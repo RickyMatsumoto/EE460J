@@ -10,9 +10,12 @@ print("# Patients = " + str(len(df)))
 print("# Features = " + str(len(df.columns)))
 # print(df.head())
 print("The first four features seem to be age, sex(0m, 1f), height(cm), and weight(kg).")
+# df.replace('?', None, inplace=True)
 for column in df:
     temp = df[column]
-    # print(temp)
-    temp.replace(to_replace='?', value=None)
+    temp.replace('?', np.nan, inplace=True)
+    temp = pd.to_numeric(temp)
     mean = temp.mean()
-    temp.fillna(value=mean)
+    temp.replace(np.nan, mean, inplace=True)
+    df[column] = temp
+print(df.head())
