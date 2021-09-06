@@ -8,9 +8,7 @@ import os
 df = pd.read_csv(os.getcwd() + "\HW1\PatientData.csv", header=None)
 print("# Patients = " + str(len(df)))
 print("# Features = " + str(len(df.columns)))
-# print(df.head())
 print("The first four features seem to be age, sex(0m, 1f), height(cm), and weight(kg).")
-# df.replace('?', None, inplace=True)
 for column in df:
     temp = df[column]
     temp.replace('?', np.nan, inplace=True)
@@ -18,4 +16,4 @@ for column in df:
     mean = temp.mean()
     temp.replace(np.nan, mean, inplace=True)
     df[column] = temp
-print(df.head())
+print("By plotting different features alongside the patient condition(i.e. x = feature, y = condition), we could find which features correlate the strongest positively/negatively with patient condition by seeing how clutered the points are. From there, we could hypothesize which features impact patient condition the strongest by measuring the correlation, and hopefully be able to predict patient condition by using a combination of those features in the future.")
