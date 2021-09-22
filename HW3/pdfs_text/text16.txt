@@ -1,0 +1,1483 @@
+Learning Continuous Semantic Representations of Symbolic Expressions
+
+Miltiadis Allamanis 1 Pankajan Chanthirasegaran 2 Pushmeet Kohli 3 Charles Sutton 2 4
+
+Abstract
+
+Combining abstract, symbolic reasoning with con-
+tinuous neural reasoning is a grand challenge of
+representation learning. As a step in this direc-
+tion, we propose a new architecture, called neural
+equivalence networks, for the problem of learn-
+ing continuous semantic representations of alge-
+braic and logical expressions. These networks are
+trained to represent semantic equivalence, even
+of expressions that are syntactically very differ-
+ent. The challenge is that semantic representa-
+tions must be computed in a syntax-directed man-
+ner, because semantics is compositional, but at
+the same time, small changes in syntax can lead
+to very large changes in semantics, which can be
+difﬁcult for continuous neural architectures. We
+perform an exhaustive evaluation on the task of
+checking equivalence on a highly diverse class of
+symbolic algebraic and boolean expression types,
+showing that our model signiﬁcantly outperforms
+existing architectures.
+
+1. Introduction
+
+Combining abstract, symbolic reasoning with continuous
+neural reasoning is a grand challenge of representation learn-
+ing. This is particularly important while dealing with ex-
+ponentially large domains such as source code and logical
+expressions. Symbolic notation allows us to abstractly rep-
+resent a large set of states that may be perceptually very
+different. Although symbolic reasoning is very powerful,
+it also tends to be hard. For example, problems such as
+the satisﬁablity of boolean expressions and automated for-
+mal proofs tend to be NP-hard or worse. This raises the
+exciting opportunity of using pattern recognition within
+symbolic reasoning, that is, to learn patterns from datasets
+of symbolic expressions that approximately represent se-
+
+Work started when M. Allamanis was at Edinburgh. This work
+was done while P. Kohli was at Microsoft. 1Microsoft Research,
+Cambridge, UK 2University of Edinburgh, UK 3DeepMind, Lon-
+don, UK 4The Alan Turing Institute, London, UK. Correspondence
+to: Miltiadis Allamanis <t-mialla@microsoft.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+mantic relationships. However, apart from some notable
+exceptions (Alemi et al., 2016; Loos et al., 2017; Zaremba
+et al., 2014), this area has received relatively little attention
+in machine learning. In this work, we explore the direction
+of learning continuous semantic representations of symbolic
+expressions. The goal is for expressions with similar seman-
+tics to have similar continuous representations, even if their
+syntactic representation is very different. Such representa-
+tions have the potential to allow a new class of symbolic
+reasoning methods based on heuristics that depend on the
+continuous representations, for example, by guiding a search
+procedure in a symbolic solver based on a distance metric
+in the continuous space.
+
+In this paper, we make a ﬁrst essential step of addressing
+the problem of learning continuous semantic representa-
+tions (SEMVECs) for symbolic expressions. Our aim is,
+given access to a training set of pairs of expressions for
+which semantic equivalence is known, to assign continuous
+vectors to symbolic expressions in such a way that seman-
+tically equivalent, but syntactically diverse expressions are
+assigned to identical (or highly similar) continuous vectors.
+This is an important but hard problem; learning composable
+SEMVECs of symbolic expressions requires that we learn
+about the semantics of symbolic elements and operators
+and how they map to the continuous representation space,
+thus encapsulating implicit knowledge about symbolic se-
+mantics and its recursive abstractive nature. As we show
+in our evaluation, relatively simple logical and polynomial
+expressions present signiﬁcant challenges and their seman-
+tics cannot be sufﬁciently represented by existing neural
+network architectures.
+
+Our work in similar in spirit to the work of Zaremba et al.
+(2014), who focus on learning expression representations to
+aid the search for computationally efﬁcient identities. They
+use recursive neural networks (TREENN)1 (Socher et al.,
+2012) for modeling homogenous, single-variable polyno-
+mial expressions. While they present impressive results, we
+ﬁnd that the TREENN model fails when applied to more
+complex symbolic polynomial and boolean expressions. In
+particular, in our experiments we ﬁnd that TREENNs tend
+to assign similar representations to syntactically similar ex-
+pressions, even when they are semantically very different.
+The underlying conceptual problem is how to develop a con-
+
+1To avoid confusion, we use TREENN for recursive neural
+
+networks and RNN for recurrent neural networks.
+
+Learning Continuous Semantic Representations of Symbolic Expressions
+
+tinuous representation that follows syntax but not too much,
+that respects compositionality while also representing the
+fact that a small syntactic change can be a large semantic
+one.
+
+To tackle this problem, we propose a new architecture, called
+neural equivalence networks (EQNET). EQNETs learn how
+syntactic composition recursively composes SEMVECs, like
+a TREENN, but are also designed to model large changes
+in semantics as the network progresses up the syntax tree.
+As equivalence is transitive, we formulate an objective func-
+tion for training based on equivalence classes rather than
+pairwise decisions. The network architecture is based on
+composing residual-like multi-layer networks, which allows
+more ﬂexibility in modeling the semantic mapping up the
+syntax tree. To encourage representations within an equiv-
+alence class to be tightly clustered, we also introduce a
+training method that we call subexpression autoencoding,
+which uses an autoencoder to force the representation of
+each subexpression to be predictable and reversible from its
+syntactic neighbors. Experimental evaluation on a highly
+diverse class of symbolic algebraic and boolean expression
+types shows that EQNETs dramatically outperform existing
+architectures like TREENNs and RNNs.
+
+To summarize, the main contributions of our work are: (a)
+We formulate the problem of learning continuous semantic
+representations (SEMVECs) of symbolic expressions and
+develop benchmarks for this task. (b) We present neural
+equivalence networks (EQNETs), a neural network archi-
+tecture that learns to represent expression semantics onto a
+continuous semantic representation space and how to per-
+form symbolic operations in this space. (c) We provide
+an extensive evaluation on boolean and polynomial expres-
+sions, showing that EQNETs perform dramatically better
+than state-of-the-art alternatives. Code and data are avail-
+able at groups.inf.ed.ac.uk/cup/semvec.
+
+2. Model
+
+In this work, we are interested in learning semantic, compo-
+sitional representations of mathematical expressions, which
+we call SEMVECs, and in learning to generate identical rep-
+resentations for expressions that are semantically equivalent,
+i.e. they belong to the same equivalence class. Equivalence
+is a stronger property than similarity, which has been the
+focus of previous work in neural network learning (Chopra
+et al., 2005), since equivalence is additionally a transitive
+relationship.
+
+Problem Hardness. Finding the equivalence of arbitrary
+symbolic expressions is a NP-hard problem or worse. For
+example, if we focus on boolean expressions, reducing an
+expression to the representation of the false equivalence
+class amounts to proving its non-satisﬁability — an NP-
+complete problem. Of course, we do not expect to circum-
+
+vent an NP-complete problem with neural networks. A
+network for solving boolean equivalence would require an
+exponential number of nodes in the size of the expression if
+P
+= N P . Instead, our goal is to develop architectures that
+efﬁciently learn to solve the equivalence problems for ex-
+pressions that are similar to a smaller number of expressions
+in a given training set. The supplementary material shows
+a sample of such expressions that illustrate the hardness of
+this problem.
+
+Notation and Framework. To allow our representations
+to be compositional, we employ the general framework of
+recursive neural networks (TREENN) (Socher et al., 2012;
+2013), in our case operating on tree structures of the syn-
+tactic parse of a formula. Given a tree T , TREENNs learn
+distributed representations for each node in the tree by recur-
+sively combining the representations of its subtrees using a
+neural network. We denote the children of a node n as ch(n)
+which is a (possibly empty) ordered tuple of nodes. We also
+use par(n) to refer to the parent node of n. Each node in
+our tree has a type, e.g. a terminal node could be of type “a”
+referring to the variable a or of type “and” referring to a
+) operation. We refer to the type
+node of the logical AND (
+of a node n as τn. In pseudocode, TREENNs retrieve the
+representation of a tree T rooted at node ρ, by invoking the
+function TREENN(ρ) that returns a vector representation
+RD, i.e., a SEMVEC. The function is deﬁned as
+rρ
+
+∧
+
+∈
+
+TREENN (current node n)
+if n is not a leaf then
+
+COMBINE(TREENN(c0), . . . , TREENN(ck), τn),
+
+rn
+where (c0, . . . , ck) = ch(n)
+
+←
+
+else
+rn
+return rn
+
+←
+
+LOOKUPLEAFEMBEDDING(τn)
+
+The general framework of TREENN allows two points
+of variation, the implementation of LOOKUPLEAFEM-
+BEDDING and COMBINE. Traditional TREENNs (Socher
+et al., 2013) deﬁne LOOKUPLEAFEMBEDDING as a simple
+lookup operation within a matrix of embeddings and COM-
+BINE as a single-layer neural network. As discussed next,
+these will both prove to be serious limitations in our setting.
+To train these networks to learn SEMVECs, we will use a
+supervised objective based on a set of known equivalence
+relations (see Section 2.2).
+
+2.1. Neural Equivalence Networks
+
+Our domain requires that the network learns to abstract
+away syntax, assigning identical representations to expres-
+sions that may be syntactically different but semantically
+equivalent, and also assigning different representations to
+expressions that may be syntactically very similar but non-
+equivalent. In this work, we ﬁnd that standard neural ar-
+chitectures do not handle well this challenge. To repre-
+sent semantics from syntax, we need to learn to recursively
+
+(cid:54)
+Learning Continuous Semantic Representations of Symbolic Expressions
+
+(a) Architectural diagram of EQNETs. Example parse tree shown is of the boolean expression (a ∨ c) ∧ a.
+
+COMBINE (rc0, . . . , rck , τp)
+¯l0
+[rc0, . . . , rck ]
+σ (cid:0)Wi,τp ·
+(cid:1)
+←
+¯l0
+¯l1
+←
+¯l0 + Wo1,τp ·
+¯lout
+Wo0,τp ·
+←
+(cid:13)
+return ¯lout/ (cid:13)
+(cid:13)¯lout
+(cid:13)2
+
+¯l1
+
+SUBEXPAE (rc0, . . . , rck , rp, τp)
+[rc0, . . . , rck ]
+tanh (cid:0)We,τp ·
+tanh (cid:0)Wd
+·
+(cid:107)2 /
+˜x
+˜x
+x
+(cid:107)2
+(cid:107)
+· (cid:107)
+COMBINE(˜x, τp)
+(cid:0)˜x(cid:62)x + ˜r(cid:62)
+p rp
+
+x
+←
+˜x
+←
+˜x
+←
+˜rp
+←
+return
+
+(cid:1)
+
+−
+
+[rp, x]
+
+n(cid:1)(cid:1)
+
+·
+
+(b) COMBINE of EQNET.
+
+(c) Loss function used for subexpression autoencoder
+
+Figure 1. EQNET architecture.
+
+compose and decompose semantic representations and re-
+move syntactic “noise”. Any syntactic operation may sig-
+niﬁcantly change semantics (e.g. negation, or appending
+FALSE) while we may reach the same semantic state
+∧
+through many possible operations. This necessitates us-
+ing high-curvature operations over the semantic representa-
+tion space. Furthermore, some operations are semantically
+reversible and thus we need to learn reversible semantic
+representations (e.g.
+A and A should have an identical
+SEMVECs). Based on these, we deﬁne neural equivalence
+networks (EQNET), which learn to compose representations
+of equivalence classes into new equivalence classes (Fig-
+ure 1a). Our network follows the TREENN architecture,
+i.e. is implemented using TREENN to model the composi-
+tional nature of symbolic expressions but is adapted based
+on the domain requirements. The extensions we introduce
+have two aims: ﬁrst, to improve the network training; and
+second, and more interestingly, to encourage the learned
+representations to abstract away surface level information
+while retaining semantic content.
+
+¬¬
+
+The ﬁrst extension that we introduce is to the network struc-
+ture at each layer in the tree. Traditional TREENNs (Socher
+et al., 2013) use a single-layer neural network at each tree
+node. During our preliminary investigations and in Sec-
+tion 3, we found that single layer networks are not ade-
+quately expressive to capture all operations that transform
+the input SEMVECs to the output SEMVEC and maintain
+semantic equivalences, requiring high-curvature operations.
+Part of the problem stems from the fact that within the
+Euclidean space of SEMVECs some operations need to be
+non-linear. For example a simple XOR boolean operator re-
+quires high-curvature operations in the continuous semantic
+representation space. Instead, we turn to multi-layer neural
+
+networks. In particular, we deﬁne the network as shown
+in the function COMBINE in Figure 1b. This uses a two-
+layer MLP with a residual-like connection to compute the
+SEMVEC of each parent node in that syntax tree given that
+of its children. Each node type τn, e.g., each logical oper-
+ator, has a different set of weights. We experimented with
+deeper networks but this did not yield any improvements.
+
+However, as TREENNs become deeper, they suffer from
+optimization issues, such as diminishing and exploding gra-
+dients. This is essentially because of the highly compo-
+sitional nature of tree structures, where the same network
+(i.e. the COMBINE non-linear function) is used recursively,
+causing it to “echo” its own errors and producing unstable
+feedback loops. We observe this problem even with only
+two-layer MLPs, as the overall network can become quite
+deep when using two layers for each node in the syntax
+tree. We resolve this issue in the training procedure by
+constraining each SEMVEC to have unit norm. That is, we
+set LOOKUPLEAFEMBEDDING(τn) = Cτn /
+Cτn(cid:107)2 , and
+(cid:107)
+we normalize the output of the ﬁnal layer of COMBINE in
+Figure 1b. The normalization step of ¯lout and Cτn is some-
+what similar to weight normalization (Salimans & Kingma,
+2016) and vaguely resembles layer normalization (Ba et al.,
+2016). Normalizing the SEMVECs partially resolves issues
+with diminishing and exploding gradients, and removes a
+spurious degree of freedom in the semantic representation.
+As simple as this modiﬁcation may seem, we found it vital
+for obtaining good performance, and all of our multi-layer
+TREENNs converged to low-performing settings without it.
+
+Although these modiﬁcations seem to improve the represen-
+tation capacity of the network and its ability to be trained,
+we found that they were not on their own sufﬁcient for good
+
+rc2rc1aacCombine¯l0rpSubexpAerc1rc2rp˜rc1˜rc2˜rpCombine˜rc1–rc1,˜rc2–rc2,˜rp–rp˜x¯l1¯lout/(cid:107)·(cid:107)2SemVecLearning Continuous Semantic Representations of Symbolic Expressions
+
+performance. In our early experiments, we noticed that the
+networks were primarily focusing on syntax instead of se-
+mantics, i.e., expressions that were nearby in the continuous
+space were primarily ones that were syntactically similar.
+At the same time, we observed that the networks did not
+learn to unify representations of the same equivalence class,
+observing multiple syntactically distinct but semantically
+equivalent expressions to have distant SEMVECs.
+
+Therefore we modify the training objective in order to en-
+courage the representations to become more abstract, reduc-
+ing their dependence on surface-level syntactic information.
+We add a regularization term on the SEMVECs that we call
+a subexpression autoencoder (SUBEXPAE). We design this
+regularization to encourage the SEMVECs to have two prop-
+erties: abstraction and reversibility. Because abstraction
+arguably means removing irrelevant information, a network
+with a bottleneck layer seems natural, but we want the train-
+ing objective to encourage the bottleneck to discard syntactic
+information rather than semantic information. To achieve
+this, we introduce a component that aims to encourage re-
+versibility, which we explain by an example. Observe that
+given the semantic representation of any two of the three
+nodes of a subexpression (by which we mean the parent, left
+child, right child of an expression tree) it is often possible to
+completely determine or at least place strong constraints on
+the semantics of the third. For example, consider a boolean
+F2(a, b) where F1 and F2
+formula F (a, b) = F1(a, b)
+∨
+are arbitrary propositional formulae over the variables a, b.
+Then clearly if we know that F implies that a is true but F1
+does not, then F2 must imply that a is true. More generally,
+if F belongs to some equivalence class e0 and F1 belongs
+to a different class e1, we want the continuous representa-
+tion of F2 to reﬂect that there are strong constraints on the
+equivalence class of F2.
+
+Subexpression autoencoding encourages abstraction by em-
+ploying an autoencoder with a bottleneck, thereby remov-
+ing irrelevant information from the representations, and en-
+courages reversibility by autoencoding the parent and child
+representations together, to encourage dependence in the
+representations of parents and children. More speciﬁcally,
+given any node p in the tree with children c0 . . . ck, we can
+deﬁne a parent-children tuple [rc0 , . . . , rck , rp] containing
+the (computed) SEMVECs of the children and parent nodes.
+What SUBEXPAE does is to autoencode this representation
+tuple into a low-dimensional space with a denoising autoen-
+coder. We then seek to minimize the reconstruction error of
+the child representations (˜rc0, . . . , ˜rck ) as well as the recon-
+structed parent representation ˜rp that can be computed from
+the reconstructed children. More formally, we minimize
+the return value of SUBEXPAE in Figure 1c where n is a
+binary noise vector with κ percent of its elements set to
+zero. Note that the encoder is speciﬁc to the parent node
+type τp. Although our SUBEXPAE may seem similar to the
+recursive autoencoders of Socher et al. (2011), it differs
+
+in two major ways. First, SUBEXPAE autoencodes on the
+entire parent-children representation tuple, rather than the
+child representations alone. Second, the encoding is not
+used to compute the parent representation, but only serves
+as a regularizer.
+
+Subexpression autoencoding has several desirable effects.
+First, it forces each parent-children tuple to lie in a low-
+dimensional space, requiring the network to compress infor-
+mation from the individual subexpressions. Second, because
+the denoising autoencoder is reconstructing parent and child
+representations together, this encourages child representa-
+tions to be predictable from parents and siblings. Putting
+these two together, the goal is that the information discarded
+by the autoencoder bottleneck will be more syntactic than
+semantic, assuming that the semantics of child node is more
+predictable from its parent and sibling than its syntactic
+realization. The goal is to nudge the network to learn con-
+sistent, reversible semantics. Additionally, subexpression
+autoencoding has the potential to gradually unify distant
+representations that belong to the same equivalence class.
+To illustrate this point, imagine two semantically equiv-
+alent c(cid:48)
+0 child nodes of different expressions that
+have distant SEMVECs, i.e. (cid:13)
+(cid:15) although
+(cid:13)rc(cid:48)
+rc(cid:48)(cid:48)
+0 −
+COMBINE(rc(cid:48)
+, . . . ). In some cases
+COMBINE(rc(cid:48)(cid:48)
+due to the autoencoder noise, the differences between the in-
+put tuple x(cid:48), x(cid:48)(cid:48) that contain rc(cid:48)
+will be non-existent
+and the decoder will predict a single location ˜rc0 (possibly
+different from rc(cid:48)
+). Then, when minimizing the
+reconstruction error, both rc(cid:48)
+will be attracted to
+˜rc0 and eventually should merge.
+
+(cid:13)
+(cid:13)2 (cid:29)
+
+0 and c(cid:48)(cid:48)
+
+and rc(cid:48)(cid:48)
+
+and rc(cid:48)(cid:48)
+
+and rc(cid:48)(cid:48)
+
+, . . . )
+
+≈
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+2.2. Training
+
+}
+
+=
+
+=
+
+e1 . . . eJ
+{
+
+T1 . . . TN
+{
+
+We train EQNETs from a dataset of expressions whose
+semantic equivalence is known. Given a training set
+of parse trees of expressions, we assume
+T
+that the training set is partitioned into equivalence classes
+. We use a supervised objective similar
+E
+}
+to classiﬁcation; the difference between classiﬁcation and
+our setting is that whereas standard classiﬁcation problems
+consider a ﬁxed set of class labels, in our setting the number
+of equivalence classes in the training set will vary with N .
+Given an expression tree T that belongs to the equivalence
+class ei
+
+, we compute the probability
+
+∈ E
+
+P (ei
+
+T ) =
+|
+
+(cid:80)
+
+exp (cid:0)TREENN(T )(cid:62)qei + bi
+(cid:1)
+j exp (cid:0)TREENN(T )(cid:62)qej + bj
+
+(cid:1)
+
+(1)
+
+where qei are model parameters that we can interpret as
+representations of each equivalence class that appears in the
+training class, and bi are scalar bias terms. Note that in this
+work, we only use information about the equivalence class
+of the whole expression T , ignoring available information
+about subexpressions. This is without loss of generality,
+because if we do know the equivalence class of a subex-
+pression of T , we can simply add that subexpression to
+
+Learning Continuous Semantic Representations of Symbolic Expressions
+
+the training set. To train the model, we use a max-margin
+objective that maximizes classiﬁcation accuracy, i.e.
+
+(cid:32)
+
+ACC(T, ei) = max
+
+L
+
+0, arg max
+ej (cid:54)=ei,ej ∈E
+
+log
+
+(cid:33)
+
++ m
+
+P (ej
+P (ei
+
+T )
+|
+T )
+|
+
+(2)
+
+where m > 0 is a scalar margin. And therefore the op-
+timized loss function for a single expression tree T that
+belongs to equivalence class ei
+
+is
+
+(T, ei) =
+
+ACC(T, ei) +
+
+L
+
+L
+
+SUBEXPAE(ch(n), n)
+
+∈ E
+(cid:88)
+
+n∈Q
+
+µ
+Q
+|
+
+|
+
+(3)
+
+|
+
+|
+
+∈
+
+∈
+
+≥
+
+> 0
+
+n
+{
+
+ch(n)
+
+, i.e. contains the non-
+where Q =
+T :
+}
+leaf nodes of T and µ
+(0, 1] a scalar weight. We found
+that subexpression autoencoding is counterproductive early
+in training, before the SEMVECs begin to represent aspects
+10−νt
+of semantics. So, for each epoch t, we set µ = 1
+with ν
+0. Instead of the supervised objective that we
+propose, an alternative option for training EQNET would be
+a Siamese objective (Chopra et al., 2005) that learns about
+similarities (rather than equivalence) between expressions.
+In practice, we found the optimization to be very unstable,
+yielding suboptimal performance. We believe that this has
+to do with the compositional and recursive nature of the task
+that creates unstable dynamics and the fact that equivalence
+is a stronger property than similarity.
+
+−
+
+3. Evaluation
+
+·
+
+·
+
+·
+
+·
+
+(d
+
+(a
+
+Datasets. We generate datasets of expressions grouped
+into equivalence classes from two domains. The datasets
+from the BOOL domain contain boolean expressions and
+the POLY datasets contain polynomial expressions. In both
+domains, an expression is either a variable, a binary operator
+that combines two expressions, or a unary operator applied
+to a single expression. When deﬁning equivalence, we in-
+terpret distinct variables as referring to different entities in
+the domain, so that, e.g., the polynomials c
+a + b) and
+f
+d+e) are not equivalent. For each domain, we generate
+“simple” datasets which use a smaller set of possible opera-
+tors and “standard” datasets which use a larger set of more
+complex operators. We generate each dataset by exhaus-
+tively generating all parse trees up to a maximum tree size.
+All expressions are symbolically simpliﬁed into a canonical
+from in order to determine their equivalence class and are
+grouped accordingly. Table 1 shows the datasets we gener-
+ated. In the supplementary material we present some sample
+expressions. For the polynomial domain, we also generated
+ONEV-POLY datasets, which are polynomials over a single
+variable, since they are similar to the setting considered by
+Zaremba et al. (2014) — although ONEV-POLY is still a lit-
+tle more general because it is not restricted to homogeneous
+polynomials. Learning SEMVECs for boolean expressions
+
+is already a hard problem; with n boolean variables, there
+are 22n
+equivalence classes (i.e. one for each possible truth
+table). We split the datasets into training, validation and test
+sets. We create two test sets, one to measure generalization
+performance on equivalence classes that were seen in the
+training data (SEENEQCLASS), and one to measure general-
+ization to unseen equivalence classes (UNSEENEQCLASS).
+It is easiest to describe UNSEENEQCLASS ﬁrst. To cre-
+ate the UNSEENEQCLASS, we randomly select 20% of all
+the equivalence classes, and place all of their expressions
+in the test set. We select equivalence classes only if they
+contain at least two expressions but less than three times
+the average number of expressions per equivalence class.
+We thus avoid selecting very common (and hence trivial
+to learn) equivalence classes in the testset. Then, to create
+SEENEQCLASS, we take the remaining 80% of the equiv-
+alence classes, and randomly split the expressions in each
+class into training, validation, SEENEQCLASS test in the
+proportions 60%–15%–25%. We provide the datasets online
+at groups.inf.ed.ac.uk/cup/semvec.
+
+Baselines. To compare the performance of our model, we
+train the following baselines. TF-IDF: learns a representa-
+tion given the expression tokens (variables, operators and
+parentheses). This captures topical/declarative knowledge
+but is unable to capture procedural knowledge. GRU refers
+to the token-level gated recurrent unit encoder of Bahdanau
+et al. (2015) that encodes the token-sequence of an expres-
+sion into a distributed representation. Stack-augmented
+RNN refers to the work of Joulin & Mikolov (2015) which
+was used to learn algorithmic patterns and uses a stack as
+a memory and operates on the expression tokens. We also
+include two recursive neural networks (TREENN). The 1-
+layer TREENN which is the original TREENN also used by
+Zaremba et al. (2014). We also include a 2-layer TREENN,
+where COMBINE is a classic two-layer MLP without resid-
+ual connections. This shows the effect of SEMVEC normal-
+ization and subexpression autoencoder.
+
+Hyperparameters. We tune the hyperparameters of all
+models using Bayesian optimization (Snoek et al., 2012)
+on a boolean dataset with 5 variables and maximum tree
+size of 7 (not shown in Table 1) using the average k-NN
+(k = 1, . . . , 15) statistics (described next). The selected
+hyperparameters are detailed in the supplementary material.
+
+3.1. Quantitative Evaluation
+
+Metrics. To evaluate the quality of the learned represen-
+tations we count the proportion of k nearest neighbors of
+each expression (using cosine similarity) that belong to the
+same equivalence class. More formally, given a test query
+expression q in an equivalence class c we ﬁnd the k nearest
+neighbors Nk(q) of q across all expressions, and deﬁne the
+
+Learning Continuous Semantic Representations of Symbolic Expressions
+
+Table 1. Dataset statistics and results. SIMP datasets contain simple operators (“∧, ∨, ¬” for BOOL and “+, −” for POLY) while the rest
+contain all operators (i.e. “∧, ∨, ¬, ⊕, ⇒” for BOOL and “+, −, ·” for POLY). ⊕ is the XOR operator. The number in the dataset name
+indicates its expressions’ maximum tree size. L refers to a “larger” number of 10 variables. H is the entropy of equivalence classes.
+
+Dataset
+
+#
+Vars
+
+# Equiv
+Classes
+
+H
+
+score5 (%) in UNSEENEQCLASS
+tf-idf GRU StackRNN 1L TREENN 2L TREENN EQNET
+
+SIMPBOOL8
+SIMPBOOL10S
+BOOL5
+BOOL8
+BOOL10S
+SIMPBOOLL5
+BOOLL5
+SIMPPOLY5
+SIMPPOLY8
+SIMPPOLY10
+ONEV-POLY10
+ONEV-POLY13
+POLY5
+POLY8
+
+3
+3
+3
+3
+10
+10
+10
+3
+3
+3
+1
+1
+3
+3
+
+#
+Exprs
+
+39,048
+26,304
+1,239
+257,784
+51,299
+10,050
+36,050
+237
+3,477
+57,909
+1,291
+107,725
+516
+11,451
+
+5.6
+7.2
+5.6
+6.2
+8.0
+9.9
+11.8
+5.0
+5.8
+6.3
+5.4
+7.1
+6.7
+9.0
+
+120
+191
+95
+232
+256
+1,342
+7,312
+47
+104
+195
+83
+677
+150
+1,102
+
+30.9
+11.0
+35.8
+17.2
+5.1
+40.2
+20.7
+6.3
+14.6
+11.0
+10.9
+4.7
+34.1
+5.7
+
+17.4
+6.2
+34.9
+10.7
+5.0
+53.1
+31.1
+21.9
+36.1
+25.9
+43.5
+3.2
+37.8
+13.9
+
+(4)
+
+26.7
+7.6
+12.4
+16.0
+3.9
+50.5
+11.5
+1.0
+5.8
+6.6
+5.3
+2.2
+2.2
+2.4
+
+27.4
+25.0
+16.4
+15.7
+10.8
+3.48
+0.1
+40.6
+12.5
+19.9
+10.9
+10.0
+46.8
+10.4
+
+25.5
+93.4
+26.0
+15.4
+20.2
+19.9
+0.5
+27.1
+13.1
+7.1
+8.5
+56.2
+59.1
+14.8
+
+97.4
+99.1
+65.8
+58.1
+71.4
+85.0
+75.2
+65.6
+98.9
+99.3
+81.3
+90.4
+55.3
+86.2
+
+S dataset contains all equivalence classes but at most 200 uniformly sampled (without replacement) expressions per equivalence class.
+
+score as
+
+scorek(q) = |
+
+Nk(q)
+min(k,
+
+.
+
+c
+|
+)
+
+∩
+c
+|
+|
+
+To report results for a given testset, we simply average
+scorek(q) for all expressions q in the testset. We also report
+the precision-recall curves for the problem of clustering the
+SEMVECs into their appropriate equivalence classes.
+
+Evaluation. Figure 2 presents the average per-model
+precision-recall curves across the datasets. Table 1 shows
+score5 of UNSEENEQCLASS. Detailed plots are found in
+the supplementary material. EQNET performs better for all
+datasets, by a large margin. The only exception is POLY5,
+where the 2-L TREENN performs better. However, this may
+have to do with the small size of the dataset. The reader
+may observe that the simple datasets (containing fewer op-
+erations and variables) are easier to learn. Understandably,
+introducing more variables increases the size of the rep-
+resented space reducing performance. The tf-idf method
+performs better in settings with more variables, because
+it captures well the variables and operations used. Simi-
+lar observations can be made for sequence models. The
+one and two layer TREENNs have mixed performance; we
+believe that this has to do with exploding and diminish-
+ing gradients due to the deep and highly compositional
+nature of TREENNs. Although Zaremba et al. (2014) con-
+sider a different problem to us, they use data similar to the
+ONEV-POLY datasets with a traditional TREENN architec-
+ture. Our evaluation suggests that EQNETs perform much
+better within the ONEV-POLY setting.
+
+Evaluation of Compositionality. We evaluate whether
+EQNETs successfully learn to compute compositional rep-
+resentations, rather than overﬁtting to expression trees of
+
+a small size. To do this we consider a type of transfer set-
+ting, in which we train on simpler datasets, but test on more
+complex ones; for example, training on the training set of
+BOOL5 but testing on the testset of BOOL8. We average
+over 11 different train-test pairs (full list in supplementary
+material) and show the results in Figure 3a and Figure 3b.
+These graphs again show that EQNETs are better than any
+of the other methods, and indeed, performance is only a bit
+worse than in the non-transfer setting.
+
+Impact of EQNET Components EQNETs differ from
+traditional TREENNs in two major ways, which we ana-
+lyze here. First, SUBEXPAE improves performance. When
+training the network with and without SUBEXPAE, on av-
+erage, the area under the curve (AUC) of scorek decreases
+by 16.8% on the SEENEQCLASS and 19.7% on the UN-
+SEENEQCLASS. This difference is smaller in the transfer
+setting, where AUC decreases by 8.8% on average. How-
+ever, even in this setting we observe that SUBEXPAE helps
+more in large and diverse datasets. The second key differ-
+ence to traditional TREENNs is the output normalization
+and the residual connections. Comparing our model to the
+one-layer and two-layer TREENNs again, we ﬁnd that out-
+put normalization results in important improvements (the
+two-layer TREENNs have on average 60.9% smaller AUC).
+We note that only the combination of the residual connec-
+tions and the output normalization improve the performance,
+whereas when used separately, there are no signiﬁcant im-
+provements over the two-layer TREENNs.
+
+3.2. Qualitative Evaluation
+
+Table 2 shows expressions whose SEMVEC nearest neighbor
+is of an expression of another equivalence class. Manually
+inspecting boolean expressions, we ﬁnd that EQNET confu-
+sions happen more when a XOR or implication operator is
+
+Learning Continuous Semantic Representations of Symbolic Expressions
+
+(a) SEENEQCLASS
+
+(b) UNSEENEQCLASS
+
+Figure 2. Precision-Recall Curves averaged across datasets.
+
+Table 2. Non semantically equivalent ﬁrst nearest-neighbors from BOOL8 and POLY8. A checkmark indicates that the method correctly
+results in the nearest neighbor being from the same equivalence class.
+
+Expr
+
+a ∧ (a ∧ (a ∧ (¬c)))
+
+a ∧ (a ∧ (c ⇒ (¬c)))
+
+(a ∧ a) ∧ (c ⇒ (¬c))
+
+a + (c · (a + c))
+
+((a + c) · c) + a
+
+(b · b) − b
+
+tﬁdf
+GRU
+1L-TREENN
+EQNET
+
+c ∧ ((a ∧ a) ∧ (¬a))
+(cid:88)
+a ∧ (a ∧ (a ∧ (¬b)))
+(cid:88)
+
+c ⇒ (¬((c ∧ a) ∧ a))
+a ∧ (a ∧ (c ∧ (¬c)))
+a ∧ (a ∧ (c ⇒ (¬b)))
+(cid:88)
+
+c ⇒ (¬((c ∧ a) ∧ a))
+(a ∧ a) ∧ (c ⇒ (¬c))
+(a ∧ a) ∧ (c ⇒ (¬b))
+(¬(b ⇒ (b ∨ c))) ∧ a
+
+a + (c + a) · c
+b + (c · (a + c))
+a + (c · (b + c))
+(cid:88)
+
+(c · a) + (a + c)
+((b + c) · c) + a
+((b + c) · c) + a
+(cid:88)
+
+b · (b − b)
+(b + b) · b − b
+(a − c) · b − b
+(b · b) · b − b
+
+(c
+
+¬
+
+⊕
+
+(a
+
+((a
+
+c)
+
+b))) ((c
+
+(
+
+b))
+
+∨
+
+¬
+
+a)
+
+(a
+
+∧
+
+⇒
+
+a)
+
+⇒
+
+∧
+
+⊕
+
+((b
+
+(
+
+c))
+
+(a
+
+b) ((b
+
+a)
+
+a)
+
+b
+
+⊕
+
+¬
+
+∧
+
+⊕
+
+∨
+
+·
+
+−
+
+·
+
+∧
+
+b)
+
+a
+
+((a + b)
+
+a)
+
+−
+
+·
+
+((c
+
+b)
+
+c)
+
+a
+
+·
+
+·
+
+·
+
+b + ((b
+
+b)
+
+b)
+
+·
+
+·
+
+Figure 4. Visualization of score5 for all expression nodes for three
+BOOL10 and four POLY8 test sample expressions using EQNET.
+The darker the color, the lower the score, i.e. white implies a score
+of 1 and dark red a score of 0.
+
+to compose expressions that achieve good score, even if the
+subexpressions achieve a worse score. This suggests that
+for common expressions, (e.g. single variables and monomi-
+als) the network tends to select a unique location, without
+merging the equivalence classes or affecting the upstream
+performance of the network. Larger scale interactive t-SNE
+visualizations can be found online.
+
+Figure 5 presents two PCA visualizations of the SEMVECs
+of simple expressions and their negations/negatives. It can
+be discerned that the black dots and their negations (in
+red) are discriminated in the semantic representation space.
+Figure 5b shows this property in a clear manner: left-right
+discriminates between polynomials with 1 and
+a, top-
+b and b and the diagonal
+bottom between polynomials with
+c. We observe a similar
+x between c and
+parellelt to y =
+behavior in Figure 5a for boolean expressions.
+
+−
+−
+
+−
+
+−
+
+4. Related Work
+
+Researchers have proposed compilation schemes that can
+transform any given program or expression to an equivalent
+neural network (Gruau et al., 1995; Neto et al., 2003; Siegel-
+
+(a) SEENEQCLASS
+
+(b) UNSEENEQCLASS
+
+Figure 3. Evaluation of compositionality; training set simpler than
+test set. Average scorek (y-axis in log-scale). Markers are shown
+every three ticks for clarity. TREENN refers to Socher et al. (2012).
+
+involved. In fact, we fail to ﬁnd any confused expressions
+for EQNET not involving these operations in BOOL5 and
+in the top 100 expressions in BOOL10. As expected, tf-idf
+confuses expressions with others that contain the same op-
+erators and variables ignoring order. In contrast, GRU and
+TREENN tend to confuse expressions with very similar sym-
+bolic representations, i.e. that differ in one or two deeply
+nested variables or operators. In contrast, EQNET tends
+to confuse fewer expressions (as we previously showed)
+and the confused expressions tend to be more syntactically
+diverse and semantically related.
+
+Figure 4 shows a visualization of score5 for each node in
+the expression tree. One may see that as EQNET knows how
+
+0.00.20.40.60.81.0Recall0.00.20.40.60.81.0Precisiontf-idfGRUStackRNNTreeNN-1LayerTreeNN-2LayerEqNet0.00.20.40.60.81.0Recall0.00.20.40.60.81.0Precisiontf-idfGRUStackRNNTreeNN-1LayerTreeNN-2LayerEqNet510k10−1100scorek510k10−1100scorektf-idfGRUStackRNNTreeNN-1LayerTreeNN-2LayerEqNetLearning Continuous Semantic Representations of Symbolic Expressions
+
+(a) Negation in BOOL expressions
+
+(b) Negatives in POLY expressions
+
+Figure 5. A PCA visualization of some simple non-equivalent boolean and polynomial expressions (black-square) and their negations
+(red-circle). The lines connect the negated expressions.
+
+mann, 1994). One can consider a serialized version of the
+resulting neural network as a representation of the expres-
+sion. However, it is not clear how we could compare the
+serialized representations corresponding to two expressions
+and whether this mapping preserves semantic distances.
+
+Recursive neural networks (TREENN) (Socher et al., 2012;
+2013) have been successfully used in NLP with multiple
+applications. Socher et al. (2012) show that TREENNs can
+learn to compute the values of some simple propositional
+statements. EQNET’s SUBEXPAE may resemble recursive
+autoencoders (Socher et al., 2011) but differs in form and
+function, encoding the whole parent-children tuple to force
+a clustering behavior.
+In addition, when encoding each
+expression our architecture does not use a pooling layer but
+directly produces a single representation for the expression.
+
+Mou et al. (2016) design tree convolutional networks to clas-
+sify code into student submission tasks. Although they learn
+representations of the student tasks, these representations
+capture task-speciﬁc syntactic features rather than code se-
+mantics. Piech et al. (2015) also learn distributed matrix
+representations of student code submissions. However, to
+learn the representations, they use input and output program
+states and do not test for program equivalence. Additionally,
+these representations do not necessarily represent program
+equivalence, since they do not learn the representations over
+all possible input-outputs. Allamanis et al. (2016) learn
+variable-sized representations of source code snippets to
+summarize them with a short function-like name but aim
+learn summarization features in code rather than representa-
+tions of symbolic expression equivalence.
+
+More closely related is the work of Zaremba et al. (2014)
+who use a TREENN to guide the search for more efﬁcient
+mathematical identities, limited to homogeneous single-
+variable polynomial expressions. In contrast, EQNETs con-
+sider at a much wider set of expressions, employ subexpres-
+sion autoencoding to guide the learned SEMVECs to better
+
+represent equivalence, and do not use search when looking
+for equivalent expressions. Alemi et al. (2016) use RNNs
+and convolutional neural networks to detect features within
+mathematical expressions to speed the search for premise
+selection in automated theorem proving but do not explicitly
+account for semantic equivalence. In the future, SEMVECs
+may be useful within this area.
+
+Our work is also related to recent work on neural network
+architectures that learn controllers/programs (Gruau et al.,
+1995; Graves et al., 2014; Joulin & Mikolov, 2015; Grefen-
+stette et al., 2015; Dyer et al., 2015; Reed & de Freitas,
+2016; Neelakantan et al., 2015; Kaiser & Sutskever, 2016).
+In contrast to this work, we do not aim to learn how to eval-
+uate expressions or execute programs with neural network
+architectures but to learn continuous semantic representa-
+tions (SEMVECs) of expression semantics irrespectively of
+how they are syntactically expressed or evaluated.
+
+5. Discussion & Conclusions
+
+In this work, we presented EQNETs, a ﬁrst step in learning
+continuous semantic representations (SEMVECs) of proce-
+dural knowledge. SEMVECs have the potential of bridging
+continuous representations with symbolic representations,
+useful in multiple applications in artiﬁcial intelligence, ma-
+chine learning and programming languages.
+
+We show that EQNETs perform signiﬁcantly better than
+state-of-the-art alternatives. But further improvements are
+needed, especially for more robust training of compositional
+models. In addition, even for relatively small symbolic ex-
+pressions, we have an exponential explosion of the semantic
+space to be represented. Fixed-sized SEMVECs, like the
+ones used in EQNET, eventually limit the capacity that is
+available to represent procedural knowledge. In the future,
+to represent more complex procedures, variable-sized repre-
+sentations would seem to be required.
+
+a∧(b∨c)¬(a∧c)a∨(b∧c)¬(a∧(b∧c))¬(a∨b)a∨cba∧b¬(a∧(b∨c))¬(a∨c)a∨(b∨c)ca∧c¬(b∧c)¬(a∨(b∨c))¬(a∧b)¬a¬(b∨c)¬(a∨(b∧c))¬b¬cb∧caa∨ba∧(b∧c)b∨ca−(b+c)(a+b)−(b+c)b−a(a+c)−(c+b)b−(a+c)a−(c−b)(c−c)−(a−b)a−(b−c)c−(a+b)(b−b)−(a−c)(b−a)+cc−aa−ca−bLearning Continuous Semantic Representations of Symbolic Expressions
+
+Neelakantan, Arvind, Le, Quoc V, and Sutskever, Ilya. Neu-
+ral programmer: Inducing latent programs with gradient
+descent. In ICLR, 2015.
+
+Neto, Jo˜ao Pedro, Siegelmann, Hava T, and Costa, J F´elix.
+Symbolic processing in neural networks. Journal of the
+Brazilian Computer Society, 8(3):58–70, 2003.
+
+Piech, Chris, Huang, Jonathan, Nguyen, Andy, Phulsuk-
+sombati, Mike, Sahami, Mehran, and Guibas, Leonidas J.
+Learning program embeddings to propagate feedback on
+student code. In ICML, 2015.
+
+Reed, Scott and de Freitas, Nando. Neural programmer-
+
+interpreters. ICLR, 2016.
+
+Salimans, Tim and Kingma, Diederik P. Weight normaliza-
+tion: A simple reparameterization to accelerate training of
+deep neural networks. In Advances in Neural Information
+Processing Systems, 2016.
+
+Siegelmann, Hava T. Neural programming language. In
+Proceedings of the 12th National Conference on Artiﬁcial
+Intelligence, 1994.
+
+Snoek, Jasper, Larochelle, Hugo, and Adams, Ryan P. Practi-
+cal Bayesian optimization of machine learning algorithms.
+In NIPS, 2012.
+
+Socher, Richard, Pennington, Jeffrey, Huang, Eric H, Ng,
+Andrew Y, and Manning, Christopher D. Semi-supervised
+recursive autoencoders for predicting sentiment distribu-
+tions. In EMNLP, 2011.
+
+Socher, Richard, Huval, Brody, Manning, Christopher D,
+and Ng, Andrew Y. Semantic compositionality through
+recursive matrix-vector spaces. In EMNLP, 2012.
+
+Socher, Richard, Perelygin, Alex, Wu, Jean Y, Chuang, Ja-
+son, Manning, Christopher D, Ng, Andrew Y, and Potts,
+Christopher. Recursive deep models for semantic compo-
+sitionality over a sentiment treebank. In EMNLP, 2013.
+
+Zaremba, Wojciech, Kurach, Karol, and Fergus, Rob. Learn-
+ing to discover efﬁcient mathematical identities. In Ad-
+vances in Neural Information Processing Systems, pp.
+1278–1286, 2014.
+
+Acknowledgments
+
+This work was supported by Microsoft Research through
+its PhD Scholarship Programme and the Engineering
+and Physical Sciences Research Council [grant number
+EP/K024043/1]. We thank the University of Edinburgh Data
+Science EPSRC Centre for Doctoral Training for providing
+additional computational resources.
+
+References
+
+Alemi, Alex A, Chollet, Francois, Irving, Geoffrey, Szegedy,
+Christian, and Urban, Josef. DeepMath – Deep se-
+quence models for premise selection. arXiv preprint
+arXiv:1606.04442, 2016.
+
+Allamanis, Miltiadis, Peng, Hao, and Sutton, Charles. A
+convolutional attention network for extreme summariza-
+tion of source code. In ICML, 2016.
+
+Ba, Jimmy Lei, Kiros, Jamie Ryan, and Hinton, Geoffrey E.
+Layer normalization. arXiv preprint arXiv:1607.06450,
+2016.
+
+Bahdanau, Dzmitry, Cho, Kyunghyun, and Bengio, Yoshua.
+Neural machine translation by jointly learning to align
+and translate. In ICLR, 2015.
+
+Chopra, Sumit, Hadsell, Raia, and LeCun, Yann. Learning
+a similarity metric discriminatively, with application to
+face veriﬁcation. In CVPR, 2005.
+
+Dyer, Chris, Ballesteros, Miguel, Ling, Wang, Matthews,
+Austin, and Smith, Noah A. Transition-based dependency
+In ACL,
+parsing with stack long short-term memory.
+2015.
+
+Graves, Alex, Wayne, Greg, and Danihelka, Ivo. Neural
+Turing machines. arXiv preprint arXiv:1410.5401, 2014.
+
+Grefenstette, Edward, Hermann, Karl Moritz, Suleyman,
+Mustafa, and Blunsom, Phil. Learning to transduce with
+unbounded memory. In NIPS, 2015.
+
+Gruau, Fr´ed´eric, Ratajszczak, Jean-Yves, and Wiber, Gilles.
+A neural compiler. Theoretical Computer Science, 1995.
+
+Joulin, Armand and Mikolov, Tomas. Inferring algorithmic
+patterns with stack-augmented recurrent nets. In NIPS,
+2015.
+
+Kaiser, Łukasz and Sutskever, Ilya. Neural GPUs learn
+
+algorithms. In ICLR, 2016.
+
+Loos, Sarah, Irving, Geoffrey, Szegedy, Christian, and
+Kaliszyk, Cezary. Deep network guided proof search.
+arXiv preprint arXiv:1701.06972, 2017.
+
+Mou, Lili, Li, Ge, Zhang, Lu, Wang, Tao, and Jin, Zhi.
+Convolutional neural networks over tree structures for
+programming language processing. In AAAI, 2016.
+
+

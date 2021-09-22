@@ -1,0 +1,1141 @@
+Sequence Modeling via Segmentations
+
+Chong Wang 1 Yining Wang 2 Po-Sen Huang 1 Abdelrahman Mohamed 3 Dengyong Zhou 1 Li Deng 4
+
+Abstract
+Segmental structure is a common pattern in many
+types of sequences such as phrases in human
+languages.
+In this paper, we present a proba-
+bilistic model for sequences via their segmenta-
+tions. The probability of a segmented sequence
+is calculated as the product of the probabilities
+of all its segments, where each segment is mod-
+eled using existing tools such as recurrent neu-
+ral networks. Since the segmentation of a se-
+quence is usually unknown in advance, we sum
+over all valid segmentations to obtain the ﬁnal
+probability for the sequence. An efﬁcient dy-
+namic programming algorithm is developed for
+forward and backward computations without re-
+sorting to any approximation. We demonstrate
+our approach on text segmentation and speech
+recognition tasks. In addition to quantitative re-
+sults, we also show that our approach can dis-
+cover meaningful segments in their respective
+application contexts.
+
+1. Introduction
+
+Segmental structure is a common pattern in many types of
+sequences, typically, phrases in human languages and letter
+combinations in phonotactics rules. For instances,
+
+• Phrase structure. “Machine learning is part of artiﬁ-
+cial intelligence” → [Machine learning] [is] [part of]
+[artiﬁcial intelligence].
+
+• Phonotactics rules. “thought” → [th][ou][ght].
+
+The words or letters in brackets “[ ]” are usually consid-
+ered as meaningful segments for the original sequences. In
+this paper, we hope to incorporate this type of segmental
+structure information into sequence modeling.
+
+Mathematically, we are interested in constructing a condi-
+tional probability distribution p(y|x), where output y is a
+
+1Microsoft Research 2Carnegie Mellon University 3Amazon
+4Citadel Securities LLC. Correspondence to: Chong Wang
+<chowang@microsoft.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+sequence and input x may or may not be a sequence. Sup-
+pose we have a segmented sequence. Then the probability
+of this sequence is calculated as the product of the prob-
+abilities of its segments, each of which is modeled using
+existing tools such as recurrent neural networks (RNNs),
+long-short term memory (LSTM) (Hochreiter & Schmid-
+huber, 1997), or gated recurrent units (GRU) (Chung et al.,
+2014). When the segmentation for a sequence is unknown,
+we sum over the probabilities from all valid segmentations.
+In the case that the input is also a sequence, we further need
+to sum over all feasible alignments between inputs and out-
+put segmentations. This sounds complicated. Fortunately,
+we show that both forward and backward computations can
+be tackled with a dynamic programming algorithm without
+resorting to any approximations.
+
+This paper is organized as follows. In Section 2, we de-
+scribe our mathematical model which constructs the prob-
+ability distribution of a sequence via its segments, and dis-
+cuss related work. In Section 3, we present an efﬁcient dy-
+namic programming algorithm for forward and backward
+computations, and a beam search algorithm for decoding
+the output. Section 4 includes two case studies to demon-
+strate the usefulness of our approach through both quanti-
+tative and qualitative results. We conclude this paper and
+discuss future work in Section 5.
+
+2. Sequence modeling via segmentations
+
+In this section, we present our formulation of sequence
+modeling via segmentations. In our model, the output is
+always a sequence, while the input may or may not be a se-
+quence. We ﬁrst consider the non-sequence input case, and
+then move to the sequence input case. We then show how
+to carry over information across segments when needed.
+Related work is also discussed here.
+
+2.1. Case I: Mapping from non-sequence to sequence
+
+Assume the input x is a ﬁxed-length vector. Let the output
+sequence be y1:T . We are interested in modeling the prob-
+ability p(y1:T |x) via the segmentations of y1:T . Denote by
+Sy the set containing all valid segmentations of y1:T . Then
+for any segmentation a1:τa ∈ Sy, we have π(a1:τa ) = y1:T ,
+where π(·) is the concatenation operator and τa is the num-
+ber of segments in this segmentation. For example, let
+
+Sequence Modeling via Segmentations
+
+Figure 1. For Section 2.1. Given output y1:3 and its segmentation
+a1 = {y1, $} and a2 = {y2, y3, $}, input x controls the initial
+states of both segments. Note that π(a1:t−1) is omitted here.
+
+T = 5 and τa = 3. Then one possible a1:τa could be like
+a1:τa = {{y1, $}, {y2, y3, $}, {y4, y5, $}}, where $ denotes
+the end of a segment. Note that symbol $ will be ignored
+in the concatenation operator π(·). Empty segments, those
+containing only $, are not permitted in our setting. Note
+that while the number of distinct segments for a length-T
+sequence is O(T 2), the number of distinct segmentations,
+that is, |Sy|, is exponentially large.
+
+Since the segmentation is unknown in advance, the prob-
+ability of the sequence y1:T is deﬁned as the sum of the
+probabilities from all the segmentations in Sy,
+
+p(y1:T |x) (cid:44) (cid:88)
+
+p(a1:τa |x)
+
+a1:τa ∈Sy
+
+(cid:88)
+
+τa(cid:89)
+
+a1:τa ∈Sy
+
+t=1
+
+=
+
+p(at|x, π(a1:t−1)),
+
+(1)
+
+where p(a1:τa |x) is the probability for segmentation a1:τa
+given input x, and p(at|x, π(a1:t−1)) is the probability for
+segment at given input x and the concatenation of all pre-
+vious segments π(a1:t−1). Figure 1 illustrates a possi-
+ble relationship between x and y1:T given one particular
+segmentation. We choose to model the segment proba-
+bility p(at|x, π(a1:t−1)) using recurrent neural networks
+(RNNs), such as LSTM or GRU, with a softmax proba-
+bility function. Input x and concatenation π(a1:t−1) deter-
+mine the initial state for this RNN. (All segments’ RNNs
+share the same network parameters.) However, since |Sy|
+is exponentially large, Eq. 1 cannot be directly computed.
+We defer the computational details to Section 3.
+
+2.2. Case II: Mapping from sequence to sequence
+
+Now we assume the input is also a sequence x1:T (cid:48) and the
+output remains as y1:T . We make a monotonic alignment
+assumption—each input element xt emits one segment at,
+which is then concatenated as π(a1:T (cid:48)) to obtain y1:T . Dif-
+ferent from the case when the input is not a sequence, we
+allow empty segments in the emission, i.e., at = {$} for
+some t, such that any segmentation of y1:T will always
+consist of exactly T (cid:48) segments with possibly some empty
+
+Figure 2. For Section 2.2. SWAN emits one particular segmenta-
+tion of y1:T with x1 waking (emits y1) and x4 waking (emits y2
+and y3) while x2, x3 and x5 sleeping. SWAN needs to consider
+all valid segmentations like this for y1:T .
+
+ones. In other words, all valid segmentations for the out-
+put is in set Sy (cid:44) {a1:T (cid:48)
+: π(a1:T (cid:48)) = y1:T }. Since an
+input element can choose to emit an empty segment, we
+name this particular method as “Sleep-WAke Networks”
+(SWAN). See Figure 2 for an example of the emitted seg-
+mentation of y1:T .
+
+Again, as in Eq. 1, the probability of the sequence y1:T is
+deﬁned as the sum of the probabilities of all the segmenta-
+tions in Sy,
+
+p(y1:T |x1:T (cid:48)) (cid:44) (cid:88)
+
+T (cid:48)
+(cid:89)
+
+a1:T (cid:48) ∈Sy
+
+t=1
+
+p(at|xt, π(a1:t−1)),
+
+(2)
+
+where p(at|xt, π(a1:t−1)) is the probability of segment at
+given input element xt and the concatenation of all previ-
+ous segments π(a1:t−1). In other words, input element xt
+emits segment at. Again this segment probability can be
+modeled using an RNN with a softmax probability func-
+tion with xt and π(a1:t−1) providing the information for
+the initial state. The number of possible segments for y1:T
+is O(T (cid:48)T 2). Similar to Eq. 1, a direct computation of Eq. 2
+is not feasible since |Sy| is exponentially large. We address
+the computational details in Section 3.
+
+2.3. Carrying over information across segments
+
+Note that we do not assume that the segments in a seg-
+mentation are conditionally independent. Take Eq. 2 as an
+example, the probability of a segment at given xt is deﬁned
+as p(at|xt, π(a1:t−1)), which also depends on the concate-
+nation of all previous segments π(a1:t−1). We take an ap-
+proach inspired by the sequence transducer (Graves, 2012)
+to use a separate RNN to model π(a1:t−1). The hidden
+state of this RNN and input xt are used as the initial state
+of the RNN for segment at. (We simply add them together
+in our speech recognition experiment.) This allows all pre-
+vious emitted outputs to affect this segment at. Figure 3 il-
+lustrates this idea. The signiﬁcance of this approach is that
+
+𝑦1$𝑦2𝑦3$𝑥𝑦1𝑦2𝑦3𝑦1$𝑦2𝑦3$𝑥1𝑥2𝑥3𝑥5𝑥4$$$𝑦1𝑦2𝑦3Sequence Modeling via Segmentations
+
+the separate RNN are not directly used for prediction but
+as the initial states of the RNN for the segments, which
+strengthens their dependencies on each other.
+
+SWAN itself is most similar to the recent work on the neu-
+ral transducer (Jaitly et al., 2016), although we start with
+a different motivation. The motivation of the neural trans-
+ducer is to allow incremental predictions as input stream-
+ingly arrives, for example in speech recognition. From the
+modeling perspective, it also assumes that the output is de-
+composed into several segments and the alignments are un-
+known in advance. However, its assumption that hidden
+states are carried over across the segments prohibits ex-
+act marginalizing all valid segmentations and alignments.
+So they resorted to ﬁnd an approximate “best” alignment
+with a dynamic programming-like algorithm during train-
+ing or they might need a separate GMM-HMM model to
+generate alignments in advance to achieve better results.
+Otherwise, without carrying information across segments
+results in sub-optimal performance as shown in Jaitly et al.
+(2016). In contrast, our method of connecting the segments
+described in Section 2.3 preserves the advantage of exact
+marginalization over all possible segmentations and align-
+ments while still allowing the previous emitted outputs to
+affect the states of subsequent segments. This allows us
+to obtain a comparable good performance without using an
+additional alignment tool.
+
+Another closely related work is the online segment to seg-
+ment neural transduction (Yu et al., 2016). This work treats
+the alignments between the input and output sequences as
+latent variables and seeks to marginalize them out. From
+this perspective, SWAN is similar to theirs. However, our
+work explicitly takes into account output segmentations,
+extending the scope of its application to the case when
+the input is not a sequence. Our work is also related to
+semi-Markov conditional random ﬁelds (Sarawagi & Co-
+hen, 2004), segmental recurrent neural networks (Kong
+et al., 2015) and segmental hidden dynamic model (Deng
+& Jaitly, 2015), where the segmentation is applied to the
+input sequence instead of the output sequence.
+
+3. Forward, backward and decoding
+
+In this section, we ﬁrst present the details of forward and
+backward computations using dynamic programming. We
+then describe the beam search decoding algorithm. With
+these algorithms, our approach becomes a standalone loss
+function that can be used in many applications.1 Here we
+focus on developing the algorithm for the case when the
+input is a sequence. When the input is not a sequence, the
+corresponding algorithms can be similarly derived.
+
+1We plan to release this package in a deep learning framework.
+
+Figure 3. For Section 2.3. SWAN carries over information across
+segments using a separate RNN. Here the segments are at−2 =
+{yj−1, $}, at−1 = {$} and at = {yj, yj+1, $} emitted by input
+elements xt−2, xt−1 and xt respectively.
+
+it still permits the exact dynamic programming algorithm
+as we will describe in Section 3.
+
+2.4. Related work
+
+Our approach, especially SWAN, is inspired by connec-
+tionist temporal classiﬁcation (CTC) (Graves et al., 2006)
+and the sequence transducer (Graves, 2012). CTC deﬁnes
+a distribution over the output sequence that is not longer
+than the input sequence. To appropriate map the input to
+the output, CTC marginalizes out all possible alignments
+using dynamic programming. Since CTC does not model
+the interdependencies among the output sequence, the se-
+quence transducer introduces a separate RNN as a predic-
+tion network to bring in output-output dependency, where
+the prediction network works like a language model.
+
+SWAN can be regarded as a generalization of CTC to al-
+low segmented outputs. Neither CTC nor the sequence
+transducer takes into account segmental structures of out-
+put sequences. Instead, our method constructs a probabilis-
+tic distribution over output sequences by marginalizing all
+valid segmentations. This introduces additional nontrivial
+computational challenges beyond CTC and the sequence
+transducer. When the input is also a sequence, our method
+then marginalizes the alignments between the input and the
+output segmentations. Since outputs are modeled with seg-
+mental structures, our method can be applied to the scenar-
+ios where the input is not a sequence or the input length is
+shorter than the output length, while CTC cannot. When we
+need to carry information across segments, we borrow the
+idea of the sequence transducer to use a separate RNN. Al-
+though it is suspected that using a separate RNN could re-
+sult in a loosely-coupled model (Graves, 2013; Jaitly et al.,
+2016) that might hinder the performance, we do not ﬁnd
+it to be an issue in our approach. This is perhaps due to
+our use of the output segmentation—the hidden states of
+
+𝑦𝑗−1$𝑦𝑗𝑦𝑗+1$𝑥𝑡−2𝑥𝑡−1𝑥𝑡$𝑦𝑗−1𝑦𝑗𝑦𝑗+1𝑦𝑗−2𝑦𝑗−1𝑦𝑗𝑦𝑗+1(the RNN connecting segments)Sequence Modeling via Segmentations
+
+3.1. Forward and backward propagations
+
+Forward. Consider calculating the result for Eq. 2. We
+ﬁrst deﬁne the forward and backward probabilities,2
+
+αt(j) = p(y1:j|x1:t),
+βt(j) = p(yj+1,T |xt+1:T (cid:48), y1:j),
+
+where forward αt(j) represents the probability that input
+x1:t emits output y1:j and backward βt(j) represents the
+probability that input xt+1:T (cid:48) emits output yj+1:T . Using
+αt(j) and βt(j), we can verify the following, for any t =
+0, 1, ..., T (cid:48),
+
+p(y1:T |x1:T (cid:48)) =
+
+αt(j)βt(j),
+
+(3)
+
+T
+(cid:88)
+
+j=0
+
+where the summation of j from 0 to T is to enumerate all
+possible two-way partitions of output y1:T . A special case
+is that p(y1:T |x1:T (cid:48)) = αT (cid:48)(T ) = β0(0). Furthermore, we
+have following dynamic programming recursions accord-
+ing to the property of the segmentations,
+
+αt(j) =
+
+αt−1(j(cid:48))p(yj(cid:48)+1:j|xt),
+
+βt(j) =
+
+βt+1(j(cid:48))p(yj+1:j(cid:48)|xt+1),
+
+j
+(cid:88)
+
+j(cid:48)=0
+
+T
+(cid:88)
+
+j(cid:48)=j
+
+where p(yj(cid:48)+1:j|xt) is the probability of the segment
+yj(cid:48)+1:j emitted by xt and p(yj+1:j(cid:48)|xt+1) is similarly de-
+ﬁned. When j = j(cid:48), notation yj+1:j(cid:48) indicates an empty
+segment with previous output as y1:j. For simplicity, we
+omit the notation for those previous outputs, since it does
+not affect the dynamic programming algorithm. As we dis-
+cussed before, p(yj(cid:48)+1:j|xt) is modeled using an RNN with
+a softmax probability function. Given initial conditions
+α0(0) = 1 and βT (cid:48)(T ) = 1, we can efﬁciently compute
+the probability of the entire output p(y1:T |x1:T (cid:48)).
+
+Backward. We only show how to compute the gradient
+w.r.t xt since others can be similarly derived. Given the
+representation of p(y1:T |x1:T (cid:48)) in Eq. 3 and the dynamic
+programming recursion in Eq. 4, we have
+
+∂ log p(y1:T |x1:T (cid:48))
+∂xt
+
+=
+
+T
+(cid:88)
+
+j(cid:48)
+(cid:88)
+
+j(cid:48)=0
+
+j=0
+
+wt(j, j(cid:48))
+
+∂ log p(yj+1:j(cid:48)|xt)
+∂xt
+
+,
+
+where wt(j, j(cid:48)) is deﬁned as
+
+wt(j, j(cid:48)) (cid:44) αt−1(j)βt(j(cid:48))
+
+p(yj+1:j(cid:48)|xt)
+p(y1:T |x1:T (cid:48))
+
+.
+
+2The forward and backward probabilities are terms for dy-
+namic programming and not to be confused with forward and
+backward propagations in general machine learning.
+
+(4)
+
+(5)
+
+(6)
+
+(7)
+
+Thus, the gradient w.r.t. xt is a weighted linear combina-
+tion of the contributions from related segments.
+
+∂ log p(yj+1:j(cid:48) |xt)
+∂xt
+
+More efﬁcient computation for segment probabilities.
+The forward and backward algorithms above assume that
+all segment probabilities, log p(yj+1:j(cid:48)|xt) as well as their
+, for 0 ≤ j ≤ j(cid:48) ≤ T and
+gradients
+0 ≤ t ≤ T (cid:48), are already computed. There are O(T (cid:48)T 2) of
+such segments. And if we consider each recurrent step as a
+unit of computation, we have the computational complex-
+ity as O(T (cid:48)T 3). Simply enumerating everything, although
+parallelizable for different segments, is still expensive.
+
+We employ two additional strategies to allow more efﬁcient
+computations. The ﬁrst is to limit the maximum segment
+length to be L, which reduces the computational complex-
+ity to O(T (cid:48)T L2). The second is to explore the structure of
+the segments to further reduce the complexity to O(T (cid:48)T L).
+This is an important improvement, without which we ﬁnd
+the training would be extremely slow.
+
+The key observation for the second strategy is that the
+computation for the longest segment can be used to cover
+those for the shorter ones. First consider forward propa-
+gation with j and t ﬁxed. Suppose we want to compute
+log p(yj+1:j(cid:48)|xt) for any j(cid:48) = j, ..., j + L, which contains
+L + 1 segments, with the length ranging from 0 to L. In or-
+der to compute for the longest segment log p(yj+1:j+L|xt),
+we need the probabilities for p(y = yj+1|xt, h0), p(y =
+yj+2|yj+1, xt, h1), ..., p(y = yj+L|yj+L−1, xt, hL−1) and
+p(y = $|yj+L, xt, hL), where hl, l = 0, 1, ..., L, are the re-
+current states. Note that this process also gives us the prob-
+ability distributions needed for the shorter segments when
+j(cid:48) = j, ..., j + L − 1. For backward propagation, we ob-
+serve that, from Eq. 6, each segment has its own weight
+on the contribution to the gradient, which is wt(j, j(cid:48)) for
+p(yj+1:j(cid:48)|xt), j(cid:48) = j, ..., j + L. Thus all we need is to as-
+sign proper weights to the corresponding gradient entries
+for the longest segment yj+1:j+L in order to integrate the
+contributions from the shorter ones. Figure 4 illustrates the
+forward and backward procedure.
+
+3.2. Beam search decoding
+
+Although it is possible compute the output sequence proba-
+bility using dynamic programming during training, it is im-
+possible to do a similar thing during decoding since the out-
+put is unknown. We thus resort to beam search. The beam
+search for SWAN is more complex than the simple left-to-
+right beam search algorithm used in standard sequence-to-
+sequence models (Sutskever et al., 2014). In fact, for each
+input element xt, we are doing a simple left-to-right beam
+search decoder. In addition, different segmentations might
+imply the same output sequence and we need to incorporate
+this information into beam search as well. To achieve this,
+
+Sequence Modeling via Segmentations
+
+Figure 4. Illustration for an efﬁcient computation for segments yj+1:j(cid:48) , j(cid:48) = j, j + 1, ..., j + L with one pass on the longest segment
+yj+1:j+L, where V is the vocabulary size and $ is the symbol for the end of a segment. In this example, we use j = 0 and L = 3.
+Thus we have four possible segments {$}, {y1, $}, {y1, y2, $} and {y1, y2, y3, $} given input xt. (a) Forward pass. Shaded small
+circles indicate the softmax probabilities needed to compute the probabilities of all four segments. (b) Backward pass. The weights are
+wj(cid:48) (cid:44) wt(0, j(cid:48)) deﬁned in Eq.7 for j(cid:48) = 0, 1, 2, 3 for four segments mentioned above. Shaded small circles are annotated with the
+gradient values while unshaded ones have zero gradients. For example, y1 has a gradient of w1 + w2 + w3 since y1 appears in three
+segment {y1, $}, {y1, y2, $} and {y1, y2, y3, $}.
+
+each time after we process an input element xt, we merge
+the partial candidates with different segments into one can-
+didate if they indicate the same partial sequence. This is
+reasonable because the emission of the next input element
+xt+1 only depends on the concatenation of all previous seg-
+ments as discussed in Section 2.3. Algorithm 1 shows the
+details of the beam search decoding algorithm.
+
+4. Experiments
+
+In this section, we apply our method to two applications,
+one unsupervised and the other supervised. These include
+1) content-based text segmentation, where the input to our
+distribution is a vector (constructed using a variational au-
+toencoder for text) and 2) speech recognition, where the in-
+put to our distribution is a sequence (of acoustic features).
+
+4.1. Content-based text segmentation
+
+This text segmentation task corresponds to an application
+of a simpliﬁed version of the non-sequence-input model in
+Section 2.1, where we drop the term π(a1:t−1) in Eq.1.
+
+Model description.
+In this task, we would like to auto-
+matically discover segmentations for textual content. To
+this end, we build a simple model inspired by latent Dirich-
+let allocation (LDA) (Blei et al., 2003) and neural varia-
+
+tional inference for texts (Miao et al., 2016).
+
+LDA assumes that the words are exchangeable within a
+document—“bag of words” (BoW). We generalize this as-
+sumption to the segments within each segmentation—“bag
+of segments”. In other words, if we had a pre-segmented
+document, all segments would be exchangeable. How-
+ever, since we do not have a pre-segmented document, we
+assume that for any valid segmentation.
+In addition, we
+choose to drop the term π(a1:t−1) in Eq.1 in our sequence
+distribution so that we do not carry over information across
+segments. Otherwise, the segments are not exchangeable.
+This is designed to be comparable with the exchangeabil-
+ity assumption in LDA, although we can deﬁnitely use the
+carry-over technique in other occasions.
+
+Similar to LDA, for a document with words y1:T , we as-
+sume that a topic-proportion like vector, θ, controls the dis-
+tribution of the words. In more details, we deﬁne θ(ζ) ∝
+exp(ζ), where ζ ∼ N (0, I). Then the log likelihood of
+words y1:T is deﬁned as
+log p(y1:T ) = log Ep(ζ)[p(y1:T |W θ(ζ))]
+
+≥ Eq(ζ)[log p(y1:T |W θ(ζ))] + Eq(ζ)
+
+(cid:104)
+log p(ζ)
+q(ζ)
+
+(cid:105)
+
+,
+
+where the last inequality follows the variational inference
+principle (Jordan, 1999) with variational distribution q(ζ).
+Here p(y1:T |W θ(ζ)) is modeled as Eq.1 with W θ(ζ) as the
+
+𝑦3𝑦2𝑦1𝑦1𝑦2𝑥𝑡𝑦1𝑦2𝑦3$𝑦3(a) Forward pass𝑉1$vocabulary𝑦3𝑦2𝑦1𝑦1𝑦2𝑥𝑡𝑦1𝑦2𝑦3$𝑦3(b) Backward passsoftmaxprobabilitiesgradients𝑤0𝑤1𝑤2𝑤3𝑤3𝑤2+𝑤3𝑤1+𝑤2+𝑤3Sequence Modeling via Segmentations
+
+Algorithm 1 SWAN beam search decoding
+
+Input: input x1:T (cid:48) , beam size B, maximum segment length L,
+Y = {∅} and P = {∅ : 1}.
+for t = 1 to T (cid:48) do
+
+// A left-to-right beam search given xt.
+Set local beam size b = B, Yt = {} and Pt = {}.
+for j = 0 to L do
+for y ∈ Y do
+
+Compute the distribution of the next output for current
+segment, p(yj|y, xt).
+
+end for
+if j = L then
+
+else
+
+// Reaching the maximum segment length.
+for y ∈ Y do
+
+P(y) ← P(y)p(yj = $|y, xt)
+
+end for
+Choose b candidates with highest probabilities P(y)
+from Y and move them into Yt and Pt.
+
+Choose a set Ytmp containing b candidates with highest
+probabilities P(y)p(yj|y, xt) out of all pairs {y, yj},
+where y ∈ Y and yi ∈ {1, ..., V, $}.
+for {y, yj} ∈ Ytmp do
+
+P(y) ← P(y)p(yj|y, xt).
+if yj = $ then
+
+Move y from Y and P into Yt and Pt.
+b ← b − 1.
+
+else
+
+y ← {y, yj}
+
+end if
+end for
+
+end if
+if b = 0 then
+
+break
+
+end if
+end for
+Update Y ← Yt and P ← Pt.
+// Merge duplicate candidates in Y.
+while There exists yi = yi(cid:48) for any yi, yi(cid:48) ∈ Y do
+
+P(yi) ← P(yi) + P(yi(cid:48) )
+Remove yi(cid:48) from Y and P.
+
+end while
+
+end for
+Return: output y with the highest probability from Y.
+
+input vector “x” and W being another weight matrix. Note
+again that π(a1:t−1) is not used in p(y1:T |W θ(ζ)).
+
+For variational distribution q(ζ), we use variational au-
+toencoder to model it as an inference network (Kingma &
+Welling, 2013; Rezende et al., 2014). We use the form sim-
+ilar to Miao et al. (2016), where the inference network is a
+feed-forward neural network and its input is the BoW of
+the document — q(ζ) (cid:44) q(ζ|BoW(y1:T )).
+
+Predictive likelihood comparison with LDA. We use
+two datasets including AP (Associated Press, 2, 246 doc-
+uments) from Blei et al. (2003) and CiteULike3 scientiﬁc
+article abstracts (16, 980 documents) from Wang & Blei
+
+(2011). Stop words are removed and a vocabulary size of
+10, 000 is chosen by tf-idf for both datasets. Punctuations
+and stop words are considered to be known segment bound-
+aries for this experiment. For LDA, we use the variational
+EM implementation taken from authors’ website.4
+
+We vary the number of topics to be 100, 150, 200, 250 and
+300. And we use a development set for early stopping with
+up to 100 epochs. For our model, the inference network is
+a 2-layer feed-forward neural network with ReLU nonlin-
+earity. A two-layer GRU is used to model the segments in
+the distribution p(y1:T |W θ(ζ)). And we vary the hidden
+unit size (as well as the word embedding size) to be 100,
+150 and 200, and the maximum segment length L to be 1,
+2 and 3. We use Adam algorithm (Kingma & Ba, 2014) for
+optimization with batch size 32 and learning rate 0.001.
+
+We use the evaluation setup from Hoffman et al. (2013)
+for comparing two different models in terms of predic-
+tive log likelihood on a heldout set. We randomly choose
+90% of documents for training and the rest is left for test-
+ing. For each document y in testing, we use ﬁrst 75% of
+the words, yobs, for estimating θ(ζ) and the rest, yeval,
+for evaluating the likelihood. We use the mean of θ from
+variational distribution for LDA or the output of inference
+network for our model. For our model, p(yeval|yobs) ≈
+p(yeval|W θ(¯ζobs)), where ¯ζobs is chosen as the mean of
+q(ζ|yobs). Table 1 shows the empirical results. When the
+maximum segment length L = 1, our model is better on AP
+but worse on CiteULike than LDA. When L increases from
+1 to 2 and 3, our model gives monotonically higher predic-
+tive likelihood on both datasets, demonstrating that bring-
+ing in segmentation information leads to a better model.
+
+Example of text segmentations.
+In order to improve the
+readability of the example segmentation, we choose to keep
+the stop words in the vocabulary, different from the set-
+ting in the quantitative comparison with LDA. Thus, stop
+words are not treated as boundaries for the segments. Fig-
+ure 5 shows an example text. The segmentation is obtained
+by ﬁnding the path with the highest probability in dynamic
+programming.5 As we can see, many reasonable segments
+are found using this automatic procedure.
+
+4.2. Speech recognition
+
+We also apply our model to speech recognition, and present
+results on both phoneme-level and character-level experi-
+ments. This corresponds to an application of SWAN de-
+scribed in Section 2.2.
+
+4http://www.cs.columbia.edu/˜blei/lda-c/
+5This is done by replacing the “sum” operation with “max”
+
+3http://www.citeulike.org
+
+operation in Eq. 4.
+
+Sequence Modeling via Segmentations
+
+Table 1. Predictive log likelihood comparison. Higher values in-
+dicate better results. L is the maximum segment length. The top
+table shows LDA results and the bottom one shows ours.
+
+#LDA TOPICS
+
+AP
+
+CITEULIKE
+
+100
+150
+200
+250
+300
+
+-9.25
+-9.23
+-9.22
+-9.23
+-9.22
+
+-7.86
+-7.85
+-7.83
+-7.82
+-7.82
+
+#HIDDEN L
+
+AP
+
+CITEULIKE
+
+100
+100
+100
+
+150
+150
+150
+
+200
+200
+200
+
+1
+2
+3
+
+1
+2
+3
+
+1
+2
+3
+
+-8.42
+-8.31
+-8.29
+
+-8.38
+-8.30
+-8.28
+
+-8.41
+-8.32
+-8.30
+
+-8.12
+-7.68
+-7.61
+
+-8.12
+-7.67
+-7.60
+
+-8.13
+-7.67
+-7.61
+
+Dataset. We evaluate SWAN on the TIMIT corpus fol-
+lowing the setup in Deng et al. (2006). The audio data is
+encoded using a Fourier-transform-based ﬁlter-bank with
+40 coefﬁcients (plus energy) distributed on a mel-scale,
+together with their ﬁrst and second temporal derivatives.
+Each input vector is therefore size 123. The data is nor-
+malized so that every element of the input vectors has
+zero mean and unit variance over the training set. All 61
+phoneme labels are used during training and decoding, then
+mapped to 39 classes for scoring in the standard way (Lee
+& Hon, 1989).
+
+Phoneme-level results. Our SWAN model consists of a
+5-layer bidirectional GRU with 300 hidden units as the en-
+coder and two 2-layer unidirectional GRU(s) with 600 hid-
+den units, one for the segments and the other for connect-
+ing the segments in SWAN. We set the maximum segment
+length L = 3. To reduce the temporal input size for SWAN,
+we add a temporal convolutional layer with stride 2 and
+width 2 at the end of the encoder. For optimization, we
+largely followed the strategy in Zhang et al. (2017). We
+use Adam (Kingma & Ba, 2014) with learning rate 4e − 4.
+We then use stochastic gradient descent with learning rate
+3e − 5 for ﬁne-tuning. Batch size 20 is used during train-
+ing. We use dropout with probability of 0.3 across the lay-
+ers except for the input and output layers. Beam size 40
+is used for decoding. Table 3 shows the results compared
+with some previous approaches. SWAN achieves competi-
+tive results without using a separate alignment tool.
+
+Figure 5. Example text with automatic segmentation, obtained us-
+ing the path with highest probability. Words in the same brackets
+“[ ]” belong to the same segment. “UNK” indicates a word not in
+the vocabulary. The maximum segment length L = 3.
+
+We also examine the properties of SWAN’s outputs. We
+ﬁrst estimate the average segment length6 (cid:96) for the out-
+put. We ﬁnd that (cid:96) is usually smaller than 1.1 from the
+settings with good performances. Even when we increase
+the maximum segment length L to 6, we still do not see a
+signiﬁcantly increase of the average segment length. We
+suspect that the phoneme labels are relatively independent
+summarizations of the acoustic features and it is not easy
+to ﬁnd good phoneme-level segments. The most common
+segment patterns we observe are ‘sil ?’, where ‘sil’ is the si-
+lence phoneme label and ‘?’ denotes some other phoneme
+label (Lee & Hon, 1989). On running time, SWAN is about
+5 times slower than CTC. (Note that CTC was written in
+CUDA C, while SWAN is written in torch.)
+
+Character-level results.
+In additional to phoneme-level
+recognition experiments, we also evaluate our model on
+the task to directly output the characters like Amodei et al.
+(2016). We use the original word level transcription from
+the TIMIT corpus, convert them into lower cases, and sep-
+arate them to character level sequences (the vocabulary in-
+cludes from ‘a’ to ‘z’, apostrophe and the space symbol.)
+We ﬁnd that using temporal convolutional layer with stride
+7 and width 7 at the end of the decoder and setting L = 8
+yields good results. In general, we found that starting with
+a larger L is useful. We believe that a larger L allows more
+explorations of different segmentations and thus helps opti-
+mization since we consider the marginalization of all possi-
+ble segmentations. We obtain a character error rate (CER)
+of 30.5% for SWAN compared to 31.8% for CTC.7
+
+We examine the properties of SWAN for this character-
+level recognition task. Different from the observation from
+
+6The average segment length is deﬁned as the length of the
+output (excluding end of segment symbol $) divided by the num-
+ber of segments (not counting the ones only containing $).
+
+7As far as we know, there is no public CER result of CTC for
+TIMIT, so we empirically ﬁnd the best one as our baseline. We
+use Baidu’s CTC implementation: https://github.com/
+baidu-research/warp-ctc.
+
+[Exploiting] [generative models] [in] [discriminative classifiers][Generativeprobabilitymodels][suchas][hiddenMarkovmodels]UNK[principledwayof][treatingmissinginformation][and][variablelengthsequences].[On][theotherhand],[discriminativemethods][suchas][supportvectormachines][enableusto][constructflexible][decisionboundaries][and][oftenresultin][classification]UNK[tothat][ofthe][modelbasedapproaches].UNK[shouldcombinethese][twocomplementaryapproaches].UNK,[wedevelop][anaturalway][ofachievingthis]UNK[derivingkernelfunctions][forusein][discriminativemethods][suchas][supportvectormachines][from][generativeprobabilitymodels].Sequence Modeling via Segmentations
+
+Table 2. Examples of character-level outputs with their segmentations, where “·” represents the segment boundary, “(cid:3)” represents the
+space symbol in SWAN’s outputs, the “best path” represents the most probable segmentation given the ground truth, and the “max
+decoding” represents the beam search decoding result with beam size 1.
+
+ground truth
+best path
+max decoding
+
+one thing he thought nobody knows about it yet
+o·ne(cid:3)·th·i·ng(cid:3)·he(cid:3)·th·ou·ght·(cid:3)·n·o·bo·d·y(cid:3)·kn·o·w·s(cid:3)·a·b·ou·t(cid:3)·i·t(cid:3)·y·e·t
+o·ne(cid:3)·th·a·n·(cid:3)·he(cid:3)·th·ou·gh·o·t(cid:3)·n·o·bo·d·y(cid:3)·n·o·se(cid:3)·a·b·ou·t(cid:3)·a·t(cid:3)·y·e·t
+
+ground truth
+best path
+max decoding
+
+jeff thought you argued in favor of a centrifuge purchase
+j·e·ff·(cid:3)·th·ou·ght(cid:3)·you·(cid:3)·a·r·g·u·ed(cid:3)·in(cid:3)·f·a·vor·(cid:3)·of(cid:3)·a·(cid:3)·c·en·tr·i·f·u·ge(cid:3)·p·ur·ch·a·s·e
+j·a·ff·(cid:3)·th·or·o·d·y(cid:3)·a·re(cid:3)·g·i·vi·ng(cid:3)·f·a·ver·(cid:3)·of(cid:3)·er·s·e·nt·(cid:3)·f·u·ge(cid:3)·p·er·ch·e·s
+
+ground truth
+best path
+max decoding
+
+he trembled lest his piece should fail
+he·(cid:3)·tr·e·m·b·le·d(cid:3)·l·e·s·t·(cid:3)·hi·s(cid:3)·p·i·e·ce(cid:3)·sh·oul·d(cid:3)·f·a·i·l
+he·(cid:3)·tr·e·m·b·le(cid:3)·n·e·s·t·(cid:3)·hi·s(cid:3)·p·ea·s·u·de(cid:3)·f·a·i·l
+
+Table 3. TIMIT phoneme recognition results.
+phoneme error rate on the core test set.
+
+“PER” is the
+
+Model
+
+PER (%)
+
+BiLSTM-5L-250H (Graves et al., 2013)
+TRANS-3L-250H (Graves et al., 2013)
+Attention RNN (Chorowski et al., 2015)
+Neural Transducer (Jaitly et al., 2016)
+CNN-10L-maxout (Zhang et al., 2017)
+SWAN (this paper)
+
+18.4
+18.3
+17.6
+18.2
+18.2
+18.1
+
+the phoneme-level task, we ﬁnd the average segment length
+(cid:96) is around 1.5 from the settings with good performances,
+longer than that of the phoneme-level setting. This is ex-
+pected since the variability of acoustic features for a char-
+acter is much higher than that for a phone and a longer
+segment of characters helps reduce that variability. Table 2
+shows some example decoding outputs. As we can see,
+although not perfect, these segments often correspond to
+important phonotactics rules in the English language and
+we expect these to get better when we have more labeled
+speech data. In Figure 6, we show an example of mapping
+the character-level alignment back to the speech signals,
+together with the ground truth phonemes. We can observe
+that the character level sequence roughly corresponds to the
+phoneme sequence in terms of phonotactics rules.
+
+Finally, from the examples in Table 2, we ﬁnd that the space
+symbol is often assigned to a segment together with its pre-
+ceding character(s) or as an independent segment. We sus-
+pect this is because the space symbol itself is more like
+a separator of segments than a label with actual acoustic
+meanings. So in future work, we plan to treat the space
+symbol between words as a known segmentation boundary
+that all valid segmentations should comply with, which will
+lead to a smaller set of possible segments. We believe this
+will not only make it easier to ﬁnd appropriate segments,
+but also signiﬁcantly reduce the computational complexity.
+
+Figure 6. Spectrogram of a test example of the output sequence,
+“please take this”. Here “·” represents the boundary and (cid:3) rep-
+resents the space symbol in SWAN’s result. The “phonemes”
+sequence is the ground truth phoneme labels.
+(The full list of
+phoneme labels and their explanations can be found in Lee & Hon
+(1989).) The “best path” sequence is from SWAN. Note that the
+time boundary is not precise due to the convolutional layer.
+
+5. Conclusion and Future work
+
+In this paper, we present a new probability distribution for
+sequence modeling and demonstrate its usefulness on two
+different tasks. Due to its generality, it can be used as a loss
+function in many sequence modeling tasks. We plan to in-
+vestigate following directions in future work. The ﬁrst is to
+validate our approach on large-scale speech datasets. The
+second is machine translation, where segmentations can be
+regarded as “phrases.” We believe this approach has the
+potential to bring together the merits of traditional phrase-
+based translation (Koehn et al., 2003) and recent neural ma-
+chine translation (Sutskever et al., 2014; Bahdanau et al.,
+2014). For example, we can restrict the number of valid
+segmentations with a known phrase set. Finally, applica-
+tions in other domains including DNA sequence segmen-
+tation (Braun & Muller, 1998) might beneﬁt from our ap-
+proach as well.
+
+sil        pliyzsilteysildhihspl        easetakethisPhonemesBest pathSequence Modeling via Segmentations
+
+References
+
+Amodei, Dario, Anubhai, Rishita, Battenberg, Eric, Case,
+Carl, Casper, Jared, Catanzaro, Bryan Diamos, Greg,
+et al. Deep speech 2: End-to-end speech recognition in
+English and Mandarin. In Proceedings of the 33rd Inter-
+national Conference on Machine Learning, pp. 173–182,
+2016.
+
+Bahdanau, Dzmitry, Cho, Kyunghyun, and Bengio,
+Yoshua. Neural machine translation by jointly learning
+to align and translate. arXiv preprint arXiv:1409.0473,
+2014.
+
+Blei, D., Ng, A., and Jordan, M. Latent Dirichlet allo-
+cation. Journal of Machine Learning Research, 3:993–
+1022, January 2003.
+
+Hochreiter, Sepp and Schmidhuber, J¨urgen. Long short-
+term memory. Neural Computation, 9(8):1735–1780,
+1997.
+
+Hoffman, M., Blei, D., Wang, C., and Paisley, J. Stochas-
+tic variational inference. Journal of Machine Learning
+Research, 14(1303–1347), 2013.
+
+Jaitly, Navdeep, Le, Quoc V, Vinyals, Oriol, Sutskever,
+Ilya, Sussillo, David, and Bengio, Samy. An online
+sequence-to-sequence model using partial conditioning.
+In Advances in Neural Information Processing Systems,
+pp. 5067–5075, 2016.
+
+Jordan, Michael (ed.). Learning in Graphical Models. MIT
+
+Press, Cambridge, MA, 1999.
+
+Braun, Jerome V and Muller, Hans-Georg. Statistical meth-
+ods for dna sequence segmentation. Statistical Science,
+pp. 142–162, 1998.
+
+Kingma, Diederik and Ba,
+
+Jimmy.
+method for stochastic optimization.
+arXiv:1412.6980, 2014.
+
+Adam:
+
+A
+arXiv preprint
+
+Chorowski, Jan K, Bahdanau, Dzmitry, Serdyuk, Dmitriy,
+Cho, Kyunghyun, and Bengio, Yoshua. Attention-based
+models for speech recognition. In Advances in Neural
+Information Processing Systems, pp. 577–585, 2015.
+
+Chung, Junyoung, Gulcehre, Caglar, Cho, KyungHyun,
+and Bengio, Yoshua. Empirical evaluation of gated re-
+current neural networks on sequence modeling. arXiv
+preprint arXiv:1412.3555, 2014.
+
+Deng, Li and Jaitly, Navdeep. Deep discriminative and gen-
+erative models for speech pattern recognition. Chapter
+2 in Handbook of Pattern Recognition and Computer Vi-
+sion (Ed. C.H. Chen), pp. 27–52, 2015.
+
+Deng, Li, Yu, Dong, and Acero, Alex. Structured speech
+IEEE Trans. Audio, Speech, and Language
+
+modeling.
+Processing, pp. 1492–1504, 2006.
+
+Graves, Alex. Sequence transduction with recurrent neural
+
+networks. arXiv preprint arXiv:1211.3711, 2012.
+
+Graves, Alex. Generating sequences with recurrent neural
+
+networks. arXiv preprint arXiv:1308.0850, 2013.
+
+Graves, Alex, Fern´andez, Santiago, Gomez, Faustino, and
+Schmidhuber, J¨urgen. Connectionist temporal classiﬁ-
+cation: labelling unsegmented sequence data with recur-
+rent neural networks. In Proceedings of the 23rd inter-
+national conference on Machine learning, pp. 369–376.
+ACM, 2006.
+
+Graves, Alex, Mohamed, Abdel-rahman, and Hinton, Ge-
+offrey. Speech recognition with deep recurrent neural
+networks. In IEEE International Conference on Acous-
+tics Speech and Signal Processing (ICASSP),, pp. 6645–
+6649. IEEE, 2013.
+
+Kingma, Diederik P and Welling, Max. Auto-encoding
+arXiv preprint arXiv:1312.6114,
+
+variational Bayes.
+2013.
+
+Koehn, Philipp, Och, Franz Josef, and Marcu, Daniel. Sta-
+tistical phrase-based translation. In Proceedings of the
+2003 Conference of the North American Chapter of the
+Association for Computational Linguistics on Human
+Language Technology-Volume 1, pp. 48–54. Association
+for Computational Linguistics, 2003.
+
+Kong, Lingpeng, Dyer, Chris, and Smith, Noah A. Seg-
+arXiv preprint
+
+mental recurrent neural networks.
+arXiv:1511.06018, 2015.
+
+Lee, Kai-Fu and Hon, Hsiao-Wuen. Speaker-independent
+phone recognition using hidden markov models. IEEE
+Transactions on Acoustics, Speech, and Signal Process-
+ing, 37(11):1641–1648, 1989.
+
+Miao, Yishu, Yu, Lei, and Blunsom, Phil. Neural varia-
+In Proceedings of
+tional inference for text processing.
+the 33rd International Conference on Machine Learn-
+ing, pp. 1727–1736, 2016.
+
+Rezende, Danilo Jimenez, Mohamed, Shakir, and Wierstra,
+Daan. Stochastic backpropagation and approximate in-
+ference in deep generative models. In Proceedings of the
+31st International Conference on Machine Learning, pp.
+1278–1286, 2014.
+
+Sarawagi, Sunita and Cohen, William W. Semi-markov
+conditional random ﬁelds for information extraction. In
+In Advances in Neural Information Processing Systems
+17, pp. 1185–1192, 2004.
+
+Sequence Modeling via Segmentations
+
+Sutskever, Ilya, Vinyals, Oriol, and Le, Quoc V. Sequence
+to sequence learning with neural networks. In Advances
+in Neural Information Processing Systems, pp. 3104–
+3112, 2014.
+
+Wang, Chong and Blei, David M. Collaborative topic mod-
+eling for recommending scientiﬁc articles. In ACM Inter-
+national Conference on Knowledge Discovery and Data
+Mining, 2011.
+
+Yu, Lei, Buys, Jan, and Blunsom, Phil. Online seg-
+ment to segment neural transduction. arXiv preprint
+arXiv:1609.08194, 2016.
+
+Zhang, Ying, Pezeshki, Mohammad, Brakel, Phil´emon,
+Zhang, Saizheng, Laurent, C´esar, Bengio, Yoshua, and
+Courville, Aaron. Towards end-to-end speech recog-
+nition with deep convolutional neural networks. arXiv
+preprint arXiv:1701.02720, 2017.
+
+

@@ -1,0 +1,1319 @@
+Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+Yi-An Ma 1 Nicholas J. Foti 1 Emily B. Fox 1
+
+Abstract
+
+Stochastic gradient MCMC (SG-MCMC) algo-
+rithms have proven useful in scaling Bayesian
+inference to large datasets under an assump-
+tion of i.i.d data. We instead develop an SG-
+MCMC algorithm to learn the parameters of hid-
+den Markov models (HMMs) for time-dependent
+data. There are two challenges to applying SG-
+MCMC in this setting: The latent discrete states,
+and needing to break dependencies when consid-
+ering minibatches. We consider a marginal likeli-
+hood representation of the HMM and propose an
+algorithm that harnesses the inherent memory de-
+cay of the process. We demonstrate the effective-
+ness of our algorithm on synthetic experiments
+and an ion channel recording data, with runtimes
+signiﬁcantly outperforming batch MCMC.
+
+1. Introduction
+
+Stochastic gradient based algorithms have proven crucial
+in numerous areas for scaling inference algorithms to large
+datasets. The key idea is to employ noisy estimates of the
+gradient based on minibatches of data, avoiding a costly
+gradient computation using the full dataset (Robbins &
+Monro, 1951). Assuming the data are i.i.d. and the mini-
+batches are properly scaled, the stochastic gradient is an
+unbiased estimate of the true gradient.
+In the context of
+Bayesian inference, such approaches have proven useful in
+scaling variational inference (Hoffman et al., 2013; Bryant
+& Sudderth, 2012; Broderick et al., 2013; Foti et al., 2014)
+and Markov chain Monte Carlo (MCMC) (Welling & Teh,
+2011; Patterson & Teh, 2013; Chen et al., 2014; Ding et al.,
+2014; Shang et al., 2015). For the latter, a primary focus
+has been on the inﬂuence of the stochastic gradient noise
+on the MCMC iterates; in contrast to many optimization-
+based procedures, it is non-trivial to show that the under-
+lying (stochastic) dynamics maintain the correct stationary
+
+1University of Washington, Seattle, WA, USA. Correspon-
+
+dence to: Yi-An Ma <yianma@uw.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+distribution in the presence of such noise. Signiﬁcant head-
+way has been made in developing such correct SG-MCMC
+procedures. These algorithms have shown great practical
+beneﬁts and have gained signiﬁcant traction.
+
+A separate challenge, however, is the important and often
+overlooked question of whether such stochastic gradient
+techniques can be applied to massive amounts of sequential
+or otherwise non-i.i.d. data. In such cases, crucial depen-
+dencies must be broken to form the necessary minibatches.
+This question received some attention in the stochastic vari-
+ational inference (SVI) algorithm of Foti et al. (2014) for
+hidden Markov models (HMMs). In this work, we also fo-
+cus in on HMMs as a simple example of a sequential data
+model, but turn our attention to SG-MCMC algorithms.
+
+for
+
+are many existing algorithms
+
+There
+inferring
+the model parameters of an HMM including Monte
+Carlo methods (Scott, 2002), expectation-maximization
+(EM) (Bishop, 2006), and variational algorithms (Beale,
+2003). All of these ideas operate by iterating between a
+local update for the latent states, followed by a global
+update of the model parameters. The local update is
+usually performed using the forward-backward algorithm
+that allows computation of any marginal, or pair-wise
+marginal, in time linear in the length of the sequence.
+
+In the variational context, recent work has focused on scal-
+ing these local-global inference schemes to settings with
+a large number of replicates of short sequences (Johnson
+& Willsky, 2014; Hughes et al., 2015). These methods
+utilize the fact that independent replicates of the obser-
+vation sequence can be used to compute unbiased gradi-
+ent estimates (Johnson & Willsky, 2014), and can be used
+to incrementally update sufﬁcient statistics (Hughes et al.,
+2015). In contrast, the SVI-HMM algorithm of Foti et al.
+(2014) examines how to deal with extremely long obser-
+vation sequences. The algorithm heuristically breaks the
+dependence between observations and performs local up-
+dates on short subsequences of observations using a lim-
+ited forward-backward algorithm. These existing methods
+suffer from a number of drawbacks. The variational ap-
+proaches must use an approximate posterior distribution
+for both the state- and model-parameters, which may not
+be representative of the true distributions. The methods are
+also limited to conjugate prior distributions over the param-
+eters, which can severely limit the expressiveness of the
+
+Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+model. Finally, all of the methods discussed thus far are
+susceptible to the widely known problem of underestimat-
+ing posterior correlations biasing fully Bayesian analyses.
+
+2. Background
+
+2.1. Hidden Markov Models
+
+Unfortunately, attempting to naively use subchains as in
+Foti et al. (2014) within SG-MCMC approaches is fraught
+with difﬁculty: The local-global structure of SVI-HMM
+does not lend itself to deriving provably correct SG-MCMC
+algorithms, stemming from two main challenges.
+
+The ﬁrst challenge is that SG-MCMC methods sample
+continuous-valued parameter representations, whereas the
+HMM learning objective is typically speciﬁed in terms of
+the discrete-valued state sequence (local variables). To ad-
+dress this challenge, we consider an alternative approach to
+performing parameter inference for HMMs: We work di-
+rectly with the marginal likelihood of the observation. We
+form stochastic gradients by only evaluating terms of the
+full gradient that depend on a small subsequence.
+
+The second challenge is handling the temporal dependen-
+cies, speciﬁcally:
+i) each subsequence-speciﬁc term in
+the stochastic gradient still requires a forward-backward
+pass on the rest of the sequence, and ii) proximal sub-
+sequences are mutually correlated. We address both of
+these issues by capitalizing on the well-known memory de-
+cay of the Markovian structure underlying the data gen-
+Speciﬁcally, we approximate the full
+erating process.
+forward-backward passes with message passing only on
+short buffers around the considered subsequences of obser-
+vations. We further restrict subsequences to be sufﬁciently
+far from one another to ensure that computations with
+them are uncorrelated. We provide a theoretically justi-
+ﬁed approach to estimating this buffer length and between-
+subsequence gap, allowing us to prove the validity of the
+resulting SG-MCMC algorithm.
+In particular, the same
+theoretical guarantees are provided as in the i.i.d. setting.
+
+Buffering to perform limited message passing in HMMs
+was also applied in SVI-HMM Foti et al. (2014); however,
+the buffering there was part of a latent state update. In par-
+ticular, SVI-HMM iterates between buffered message pass-
+ing for local updates and stochastic gradients for global up-
+dates. We, in contrast, consider stochastic gradients of a
+marginal likelihood representation and utilize buffering di-
+rectly within this stochastic gradient calculation.
+
+We evaluate the efﬁcacy of our buffered SG-MCMC
+method for HMMs on two synthetic examples with very
+different dynamics. We compare against an unbuffered SG-
+MCMC approach as well as against treating the data as
+i.i.d. Finally, we show the computational gains of our SG-
+MCMC algorithm over batch MCMC by segmenting an
+ion channel dataset where a 1,000X speedup was observed.
+Collectively, our contributions make a sizable step towards
+general purpose SG-MCMC algorithms for sequential data.
+
+Hidden Markov models (HMMs) are a class of discrete-
+time doubly stochastic processes consisting of a i) latent
+discrete-valued state sequence xt ∈ {1, . . . , K} generated
+by a Markov chain and (ii) corresponding observations yt
+generated from distributions determined by the latent states
+xt. Speciﬁcally, the joint distribution of y = (y1, · · · , yT )
+and x = (x0, · · · , xT ), factorizes as
+
+p(x, y) = π0(x0)
+
+p(xt|xt−1, A) · p(yt|xt, φ),
+
+(1)
+
+T
+(cid:89)
+
+t=1
+
+where A is the Markov transition matrix such that Ai,j =
+Pr(xt = i|xt−1 = j), {φk}K
+k=1 are the emission param-
+eters, and π0 = p(x0) is the initial state distribution. We
+denote the parameters of interest as θ = {A, φ} and do not
+focus on performing inference on π0.
+
+Traditionally, EM, variational inference, or MCMC are
+used to perform inference over θ (Scott, 2002; Beale,
+2003). These algorithms rely on the well-known forward-
+backward algorithm to compute the marginal, p(xt|y1:T ),
+and pairwise-marginal, p(xt, xt+1|y1:T ), distributions. The
+algorithm works by recursively computing a sequence of
+forward messages αt(xt) = p(xt|y1:t) and backwards
+messages βt(xt) = p(yt+1:T |xt) which can then be used
+to compute the necessary marginals (Beale, 2003). These
+marginals are then used to update or sample from the dis-
+tribution of the model parameters.
+
+These past algorithms have found widespread use in statis-
+tics and machine learning. However, as discussed in Sec. 1,
+an alternative formulation of the HMM can provide greater
+utility in developing an SG-MCMC approach. Marginaliz-
+ing over x, we obtain the marginal likelihood:
+
+p(y|θ) = 1T P (yT )A · · · P (y1)A π0,
+
+(2)
+
+where P (yt) is a diagonal matrix with Pi,i(yt) =
+p(yt|xt = i, φi); 1T is a row vector of K ones; and
+(π0)i = π0(x0 = i). The resulting posterior distribution
+of θ given y = y1:T is then:
+
+p(θ|y) ∝ 1T P (yT )A · · · P (y1)A π0 · p(θ).
+
+(3)
+
+Working with the marginal likelihood and posterior alle-
+viates the need to compute the marginals and pairwise
+marginals of xt. As such, only the forward pass of the
+forward-backward algorithm is performed.
+Indeed, per-
+forming the matrix multiplications in Eq. (2) from right to
+left corresponds to computing the normalizing constants of
+the forward messages. Performing the matrix multiplies
+from left to right corresponds to unnormalized messages in
+belief propagation, (cf. Fox, 2009). Perhaps most impor-
+tantly for the development of our SG-MCMC algorithm,
+
+Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+the marginal likelihood does not involve alternately updat-
+ing the local state variables, xt, and the global model pa-
+rameters θ.
+Instead, we need only explore a continuous
+space which will allow us to leverage gradient information
+to develop a computationally and statistically efﬁcient al-
+gorithm. The major impediment to directly using Eq. (2)
+for SG-MCMC is that it is unclear how to form a stochastic
+gradient based on a subsequence to avoid the computational
+burden of gradient computations in large T settings.
+
+Algorithm 1 SG-MCMC
+
+initialize θ0
+for t = 0, 1, 2 · · · , Niter do
+
+for i = 1 · · · n do
+∂
+Γi(θ) = (cid:80)
+∂θj
+
+j
+
+(Dij(θ) + Qij(θ))
+
+end for
+sample η(t) ∼ N (0, 2(cid:15)tD(θ(t)) − (cid:15)2
+θ(t+1) ← θ(t) + η(t)
+
+t (cid:98)B(t))
+(cid:104)(cid:0)D(θ(t)) + Q(θ(t))(cid:1)∇ (cid:101)U (θ(t)) + Γ(θ(t))
+
+(cid:105)
+
+−(cid:15)t
+
+2.2. Stochastic Gradient MCMC for i.i.d. Data
+
+end for
+
+One approach for devising MCMC algorithms is to uti-
+lize continuous dynamics to explore a potential function
+U (θ) ∝ − ln π(θ) for target distribution π(θ); for Bayesian
+inference, we take U (θ) ∝ − ln p(θ|y), i.e., the negative
+log posterior. Then, samples of a continuous valued pa-
+rameter, θ ∈ Rd, can be drawn as (Ma et al., 2015; 2016)
+
+θ(t+1) ←θ(t) − (cid:15)t
+
+(cid:105)
+(cid:104)(cid:0)D(θ(t)) + Q(θ(t))(cid:1)∇U (θ(t)) + Γ(θ(t))
+
++ N (0, (cid:15)t(2D(θ(t)))),
+
+(4)
+
+∂
+∂θj
+
+where Γi(θ) = (cid:80)d
+
+j=1
+
+(Di,j(θ) + Qi,j(θ)), D(θ(t))
+
+is a positive-deﬁnite matrix and Q(θ(t)) a skew-symmetric
+matrix. Ma et al. (2015) proved that in the limit (cid:15)t → 0
+with ergodicity, the iterates θ(t) will be drawn from p(θ|y).
+For i.i.d. data, U (θ) = − (cid:80)
+s∈S ln p(ys|θ) − log p(θ). For
+independently sampled data subsets, (cid:101)S ⊂ S, a noisy unbi-
+ased estimate of the potential function is given by:
+
+(cid:101)U (θ) = −
+
+log p(ys|θ) − log p(θ);
+
+(cid:101)S ⊂ S.
+
+(5)
+
+|S|
+| (cid:101)S|
+
+(cid:88)
+
+s∈ (cid:101)S
+
+As such, a gradient computed based on (cid:101)U (θ)—called a
+stochastic gradient—is a noisy, but unbiased estimator of
+the full-data gradient. The key question is whether the
+noise injected by the stochastic gradient adversely affects
+the stationary distribution of the modiﬁed dynamics (using
+∇ (cid:101)U (θ) in place of ∇U (θ)). One way to analyze the impact
+of the stochastic gradient is to make use of the central limit
+theorem and assume
+
+∇ (cid:101)U (θ) = ∇U (θ) + N (0, V(θ)).
+
+(6)
+
+Simply using ∇ (cid:101)U (θ) in place of ∇U (θ) in Eq. (4) results
+in an additional noise term (D(θ) + Q(θ)(cid:1) N (0, V(θ))T .
+Assuming we have an estimate (cid:98)B of the variance of this
+additional noise satisfying 2D(θ) − (cid:15) (cid:98)B (cid:23) 0 (i.e., posi-
+tive semideﬁnite), then we can attempt to account for the
+stochastic gradient noise by simulating
+
+This is the SG-MCMC algorithm for i.i.d. data proposed
+by Ma et al. (2015; 2016). See Alg. 2.
+
+For this SG-MCMC, there are sources of error introduced
+via (i) discretizing the continuous stochastic dynamics and
+(ii) estimation of the stochastic gradient noise covariance.
+Although the algorithm is provably correct as (cid:15)t → 0, in
+practice one uses a small, ﬁnite stepsize for greater ef-
+ﬁciency.
+In such cases, bias is introduced. This bias-
+variance tradeoff was recently studied in (Vollmer et al.,
+2016). Higher order numerical schemes (Chen et al., 2015;
+Leimkuhler & Shang, 2016) and a moving window estima-
+tion of (cid:98)B can further reduce this bias (Shang et al., 2015).
+
+3. Stochastic Gradient MCMC for HMMs
+
+In order to apply SG-MCMC methods to HMMs we must
+be able to efﬁciently estimate the gradient of the poten-
+tial, U (θ) ∝ − ln p(θ|y). The approach we take consists
+of three steps (see Fig. 1). First, we marginalize out the
+discrete state sequence and use the marginal likelihood of
+the data. Next, we derive an expression for the gradient of
+the marginal likelihood that factorizes over disjoint subse-
+quences. Finally, we compute an unbiased noisy estimate
+of the gradient by randomly sampling subsequences and
+show that using this estimate results in an SG-MCMC algo-
+rithm that admits the desired stationary distribution under
+the same conditions as in the i.i.d. case (see Sec. 2.2).
+
+One could have imagined an alternative approach—as in
+SVI-HMM—of ﬁrst sampling subsequences; we could
+then compute an approximation of the marginal likelihood
+on this subsequence and treat its gradient as our stochastic
+gradient. However, without the marginal likelihood infor-
+mation in the ﬁrst place, it is not obvious how subsequences
+correlate with each other and consequently how to control
+the error resulting from subsampling.
+
+3.1. Gradient of Marginal Likelihood Representation
+
+θ(t+1) ←θ(t) − (cid:15)t
+
+(cid:105)
+(cid:104)(cid:0)D(θ(t)) + Q(θ(t))(cid:1)∇ (cid:101)U (θ(t)) + Γ(θ(t))
+(7)
+
++ N (0, (cid:15)t(2D(θ(t)) − (cid:15)t (cid:98)B(t))).
+
+that
+
+Recall
+the posterior under an HMM is given by
+Eq. (3) and that the potential function U (θ) ∝ − ln p(θ|y).
+As will prove useful in our SG-MCMC algorithm, we
+
+Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+rewrite the posterior in terms of a subsequence yτ,L =
+(yτ −L, . . . , yτ , . . . , yτ +L) with half-width L centered at
+time τ ∈ {L + 1, . . . , T − L − 1}. The overall subsequence
+length is 2L + 1. Deﬁning
+
+in the minibatch. The τ s are drawn randomly from {L +
+1, . . . , T −L−1}; details of the full sampling scheme for (cid:101)S
+is provided in the Supplement. We then use the following
+estimator of the full gradient:
+
+P (yτ,L) = P (yτ +L)A · · · P (yτ −L)A,
+
+(8)
+
+(cid:103)∇U (θ)i =
+
+(12)
+
+we can rewrite Eq. (3) as
+
+p(θ|y) ∝ qT
+
+τ +L+1P (yτ,L)πτ −L−1 · p(θ).
+
+(9)
+
+Here, qτ +L+1,i = p(yτ +L+1:T |xτ +L = i) is the likeli-
+hood of the observations after yτ,L given the value of the
+latent state at τ , and πτ −L−1,i = p(xτ −L = i|y1:τ −L−1) is
+the predictive distribution of the latent state at τ given the
+observations before yτ,L. Note, we do not actually need to
+instantiate the latent state variables xτ −L and xτ +L+1 as
+qτ +L+1 and πτ −L−1 can be computed (in theory) via the
+forward-backward algorithm (Rabiner, 1989; Scott, 2002).
+
+Let S = {yτ,L} be a set of non-overlapping subsequences
+that cover y. The gradient of Eq. (9) can be written as
+
+∇U (θ)i = −
+
+(cid:88)
+
+= −
+
+yτ,L∈S
+
+∂ ln p(y|θ)
+∂θi
+
+−
+
+∂ ln p(θ)
+∂θi
+
+qT
+
+τ +L+1
+
+∂P (yτ,L)
+∂θi
+qT
+τ +L+1P (yτ,L)πτ −L−1
+
+πτ −L−1
+
+(10)
+
+−
+
+∂ ln p(θ)
+∂θi
+
+,
+
+where the equality follows from the product rule (see the
+Supplement for complete derivation).
+Importantly, note
+that the gradient involves a sum over terms corresponding
+to all non-overlapping subsequences of length 2L + 1.
+
+We could imagine using ∇U (θ) from Eq. (10) in the update
+rule of Eq. (4) to generate sample values of θ. However,
+Eq. (10) is extremely computationally intensive for two rea-
+sons. First, calculating qτ +L+1 and πτ −L−1 involves the
+whole sequence of length T . Second, one must compute
+qτ +L+1, P (yτ,L), and πτ −L−1 for each yτ,L ∈ S in the
+sum; this involves T /L terms, thus requiring O(T 2) com-
+putation time to compute the gradient.
+
+3.2. Stochastic Gradient Calculation
+
+In place of ∇U (θ) in Eq. (10), we can deﬁne a stochastic
+gradient based on a single subsequence, (cid:103)∇U (θ):
+
+(cid:103)∇U (θ)i = −
+
+qT
+
+τ +L+1
+
+∂P (yτ,L)
+∂θi
+qT
+τ +L+1P (yτ,L)πτ −L−1
+
+πτ −L−1
+
+−
+
+∂ ln p(θ)
+∂θi
+
+.
+
+(11)
+
+To control the variance of this estimator, we sample a
+collection of subsequences—referred to as a minibatch—
+(cid:101)S = {yτ,L} where | (cid:101)S| denotes the number of subchains
+
+−
+
+1
+p( (cid:101)S)
+
+(cid:88)
+
+yτ,L∈ (cid:101)S
+
+qT
+
+τ +L+1
+
+∂P (yτ,L)
+∂θi
+qT
+τ +L+1P (yτ,L)πτ −L−1
+
+πτ −L−1
+
+−
+
+∂ ln p(θ)
+∂θi
+
+.
+
+If we sample ˜S from the set of all possible length-L
+subsequences with probability p( (cid:101)S) = | (cid:101)S|LT −1, then
+E
+= ∇U (θ) (Gopalan et al., 2012).
+
+(cid:105)
+(cid:103)∇U (θ)
+
+(cid:104)
+
+Unfortunately, even this stochastic estimate is prohibitively
+expensive to compute since the q and π terms require
+touching nearly all of the observations. We instead con-
+sider approximating these quantities.
+
+Approximating messages via buffering Inspired by
+recent work on stochastic variational
+inference for
+HMMs (Foti et al., 2014), we introduce a buffer of length
+B on either end of each subsequence (yLB, yτ,L, yRB)
+where yLB = (yτ −L−B, . . . , yτ −L−1) and yRB =
+(yτ +L+1, . . . , yτ +L+B). See Fig. 1. For an irreducible
+and aperiodic Markov chain, a sufﬁciently long buffer will
+render the observations within yτ,L and those outside the
+buffers approximately independent. This lets us approxi-
+mate the boundary terms in Eq. (11) as
+
+πτ −L−1 ≈ ˜πτ −L−1 = P (yτ −L−1)A · · · P (yτ −L−B)A
+(cid:125)
+
+(cid:124)
+
+π0
+
+τ +L+1 ≈ ˜qT
+qT
+
+τ +L+1 = 1T P (yτ +L+B)A · · · P (yτ +L+1)
+(cid:125)
+
+(cid:124)
+
+.
+
+(13)
+Notice that we plug in π0 and 1T as the initial conditions
+for the buffers in Eq. (13). Though this introduces errors
+into the computations of P (yLB) and P (yRB), these errors
+will be nearly forgotten for observations in the subchain of
+interest yτ,L due to the mixing of the underlying Markov
+chain. We rewrite the terms in Eq. (10) as
+
+(cid:123)(cid:122)
+P (yLB )
+
+(cid:123)(cid:122)
+P (yRB )
+
+1TP (yRB)
+
+∂P (yτ,L)
+∂θ
+1TP (yRB)P (yτ,L)P (yLB)π0
+
+P (yLB)π0
+
+.
+
+(14)
+
+We note that Eq. (12) is computed in time O(| (cid:101)S|LK 2) us-
+ing buffers. When | (cid:101)S|L (cid:28) T this results in signiﬁcant
+computational speedups over batch inference algorithms.
+
+A critical question that needs to be answered is how long
+should the buffers be? Though previous theory exists to
+quantify the buffer length, the resulting lengths are of-
+ten longer than the entire sequence (LeGland & Mevel,
+
+Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+Figure 1. Diagram of subsequences, buffers, and subsequence sampling from full observation sequence. Left: The SVI method of Foti
+et al. (2014) approximates stochastic gradients using subchains of length 2L + 1 using the forward-backward algorithm performed on
+both the subchains and the associated buffer chains of length B. Right: Our propsoed SG-MCMC method uses a similar subsampling
+approach, however, i) the latent chain is never instantiated and ii) a minimum gap between consecutive subchains, yτ,L, is used to ensure
+nearly uncorrelated subsequences. The thick black lines through the observables y represent all pairwise correlations between observa-
+tions due to marginalization of x. Correlation decays with distance enabling the segmentation of the of the chain into subsequences.
+
+1997). A heuristic solution was suggested (Foti et al.,
+2014), but theoretical justiﬁcation was lacking. We pro-
+pose estimating the buffer length using the Lyapunov expo-
+nent of the random dynamical system speciﬁed by A and
+P (yτ,L). The Lyapunov exponent L measures the evo-
+lution of the distance between vectors after applying the
+operator (P (yτ,L)A)[·] (Arnold, 1998). By generalizing
+the Perron–Frobenius theorem, all of the eigenvalues of the
+operator (P (yτ,L)A)[·] are less than 0, which implies that
+L ≤ 0 (Seneta, 2006). The greater the absolute value of L,
+the faster the errors at the boundaries of the buffers decay,
+and the shorter the buffers need to be. Given an estimate of
+L, we set the buffer length as B = (cid:6)L−1 ln (δ/δ0)(cid:7) where
+δ ≤ δ0 are error tolerances. The method of calculating L
+is described in the Supplement. Forthcoming work in the
+applied probability literature formalizes the validity of this
+approach (Ye et al.).
+
+Approximately independent subsequences We esti-
+mate (cid:103)∇U (θ) with minibatches composed of subsequences.
+When the subsequences in a minibatch overlap or are very
+close to one another, the statistical efﬁciency of (cid:103)∇U (θ)
+is diminished, requiring more subsequences to obtain ac-
+curate estimates. If we assume that the Markov chain of
+the latent state sequence is in equilibrium — a realistic as-
+sumption if T is huge — then we can leverage the memory
+decay of the Markov chain to encourage independent sub-
+sequences for use in the gradient estimator.
+
+The mixing time of a Markov chain, denoted ν, is the num-
+ber of steps needed until the chain is “close” to its sta-
+tionary distribution (Seneta, 2006). This implies that for
+|t−τ | > ν, the corresponding xt and xτ are approximately
+independent. Consequently, if we choose the buffer length
+B > 0 s.t. L+B ≥ ν, then t < τ −L−B or t > τ +L+B
+implies that yt is approximately independent of yLB, yτ,L,
+and yRB. Therefore, we can increase the statistical efﬁ-
+
+ciency of (cid:103)∇U (θ) by sequentially sampling the yτ,Ls such
+that they are at least 2(L + B) + ν time indices apart (see
+the Supplement for details). We estimate the mixing time
+ν = (1 − ˆλ2)−1 where ˆλ2 is the second largest eigenvalue
+of the current transition parameter iterate, A(t).
+
+When sampling subsequences adhering to the mixing-time-
+dependent gap, each term in Eq. (12) is rendered approx-
+imately independent. Following standard practice for SG-
+MCMC algoriths, we appeal to the central limit theorem
+obtaining the following expression for the asymptotic dis-
+tribution of (cid:103)∇U (θ) as:
+
+(cid:103)∇U (θ) ≈ ∇U (θ) + N (0, Vi(θ)),
+
+(15)
+
+where Vi(θ) is the stochastic gradient noise variance. This
+will prove crucial for our analysis in Sec. 3.4.
+
+3.3. Incorporating Geometric Information
+
+Eq. (4) serves as a general purpose algorithm that theoret-
+ically attains the correct stationary distribution for any D
+and Q matrices when the step size (cid:15)t approaches zero. But
+in practice, we need to take into account numerical sta-
+bility during numerical integrals. For example, when we
+are sampling from the probability simplex, previous work
+has shown that taking the curvature of the parameter space
+into account is important (Welling & Teh, 2011; Ma et al.,
+2015). Since our transition parameters live on the sim-
+plex, we likewise incorporate the geometry of the parame-
+ter space by constructing a stochastic-gradient Riemannian
+MCMC (SG-RMCMC) algorithm.
+
+SG-RLD for transition parameters
+In order to sample
+the transition matrix A we note that the columns of A are
+constrained to lie on the probability simplex. To address
+these constraints, we use the expanded mean parametriza-
+
+B 𝐵 2𝐿+1 Minimum Gap: 𝜈 Marginalize  𝐱  B 𝐵 2𝐿+1 yLB yRB y1:T 𝐱 𝐲 yτ Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+| ˆAi,j|
+i | ˆAi,j|
+
+(cid:80)
+
+tion: A =
+
+, similar to what Patterson & Teh
+
+(2013) used for topic modeling. Evaluating (cid:103)∇U (θ) in
+Eq. (10) for θ = ˆAi,j, using Eq. (8) yields:
+
+(cid:103)∇U ˆAi,j
+
+( ˆAi,j)
+
+(16)
+
+= −
+
+1
+p( (cid:101)S)
+
+(cid:88)
+
+τ +L
+(cid:88)
+
+yτ,L∈ (cid:101)S
+
+t=τ −L
+
+((cid:101)qτ +L+1)i Pi,i(yt) ((cid:101)πτ −L−1)j
+τ +LP (yt) ˆA(cid:101)πτ −L
+(cid:101)qT
+
+.
+
+Here, ˜πτ −L−1 and ˜qτ +L+1 are computed on the left and
+right buffers, respectively, according to Eq. (13). The terms
+inside the sum in Eq. (16) are analogous to the pairwise
+marginals of the latent state in traditional HMM inference
+algorithms. A detailed derivation of this gradient can be
+found in the Supplement.
+
+By leveraging the ﬂexible SG-MCMC update rule of
+Eq. (7), we remove the dependency on ˆAi,j from the de-
+nominator of Eq. (16) by selecting D = ˆA and Q = 0.
+This yields the following update:
+
+ˆA(t+1)
+
+i,j ← ˆA(t)
+
+i,j − (cid:15)t
+(cid:16)
+
++ N
+
+0, (cid:15)t
+
+(cid:104) ˆA(t)
+i,j (cid:103)∇U ˆAi,j
+(cid:16)
+2 ˆA(t)
+
+i,j − (cid:15)t (cid:98)B(t)
+
+i,j
+
+(cid:105)
+
+( ˆA(t)
+
+i,j , φ) + I
+(cid:17)(cid:17)
+
+(17)
+
+where φ denotes all other model parameters. We note that
+this pre-conditioned gradient takes advantage of the local
+geometry of the parameter space by pre-multiplying by a
+metric tensor that arises from Eq. (7).
+
+SG-RLD for emission parameters Similarly to the tran-
+sition parameters, we sample the emission parameters
+{φk : k = 1, . . . , K}, by evaluating (cid:103)∇U (θ) in Eq. (10)
+for θ = φk Using Eq. (8). This results in the gradient:
+
+(cid:103)∇U (φk) = −
+
+1
+p( (cid:101)S)
+
+(cid:88)
+
+τ +L
+(cid:88)
+
+yτ,L∈ (cid:101)S
+
+t=τ −L
+
+(18)
+
+.
+
+·
+
+∂ ln Pk,k(yt)
+∂φk
+
+((cid:101)qτ +L+1)k Pk,k(yt) ((cid:101)πτ −L−1)k
+(cid:101)qT
+τ +L+1P (yt)A(cid:101)πτ −L−1
+Again, ˜πτ −L−1 and ˜qτ +L+1 are computed on the left and
+right buffers, respectively, according to Eq. (13). Similarly
+to the transition parameters, we account for the geometry of
+the parameter space by specifying an appropriate D and Q
+in Eq. (7) which in general depends on the form of p(yt|φ).
+For exponential family emission distributions we recom-
+mend taking D to be the inverse of the Fisher information
+matrix (Amari, 1998).
+
+As a concrete example, we consider a Gaussian emission
+distribution. Deﬁne, zt = (µk − yt), then we have:
+
+∇µk ln Pk,k(yt) = Σ−1
+
+k zt
+
+∇Σk ln Pk,k(yt) =
+
+Σ−1
+k
+
+(cid:0)Σk − ztzT
+
+t
+
+(cid:1) Σ−1
+k .
+
+1
+2
+
+(19)
+
+(20)
+
+We plug these values into the SG-MCMC update of Eq. (7)
+using D = Σ to account for the geometry of the parameter
+space and Q = 0. This leads to the update equations:
+
+µ(t+1)
+k ←µ(t)
+
+(cid:104)
+
+Σ(t)
+k
+
+k − (cid:15)t
++ N (0, (cid:15)t(2Σ(t)
+
+(cid:94)∇µk U (A, φ(t)
+k )
+
+(cid:105)
+
+k − (cid:15)t (cid:98)Bt)).
+
+(21)
+
+k ←Σ(t)
+Σ(t+1)
+
+(cid:104)
+
+Σ(t)
+k
+
+k − (cid:15)t
++ N (0, (cid:15)t(2Σ(t)
+
+(cid:94)∇Σk U (A, φ(t)
+k ⊗ Σ(t)
+
+k )Σ(t)
+k − (cid:15)t (cid:98)B(t))).
+
+(cid:105)
+
+k + Σ(t)
+
+k
+
+(22)
+
+It is possible when using Eq. (22) to obtain a Σ(t+1) that is
+not positive deﬁnite. In this case we reject the update and
+set Σ(t+1) = Σ(t).
+
+3.4. Analysis of SG-MCMC for HMMs
+
+Our proposed SG-MCMC scheme for HMMs introduces
+error in three ways. The ﬁrst two carry over from the stan-
+dard i.i.d. setting: (i) discretizing the continuous stochastic
+dynamics and (ii) estimating the stochastic gradient noise
+covariance, as discussed in Sec. 2.2.
+
+The third is via our approximations ˜πτ −L−1 and ˜qτ +L+1.
+This error is already incorporated in Eq. (15), and vanishes
+with (cid:15)t in Eq. (7). Thus, applying the results from Ma
+et al. (2015; 2016), we can show that the proposed SG-
+MCMC for HMMs asymptotically has the right stationary
+distribution under the same conditions as in the i.i.d. case.
+However, in practice we use a ﬁxed (cid:15)t, and as we show in
+Sec. 4.1, performing sufﬁcient buffering via our Lyapunov
+exponent approach is critical.
+
+In summary, our SG-MCMC algorithm enables MCMC-
+based inference in HMMs for massive sequences of data.
+In particular, we only require computations on collections
+of small subsequences and attain the desired stationary dis-
+tribution by mitigating the errors incurred by these approx-
+imations. Finally, we have shown how to incorporate ge-
+ometric information about the parameter space in order to
+increase the numerical robustness of the algorithm.
+
+4. Experiments
+
+We evaluate the performance of our proposed SG-RLD
+algorithm for HMMs on both synthetic and real data.
+First, we demonstrate the effectiveness of incorporating the
+buffers on two synthetic data sets that exhibit very differ-
+ent dynamics. Next we apply our SG-RLD for HMMs to
+a non-conjugate model of synthetic data. Finally, we ap-
+ply SG-RLD to a large ion channel recording data set and
+compare to batch MCMC.
+
+Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+Algorithm 2 SG-MCMC for HMM
+
+initialize A(0) and φ(0)
+k
+for n = 0, 1, 2 · · · , Niter do
+
+Periodically estimate the buffer length B and the min-
+imum subchain gap ν according to Sec. 3.
+Sample subchains ˜S of length L from p( (cid:101)S).
+for s = 1 · · · Nsteps do
+
+Update ˆA(s) according to Eq. (16) and (17)
+
+end for
+Calculate ˆA = 1
+Set Ai,j ← | ˆAi,j|
+for s = 1 · · · Nsteps do
+
+Nsteps
+(cid:46)(cid:80)
+
+(cid:80)Nsteps
+s=1
+
+ˆA(s).
+
+i | ˆAi,j|
+
+update φ(s) according to Eqs. (19)– (22)
+
+end for
+Set φ = 1
+
+Nsteps
+
+(cid:80)Nsteps
+
+s=1 φ(s).
+
+end for
+
+4.1. Evaluating Buffer Effectiveness
+
+We ﬁrst design two synthetic experiments in order to il-
+lustrate the effectiveness of our adaptive buffer scheme.
+We compare SG-RLD with buffering, without buffering,
+and treating the data as i.i.d. as a baseline. We can view
+the no-buffer algorithm as one that treats the subsequences
+as short, independent realizations, similarly to (Johnson &
+Willsky, 2014). Following Foti et al. (2014), we create two
+synthetic datasets both with T = 20 million observations
+and K = 8 latent states (see Fig. 2 (top)).
+
+The ﬁrst data set, diagonally dominant (DD) consists of
+a Markov chain that heavily self-transitions and has iden-
+tiﬁable emissions. The second dataset—reversed cycles
+(RC)—strongly transitions between two cycles over three
+states, each in opposite directions. Further details on these
+datasets and how we set L and | (cid:101)S| are in the Supplement.
+
+The 10-step-ahead predictive log probability is depicted in
+Fig. 2 for the DD and RC datasets. See the Supplement for
+similar results comparing errors in transition matrix estima-
+tion. In both cases, we see that both SG-RLD HMM meth-
+ods greatly outperform the i.i.d. algorithm. The reason i.i.d.
+SG-RLD performs so badly on the DD data stems from all
+states being equally probable so that ignoring the dynam-
+ics forces the model to have little apriori conﬁdence in the
+next observations. For the RC dataset, the i.i.d. algorithm
+fails to capture the structured transitions between states,
+again reducing predictive performance.
+Importantly, our
+adaptive buffer scheme attains both better predictive per-
+formance and converges to the true transition matrix in less
+time. In fact, there is a bias in the learned transition matrix
+for the non-buffered algorithm due to inaccurate subchain
+approximation of q, π. This experiment demonstrates that
+accounting for dynamics yields massive gains in predictive
+
+Figure 2. Synthetic experiments for DD (left) and RC (right) data.
+Top: Sample datasets; Arrows indicate Markov transitions. Bot-
+tom: 10-step-ahead log predictive likelihood versus learning time
+for DD (left) and RC (right) dynamics. Comparisons are made for
+SG-RLD algorithms with adaptive buffer, no buffer, and treating
+the data as i.i.d..
+
+Figure 3. Synthetic experiment with log-normal emission. We
+use the non-conjugate emission model on the synthetic data (Top
+Left) with two hidden states and log-normal emissions and com-
+pare it against the conjugate model. We show the difference
+in convergence speed (Top Right) and log held out probability
+ln p(ytest|ytrain) on 2, 000 test data (Bottom).
+
+performance and that using our adaptive buffer scheme pro-
+vides further gains on top of that.
+
+4.2. Non-conjugate Emission Distributions
+
+We next demonstrate the beneﬁt of our SG-RMCMC al-
+gorithm in being able to handle non-conjugate emissions,
+an essential feature to perform ﬂexible Bayesian analyses.
+We simulate 2 × 105 observations from a 2-state HMM
+with log-normal emissions. Details of the parameter set-
+tings used to generate the data are in the Supplement. We
+
+Diagonally Dominant Reversed Cycles 050100150−60−40−200runtime (sec)log predictive prob  BufferNo BufferI.I.D.0100200−40−30−20−100runtime (sec)  0200400020406080 ytt020040060000.511.5Iterations|| A − Atrue ||F  Non−Conjugate ModelConjugate ModelK Non-Conjugate Emission  Conjugate Emission  1 −2.2679×104 −1.3172×105 2 −𝟏.𝟗𝟓𝟐𝟖×𝟏𝟎𝟒 −1.3081×105 3 −2.2005×104 −8.8227×104 4 −2.0376×104 −𝟕.𝟓𝟓𝟏𝟎×𝟏𝟎𝟒 Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+Figure 4. Inference of ion channel data Top: SG-RLD segmentation at runtimes: 44.05, 138.51, and 466.82 (sec). Bottom: Batch-RLD
+segmentation at runtimes: 716.19, 2124.43, and 7245.14 (sec). Right: Held-out-probability of 5000 unobserved data points (top) and
+error decay of transition matrix estimates (bottom) for SG-RLD and batch-RLD methods in loglog scales. Acvg denotes the estimated
+transition parameters A after convergence. SG-RLD obtains plausible segmenations and accurate estimates of the transition matrix in a
+fraction of the time as a batch algorithm.
+
+evaluate the ability of two different HMM models in terms
+of parameter estimation and model selection accuracy.
+
+ther log-transform and normalize the observations to use
+Gaussian emission.
+
+The ﬁrst HMM we consider uses log-normal emissions
+with non-conjugate normal priors. The second model
+uses Gaussian emissions with a conjugate normal-inverse-
+Wishart prior.
+In Fig. 3 we show that the non-conjugate
+model obtains accurate estimates of the transition ma-
+trix in substantially fewer iterations than the conjugate
+model. Next, we demonstrate that efﬁciently handling
+non-conjugate models leads to improved model selection.
+Speciﬁcallly, we use SG-RLD to ﬁt both the conjugate and
+non-conjugate HMMs described above with K = 1, 2, 3, 4
+states and compute the marginal likelihood of the observa-
+tions under each model. In the table of Fig. 3 we see that
+the non-conjugate model selects the right number of states
+(2), whereas the conjugate model selects a model with more
+states (4). The ability to use non-conjugate HMMs for truly
+massive data sets has been infeasible until this point and
+this experiment demonstrates its utility.
+
+4.3. Ion Channel Recordings
+
+We investigate the behavior of the SG-RLD sampler on
+ion channel recording data.
+In particular, we consider a
+1MHz recording from Rosenstein et al. (2013) of a sin-
+gle alamethicin channel. This data was previously inves-
+tigated in Palla et al. (2014) and Tripuraneni et al. (2015)
+using a complicated Bayesian nonparametric HMM. In that
+work, the authors downsample the data by a factor of 100
+and only used 10, 000 and 2, 000 observations respectively
+due to the challenge of scaling computations to the full se-
+quence. We subsample the time series by a factor of 50,
+resulting in 209, 634 observations, to reduce the strong au-
+tocorrelations present in the observations that are not cap-
+tured well by a vanilla HMM. However, our algorithm
+would have no difﬁculty handling the full dataset. We fur-
+
+We use a non-informative ﬂat prior to analyze the ion chan-
+nel data. In Fig. 4 we see that before the batch-RLD algo-
+rithm ﬁnishes a single iteration, the SG-RLD algorithm has
+already converged and generated a reasonable segmenta-
+tion. With the converged estimation of the transition pa-
+rameters A as reference, we calculated the speed of con-
+vergence of SG-RLD and batch-RLD algorithms and found
+that the SG-RLD is approximately 1, 000 times faster.
+
+5. Discussion
+
+We have developed an SG-MCMC algorithm to perform in-
+ference in HMMs for massive observation sequences. The
+algorithm can be used with non-conjugate emission distri-
+butions and is thus applicable to modeling a variety of data.
+Also, the algorithm asymptotically samples from the true
+posterior as opposed to variational approaches.
+
+Developing the algorithm relied on three ingredients. First,
+we derived an efﬁcient approach to estimate the gradient of
+the marginal likelihood of the HMM from only small sub-
+chains. Second, we developed a principled approach using
+buffers to mitigate the errors introduced when breaking the
+dependencies at the boundaries of the subchains. Unlike
+previous heuristic buffering schemes, our approach is the-
+oretically justiﬁed using random dynamical systems. Last,
+we utilize sampling scheme based on the mixing time of the
+HMM to ensure subchains are approximately independent.
+
+In future work we will extend these ideas to other models of
+dependent data, such as Markov random ﬁelds. Also, the
+ideas presented here are not limited to MCMC and could
+be used to develop more principled variational inference
+algorithms for dependent data.
+
+020004000−1012t yt010002000300040005000−1012t010002000300040005000−1012t102103104105−8−6−4−2x 104runtime (sec)log held out prob  SG−RLDbatch−RLD020004000−1012t yt010002000300040005000−1012t010002000300040005000−1012t10010110210310410510−2100runtime (sec)|| A − Acvg ||F  SG−RLDbatch−RLDStochastic Gradient MCMC Methods for Hidden Markov Models
+
+Acknowledgements
+
+This work was supported by ONR Grant N00014-15-1-
+2380, NSF CAREER Award IIS-1350133, and by Ter-
+raSwarm, one of six centers of STARnet, a Semiconduc-
+tor Research Corporation program sponsored by MARCO
+and DARPA. NF was supported by a Washington Research
+Foundation Innovation Postdoctoral Fellowship in Neuro-
+engineering and Data Science.
+
+References
+
+Amari, S. Natural gradient works efﬁciently in learning.
+
+Neural Computation, 10(2):251–276, 1998.
+
+Arnold, L. Random Dynamical Systems. Springer, 1998.
+
+Beale, M. J.
+
+Variational Algorithms for Approximate
+Bayesian Inference. Ph.D. thesis, University College
+London, 2003.
+
+Bishop, C. M. Pattern Recognition and Machine Learning.
+
+Springer, 2006.
+
+Broderick, T., Boyd, N., Wibisono, A., Wilson, A. C., and
+Jordan, M. I. Streaming variational Bayes. In Advances
+in Neural Information Processing Systems, 2013.
+
+Bryant, M. and Sudderth, E. B. Truly nonparametric online
+variational inference for hierarchical Dirichlet processes.
+In Advances in Neural Information Processing Systems,
+2012.
+
+Chen, C., Ding, N., and Carin, L. On the convergence of
+stochastic gradient mcmc algorithms with high-order in-
+tegrators. In Advances in Neural Information Processing
+Systems 28, pp. 2278–2286. 2015.
+
+Chen, T., Fox, E. B., and Guestrin, C. Stochastic gradient
+Hamiltonian Monte Carlo. In Proceeding of 31st Inter-
+national Conference on Machine Learning (ICML’14),
+2014.
+
+Ding, N., Fang, Y., Babbush, R., Chen, C., Skeel, R. D.,
+and Neven, H. Bayesian sampling using stochastic gra-
+In Advances in Neural Information
+dient thermostats.
+Processing Systems 27 (NIPS’14). 2014.
+
+Foti, N. J., Xu, J., Laird, D., and Fox, E. B. Stochastic
+variational inference for hidden Markov models. In Ad-
+vances in Neural Information Processing Systems, 2014.
+
+Fox, E.B. Bayesian Nonparametric Learning of Complex
+Dynamical Phenomena. Ph.D. thesis, MIT, Cambridge,
+MA, 2009.
+
+Gopalan, P. K., Gerrish, S., Freedman, M., Blei, D. M., and
+Mimno, D. M. Scalable inference of overlapping com-
+munities. In Advances in Neural Information Processing
+Systems, pp. 2249–2257. 2012.
+
+Hoffman, M. D., Blei, D. M., Wang, C., and Paisley, J.
+Journal of Maching
+
+Stochastic variational inference.
+Learning Research, 14(1):1303–1347, May 2013.
+
+Hughes, M. C., Stephenson, W., and Sudderth, E. B. Scal-
+able adaptation of state complexity for nonparametric
+In Advances in Neural Infor-
+hidden Markov models.
+mation Processing Systems, 2015.
+
+Johnson, M. J. and Willsky, A. S. Stochastic variational in-
+ference for Bayesian time series models. In International
+Conference on Machine Learning, 2014.
+
+LeGland, F. and Mevel, L. Exponential forgetting and ge-
+ometric ergodicity in hidden Markov models. In IEEE
+Conference on Decision and Control, 1997.
+
+Leimkuhler, Benedict and Shang, Xiaocheng. Adaptive
+thermostats for noisy gradient systems. SIAM Journal
+on Scientiﬁc Computing, 38(2):A712–A736, 2016.
+
+Ma, Y.-A, Chen, T., and Fox, E. B. A complete recipe for
+stochastic gradient MCMC. In Advances in Neural In-
+formation Processing Systems 28, pp. 2899–2907. 2015.
+
+Ma, Y.-A., Fox, E. B., Chen, T., and Wu, L. A unifying
+framework for devising efﬁcient and irreversible MCMC
+samplers. arXiv:1608.05973, 2016.
+
+Palla, K., Knowles, D. A., and Ghahramani, Z. A reversible
+inﬁnite HMM using normalised random measures.
+In
+International Conference on Machine Learning, 2014.
+
+Patterson, S. and Teh, Y. W. Stochastic gradient Rieman-
+nian Langevin dynamics on the probability simplex. In
+Advances in Neural Information Processing Systems 26
+(NIPS’13). 2013.
+
+Rabiner, L. R. A tutorial on hidden Markov models and
+selected applications in speech recognition. In Proceed-
+ings of the IEEE, volume 77, pp. 257–286, 1989.
+
+Robbins, H. and Monro, S. A stochastic approximation
+method. The Annals of Mathematical Statistics, 22(3):
+400–407, 09 1951.
+
+Rosenstein, J. K., Ramakrishnan, S., Roseman, J., and L,
+Shepard K. Single ion channel recordings with CMOS-
+anchored lipid membranes. Nano Letters, 13(6):2682–
+2686, 2013.
+
+Scott, S. L. Bayesian methods for hidden Markov models:
+Recursive computing in the 21st century. Journal of the
+American Statistical Association, 97(457):337–351, 03
+2002.
+
+Seneta, E. Non-negative matrices and Markov chains.
+
+Springer Science & Business Media, 2006.
+
+Stochastic Gradient MCMC Methods for Hidden Markov Models
+
+Shang, X., Zhu, Z., Leimkuhler, B., and Storkey, A.
+Covariance-controlled adaptive Langevin thermostat for
+large-scale Bayesian sampling. In Advances in Neural
+Information Processing Systems 28 (NIPS’15). 2015.
+
+Tripuraneni, N., Gu, S., Ge, H., and Ghahramani, Z. Par-
+ticle Gibbs for inﬁnite hidden Markov Models. In Ad-
+vances in Neural Information Processing Systems, pp.
+2386–2394, 2015.
+
+Vollmer, S. J., Zygalakis, K. C., and Teh, Y. W. Exploration
+of the (non-)asymptotic bias and variance of stochastic
+gradient Langevin dynamics. Journal of Machine Learn-
+ing Research, 17(159):1–48, 2016.
+
+Welling, M. and Teh, Y. W. Bayesian learning via stochas-
+In Proceedings of
+tic gradient Langevin dynamics.
+the 28th International Conference on Machine Learning
+(ICML’11), pp. 681–688, June 2011.
+
+Ye, F. X.-F., Ma, Y.-A., and Qian, H. A numerical algo-
+rithm for calculating the rate of exponential forgetting in
+HMM. manuscript in preparation.
+
+

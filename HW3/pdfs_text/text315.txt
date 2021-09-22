@@ -1,0 +1,1442 @@
+Recursive Partitioning for Personalization using Observational Data
+
+Nathan Kallus 1
+
+Abstract
+We study the problem of learning to choose from
+m discrete treatment options (e.g., news item or
+medical drug) the one with best causal effect for
+a particular instance (e.g., user or patient) where
+the training data consists of passive observations
+of covariates, treatment, and the outcome of the
+treatment. The standard approach to this prob-
+lem is regress and compare: split the training data
+by treatment, ﬁt a regression model in each split,
+and, for a new instance, predict all m outcomes
+and pick the best. By reformulating the problem
+as a single learning task rather than m separate
+ones, we propose a new approach based on re-
+cursively partitioning the data into regimes where
+different treatments are optimal. We extend this
+approach to an optimal partitioning approach that
+ﬁnds a globally optimal partition, achieving a
+compact, interpretable, and impactful personal-
+ization model. We develop new tools for validat-
+ing and evaluating personalization models on ob-
+servational data and use these to demonstrate the
+power of our novel approaches in a personalized
+medicine and a job training application.
+
+1. Introduction
+
+Personalization is the problem of determining the best
+treatment option for a given instance. A treatment can, for
+example, be a movie recommendation (Zhou et al., 2008),
+a display ad (Goldfarb & Tucker, 2011), or a pharmacolog-
+ical therapy (Lesko, 2007), and an instance is usually an
+individual person. In this paper, we study the problem of
+learning how to personalize from observational data, which
+is an important problem in emergent contexts such as per-
+sonalized medicine.
+In this and related contexts, experi-
+mentation can be prohibitively small-scale, costly, danger-
+ous, and unethical in comparison to passive data collection,
+
+1School of Operations Research and Information Engineering
+and Cornell Tech, Cornell University. Correspondence to: Nathan
+Kallus <kallus@cornell.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+which can be potentially massive as in electronic medi-
+cal records (EMRs) but, at the same time, lack experimen-
+tal manipulation so that isolated causal effects of speciﬁc
+treatments are hidden by confounding factors. We show
+that standard approaches that pose the problem as multiple
+supervised learning tasks fall short in this setting and pro-
+pose new learning algorithms as well as evaluation methods
+used for validation, selection, and tuning.
+
+Speciﬁcally, we consider the problem of learning how to
+assign the best of m treatments to an instance, given an
+observation of associated baseline covariates x ∈ Rd. An
+instance is characterized by the random variables X ∈ Rd
+and Y (1), . . . , Y (m) ∈ R, which denote the covariates and
+the m potential outcomes of applying each of the treat-
+ments (Imbens & Rubin, 2015, Chs. 1-2). We use the
+convention that smaller outcome is better. A personal-
+ization model is a map τ : Rd → [m] = {1, . . . , m}
+that, given an observation of covariates x, prescribes a
+treatment τ (x).
+Its (out-of-sample) personalization risk
+is its average causal effect in the population R(τ ) =
+E [Y (τ (X))] (the expectation is taken with respect to the
+joint distribution of X, Y (1), . . . , Y (m)). The Bayes op-
+timal risk is R∗ = R(τ ∗), where τ ∗(x) ∈ T ∗(x) =
+arg mint∈[m] E [Y (t) | X = x] is the Bayes optimal per-
+sonalization model.
+
+The learning task is to train a personalization model ˆτn(·)
+on n data points: Sn = {(X1, T1, Y1), . . . , (Xn, Tn, Yn)} ,
+where the observed outcome Yi = Yi(Ti) corresponds only
+to the treatment Ti administered. This data is observa-
+tional: we may not control the historic administration of
+treatment (as we would in a controlled experiment) and
+the values Yi(t) for t (cid:54)= Ti are missing data. We assume
+the data is independent and identically distributed (iid) and
+let X, T, Y, Y (1), . . . , Y (m) represent a generic draw. Al-
+though the data is iid, the t-treated sample {i : Ti = t} dif-
+fers systematically from the sample t(cid:48)-treated {i : Ti = t(cid:48)}
+for t (cid:54)= t(cid:48), i.e., not just by chance as in a randomized con-
+trolled trial (RCT). Our second assumption about the data
+is unconfoundedness:
+
+Assumption 1. For each t ∈ [m]: Y (t) is independent of
+T given X and T = t is possible for almost every X, i.e.,
+Y (t) ⊥⊥ T | X and P (P (T = t | X) > 0) = 1.
+
+The assumption is standard in causal effect estimation
+
+Recursive Partitioning for Personalization using Observational Data
+
+(see e.g. Kallus, 2016; 2017b) for ensuring identiﬁability
+(Rosenbaum & Rubin, 1983). It says that we measured the
+right covariates to separate the effect of the treatment itself
+from the effect of assignment.
+In the context of person-
+alized medicine, this assumption would be justiﬁed if the
+EMR contained all the patient information used by a doctor
+to prescribe treatment up to the vagaries and idiosyncrasies
+of individual doctors or hospitals. Under Asn. 1, the condi-
+tional causal effect is equal to regressing Y on X, T :
+
+E [Y (t) | X = x] = E [Y (t) | X = x, T = t]
+
+= E [Y | X = x, T = t] .
+
+1.1. Standard Approach: Regress and Compare
+
+Since under Asn. 1 the optimal model τ ∗ chooses a treat-
+ment by minimizing among m regression functions, one
+obvious approach to personalization is to estimate these
+regression functions, ﬁtting each to the subset of the data
+that received each treatment, and then use these to pre-
+dict outcomes and pick the smallest prediction. For ex-
+ample, in medicine, there is a vast literature on predict-
+ing patient-speciﬁc responses to treatment (Feldstein et al.,
+1978; Stoehlmacher et al., 2004) and picking the best by
+comparing (Qian & Murphy, 2011; Bertsimas et al., 2017).
+
+The same approach is also generally taken in the contex-
+tual multi-arm bandit problem (Li et al., 2010), which is
+similar to our problem with the differences that we con-
+sider an ofﬂine learning problem and that bandit arm pulls
+are controlled interventions (a bandit problem is essentially
+a dynamic RCT) so the treated subpopulations are always
+statistically equivalent. The standard solution is to ﬁt m re-
+gression functions, and, for a new instance, predict m out-
+comes and pick the smallest prediction subject to cleverly
+ensuring sufﬁcient exploration by, e.g., adding conﬁdence
+bounds that vanish with n. The regression, assumed linear,
+is done using ridge regression as in Li et al. (2010) (Lin-
+UCB), ordinary least squares (OLS) as in Goldenshluger &
+Zeevi (2013), or LASSO as in Bastani & Bayati (2016).
+
+The regress and compare (R&C) approach to personaliza-
+tion from observational data can be summarized as:
+
+1. For each t ∈ [m]:
+(a) Consider the t-treated subsample St,nt = {(Xi, Yi) :
+
+i ∈ [n], Ti = t} of size nt = (cid:80)n
+
+I [Ti = t].
+
+i=1
+
+(b) Fit a regression model ˆµt,nt(x) of the response Y to
+regressors X using training data St,nt , e.g., by OLS.1
+
+1Note that separate OLS on each subsample St,nt is equiva-
+lent to OLS on the whole sample if we include interaction terms
+with dummy variables I [Ti = t]. At the same time, OLS on the
+whole sample without interaction terms provides no personaliza-
+tion, i.e., ˆτ R&C
+(x) is constant. Similarly, separate nonparametric
+regressions on each subsample is equivalent to using the whole
+sample and endowing the T variable with a discrete topology.
+
+n
+
+2. Personalize by choosing the best predicted outcome:
+
+ˆτ R&C
+n
+
+(x) = arg mint∈[m] ˆµt,nt(x).
+
+Under Asn. 1, if our regression estimator is consistent then
+so is R&C personalization consistent as shown below. All
+proofs are given in the supplementary materials.
+
+Theorem 1. If Asn. 1 holds and ˆµt,nt(x) are pointwise
+consistent regressions, i.e., ˆµt,nt(X) → E [Y | X, T = t]
+almost surely (a.s.) ∀t ∈ [m], then ˆτ R&C
+(X) ∈ T ∗(X)
+eventually a.s.
+
+n
+
+Examples of pointwise consistent regression estimators are
+k-nearest neighbors (kNN) and kernel regression (Walk,
+If a linear model is well-speciﬁed, then OLS is
+2010).
+also pointwise consistent.
+In practice, however, R&C is
+not effective for personalization because it attempts to learn
+much more than it needs to, it splits the training data into
+m, and in training it addresses estimation or prediction risk
+rather than personalization risk.
+
+1.2. Other Related Problems and Approaches
+
+In learning heterogeneous causal effects, one is concerned
+with the case of observational data with two treatments, t =
+1 (“Control”) and t = 2 (“Treatment”), and the estimation
+of the relative conditional average treatment effect (CATE),
+δ(x) = E [Y (2) − Y (1) | X = x]. Under Asn. 1, CATE is
+the difference between two regression functions: δ(x) =
+E [Y | X = x, T = 2]−E [Y | X = x, T = 1]. And so one
+way to estimate it is by regressing outcome in each treat-
+ment population and taking differences. When the condi-
+tioning variables in CATE are a proper subset of the co-
+variates needed to satisfy Asn. 1, Abrevaya et al. (2015)
+propose estimates based on propensity-score weighting and
+kernel regression. Athey & Imbens (2016) develop the
+Causal Tree (CT), which uses recursive partitioning, as an
+alternative to differencing two CART regressions.
+
+For personalization, learning heterogeneous effects can be
+used to choose between two treatments by comparing an
+estimate of their relative CATE to zero. As a learning prob-
+lem, however, this addresses estimation risk rather than per-
+sonalization risk and deals only with two treatments.
+In
+Sec. 2.6 we propose one-vs-one and one-vs-all strategies
+for personalization using CATE estimates and show it is
+consistent. We compare to this strategy using CT in our
+empirical investigation.
+
+In learning from logged bandit feedback (Beygelzimer
+& Langford, 2009; Swaminathan & Joachims, 2015a;b;
+Kallus, 2017a), one is concerned with learning a good pol-
+icy for a contextual multi-arm bandit problem based on
+logged data from another, known policy, rather than on-
+line interactions. This problem differs in that it assumes
+the data is experimental and the policy that generated the
+data is known and available. In Sec. 2.6, we discuss adapt-
+
+Recursive Partitioning for Personalization using Observational Data
+
+Figure 1. Personalization Tree for Warfarin Dosing (Sec. 4.1):
+from each node, the ﬁrst arrow clockwise starting from noon cor-
+responds to “No” and the other to “Yes.”
+
+ing these methods using imputed estimated propensities, to
+which we compare in our empirical investigation.
+
+2. Recursive Partitioning for Personalization
+
+In this section we present three new algorithms that tackle
+personalization directly as a single learning task.
+
+2.1. Recasting the Problem
+
+We begin by reformulating personalization risk. Follow-
+ing Hirano & Imbens (2004, Def. 2.1), we deﬁne the gen-
+eralized propensity score (GPS) as Q = φ(T, X), where
+φ(t, x) = P (T = t | X = x). The GPS of subject i, Qi, is
+an unknown quantity given by taking the unknown φ(t, x)
+and plugging in the known variables Ti, Xi. Using the GPS
+we can relate the personalization risk of a personalization
+model τ to its accuracy as a classiﬁcation model for labels
+T , weighted by outcome and GPS.
+
+Theorem 2. Under Asn. 1,
+
+R(τ ) = E [I [T = τ (X)] Y /Q] .
+
+(1)
+
+For m = 2 and randomized data (φ(1, x) = π constant),
+Zhao et al. (2012) is a special case of Thm. 2. Thm. 2
+suggests using a weighted form of empirical classiﬁcation
+risk minimization. When Q is fully known as in the logged
+bandit setting, this approach is closely related to the ap-
+proach taken by Beygelzimer & Langford (2009); Swami-
+nathan & Joachims (2015a;b). In the observational setting,
+we explore estimating and imputing Q to use this approach
+in Sec. 2.6. However, because estimating the GPS gener-
+ally either relies heavily on model speciﬁcation or, in non-
+parametric settings, can be biased and variable, this will
+lead to severe instability and limited practical use. More-
+over, it does not address the personalization problem as a
+single learning task, rather as two: learning a propensity
+model task and then a weighted classiﬁcation task. Instead,
+in the following sections we present a single-task approach
+that does not rely on estimating propensities separately.
+
+2.2. An Impurity Measure for Personalization
+
+Classiﬁcation and regression trees (CART) are predic-
+tive models based on recursive partitioning: the covariate
+space is recursively partitioned by axis-aligned hyperplanes
+(x(cid:96) ≤ θ for (cid:96) ∈ [d] and θ ∈ R) in order to minimize a
+within-partition impurity measure (Breiman et al., 1984).
+Impurities for classiﬁcation include entropy and Gini and
+for regression include sum of squared errors. Athey &
+Imbens (2016) develop impurities for estimating heteroge-
+neous effects. Motivated by Thm. 2, we develop an impu-
+rity for personalization leading to a recursive partitioning
+algorithm called personalization tree (PT).
+
+Note that for a subset X ⊆ Rd such that X ⊥⊥ T | X ∈ X ,
+we have that φ(t, x) = P (T = t | X ∈ X ) whenever x ∈
+X . To develop the personalization impurity, we use this to
+establish the following as a corollary of Thm. 2:
+
+Corollary 3. Consider a ﬁxed partition of the covariate
+space: Rd = X1 ∪ · · · ∪ XL where X(cid:96) ∩ X(cid:96)(cid:48) = ∅ whenever
+(cid:96) (cid:54)= (cid:96)(cid:48). Suppose that the partition is sufﬁciently ﬁne so that
+
+X ⊥⊥ T | X ∈ X(cid:96) ∀(cid:96) = 1, . . . , L.
+
+(2)
+
+Then, ˆRn(τ ) = (cid:80)L
+sistent estimator for R(τ ), where
+
+(cid:96)=1
+
+ˆRn,X(cid:96) (τ ) is an unbiased and con-
+
+ˆRn,X (τ ) =
+
+(cid:80)n
+
+i=1
+
+I[Xi∈X ]
+n
+
+(cid:80)n
+
+i=1
+
+(cid:80)n
+
+I[Xi∈X ,Ti=τ (Xi)]Y
+i(cid:48)=1
+
+I[Xi(cid:48) ∈X ,Ti(cid:48) =τ (Xi)] .
+
+Note that the conditional independence in the condition (2),
+which requires that leaf membership be a balancing score
+as deﬁned by Rosenbaum & Rubin (1983), holds trivially
+when we condition on X itself. Therefore, the ﬁner the
+partition X1, . . . , XL, the more accurate this assumption.
+(while possibly not truly satisﬁable by any ﬁnite partition).
+Given a partition, we can use this risk estimate to optimize
+τ . Letting ˜S(cid:96) = {(Xi, Ti, Yi) : Xi ∈ X(cid:96)}, we can rewrite
+
+minτ :Rd→[m] n (cid:80)L
+
+(cid:96)=1
+
+ˆRn,X(cid:96)(τ ) = (cid:80)L
+
+(cid:96)=1 Ipers( ˜S(cid:96)),
+
+where Ipers is the personalization impurity given by
+
+Ipers({(Xi1, Ti1, Yi1), . . . , (Xik , Tik , Yik )})
+k((cid:80)k
+(cid:80)k
+
+= mint∈[m]
+
+j=1
+
+I[Tij =t]Yij )
+I[Tij =t]
+
+,
+
+j=1
+
+Therefore, to achieve good personalization risk we may
+wish to seek partitions that have minimal sum of within-
+partition personalization impurities as deﬁned by Ipers.
+
+2.3. Personalization Tree
+
+The PT algorithm attempts to ﬁnd a ﬁne partition of the
+data to minimize the sum of within-partition personaliza-
+tion impurities. It does so by partitioning the dataset along
+axis-aligned cuts, at each stage choosing to cut a partition
+into the two partitions with least sum of impurities and pro-
+ceeding recursively. In an attempt to ﬁnd a ﬁne partition
+
+Weight'>'132.05'kg?'VKORC1'2255'T/T?'Low'Diabe>c?'Med'VKORC1'1173'C/C?'High'CYP2C9'*1/*1?'High'Med'Valve'replacement?'Weight'<='124.85'kg?'VKORC1'497'G/G?'Takes'carbamazepine?'VKORC1'U1639'G/G?'Med'High'Low'Med'High'Med'Start%Recursive Partitioning for Personalization using Observational Data
+
+that satisﬁes condition (2), PT continues to recurse until
+a speciﬁed stopping criterion. One criterion is that there
+be at least nmin-leaf ≥ 1 subjects of each treatment in the
+partition.2 Another criterion may be a maximum recursion
+depth ∆max, but this criterion is not necessary. We also al-
+low for a limited number #features of features to be sampled
+as candidate cut dimensions. We summarize the PT recur-
+sive subroutine as Alg. 1. The PT algorithm is given by
+passing the whole dataset Sn and initial depth ∆ = 0 to
+Alg. 1. The PT algorithm is notable for producing an inter-
+pretable decision tree for the personalization rule (Fig. 1).
+
+2.4. Personalization Forest
+
+The ﬁner the partition produced by PT, the closer we are
+to condition (2) and the less bias the estimate of risk has.
+The coarser the partition, the less variance the estimate has.
+Therefore, there is an inherent trade-off to the ﬁneness pa-
+rameters in PT. To address this we can bag (bootstrap ag-
+gregate) many very ﬁne PTs, which will have the effect of
+reducing variance without incurring too much bias as in the
+case of random forests (Breiman, 2001). The correspond-
+ing personalization forest (PF) algorithm is summarized in
+d to achieve sufﬁ-
+Alg. 2. Generally, we set #features to
+cient independence between trees for variance reduction.
+
+√
+
+2.5. Optimal Personalization Tree
+
+PT is a greedy algorithm for minimizing personalization
+impurity. In this section we propose the optimal personal-
+ization tree (OPT) algorithm, which solves the global prob-
+lem of ﬁnding partitions that minimize the sum of within-
+partition personalization impurities:
+
+min
+X1∪···∪XL=Rd:(∗)
+
+L
+(cid:80)
+(cid:96)=1
+
+Ipers({(Xi, Ti, Yi) : Xi ∈ X(cid:96)}), (3)
+
+where (∗) is the restriction that X1, . . . , XL be disjoint re-
+gions deﬁned by the leaves of a binary decision tree. In
+the case of classiﬁcation and regression, Bennett & Blue
+(1996); Bertsimas & Dunn (2016) attempt to ﬁnd glob-
+ally optimal prediction trees (while the problem is NP-hard;
+see Hyaﬁl & Rivest, 1976). For our personalization prob-
+lem, motivated by Bertsimas & Dunn (2016), we propose a
+mixed-integer programming (MIP) approach to the optimal
+personalization tree problem (3).
+
+We consider a ﬁxed binary tree structure on nodes 1, . . . , P .
+Let Ap ⊂ [P ] be the unique path from the root to node
+p, i.e., its ancestors. For q ∈ Ap, let Rpq = 1 if the
+right branch is taken to reach p from q, otherwise −1.
+Let L = {p ∈ [P ] : p /∈ A(q) ∀q ∈ [P ]} be the set of
+
+2Note that Ipers(X ) is only deﬁned when there is at least 1
+subject for each treatment in the partition X . An alternative ap-
+propriate for scarce data and large m allows for any number of
+subjects but chooses the best treatment only from among those
+with at least nmin-leaf subjects in the partition.
+
+Algorithm 1 PT subroutine
+
+1:
+
+input: Data part ˜S = (cid:8)(Xi1 , Ti1 , Yi1 ), . . . , (Xik , Tik , Yik )(cid:9), cur-
+rent depth ∆, tuning parameters nmin-leaf, ∆max, #features.
+for (cid:96) ∈ [d] do sort the data along x(cid:96): Xiπ((cid:96),1) ,(cid:96) ≤ · · · ≤ Xiπ((cid:96),k),(cid:96).
+I[Tij = t].
+
+(cid:80)k
+
+j=1
+
+j=1
+
+j=1
+
+I[Tij = t]Yij / (cid:80)k
+I[Tij = t] > nmin-leaf then
+
+2: Set ˆτ ˜S (x) = arg mint∈[m]
+if ∆ < ∆max and mint∈[m]
+3:
+4:
+5:
+6:
+7:
+8:
+9:
+10:
+
+(cid:80)k
+Set I (cid:63) = ∞, (cid:96)(cid:63) = 0, j(cid:63) = 0.
+Draw (cid:96)1, . . . , (cid:96)#features at random from [d] without replacement.
+for (cid:96) = (cid:96)1, . . . , (cid:96)#features do
+Set kL
+1 = · · · = kL
+t = (cid:80)k
+Set kR
+for j ∈ [k − 1] do
+
+Update kL+=1, kR−=1, t = Tiπ((cid:96),j) , kL
+
+m = 0, SL
+I[Tij = t], SR
+
+1 = · · · = SL
+t = (cid:80)k
+j=1
+
+m = 0, kL = 0.
+
+t +=1, kR
+
+j=1
+
+I[Tij = t]Yij , kR = k.
+
+t −=1,
+
+SL
+t +=Yiπ((cid:96),j) , SR
+
+t −=Yiπ((cid:96),j) .
+
+Set I = kL mint∈[m] SL
+
+t /kL
+kmin = mint∈[m] min(kL
+
+t + kR mint∈[m] SR
+t , kR
+if I < I (cid:63) and kmin ≥ nmin-leaf then set I (cid:63) = I, (cid:96)(cid:63) = (cid:96), j(cid:63) = j.
+
+t /kR
+t ,
+
+t ).
+
+, Tiπ((cid:96)(cid:63) ,j)
+, Tiπ((cid:96)(cid:63) ,j)
+
+Set ˜SL = {(Xiπ((cid:96)(cid:63) ,j)
+˜SR = {(Xiπ((cid:96)(cid:63) ,j)
+ˆτ ˜SL = Alg. 1( ˜SL, ∆ + 1), ˆτ ˜SR = Alg. 1( ˜SR, ∆ + 1),
+θ(cid:63) = 1
+2 (Xiπ((cid:96)(cid:63) ,j),(cid:96) + Xiπ((cid:96)(cid:63) ,j+1),(cid:96)),
+ˆτ ˜S (x) = (if x(cid:96)(cid:63) ≤ θ(cid:63) then ˆτ ˜SL (x) else ˆτ ˜SR (x)).
+
+, Yiπ((cid:96)(cid:63) ,j)
+, Yiπ((cid:96)(cid:63) ,j)
+
+) : 1 ≤ j ≤ j(cid:63)},
+) : j(cid:63) +1 ≤ j ≤ k},
+
+11:
+
+12:
+13:
+14:
+15:
+16:
+17:
+18:
+
+19:
+
+20:
+21:
+
+end for
+
+end for
+if I (cid:63) < ∞ then
+
+22:
+23:
+24: end if
+
+end if
+
+output: ˆτ ˜S (x).
+
+leaf nodes and let LC = [P ]\L be the non-leaf nodes.
+Let Cp ⊂ [d] × R be the ﬁnite set of potential cuts at
+each non-leaf node p ∈ LC, where ((cid:96), θ) ∈ Cp de-
+notes that the cut x(cid:96) ≤ θ is to be considered at node
+p.
+(Usually we take θ to be the data midpoints along
+dimension (cid:96).) Let Y i = Yi − minj∈[n] Yj, Y max =
+I [Ti = t] −
+maxi Y i, and M = Y max(maxt∈[m]
+|L| nmin-leaf). For a vector γ with index set C ⊂ [d] × R,
+let χi(γ, C) = (cid:80)
+I [Xi,(cid:96) ≤ θ] γ(cid:96),θ. For p ∈ LC,
+let kp = (cid:100)log2 |Cp|(cid:101) and Zp ∈ {0, 1}kp×|Cp| be such that
+(Zp)ij = 1 if (cid:98)j/2i(cid:99) is odd and otherwise 0. Our MIP
+formulation of the OPT problem (3) follows:
+
+((cid:96),θ)∈C
+
+(cid:80)n
+
+i=1
+
+i=1
+
+(cid:80)
+
+p∈L νip subject to
+
+minimize (cid:80)n
+w ∈ [0, 1][n]×L, λ ∈ {0, 1}L×m, µ ∈ RL
++
+γp ∈ [0, 1]Cp , δp ∈ {0, 1}kp , Zpγp = δp ∀p ∈ LC
+wip ≤ 1+Rpq
+wip ≥ 1 + (cid:80)
+
+(4b)
+(4c)
+2 − Rpqχi(γq, Cq) ∀i ∈ [n], p ∈ L, q ∈ Ap (4d)
+2 − Rpqχi(γq, Cq))
+(4e)
+
++, ν ∈ R[n]×L
+
+( 1−Rpq
+
+(4a)
+
+q∈Ap
+
+∀i ∈ [n], p ∈ L
+∀t ∈ [m]
+
+(4f)
+
+∀i ∈ [n], p ∈ L (4g)
+∀i ∈ [n], p ∈ L (4h)
+∀p ∈ L
+(4i)
+
+(cid:80)
+
+i:Ti=t wip ≥ nmin-leaf
+νip ≤ Y maxwip, νip ≤ µp
+νip ≥ µp − Y max(1 − wip)
+(cid:80)
+
+t∈[m] λpt = 1
+(cid:80)
+i:Ti=t
+(cid:80)
+i:Ti=t
+
+(νip − wipY i) ≤ M (1 − λpt) ∀p ∈ L, t ∈ [m]
+
+(4j)
+
+(νip − wipY i) ≥ M (λpt − 1) ∀p ∈ L, t ∈ [m] (4k)
+
+Problem (4) is a MIP with |L| m + (cid:80)
+p∈LC log2 |Cp| bi-
+nary variables. The variables γp encode choice of cut at
+each node p and constraint (4c) ensures only one is cho-
+
+Recursive Partitioning for Personalization using Observational Data
+
+Algorithm 2 PF
+
+Algorithm 3 OPT (complete binary tree)
+
+input: Data Sn = {(X1, T1, Y1), . . . , (Xn, Tn, Yn)}, tuning parame-
+
+input: Data Sn = {(X1, T1, Y1), . . . , (Xn, Tn, Yn)}, tuning parame-
+
+ters T, nmin-leaf, ∆max, #features.
+
+n = (cid:8)(Xi1 , Ti1 , Yi1 ), . . . , (Xin , Tin , Yin )(cid:9) at random
+
+1:
+2:
+
+for j ∈ [T ] do
+Draw S(j)
+
+from Sn with replacement.
+n = Alg. 1(S(j)
+
+Set ˆτ (j)
+
+3:
+4: end for
+
+n , 0, nmin-leaf, ∆max, #features).
+
+output: ˆτn(x) = mode{ˆτ (1)
+
+n (x), . . . , ˆτ (T )
+
+n (x)}.
+
+sen (see Yıldız & Vielma, 2013). The variable wip encodes
+membership of datapoint i to leaf p and constraints (4d-
+4e) enforce that wip is the product of indicators of whether
+Xi goes in the left or right branch of the ancestor nodes.
+Since these constraints are integral (Ahuja et al., 1993) we
+need not enfoce wip be binary. Constraint (4f) ensures at
+least nmin-leaf samples per leaf. The variable µp encodes the
+mean outcome of the prescribed treatment in leaf p and the
+variable νip encodes its product with wip, as ensured by
+constraints (4g-4h). The variable λpt encodes the choice of
+treatment t in leaf p and constraint (4i) ensures only one is
+chosen. Constraints (4j-4k) ensure the consistency between
+the choice of treatment λpt and the mean outcome µp. We
+summarize the OPT algorithm for a complete binary tree in
+Alg. 3. We use Gurobi to solve MIP (4) and use PT as a
+heuristic warm start, randomly splitting leaf nodes at depth
+less than ∆.
+
+2.6. Adapting Existing Methods to Personalization
+
+Using Observational Data
+
+As discussed earlier, methods that estimate CATE, no-
+tably CT (Athey & Imbens, 2016), can be used to
+choose between two treatments by comparing δ(x) =
+E [Y | X = x, T = 2] − E [Y | X = x, T = 1]
+to zero.
+However, such methods are directed at estimation rather
+than personalization and only address two treatments. To
+address the latter, we propose one-vs-all (1vA) and one-vs-
+one (1v1) strategies for personalization.
+For 1vA, for each t ∈ [m] we learn an estimate ˆδtvA
+n (x) of
+δtvA(x) = E [Y | X = x, T = t] − E [Y | X = x, T (cid:54)= t]
+by applying a base algorithm (e.g., CT) to the modiﬁed
+n = {(Xi, 1 + I [Ti = t] , Yi) : i ∈ [n]}; then
+dataset StvA
+we assign the treatment that does the best compared to the
+rest: ˆτ 1vA
+
+n (x) ∈ arg mint∈[m]
+
+ˆδtvA(x).
+
+nt+ns
+
+for each t
+
+(cid:54)= s we learn an estimate
+For 1v1,
+ˆδtvs
+(x) of δtvs(x) = E [Y | X = x, T = t] −
+nt+ns
+E [Y | X = x, T = s] on the modiﬁed data
+subset
+= {(Xi, 1 + I [Ti = t] , Yi) : Ti ∈ {t, s}}; then we
+Stvs
+either assign the treatment that does the best compared to
+the worst, ˆτ 1v1-A
+(x),
+or the one that gets the most votes in one-to-one compar-
+(cid:105)
+isons, ˆτ 1v1-B
+(x) < 0
+.
+
+(x) ∈ arg mint∈[m] mins∈[m]
+(cid:104)ˆδtvs
+
+(x) ∈ arg maxt∈[m]
+
+ˆδtvs
+nt+ns
+
+(cid:80)
+
+I
+
+n
+
+n
+
+nt+ns
+
+s(cid:54)=t
+
+ters nmin-leaf, ∆, #features, #cuts.
+
+1: Set P = 2∆, LC = [2∆−1], Ap = (cid:8)(cid:98)p/2j (cid:99) : j ∈ [∆](cid:9),
+2:
+3:
+
+Rpq = (−1)1+(cid:98)p/2∆−(cid:98)log2(q)(cid:99)(cid:99).
+
+for (cid:96) ∈ [d] do sort the data along x(cid:96): Xiπ((cid:96),1) ,(cid:96) ≤ · · · ≤ Xiπ((cid:96),k),(cid:96).
+for p = 1, . . . , 2∆−1 do
+
+Draw Fp ⊂ [d] with |Fp| = #features. Set J = {1, (cid:100) n−1
+#cuts
+Xiπ((cid:96),j),(cid:96)+Xiπ((cid:96),j+1,(cid:96))
+2
+
+Set Cp = {((cid:96),
+
+) : (cid:96) ∈ Fp, j ∈ J}.
+
+(cid:101), . . . , n − 1}.
+
+4:
+5:
+
+6:
+7: end for
+8: Find γ, λ that solve problem (4).
+
+output: Personalization model ˆτn(x) that proceeds as follows:
+Set p = 1. for j ∈ [∆] do set ((cid:96), θ) = inf{c ∈ Cp : γp,c = 1},
+p = 2p + I [x(cid:96) > θ]. return inf{t ∈ [m] : λpt = 1}.
+
+We can prove that each of our 1vA and 1v1 proposals are
+consistent given pointwise consistent estimates of CATE:
+
+Theorem 4. Let Asn. 1 hold. Then:
+1. If ˆδtvA
+n (X) → δtvA(X) a.s.
+ˆτ 1vA
+n (X) ∈ T ∗(X) eventually a.s.
+2. If ˆδtvs
+(X) → δtvs(X) a.s.
+ˆτ 1v1-A
+n
+
+(X), ˆτ 1v1-B
+
+nt+ns
+
+n
+
+(X) ∈ T ∗(X) eventually a.s.
+
+∀t
+
+(cid:54)= s,
+
+then
+
+∀t ∈ [m],
+
+then
+
+Note that 1vA and 1v1 with CT do not inherit trees’ inter-
+pretability because the partitions of the 1vX models may
+not overlap.
+
+POEM and NPOEM (Swaminathan & Joachims, 2015a;b)
+solve the problem of learning from logged bandit feedback,
+assuming access to the logging policy that generated the
+data. To adapt these to personalizing from observational
+data, we propose to impute the logging policy using esti-
+mated GPS, i.e., pretend the data were generated by the
+policy that assigns t when context is x with probability
+ˆφn(t, x) where ˆφn is a probabilistic classiﬁcation model ﬁt-
+ted to the data {(Xi, Ti) : i ∈ [n]}. We call these IPOEM
+and INPOEM.
+
+3. Submatching for Validating
+
+Personalization using Observational Data
+
+In this section we discuss how one can evaluate and validate
+personalization policies, such as the ones from the last sec-
+tion. Usually, a new policy would be evaluated using a ran-
+domized controlled trial, but these can be infeasibly costly.
+We consider how to evaluate a personalization policy using
+observational data. Such a dataset can be a subset removed
+from the training data either for the purpose of testing or for
+tuning and selection by (cross-)validation. The difﬁculty in
+using observational data is that if a policy prescribes any
+treatment τ (Xi) (cid:54)= Ti, then it is not immediately clear how
+to score this.
+
+For ofﬂine evaluation of contextual bandits with experi-
+mental data, Li et al. (2011) show that rejection sampling
+is sufﬁcient. A similar solution to evaluation with obser-
+
+Recursive Partitioning for Personalization using Observational Data
+
+vational data is a combined rejection and importance sam-
+pling approach suggested by Thm. 2. If we had the GPS
+Qi, we could omit any datapoint where τ (Xi) (cid:54)= Ti while
+giving score Yi/Qi to each datapoint where the prescrip-
+tion matched the data, τ (Xi) = Ti. Per Thm. 2 and the law
+of large numbers, this will provide a consistent estimate
+for out-of-sample personalization risk. However, not only
+does this throw away many datapoints, but to implement
+this in practice we would have to estimate the GPS from
+data. Estimating the GPS generally either relies heavily on
+model speciﬁcation or, in non-parametric settings, can be
+biased and variable. This may be acceptable for training
+purposes, as in imputing GPS in IPOEM and INPOEM, as
+it is already a black box. However, for evaluation, a more
+reliable estimate of risk is desirable for evidence of success.
+
+We propose the use of submatching for evaluation. Match-
+ing is a common tool for causal inference (Rosenbaum,
+1989; Abadie & Imbens, 2006) where every subject is
+matched to a subject that received the opposite treatment,
+creating a complete matched dataset. In submatching, we
+instead seek only a subset of the data that is well-matched.
+In this subset, each subject is matched based on a metric
+(cid:107)x − x(cid:48)(cid:107) to m − 1 subjects that received each of the treat-
+ments the subject did not. Their outcome is imputed as
+the counterfactual outcome of those treatments for the sub-
+ject. All matched subjects are not used for training in order
+to avoid in-sample bias. Usually, Mahalanobis distance is
+used: ((x − x(cid:48)) ˆΣ−1(x − x(cid:48)))1/2 where ˆΣ is the sample co-
+variance. (Note that due to personalization on X, matching
+on propensity scores alone would be insufﬁcient.)
+
+3.1. Greedy Submatching
+
+The simplest way to extract a matched subset of size ntest
+from Sn is to do so greedily: draw random i1, . . . , intest
+from [n] without replacement, for each j ∈ [ntest] and t ∈
+[m], if t = Tij then set ˆYij t = Yij and if t (cid:54)= Tij then ﬁnd
+i ∈ arg mini∈[n]:Ti=t (cid:107)Xi − Xij (cid:107) (with replacement), let
+ˆYij t = Yi and ﬂag subject i, and ﬁnally remove all drawn
+and ﬂagged subjects from training data. The imputed value
+for the unknown Yij (t) is ˆYij t and our estimate for per-
+ˆYij τ (Xij ).
+sonalization risk of τ (x) is ˆR(τ ) = 1
+ntest
+When matching is exact, i.e. Xi = Xij for all matches,
+this estimate is unbiased.
+
+(cid:80)ntest
+j=1
+
+Theorem 5. Under Asn. 1 and exact matching,
+E[ ˆR(τ )]=R(τ ).
+
+3.2. Optimal Submatching
+
+reduces to average treatment effect estimation. Consider
+the problem of ﬁnding the subset of the data with the clos-
+est matches. That is, ﬁnding i11, i12, . . . , inpair1, inpair2 with
+Tijt = t and minimal (cid:80)npair
+j=1 (cid:107)Xij 1 − Xij 2(cid:107), and using the
+pairs for imputations.3 This problem can be reduced to bi-
+partite matching, which can be solved efﬁciently (Hopcroft
+& Karp, 1973). Consider the complete bipartite graph with
+left nodes being subjects with Ti = 1 and right nodes being
+subjects with Ti = 2 along with n−npair dummy nodes. Put
+weight (cid:107)Xi −Xj(cid:107) on edges between datapoints and weight
+0 on edges to dummy nodes. The subset of the data with
+the closest matches is given by the nodes incident to edges
+not incident to dummy nodes in the least-weight bipartite
+match. We extract these to construct a well-matched, eco-
+nomical test set with ntest = 2npair. Although this test set
+may be biased relative to the whole population (e.g., it may
+emphasize areas of treatment overlap), the corresponding
+risk estimate is unbiased conditioned on the test set, i.e., it
+corresponds to risk on an alternative population, which is
+often sufﬁcient for comparison and selection.
+
+3.3. Coefﬁcient of Personalization
+
+In prediction, the coefﬁcient of determination R2 is a unit-
+less quantity bounded by 1 that measures both how well
+data X predict outcomes Y and how well a predictive
+model leverages X. One way to interpret out-of-sample
+R2 is as the percent of the way that X and the model go
+from a no-X-data solution (Y ’s sample average) to perfect
+foresight (Y ’s realized value). Using this interpretation, we
+construct two analogous quantities for personalization, the
+1st and 2nd coefﬁcients of personalization:
+
+P1(τ ) = 1 −
+
+P2(τ ) = 1 −
+
+E[Y (τ (X))]−E[mint∈[m] Y (t)]
+mint∈[m] E[Y (t)]−E[mint∈[m] Y (t)] ,
+E[Y (τ (X))]−E[mint∈[m] Y (t)]
+E[Y (T )]−E[mint∈[m] Y (t)]
+
+.
+
+These are also analogous to the coefﬁcient of prescrip-
+tion for conditional stochastic optimization (Bertsimas &
+Kallus, 2015). The ﬁrst measures the improvement toward
+perfect (prescient) personalization relative to no personal-
+ization at all and the second does relative to current practice
+or standard of care (whatever determined T in the data).
+They are unitless, bounded by 1. Using a matched dataset,
+we can estimate these as:4
+
+ˆP1(τ ) = 1 −
+
+ˆP2(τ ) = 1 −
+
+j=1 mint∈[m]
+
+Σntest
+j=1
+
+ˆYij τ (Xij
+mint∈[m] Σntest
+j=1
+Σntest
+ˆYij τ (Xij
+j=1
+j=1Yij −Σntest
+
+)−Σntest
+ˆYij t−Σntest
+)−Σntest
+
+Σntest
+
+j=1 mint∈[m]
+ˆYij t
+
+j=1 mint∈[m]
+
+j=1 mint∈[m]
+ˆYij t
+
+.
+
+ˆYij t
+
+,
+
+ˆYij t
+
+The greedy method for constructing a matched dataset is
+simple but it can be wasteful, limiting the amount of the
+data available for training. We may be able to do better
+for testing and evaluation when m = 2, when the problem
+
+3 More efﬁcient estimates may be possible using analogues of
+Robins & Rotnitzky (1995); Hahn (1998) on the submatched data.
+4 This assumes that potential outcomes are conditionally in-
+dependent given X. Indeed, the conditional copula of potential
+outcomes has no physical meaning and is unidentiﬁable.
+
+Recursive Partitioning for Personalization using Observational Data
+
+Figure 2. Personalization Risk for Personalized Warfarin Dosing
+
+4. Empirical Investigation
+
+We conclude with an empirical investigation of personal-
+ization using observational data and our new algorithms.
+
+4.1. Personalized Warfarin Dosing
+
+According to the International Warfarin Pharmacogenetics
+Consortium, “warfarin is the most widely used oral antico-
+agulant agent worldwide” and ﬁnding the appropriate dose
+is both difﬁcult and important “because it can vary by a fac-
+tor of 10 among patients” and “incorrect doses contribute
+to a high rate of adverse effects” (Consortium, 2009). Cur-
+rently, the common practice is to start a new patient at
+35 mg/week and slowly adjust the dose (Jaffer & Bragg,
+2003). We present an application of our methods to per-
+sonalizing dosage based on data on 5410 warfarin patients
+collected by Consortium (2009).
+
+The baseline data collected on each patient include demo-
+graphic characteristics (sex, ethnicity, age, weight, height,
+and smoker), reason for treatment (e.g., atrial ﬁbrilla-
+tion), current medications, co-morbidities (e.g., diabetes),
+genotype of two polymorphisms in CYP2C9, and geno-
+type of seven single nucleotide polymorphisms (SNPs) in
+VKORC1. The correct stable therapeutic dose of warfarin,
+determined by adjustment over a few weeks, is recorded
+for each patient and segmented into three dose groups: low
+(≤ 21 mg/week, t = 1), medium (> 21, < 49 mg/week,
+t = 2), and high (≥ 49 mg/week, t = 3). The dataset
+was also studied in an online (bandit) setting in (Bastani &
+Bayati, 2016) where an R&C approach is analyzed.
+
+In our experiment, we let Y (t) be 1 if the dose t is incor-
+rect and otherwise 0. To generate observational data (where
+dosage is not revealed by experimentation), we consider T
+chosen based on body mass index (BMI):
+
+P(T = t | X = x) =
+
+e(t−2)(xBMI−µBMI)/σBMI
+e−(xBMI−µBMI)/σBMI +1+e(xBMI−µBMI )/σBMI
+
+,
+
+where µBMI and σBMI are the sample mean and standard
+deviation of BMI. As an example, we run the PT algo-
+rithm with ∆max = 5 on the whole data, generating the
+tree shown in Fig. 1. (We use ∆max = 5 due to length con-
+straints.) It is known that VKORC1 and CYP2C9 geno-
+types are strongly associated to warfarin dosage require-
+ments (Li et al., 2006). PT is able to learn this relationship
+and it provides an efﬁcient and interpretable dosing guide-
+line where the effect of these genotypes is clear.
+
+√
+
+To assess the efﬁciency of various personalization algo-
+rithms, for each n = 100, 200, . . . , 2500, we consider
+100 replications in which we randomly select n training
+subjects and ntest = 2500 test subjects (disjoint, without
+replacement).
+In each replication, we run 12 personal-
+ization algorithms and evaluate their risk on the test set
+(where full counterfactuals are available). We test stan-
+dard R&C using four predictive models: OLS, logistic
+regression, CART (scikit-learn defaults), and kNN
+(k = (cid:98)
+n(cid:99)). We compare these to our three direct
+personalization methods: PT (nmin-leaf = 20, ∆max =
+∞, #features = d), PF (T = 500, nmin-leaf = 10, ∆max =
+∞, #features =
+d), and OPT (nmin-leaf = 20, #features =
+d, #cuts = 10, ∆ = 2 + I [n ≥ 300], MIP solve time
+limited to 1 hour). We also compare to our 1vA strat-
+egy using Athey & Imbens (2016)’s CT-A (adaptive) and
+CT-H (honest with 50-50 split) and to IPOEM and IN-
+POEM (parameters tuned on 25% holdout validation as in
+Swaminathan & Joachims, 2015a;b) with GPS imputed by
+cross-validated (cid:96)1-regularized multinomial regression us-
+ing R package glmnet. (Due to limited space, we focus
+on 1vA, which outperformed 1v1.)
+
+√
+
+We plot the average risk over replicates in Fig. 2 (note
+log scale). It is evident that R&C approaches make inef-
+ﬁcient use of the available data by splitting it and learn-
+ing more than is necessary. While eventually reaching low
+risk (< 0.4), R&C using OLS and logistic regression take
+
+■■■■■■■■■■■■■■■■■■■■■■■■■◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲○○○○○○○○○○○○○○○○○○○○○○○○○□□□□□□□□□□□□□□□□□□□□□□□□□◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇◇△△△△△△△△△△△△△△△△△△△△△△△△△▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▽▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲△△△△△△△△△△△△△△△△△△△△△△△△△■PT○OLS▼CT-A1vA◆PF□Logit▽CT-H1vA▲OPT◇CART▲IPOEM△kNN△INPOEM5001000150020002500n0.360.390.440.540.64RiskRecursive Partitioning for Personalization using Observational Data
+
+Figure 3. Personalization Beneﬁt for Personalized Job Training
+
+much longer (n = 1300) to get there than our direct meth-
+ods, which achieve low risk very quickly (n = 200) and
+near-optimal risk (≤ 0.36) soon after (n = 700). Non-
+parametric R&C (CART, kNN), IPOEM, and INPOEM
+converge slowly. 1vA with CT-A and CT-H offers com-
+petitive performance for moderate n, but fails to achieve
+near-optimal risk even at n = 2500. CT-A offers a small
+edge over CT-H, which can be attributed to CT-H’s splitting
+of the training data – indeed, CT-H’s primary advantage are
+correctly sized conﬁdence intervals, which are not used.
+
+Among our direct methods, PF appears to work the best
+overall, for both small and large n, while PT achieve simi-
+lar performance for n ≥ 2000. For smaller n, OPT outper-
+forms PT (and PF for n = 100) attributed to OPT’s ability
+to ﬁnd the best simple tree to ﬁt the scarce data. For larger
+n, the MIP becomes so large that Gurobi is hardly able to
+improve the PT warm start, which has very limited depth.
+Therefore, we see performance deteriorate. We conclude
+OPT is best either for small datasets or for ﬁnding models
+that are reasonably efﬁcient while being exceedingly sim-
+ple and interpretable (depth 2–3 compared to depth 9–13
+for PT at n = 2500), albeit at computational cost. Our best
+out-of-sample risk is 0.356, which translates to ˆP1 = 0.22,
+ˆP2 = 0.47: i.e., 22% (or, 47%) of the way from no person-
+alization (or, standard of care) to perfect personalization.
+
+4.2. Personalized Job Training
+
+We consider an application to personalized recommenda-
+tions for a job training program. We use data from the
+National Supported Work Demonstration (LaLonde, 1986)
+(combining the experimental sample of 465 subjects with
+the 2490 PSID controls to create an observational dataset).
+The data includes 2935 individuals, 185 of which received
+a job training program in 1976-77 (Ti = 1). The data
+includes information about age, education level, ethnicity,
+marital status, earnings in years 1974-75, and earnings in
+1978. This data is the standard benchmark in evaluation of
+causal methodologies for estimating an average treatment
+effect (Dehejia & Wahba, 2002). We consider an alterna-
+tive setting where we give a personalized recommendation
+as to whether to enroll in the job training program, assum-
+ing enrollment costs $2,000. Therefore, we let Yi equal
+1978 earnings less $2,000 if Ti = 1.
+
+From the 2935, we extract an optimal matched test set of 55
+pairs (ntest = 110) perfectly matched in all covariates ex-
+cept for a mean absolute deviation of $12 and $17 in 1974
+and 1975 earnings, respectively, within pairs. On the re-
+maining n = 2825 subjects, we train the same personaliza-
+tion models as above with the following changes: we omit
+logistic regression (outcomes not binary), use nmin-leaf = 10
+for PT and OPT and = 1 for PF, use ∆ = 4 for OPT and let
+the MIP solve for 24 hours, use logistic regressions to im-
+
+pute GPS for IPOEM and INPOEM, and include the causal
+forest (CF) extension (Wager & Athey, 2017) of CT as im-
+plemented by the R package gradient.forest.
+
+We plot the estimated average personalized net income (af-
+ter enrollment costs) in Fig. 3. We see a clear beneﬁt to our
+methods’ direct targeting of personalization and that, with
+only two treatments, CF and CT-A provide highly compet-
+itive performance. Average net income of 4200.8 due to PF
+translates to ˆP1 = 0.22, ˆP2 = 0.28: i.e., 22% (or, 28%)
+of the way from no personalization (or, standard of care) to
+perfect personalization.
+
+5. Conclusions
+
+We developed a new approach to the unique problem of
+personalization from observational data. The approach was
+based on a new formulation of the problem and a new
+impurity measure for personalization. This lead to three
+recursive-partitioning-based algorithms:
+the personaliza-
+tion tree that greedily partitions the data to minimize the
+sum of within-partition personalization impurities, the per-
+sonalization forest that bagged many personalization trees,
+and the optimal personalization tree that used a MIP to
+globally optimize the partitioning problem. We developed
+new submatching techniques to evaluate and validate these
+algorithms as well as ones adapted from existing methods.
+And we used these techniques to evaluate all algorithms
+in two example applications: personalized warfarin dos-
+In both examples, we
+ing and personalized job training.
+demonstrated the beneﬁts of our algorithms in terms of ef-
+ﬁcacy and interpretability. We phrased the success of our
+personalization techniques in terms of the new coefﬁcients
+of personalization, which quantify the beneﬁt we achieve
+from personalization as a percentage of the beneﬁt that im-
+possibly perfect personalization can achieve relative to ei-
+ther no personalization or the standard of care.
+
+3969.24200.83892.23311.43479.93308.43913.03440.83972.62649.23368.1PTPFOPTOLSCARTkNNCT-ACT-HCFIPOEMINPOEM2500300035004000AverageNetIncomeRecursive Partitioning for Personalization using Observational Data
+
+References
+
+Abadie, Alberto and Imbens, Guido W. Large sample prop-
+erties of matching estimators for average treatment ef-
+fects. Econometrica, 74(1):235–267, 2006.
+
+Abrevaya, Jason, Hsu, Yu-Chin, and Lieli, Robert P. Esti-
+mating conditional average treatment effects. J Bus Econ
+Stat, 33(4):485–505, 2015.
+
+Ahuja, RK, Magnanti, TL, and Orlin, JB. Network ﬂows:
+
+theory, algorithms, and applications. 1993.
+
+Athey, Susan and Imbens, Guido. Recursive partitioning
+for heterogeneous causal effects. PNAS, 113(27):7353–
+7360, 2016.
+
+Bastani, Hamsa and Bayati, Mohsen. Online decision-
+
+making with high-dimensional covariates. 2016.
+
+Bennett, Kristin P and Blue, J. Optimal decision trees.
+
+Bertsimas, Dimitris and Dunn, Jack. Optimal trees. Mach
+
+1996.
+
+Learn, 2016.
+
+Bertsimas, Dimitris and Kallus, Nathan. From predictive
+
+to prescriptive analytics. 2015.
+
+Bertsimas, Dimitris, Kallus, Nathan, Weinstein, Alexan-
+der M., and Zhuo, Ying Daisy. Personalized diabetes
+management using electronic medical records. Diabetes
+Care, 40(2):210–217, 2017.
+
+Beygelzimer, Alina and Langford, John. The offset tree for
+learning with partial labels. In SIGKDD, pp. 129–138.
+ACM, 2009.
+
+2017a.
+
+Breiman, Leo. Random forests. Mach Learn, 45(1):5–32,
+
+2001.
+
+Breiman, Leo, Friedman, Jerome, Stone, Charles, and Ol-
+shen, Richard. Classiﬁcation and Regression Trees.
+1984.
+
+Consortium, International Warfarin Pharmacogenetics. Es-
+timation of the warfarin dose with clinical and pharma-
+cogenetic data. New Engl J Med, 360(8):753, 2009.
+
+Dehejia, Rajeev H and Wahba, Sadek. Propensity score-
+matching methods for nonexperimental causal studies.
+Rev Econ Stat, 84(1):151–161, 2002.
+
+Goldfarb, Avi and Tucker, Catherine. Online display ad-
+vertising: Targeting and obtrusiveness. Market Sci, 30
+(3):389–404, 2011.
+
+Hahn, Jinyong. On the role of the propensity score in ef-
+ﬁcient semiparametric estimation of average treatment
+effects. Econometrica, pp. 315–331, 1998.
+
+Hirano, Keisuke and Imbens, Guido W. The propensity
+score with continuous treatments. In Gelman, Andrew
+and Meng, Xiao-Li (eds.), Applied Bayesian modeling
+and causal inference from incomplete-data perspectives,
+pp. 73–84. 2004.
+
+Hopcroft, John E and Karp, Richard M. An nˆ5/2 algo-
+rithm for maximum matchings in bipartite graphs. SIAM
+J Comput, 2(4):225–231, 1973.
+
+Hyaﬁl, Laurent and Rivest, Ronald L. Constructing opti-
+mal binary decision trees is np-complete. Inform Process
+Lett, 5(1):15–17, 1976.
+
+Imbens, Guido W and Rubin, Donald B. Causal inference
+in statistics, social, and biomedical sciences. 2015.
+
+Jaffer, Amir and Bragg, Lee. Practical tips for warfarin
+dosing and monitoring. Clev Clin J Med, 70(4):361–371,
+2003.
+
+Kallus, Nathan. Generalized optimal matching methods for
+
+causal inference. 2016.
+
+Kallus, Nathan. Balanced policy evaluation and learning.
+
+Kallus, Nathan. A framework for optimal matching for
+causal inference. In AISTATS, pp. 372–381, 2017b.
+
+LaLonde, Robert J. Evaluating the econometric evaluations
+of training programs with experimental data. Am Econ
+Rev, pp. 604–620, 1986.
+
+Lesko, LJ. Personalized medicine: elusive dream or im-
+minent reality? Clin Pharmacol Ther, 81(6):807–816,
+2007.
+
+Li, Lihong, Chu, Wei, Langford, John, and Schapire,
+Robert E. A contextual-bandit approach to personalized
+In WWW, pp. 661–670,
+news article recommendation.
+2010.
+
+Feldstein, Michael L, Savlov, Edwin D, and Hilf, Russell.
+A statistical model for predicting response of breast can-
+cer patients to cytotoxic chemotherapy. Cancer Res, 38
+(8):2544–2548, 1978.
+
+Li, Lihong, Chu, Wei, Langford, John, and Wang, Xuanhui.
+Unbiased ofﬂine evaluation of contextual-bandit-based
+news article recommendation algorithms. In WSDM, pp.
+297–306, 2011.
+
+Goldenshluger, Alexander and Zeevi, Assaf. A linear re-
+sponse bandit problem. Stoch Syst, 3(1):230–261, 2013.
+
+Li, Tao, Lange, Leslie A, Li, Xiangli, Susswein, Lisa,
+Bryant, Betsy, Malone, Robb, Lange, Ethan M, Huang,
+
+Recursive Partitioning for Personalization using Observational Data
+
+Teng-Yi, Stafford, Darrel W, and Evans, James P. Poly-
+morphisms in the vkorc1 gene are strongly associated
+with warfarin dosage requirements in patients receiving
+anticoagulation. J Med Genet, 43(9):740–744, 2006.
+
+Qian, Min and Murphy, Susan A. Performance guarantees
+for individualized treatment rules. Ann Stat, 39(2):1180–
+1210, 2011.
+
+Robins, James M and Rotnitzky, Andrea. Semiparametric
+efﬁciency in multivariate regression models with missing
+data. Journal of the American Statistical Association, 90
+(429):122–129, 1995.
+
+Rosenbaum, Paul R. Optimal matching for observational
+studies. Journal of the American Statistical Association,
+84(408):1024–1032, 1989.
+
+Rosenbaum, Paul R and Rubin, Donald B. The central
+role of the propensity score in observational studies for
+causal effects. Biometrika, 70(1):41–55, 1983.
+
+Stoehlmacher, J, Park, DJ, Zhang, W, Yang, D, Groshen, S,
+Zahedy, S, and Lenz, HJ. A multivariate analysis of ge-
+nomic polymorphisms: prediction of clinical outcome to
+5-fu/oxaliplatin combination chemotherapy in refractory
+colorectal cancer. Brit J Cancer, 91(2):344–354, 2004.
+
+Swaminathan, Adith and Joachims, Thorsten. Counter-
+factual risk minimization: Learning from logged bandit
+feedback. In ICML, pp. 814–823, 2015a.
+
+Swaminathan, Adith and Joachims, Thorsten. The self-
+normalized estimator for counterfactual learning.
+In
+NIPS, pp. 3231–3239, 2015b.
+
+Wager, Stefan and Athey, Susan. Estimation and inference
+of heterogeneous treatment effects using random forests.
+Journal of the American Statistical Association, (just-
+accepted), 2017.
+
+Walk, Harro. Strong laws of large numbers and nonpara-
+In Recent Developments in Applied
+
+metric estimation.
+Probability and Statistics, pp. 183–214. 2010.
+
+Yıldız, Sercan and Vielma, Juan Pablo.
+
+Incremental and
+encoding formulations for mixed integer programming.
+Oper Res Lett, 41(6):654–658, 2013.
+
+Zhao, Yingqi, Zeng, Donglin, Rush, A John, and Kosorok,
+Michael R. Estimating individualized treatment rules us-
+ing outcome weighted learning. J Am Stat Assoc, 107
+(499):1106–1118, 2012.
+
+Zhou, Yunhong, Wilkinson, Dennis, Schreiber, Robert, and
+Pan, Rong. Large-scale parallel collaborative ﬁltering
+for the netﬂix prize. In AAIM, pp. 337–348. 2008.
+
+

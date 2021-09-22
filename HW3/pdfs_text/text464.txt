@@ -1,0 +1,1329 @@
+Deep Decentralized Multi-task Multi-Agent Reinforcement Learning
+under Partial Observability
+
+Shayegan Omidshaﬁei 1 Jason Pazis 1 Christopher Amato 2 Jonathan P. How 1 John Vian 3
+
+Abstract
+
+Many real-world tasks involve multiple agents
+with partial observability and limited communi-
+cation. Learning is challenging in these settings
+due to local viewpoints of agents, which perceive
+the world as non-stationary due to concurrently-
+exploring teammates. Approaches that learn spe-
+cialized policies for individual tasks face prob-
+lems when applied to the real world: not only
+do agents have to learn and store distinct poli-
+cies for each task, but in practice identities of
+tasks are often non-observable, making these ap-
+proaches inapplicable. This paper formalizes and
+addresses the problem of multi-task multi-agent
+reinforcement learning under partial observabil-
+ity. We introduce a decentralized single-task
+learning approach that is robust to concurrent in-
+teractions of teammates, and present an approach
+for distilling single-task policies into a uniﬁed
+policy that performs well across multiple related
+tasks, without explicit provision of task identity.
+
+1. Introduction
+
+In multi-task reinforcement learning (MTRL) agents are
+presented several related target tasks (Taylor & Stone,
+2009; Caruana, 1998) with shared characteristics. Rather
+than specialize on a single task, the objective is to gener-
+alize performance across all tasks. For example, a team of
+autonomous underwater vehicles (AUVs) learning to detect
+and repair faults in deep-sea equipment must be able to do
+so in many settings (varying water currents, lighting, etc.),
+not just under the circumstances observed during training.
+
+Many real-world problems involve multiple agents with
+
+1Laboratory for Information and Decision Systems (LIDS),
+MIT, Cambridge, MA, USA 2College of Computer and Informa-
+tion Science (CCIS), Northeastern University, Boston, MA, USA
+3Boeing Research & Technology, Seattle, WA, USA. Correspon-
+dence to: Shayegan Omidshaﬁei <shayegan@mit.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+partial observability and limited communication (e.g., the
+AUV example) (Oliehoek & Amato, 2016), but generat-
+ing accurate models for these domains is difﬁcult due to
+complex interactions between agents and the environment.
+Learning is difﬁcult in these settings due to partial observ-
+ability and local viewpoints of agents, which perceive the
+environment as non-stationary due to teammates’ actions.
+Efﬁcient learners must extract knowledge from past tasks
+to accelerate learning and improve generalization to new
+tasks. Learning specialized policies for individual tasks
+can be problematic, as not only do agents have to store a
+distinct policy for each task, but in practice face scenarios
+where the identity of the task is often non-observable.
+
+Existing MTRL methods focus on single-agent and/or fully
+observable settings (Taylor & Stone, 2009). By contrast,
+this work considers cooperative, independent learners op-
+erating in partially-observable, stochastic environments, re-
+ceiving feedback in the form of local noisy observations
+and joint rewards. This setting is general and realistic
+for many multi-agent domains. We introduce the multi-
+task multi-agent reinforcement learning (MT-MARL) un-
+der partial observability problem, where the goal is to max-
+imize execution-time performance on a set of related tasks,
+without explicit knowledge of the task identity. Each MT-
+MARL task is formalized as a Decentralized Partially Ob-
+servable Markov Decision Process (Dec-POMDP) (Bern-
+stein et al., 2002), a general formulation for cooperative
+decision-making under uncertainty. MT-MARL poses sig-
+niﬁcant challenges, as each agent must learn to coordinate
+with teammates to achieve good performance, ensure pol-
+icy generalization across all tasks, and conduct (implicit)
+execution-time inference of the underlying task ID to make
+sound decisions using local noisy observations. As typ-
+ical in existing MTRL approaches, this work focuses on
+average asymptotic performance across all tasks (Caruana,
+1998; Taylor & Stone, 2009) and sample-efﬁcient learning.
+
+We propose a two-phase MT-MARL approach that
+in combi-
+ﬁrst uses
+cautiously-optimistic
+nation with Deep Recurrent Q-Networks
+(DRQNs)
+for action-value approxi-
+(Hausknecht & Stone, 2015)
+mation. We introduce Concurrent Experience Replay
+Trajectories (CERTs), a decentralized extension of ex-
+
+learners
+
+Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+perience replay (Lin, 1992; Mnih et al., 2015) targeting
+sample-efﬁcient and stable MARL. This ﬁrst contribution
+enables coordination in single-task MARL under partial
+observability. The second phase of our approach distills
+each agent’s specialized action-value networks into a
+generalized recurrent multi-task network. Using CERTs
+and optimistic learners, well-performing distilled policies
+(Rusu et al., 2015) are learned for multi-agent domains.
+Both the single-task and multi-task phases of the algorithm
+are demonstrated to achieve good performance on a set
+of multi-agent target capture Dec-POMDP domains. The
+approach makes no assumptions about communication
+capabilities and is fully decentralized during learning and
+execution. To our knowledge, this is the ﬁrst formalization
+of decentralized MT-MARL under partial observability.
+
+2. Background
+
+2.1. Reinforcement Learning
+
+Single-agent RL under full observability is typically for-
+malized using Markov Decision Processes (MDPs) (Sut-
+ton & Barto, 1998), deﬁned as tuple (cid:104)S, A, T , R, γ(cid:105). At
+timestep t,
+the agent with state s ∈ S executes ac-
+tion a ∈ A using policy π(a|s), receives reward rt =
+R(s) ∈ R, and transitions to state s(cid:48) ∈ S with proba-
+bility P (s(cid:48)|s, a) = T (s, a, s(cid:48)). Denoting discounted re-
+turn as Rt = (cid:80)H
+t(cid:48)=t γt(cid:48)−trt, with horizon H and dis-
+count factor γ ∈ [0, 1), the action-value (or Q-value) is
+deﬁned as Qπ(s, a) = Eπ[Rt|st = s, at = a]. Optimal
+policy π∗ maximizes the Q-value function, Qπ∗
+(s, a) =
+maxπ Q(s, a).
+In RL, the agent interacts with the envi-
+ronment to learn π∗ without explicit provision of the MDP
+model. Model-based methods ﬁrst learn T and R, then use
+a planner to ﬁnd Qπ∗
+. Model-free methods typically di-
+rectly learn Q-values or policies, so can be more space and
+computation efﬁcient.
+
+Q-learning (Watkins & Dayan, 1992) iteratively estimates
+the optimal Q-value function using backups, Q(s, a) =
+Q(s, a) + α[r + γ maxa(cid:48) Q(s(cid:48), a(cid:48)) − Q(s, a)], where α ∈
+[0, 1) is the learning rate and the term in brackets is the
+temporal-difference (TD) error. Convergence to Qπ∗
+is
+guaranteed in the tabular (no approximation) case pro-
+vided sufﬁcient state/action space exploration; however,
+tabulated learning is unsuitable for problems with large
+state/action spaces. Practical TD methods instead use func-
+tion approximators (Gordon, 1995) such as linear combi-
+nations of basis functions or neural networks, leveraging
+inductive bias to execute similar actions in similar states.
+Deep Q-learning is a state-of-the-art approach using a Deep
+Q-Network (DQN) for Q-value approximation (Mnih et al.,
+2015). At each iteration j, experience tuple (cid:104)s, a, r, s(cid:48)(cid:105) is
+sampled from replay memory M and DQN parameters θ
+are updated to minimize loss Lj(θj) = E(s,a,r,s(cid:48))∼M[(r +
+
+γ maxa(cid:48) Q(s(cid:48), a(cid:48); ˆθj) − Q(s, a; θj))2]. Replay memory M
+is a ﬁrst-in ﬁrst-out queue containing the set of latest ex-
+perience tuples from (cid:15)-greedy policy execution. Target
+network parameters ˆθj are updated less frequently and, in
+combination with experience replay, are critical for stable
+deep Q-learning.
+
+Agents in partially-observable domains receive observa-
+tions of the latent state.
+Such domains are formal-
+ized as Partially Observable Markov Decision Processes
+(POMDPs), deﬁned as (cid:104)S, A, T , R, Ω, O, γ(cid:105) (Kaelbling
+et al., 1998). After each transition, the agent observes
+o ∈ Ω with probability P (o|s(cid:48), a) = O(o, s(cid:48), a). Due to
+noisy observations, POMDP policies map observation his-
+tories to actions. As Recurrent Neural Networks (RNNs)
+inherently maintain an internal state ht to compress input
+history until timestep t, they have been demonstrated to
+be effective for learning POMDP policies (Wierstra et al.,
+2007). Recent work has introduced Deep Recurrent Q-
+Networks (DRQNs) (Hausknecht & Stone, 2015), combin-
+ing Long Short-Term Memory (LSTM) cells (Hochreiter &
+Schmidhuber, 1997) with DQNs for RL in POMDPs. Our
+work extends this single-task, single-agent approach to the
+multi-task, multi-agent setting.
+
+2.2. Multi-agent RL
+
+Multi-agent RL (MARL) involves a set of agents in a
+shared environment, which must learn to maximize their
+individual returns (Bus¸oniu et al., 2010). Our work focuses
+on cooperative settings, where agents share a joint return.
+Claus & Boutilier (1998) dichotomize MARL agents into
+two classes: Joint Action Learners (JALs) and Independent
+Learners (ILs). JALs observe actions taken by all agents,
+whereas ILs only observe local actions. As observability of
+joint actions is a strong assumption in partially observable
+domains, ILs are typically more practical, despite having
+to solve a more challenging problem (Claus & Boutilier,
+1998). Our approach utilizes ILs that conduct both learn-
+ing and execution in a decentralized manner.
+
+Unique challenges arise in MARL due to agent inter-
+actions during learning (Bus¸oniu et al., 2010; Matignon
+et al., 2012). Multi-agent domains are non-stationary from
+agents’ local perspectives, due to teammates’ interactions
+with the environment.
+ILs, in particular, are susceptible
+to shadowed equilibria, where local observability and non-
+stationarity cause locally optimal actions to become a glob-
+ally sub-optimal joint action (Fulda & Ventura, 2007). Ef-
+fective MARL requires each agent to tightly coordinate
+with fellow agents, while also being robust against desta-
+bilization of its own policy due to environmental non-
+stationarity. Another desired characteristic is robustness to
+alter-exploration, or drastic changes in policies due to ex-
+ploratory actions of teammates (Matignon et al., 2012).
+
+Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+2.3. Transfer and Multi-Task Learning
+
+Transfer Learning (TL) aims to generalize knowledge from
+a set of source tasks to a target task (Pan & Yang, 2010). In
+single-agent, fully-observable RL, each task is formalized
+as a distinct MDP (i.e., MDPs and tasks are synonymous)
+(Taylor & Stone, 2009). While TL assumes sequential
+transfer, where source tasks have been previously learned
+and even may not be related to the target task, Multi-Task
+Reinforcement Learning (MTRL) aims to learn a policy
+that performs well on related target tasks from an under-
+lying task distribution (Caruana, 1998; Pan & Yang, 2010).
+MTRL tasks can be learned simultaneously or sequentially
+(Taylor & Stone, 2009). MTRL directs the agent’s atten-
+tion towards pertinent training signals learned on individ-
+ual tasks, enabling a uniﬁed policy to generalize well across
+all tasks. MTRL is most beneﬁcial when target tasks share
+common features (Wilson et al., 2007), and most challeng-
+ing when the task ID is not explicitly speciﬁed to agents
+during execution – the setting addressed in this paper.
+
+3. Related Work
+
+3.1. Multi-agent RL
+
+Bus¸oniu et al. (2010) present a taxonomy of MARL ap-
+proaches. Partially-observable MARL has received lim-
+ited attention. Works include model-free gradient-ascent
+based methods (Peshkin et al., 2000; Dutech et al., 2001),
+simulator-supported methods to improve policies using a
+series of linear programs (Wu et al., 2012), and model-
+based approaches where agents learn in an interleaved fash-
+ion to reduce destabilization caused by concurrent learn-
+ing (Banerjee et al., 2012). Recent scalable methods use
+Expectation Maximization to learn ﬁnite state controller
+(FSC) policies (Wu et al., 2013; Liu et al., 2015; 2016).
+
+Our approach is most related to IL algorithms that learn Q-
+values, as their representational power is more conducive
+to transfer between tasks, in contrast to policy tables or
+FSCs. The majority of existing IL approaches assume
+full observability. Matignon et al. (2012) survey these ap-
+proaches, the most straightforward being Decentralized Q-
+learning (Tan, 1993), where each agent performs indepen-
+dent Q-learning. This simple approach has some empiri-
+cal success (Matignon et al., 2012). Distributed Q-learning
+(Lauer & Riedmiller, 2000) is an optimal algorithm for de-
+terministic domains; it updates Q-values only when they
+are guaranteed to increase, and the policy only for ac-
+tions that are no longer greedy with respect to Q-values.
+Bowling & Veloso (2002) conduct Policy Hill Climbing us-
+ing the Win-or-Learn Fast heuristic to decrease (increase)
+each agent’s learning rate when it performs well (poorly).
+Frequency Maximum Q-Value heuristics (Kapetanakis &
+Kudenko, 2002) bias action selection towards those con-
+
+sistently achieving max rewards. Hysteretic Q-learning
+(Matignon et al., 2007) addresses miscoordination using
+cautious optimism to stabilize policies while teammates ex-
+plore. Its track record of empirical success against complex
+methods (Xu et al., 2012; Matignon et al., 2012; Barbalios
+& Tzionas, 2014) leads us to use it as a foundation for
+our MT-MARL approach. Foerster et al. (2016) present
+architectures to learn communication protocols for Dec-
+POMDP RL, noting best performance using a centralized
+approach with inter-agent backpropagation and parameter
+sharing. They also evaluate a model combining Decentral-
+ized Q-learning with DRQNs, which they call Reinforced
+Inter-Agent Learning. Given the decentralized nature of
+this latter model (called Dec-DRQN herein for clarity), we
+evaluate our method against it. Concurrent to our work, Fo-
+erster et al. (2017) investigated an alternate means of stabi-
+lizing experience replay for the centralized learning case.
+
+3.2. Transfer and Multi-task RL
+
+Taylor & Stone (2009) and Torrey & Shavlik (2009) pro-
+vide excellent surveys of transfer and multi-task RL, which
+almost exclusively target single-agent, fully-observable
+settings. Tanaka & Yamamura (2003) use ﬁrst and second-
+order statistics to compute a prioritized sweeping metric
+for MTRL, enabling an agent to maximize lifetime reward
+over task sequences. Fern´andez & Veloso (2006) introduce
+an MDP policy similarity metric, and learn a policy library
+that generalizes well to tasks within a shared domain. Wil-
+son et al. (2007) consider TL for MDPs, learning a Dirich-
+let Process Mixture Model over source MDPs, used as an
+informative prior for a target MDP. They extend the work
+to multi-agent MDPs by learning characteristic agent roles
+(Wilson et al., 2008). Brunskill & Li (2013) introduce an
+MDP clustering approach that reduces negative transfer in
+MTRL, and prove reduction of sample complexity of ex-
+ploration using transfer. Taylor et al. (2013) introduce par-
+allel transfer to accelerate multi-agent learning using inter-
+agent transfer. Recent work extends the notion of neu-
+ral network distillation (Hinton et al., 2015) to DQNs for
+single-agent, fully-observable MTRL, ﬁrst learning a set of
+specialized teacher DQNs, then distilling teachers to a sin-
+gle multi-task network (Rusu et al., 2015). The efﬁcacy of
+the distillation technique for single-agent MDPs with large
+state spaces leads our work to use it as a foundation for the
+proposed MT-MARL under partial observability approach.
+
+4. Multi-task Multi-agent RL
+
+This section introduces MT-MARL under partial observ-
+ability. We formalize single-task MARL using the De-
+centralized Partially Observable Markov Decision Pro-
+, T , R, Ω, O, γ(cid:105),
+cess (Dec-POMDP), deﬁned as (cid:104)I, S,
+=
+where I is a set of n agents, S is the state space,
+
+A
+
+A
+
+Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+(i)
+
+(i) = (o(i)
+. Single-agent policy π(i)
+
+×iA(i) is the joint action space, and Ω = ×iΩ(i) is the
+joint observation space (Bernstein et al., 2002).1 Each
+agent i executes action a(i) ∈ A(i), where joint action a =
+(cid:104)a(1), . . . , a(n)(cid:105) causes environment state s ∈ S to tran-
+sition with probability P (s(cid:48)|s, a) = T (s, a, s(cid:48)). At each
+timestep, each agent receives observation o(i) ∈ Ω(i), with
+joint observation probability P (o|s(cid:48), a) = O(o, s(cid:48), a),
+where o = (cid:104)o(1), . . . , o(n)(cid:105). Let local observation history
+(i) ∈
+at timestep t be (cid:126)ot
+(cid:126)Ot
+(cid:55)→ A(i) con-
+ducts action selection, and the joint policy is denoted π =
+(cid:104)π(1), . . . , π(n)(cid:105). For simplicity, we consider only pure
+joint policies, as ﬁnite-horizon Dec-POMDPs have at least
+one pure joint optimal policy (Oliehoek et al., 2008). The
+team receives a joint reward rt = R(st, at) ∈ R at each
+timestep t, the objective being to maximize the value (or
+expected return), V = E[(cid:80)H
+t=0 γtrt]. While Dec-POMDP
+planning approaches assume agents do not observe inter-
+mediate rewards, we make the typical RL assumption that
+they do. This assumption is consistent with prior work in
+MARL (Banerjee et al., 2012; Peshkin et al., 2000).
+
+1 , . . . , o(i)
+: (cid:126)Ot
+
+t ), where (cid:126)ot
+
+(i)
+
+ILs provide a scalable way to learn in Dec-POMDPs, as
+each agent’s policy maps local observations to actions.
+However, the domain appears non-stationary from the per-
+spective of each Dec-POMDP agent, a property we formal-
+ize by extending the deﬁnition by Laurent et al. (2011).
+Deﬁnition 1. Let a−(i) = a \ {a(i)}. Local decision pro-
+cess for agent i is stationary if, for all timesteps t, u ∈ N,
+
+(cid:88)
+
+P (s(cid:48)|s,(cid:104)a(i),a−(i)
+∈A−(i)
+
+t
+
+(cid:88)
+
+(cid:105)) =
+
+P (s(cid:48)|s,(cid:104)a(i),a−(i)
+
+(cid:105)),
+
+u
+
+(1)
+
+a−(i)
+
+u ∈A−(i)
+
+P (o(i)|s(cid:48),(cid:104)a(i),a−(i)
+∈A−(i)
+
+t
+
+a−(i)
+
+u ∈A−(i)
+
+(cid:88)
+
+(cid:105)) =
+
+P (o(i)|s(cid:48),(cid:104)a(i),a−(i)
+
+(cid:105)).
+
+u
+
+(2)
+
+Letting π−(i) = π \ {π(i)}, non-stationarity from the lo-
+cal perspective of agent i follows as in general a−(i)
+=
+π−(i)((cid:126)ot) (cid:54)= π−(i)((cid:126)ou) = a−(i)
+, which causes violation
+of (1) and (2). Thus, MARL extensions of single-agent
+algorithms that assume stationary environments, such as
+Dec-DRQN, are inevitably ill-fated. This motivates our de-
+cision to ﬁrst design a single-task, decentralized MARL ap-
+proach targeting non-stationarity in Dec-POMDP learning.
+
+u
+
+t
+
+The MT-MARL problem in partially observable settings
+is now introduced by extending the single-agent, fully-
+observable deﬁnition of Fern´andez & Veloso (2006).
+Deﬁnition 2. A partially-observable MT-MARL Domain D
+, Ω, γ(cid:105), where I is the set of agents, S is
+is a tuple (cid:104)I, S,
+
+A
+
+1Superscripts indicate local parameters for agent i ∈ I.
+
+a−(i)
+t
+
+and
+(cid:88)
+
+a−(i)
+t
+
+the environment state space,
+is the joint action space, Ω
+A
+is the joint observation space, and γ is the discount factor.
+
+Deﬁnition 3. A partially-observable MT-MARL Task Tj
+is a tuple (cid:104)D, Tj, Rj, Oj(cid:105), where D is a shared underly-
+ing domain; Tj, Rj, Oj are, respectively, the task-speciﬁc
+transition, reward, and observation functions.
+
+In MT-MARL, each episode e ∈ {1, . . . , E} consists of a
+randomly sampled Task Tj from domain D. The team ob-
+serves the task ID, j, during learning, but not during execu-
+tion. The objective is to ﬁnd a joint policy that maximizes
+average empirical execution-time return in all E episodes,
+¯V = 1
+t=0 γtRe(st, at), where He is the time
+E
+horizon of episode e.
+
+(cid:80)He
+
+(cid:80)E
+
+e=0
+
+5. Approach
+
+This section introduces a two-phase approach for partially-
+observable MT-MARL; the approach ﬁrst conducts single-
+task specialization, and subsequently uniﬁes task-speciﬁc
+DRQNs into a joint policy that performs well in all tasks.
+
+5.1. Phase I: Dec-POMDP Single-Task MARL
+
+As Dec-POMDP RL is notoriously complex (and solv-
+ing for the optimal policy is NEXP-complete even with a
+known model (Bernstein et al., 2002)), we ﬁrst introduce an
+approach for stable single-task MARL. This enables agents
+to learn coordination, while also learning Q-values needed
+for computation of a uniﬁed MT-MARL policy.
+
+5.1.1. DECENTRALIZED HYSTERETIC DEEP
+
+RECURRENT Q-NETWORKS (DEC-HDRQNS)
+
+Due to partial observability and local non-stationarity,
+model-based Dec-POMDP MARL is extremely challeng-
+ing (Banerjee et al., 2012). Our approach is model-free and
+decentralized, learning Q-values for each agent.
+In con-
+trast to policy tables or FSCs, Q-values are amenable to the
+multi-task distillation process as they inherently measure
+quality of all actions, rather than just the optimal action.
+
+Overly-optimistic MARL approaches (e.g., Distributed Q-
+learning (Lauer & Riedmiller, 2000)) completely ignore
+low returns, which are assumed to be caused by team-
+mates’ exploratory actions. This causes severe overesti-
+mation of Q-values in stochastic domains. Hysteretic Q-
+learning (Matignon et al., 2007), instead, uses the insight
+that low returns may also be caused by domain stochastic-
+ity, which should not be ignored. This approach uses two
+learning rates: nominal learning rate, α, is used when the
+TD-error is non-negative; a smaller learning rate, β, is used
+otherwise (where 0 < β < α < 1). The result is hystere-
+sis (lag) of Q-value degradation for actions associated with
+positive past experiences that occurred due to successful
+
+Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+cooperation. Agents are, therefore, robust against negative
+learning due to teammate exploration and concurrent ac-
+tions. Notably, unlike Distributed Q-learning, Hysteretic
+Q-learning permits eventual degradation of Q-values that
+were overestimated due to outcomes unrelated to their as-
+sociated action.
+
+Hysteretic Q-learning has enjoyed a strong empirical
+track record in fully-observable MARL (Xu et al., 2012;
+Matignon et al., 2012; Barbalios & Tzionas, 2014), ex-
+hibiting similar performance as more complex approaches.
+Encouraged by these results, we introduce Decentralized
+Hysteretic Deep Recurrent Q-Networks (Dec-HDRQNs)
+for partially-observable domains. This approach exploits
+the robustness of hysteresis to non-stationarity and alter-
+exploration, in addition to the representational power and
+memory-based decision making of DRQNs. As later
+demonstrated, Dec-HDRQN is well-suited to Dec-POMDP
+MARL, as opposed to non-hysteretic Dec-DRQN.
+
+5.1.2. CONCURRENT EXPERIENCE REPLAY
+
+TRAJECTORIES (CERTS)
+
+Experience replay (sampling a memory bank of experience
+tuples (cid:104)s, a, r, s(cid:48)(cid:105) for TD learning) was ﬁrst introduced by
+Lin (1992) and recently shown to be crucial for stable deep
+Q-learning (Mnih et al., 2015). With experience replay,
+sampling cost is reduced as multiple TD updates can be
+conducted using each sample, enabling rapid Q-value prop-
+agation to preceding states without additional environmen-
+tal interactions. Experience replay also breaks temporal
+correlations of samples used for Q-value updates—crucial
+for reducing generalization error, as the stochastic opti-
+mization algorithms used for training DQNs typically as-
+sume i.i.d. data (Bengio, 2012).
+
+Despite the beneﬁts in single-agent settings, existing
+MARL approaches have found it necessary to disable ex-
+perience replay (Foerster et al., 2016). This is due to the
+non-concurrent (and non-stationary) nature of local experi-
+ences when sampled independently for each agent, despite
+the agents learning concurrently. A contributing factor
+is that inter-agent desynchronization of experiences com-
+pounds the prevalence of earlier-mentioned shadowed equi-
+libria challenges, destabilizing coordination. As a moti-
+vating example, consider a 2 agent game where A(1) =
+A(2) = {a1, a2}. Let there be two optimal joint ac-
+tions: (cid:104)a1, a1(cid:105) and (cid:104)a2, a2(cid:105) (e.g., only these joint actions
+have positive, equal reward). Given independent experi-
+ence samples for each agent, the ﬁrst agent may learn ac-
+tion a1 as optimal, whereas the second agent learns a2, re-
+sulting in arbitrarily poor joint action (cid:104)a1, a2(cid:105). This mo-
+tivates a need for concurrent (synchronized) sampling of
+experiences across the team in MARL settings. Concurrent
+experiences induce correlations in local policy updates, so
+
+(a) CERT structure.
+
+(b) CERT minibatches.
+
+Figure 1. Concurrent training samples for MARL. Each cube sig-
+niﬁes an experience tuple (cid:104)o(i)
+, a(i)
+t+1(cid:105). Axes e, t, i corre-
+t
+t
+spond to episode, timestep, and agent indices, respectively.
+
+, rt, o(i)
+
+, a(i)
+t
+
+, rt, o(i)
+
+that given existence of multiple equilibria, agents tend to
+converge to the same one. Thus, we introduce Concur-
+rent Experience Replay Trajectories (CERTs), visualized in
+Fig. 1a. During execution of each learning episode e ∈ N+,
+each agent i collects experience tuple (cid:104)o(i)
+t+1(cid:105) at
+t
+timestep t, where ot, at, and rt are current observation, ac-
+tion, and reward, and ot+1 is the subsequent observation.
+Fig. 1a visualizes each experience tuple as a cube. Experi-
+ences in each episode are stored in a sequence (along time
+axis t of Fig. 1a), as Dec-HDRQN assumes an underly-
+ing RNN architecture that necessitates sequential samples
+for each training iteration.
+Importantly, as all agents are
+aware of timestep t and episode e, they store their expe-
+riences concurrently (along agent index axis i of Fig. 1a).
+Upon episode termination, a new sequence is initiated (a
+new row along episode axis e of Fig. 1a). No restrictions
+are imposed on terminal conditions (i.e., varying trajectory
+lengths are permitted along axis t of Fig. 1a). CERTs are
+a ﬁrst-in ﬁrst-out circular queue along the episode axis e,
+such that old episodes are eventually discarded.
+
+5.1.3. TRAINING DEC-HDRQNS USING CERTS
+
+, h(i)
+Each agent i maintains DRQN Q(i)(o(i)
+t−1, a(i); θ(i)),
+t
+where o(i)
+is the latest local observation, h(i)
+t−1 is the RNN
+t
+hidden state, a(i) is the action, and θ(i) are the local DRQN
+parameters. DRQNs are trained on experience sequences
+(traces) with tracelength τ . Figure 1b visualizes the mini-
+batch sampling procedure for training, with τ = 4. In each
+training iteration, agents ﬁrst sample a concurrent mini-
+batch of episodes. All agents’ sampled traces have the same
+starting timesteps (i.e., are coincident along agent axis i
+in Fig. 1b). Guaranteed concurrent sampling merely re-
+quires a one-time (ofﬂine) consensus of agents’ random
+number generator seeds prior to initiating learning. This
+ensures our approach is fully decentralized and assumes
+no explicit communication, even during learning. Fig. 1b
+shows a minibatch of 3 episodes, e, sampled in red. To train
+DRQNs, Hausknecht & Stone (2015) suggest randomly
+
+⋯ 𝑡 𝑒 𝑖 ⋯ ∅ ∅ ∅ 𝜏=4 Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+sampling a timestep within each episode, and training us-
+ing τ backward steps. However, this imposes a bias where
+experiences in each episode’s ﬁnal τ timesteps are used
+in fewer recurrent updates.
+Instead, we propose that for
+each sampled episode e, agents sample a concurrent start
+timestep t0 for the trace from interval {−τ + 1, . . . , He},
+where He is the timestep of the episode’s ﬁnal experience.
+For example, the three sampled (red) traces in Fig. 1b start
+at timesteps +1, −1, and +2, respectively. This ensures
+all experiences have equal probability of being used in up-
+dates, which we found especially critical for fast training
+on tasks with only terminal rewards.
+
+Sampled traces sometimes contain elements outside the
+episode interval (indicated as ∅ in Fig. 1b). We discard
+∅ experiences and zero-pad the sufﬁx of associated traces
+(to ensure all traces have equal length τ , enabling seamless
+use of ﬁxed-length minibatch optimizers in standard deep
+learning libraries). Sufﬁx (rather than preﬁx) padding en-
+sures RNN internal states of non-∅ samples are unaffected.
+In training iteration j, agent i uses the sampling procedure
+to collect a minibatch of traces from CERT memory M(i),
+
+B = {(cid:104)(cid:104)ob
+, rb
+, ab
+, ob
+t0
+t0
+t0
+t0+τ −1, rb
+t0+τ −1, ab
+(cid:104)ob
+
+t0+1(cid:105), . . . ,
+
+t0+τ −1, ob
+
+t0+τ (cid:105)(cid:105)}b={1,...,B},
+
+(3)
+
+where t0 is the start timestep for each trace, b is trace index,
+and B is number of traces (minibatch size).2 Each trace b is
+used to calculate a corresponding sequence of target values,
+
+{(cid:104)(cid:104)yb
+t0
+
+(cid:105), . . . , (cid:104)yb
+
+t0+τ −1(cid:105)(cid:105)}b={1,...,B},
+
+(4)
+
+t + γ maxa(cid:48) Q(ob
+
+where yb
+t = rb
+work parameters ˆθ(i)
+j
+learning (Mnih et al., 2015). Loss over all traces is,
+
+t, a(cid:48); ˆθ(i)
+j ). Target net-
+are updated less frequently, for stable
+
+t+1, hb
+
+Lj(θ(i)
+
+j ) = E
+
+(ob
+
+t ,ab
+
+t ,rb
+
+t ,ob
+
+t+1)∼M(i) [(δb
+
+t )2],
+
+(5)
+
+t; θ(i)
+
+t, hb
+
+t = yb
+
+t − Q(ob
+
+t−1, ab
+where δb
+j ). Loss contributions
+of sufﬁx ∅-padding elements are masked out. Parameters
+are updated via gradient descent on Eq. (5), with the caveat
+of hysteretic learning rates 0 < β < α < 1, where learning
+rate α is used if δb
+
+t ≥ 0, and β is used otherwise.
+
+5.2. Phase II: Dec-POMDP MT-MARL
+
+Following task specialization, the second phase involves
+distillation of each agent’s set of DRQNs into a uniﬁed
+DRQN that performs well in all tasks without explicit pro-
+vision of task ID. Using DRQNs, our approach extends
+the single-agent, fully-observable MTRL method proposed
+by Rusu et al. (2015) to Dec-POMDP MT-MARL. Specif-
+ically, once Dec-HDRQN specialization is conducted for
+
+2For notational simplicity, agent superscripts (i) are excluded
+
+from local experiences (cid:104)o(i), a(i), r, o(cid:48)(i)(cid:105) in Eqs. (3) to (6).
+
+each task, multi-task learning can be treated as a regression
+problem over Q-values. During multi-task learning, our ap-
+proach iteratively conducts data collection and regression.
+
+t ((cid:126)ot
+
+, Q(i)
+
+t (cid:105), where Q(i)
+
+For data collection, agents use each specialized DRQN
+(from Phase I) to execute actions in corresponding tasks,
+resulting in a set of regression CERTs {MR} (one per
+task), each containing sequences of regression experiences
+(cid:104)o(i)
+t = Q(i)
+(i); θ(i)) is the spe-
+t
+cialized DRQN’s Q-value vector for agent i at timestep
+t. Supervised learning of Q-values is then conducted.
+Each agent samples experiences from its local regression
+CERTs to train a single distilled DRQN with parameters
+θ(i)
+R . Given a minibatch of regression experience traces
+BR = {(cid:104)(cid:104)ob
+t0+τ −1(cid:105)(cid:105)}b={1,...,B},
+t0
+the following tempered Kullback-Leibler (KL) divergence
+loss is minimized for each agent,
+
+t0+τ −1, Qb
+
+(cid:105), . . . , (cid:104)ob
+
+, Qb
+t0
+
+LKL(BR, θ(i)
+
+R ; T )
+
+= E
+
+(ob
+
+t ,Qb
+
+t )∼{MR
+
+(i)}
+
+softmaxa(
+
+) ln
+
+|A(i)|
+(cid:88)
+
+a=1
+
+(6)
+
+Qb
+t
+T
+
+softmaxa( Qb
+T )
+softmaxa(Qb
+t,R)
+
+t
+
+,
+
+t,R((cid:126)ot
+
+t,R = Qb
+
+b; θ(i)
+where Qb
+R ) is the vector of action-
+values predicted by distilled DRQN given the same input
+as the specialized DRQN, T is the softmax temperature,
+and softmaxa refers to the a-th element of the softmax out-
+put. The motivation behind loss function (6) is that low
+temperatures (0 < T < 1) lead to sharpening of special-
+ized DRQN action-values, Qb
+t, ensuring that the distilled
+DRQN ultimately chooses similar actions as the special-
+ized policy it was trained on. We refer readers to Rusu
+et al. (2015) for additional analysis of the distillation loss.
+Note that concurrent sampling is not necessary during the
+distillation phase, as it is entirely supervised; CERTs are
+merely used for storage of the regression experiences.
+
+6. Evaluation
+
+6.1. Task Specialization using Dec-HDRQN
+
+We ﬁrst evaluate single-task performance of the introduced
+Dec-HDRQN approach on a series of increasingly chal-
+lenging domains. Domains are designed to support a large
+number of task variations, serving as a useful MT-MARL
+benchmarking tool. All experiments use DRQNs with
+2 multi-layer perceptron (MLP) layers, an LSTM layer
+(Hochreiter & Schmidhuber, 1997) with 64 memory cells,
+and another 2 MLP layers. MLPs have 32 hidden units each
+and rectiﬁed linear unit nonlinearities are used throughout,
+with the exception of the ﬁnal (linear) layer. Experiments
+use γ = 0.95 and Adam optimizer (Kingma & Ba, 2014)
+with base learning rate 0.001. Dec-HDRQNs use hysteretic
+learning rate β = 0.2 to 0.4. All results are reported for
+batches of 50 randomly-initialized episodes.
+
+Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+(a) Learning via Dec-DRQN.
+
+(b) Learning via Dec-HDRQN (our approach).
+
+Figure 2. Task specialization for MAMT domain with n = 2 agents, Pf = 0.3. (a) Without hysteresis Dec-DRQN policies destabilize
+in the 5 × 5 task and fails to learn in the 6 × 6 and 7 × 7 tasks. (b) Dec-HDRQN (our approach) performs well in all tasks.
+
+‘south’, ‘east’, ‘west’, and ‘wait’, but transitions are noisy
+(0.1 probability of moving to an unintended adjacent cell).
+
+In the MAST domain, each task is speciﬁed by a unique
+grid size m; in MAMT, each task also has a unique agent-
+target assignment. The challenge is that agents must learn
+particular roles (to ensure coordination) and also discern
+aliased states (to ensure quick capture of targets) using lo-
+cal noisy observations. Tasks end after H timesteps, or
+upon simultaneous target capture. Cardinality of local pol-
+
+|Ω(i) |t−1
+icy space for agent i at timestep t is O(|A(i)|
+|Ω(i) |−1 )
+(Oliehoek et al., 2008), where |A(i)| = 5, |Ω(i)| = m4 for
+MAST, and |Ω(i)| = m2(n+1) for MAMT. Across all tasks,
+non-zero reward signals are extremely sparse, appearing in
+the terminal experience tuple only if targets are simultane-
+ously captured. Readers are referred to the supplementary
+material for domain visualizations.
+
+The failure point of Dec-DRQN is ﬁrst compared to Dec-
+HDRQN in the MAST domain with n = 2 and Pf = 0 (full
+observability) for increasing task size, starting from 4 × 4.
+Despite the domain simplicity, Dec-DRQN fails to match
+Dec-HDRQN at the 8 × 8 mark, receiving value 0.05±0.16
+in contrast to Dec-HDRQN’s 0.76±0.11 (full results re-
+ported in supplementary material). Experiments are then
+scaled up to a 2 agent, 2 target MAMT domain with
+Pf = 0.3. Empirical returns throughout training are shown
+in Fig. 2. In the MAMT tasks, a well-coordinated policy
+induces agents to capture targets simultaneously (yielding
+joint +1 reward). If any agent strays from this strategy dur-
+ing learning (e.g., while exploring), teammates receive no
+reward even while executing optimal local policies, lead-
+ing them to deviate from learned strategies. Due to lack
+of robustness against alter-exploration/non-stationarity, the
+Dec-DRQN becomes unstable in the 5 × 5 task, and fails
+to learn altogether in the 6 × 6 and 7 × 7 tasks (Fig. 2a).
+Hysteresis affords Dec-HDRQN policies the stability nec-
+essary to consistently achieve agent coordination (Fig. 2b).
+A centralized-learning variation of Dec-DRQN with inter-
+agent parameter sharing (similar to RIAL-PS in Foerster
+et al. (2016)) was also tested, but was not found to im-
+prove performance (see supplementary material). These re-
+
+Figure 3. The advantage of hysteresis is even more pronounced
+for MAMT with n = 3 agents. Pf = 0.6 for 3 × 3 task, and
+Pf = 0.1 for 4 × 4 task. Dec-HDRQN indicated by (H).
+
+Figure 4. Dec-HDRQN sensitivity to learning rate β (6 × 6
+MAMT domain, n = 2 agents, Pf = 0.25). Anticipated return
+Q(o0, a0) upper bounds actual return due to hysteretic optimism.
+
+Performance is evaluated on both multi-agent single-target
+(MAST) and multi-agent multi-target (MAMT) capture do-
+mains, variations of the existing meeting-in-a-grid Dec-
+POMDP benchmark (Amato et al., 2009). Agents i ∈
+{1, . . . , n} in an m × m toroidal grid receive +1 termi-
+nal reward only when they simultaneously capture moving
+targets (1 target in MAST, and n targets in MAMT). Each
+agent always observes its own location, but only some-
+times observes targets’ locations. Target dynamics are un-
+known to agents and vary across tasks. Similar to the Pong
+POMDP domain of Hausknecht & Stone (2015), our do-
+mains include observation ﬂickering: in each timestep, ob-
+servations of targets are sometimes obscured, with proba-
+bility Pf . In MAMT, each agent is assigned a unique target
+to capture, yet is unaware of the assignment (which also
+varies across tasks). Agent/target locations are randomly
+initialized in each episode. Actions are ‘move north’,
+
+0.020K40K60KTrainingEpoch0.00.20.40.60.81.0EmpiricalReturn3×34×45×56×67×70.020K40K60KTrainingEpoch0.00.20.40.60.81.0EmpiricalReturn3×34×45×56×67×70.010K20K30K40KTrainingEpoch0.00.20.40.60.81.0EmpiricalReturn3×34×43×3(H)4×4(H)0.00.20.40.60.81.0β0.00.20.40.60.81.0Q(o0,a0)EmpiricalReturnDeep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+Figure 5. MT-MARL performance of the proposed Dec-HDRQN specialization/distillation approach (labeled as Distilled) and simulta-
+neous learning approach (labeled as Multi). Multi-task policies for both approaches were trained on all MAMT tasks from 3 × 3 through
+6 × 6. Performance shown only for 4 × 4 and 6 × 6 domains for clarity. Distilled approach shows specialization training (Phase I of
+approach) until 70K epochs, after which distillation is conducted (Phase II of approach). Letting the simultaneous learning approach run
+for up to 500K episodes did not lead to signiﬁcant performance improvement. By contrast, the performance of our approach during the
+distillation phase (which includes task identiﬁcation) is almost as good as its performance during the specialization phase.
+
+sults further validate that, despite its simplicity, hysteretic
+learning signiﬁcantly improves the stability of MARL in
+cooperative settings. Experiments are also conducted for
+the n = 3 MAMT domain (Fig. 3). This domain poses
+signiﬁcant challenges due to reward sparsity. Even in the
+4 × 4 task, only 0.02% of the joint state space has a non-
+zero reward signal. Dec-DRQN fails to ﬁnd a coordinated
+joint policy, receiving near-zero return after training. Dec-
+HDRQN successfully coordinates the 3 agents. Note the
+high variance in empirical return for the 3 × 3 task is due
+to ﬂickering probability being increased to Pf = 0.6.
+
+Sensitivity of Dec-HDRQN empirical performance to hys-
+teretic learning rate β is shown in Fig. 4, where lower
+β corresponds to higher optimism; β = 0 causes mono-
+tonic increase of approximated Q-values during learning,
+whereas β = 1 corresponds to Dec-DRQN. Due to the
+optimistic assumption, anticipated returns at the initial
+timestep, Q(o0, a0), overestimate true empirical return.
+Despite this, β ∈ [0.1, 0.6] consistently enables learning
+of a well-coordinated policy, with β ∈ [0.4, 0.5] achieving
+best performance. Readers are referred to the supplemen-
+tary material for additional sensitivity analysis of conver-
+gence trends with varying β and CERT tracelength τ .
+
+6.2. Multi-tasking using Distilled Dec-HDRQN
+
+We now evaluate distillation of specialized Dec-HDRQN
+policies (as learned in Section 6.1) for MT-MARL. A ﬁrst
+approach is to forgo specialization and directly learn a
+Dec-HDRQN using a pool of experiences from all tasks.
+This approach, called Multi-DQN by Rusu et al. (2015),
+is susceptible to convergence issues even in single-agent,
+fully-observable settings. In Fig. 5, we compare these ap-
+proaches (where we label ours as ‘Distilled’, and Multi-
+HDRQN as ‘Multi’). Both approaches were trained to per-
+form multi-tasking on 2-agent MAMT tasks ranging from
+3×3 to 6×6, with Pf = 0.3. Our distillation approach uses
+no task-speciﬁc MLP layers, unlike Rusu et al. (2015), due
+to our stronger assumptions on task relatedness and lack of
+
+execution-time observability of task identity.
+
+In Fig. 5, our MT-MARL approach ﬁrst performs Dec-
+HDRQN specialization training on each task for 70K
+epochs, and then performs distillation for 100K epochs. A
+grid search was conducted for temperature hyperparameter
+in Eq. (6) (T = 0.01 was found suitable). Note that perfor-
+mance is plotted only for the 4 × 4 and 6 × 6 tasks, simply
+for plot clarity (see supplementary material for MT-MARL
+evaluation results on all tasks). Multi-HDRQN exhibits
+poor performance across all tasks due to the complex-
+ity involved in concurrently learning over multiple Dec-
+POMDPs (with partial observability, transition noise, non-
+stationarity, varying domain sizes, varying target dynam-
+ics, and random initializations). We experimented with
+larger and smaller network sizes for Multi-HDRQN, with
+no major difference in performance (we also include train-
+ing results for 500K Multi-HDRQN iterations in the sup-
+plementary). By contrast, our proposed MT-MARL ap-
+proach achieves near-nominal execution-time performance
+on all tasks using a single distilled policy for each agent –
+despite not explicitly being provided the task identity.
+
+7. Contribution
+
+This paper introduced the ﬁrst formulation and approach
+for multi-task multi-agent reinforcement learning under
+partial observability. Our approach combines hysteretic
+learners, DRQNs, CERTs, and distillation, demonstrably
+achieving multi-agent coordination using a single joint pol-
+icy in a set of Dec-POMDP tasks with sparse rewards, de-
+spite not being provided task identities during execution.
+The parametric nature of the capture tasks used for evalu-
+ation (e.g., variations in grid size, target assignments and
+dynamics, sensor failure probabilities) makes them good
+candidates for ongoing benchmarks of multi-agent multi-
+task learning. Future work will investigate incorporation of
+skills (macro-actions) into the framework, extension to do-
+mains with heterogeneous agents, and evaluation on more
+complex domains with much larger numbers of tasks.
+
+0.020K40K60K80K100K120K140K160KTrainingEpoch0.00.20.40.60.81.0EmpiricalReturn4×4(Distilled)6×6(Distilled)4×4(Multi)6×6(Multi)Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+Acknowledgements
+
+The authors thank the anonymous reviewers for their in-
+sightful feedback and suggestions. This work was sup-
+ported by Boeing Research & Technology, ONR MURI
+Grant N000141110688 and BRC Grant N000141712072.
+
+References
+
+Amato, Christopher, Dibangoye, Jilles Steeve, and Zilber-
+stein, Shlomo. Incremental policy generation for ﬁnite-
+horizon DEC-POMDPs. In ICAPS, 2009.
+
+Banerjee, Bikramjit, Lyle, Jeremy, Kraemer, Landon, and
+Yellamraju, Rajesh. Sample bounded distributed rein-
+forcement learning for decentralized POMDPs. In AAAI,
+2012.
+
+Barbalios, Nikos and Tzionas, Panagiotis. A robust ap-
+proach for multi-agent natural resource allocation based
+on stochastic optimization algorithms. Applied Soft
+Computing, 18:12–24, 2014.
+
+Bengio, Yoshua. Practical recommendations for gradient-
+based training of deep architectures. In Neural networks:
+Tricks of the trade, pp. 437–478. Springer, 2012.
+
+Bernstein, Daniel S, Givan, Robert, Immerman, Neil, and
+Zilberstein, Shlomo. The complexity of decentralized
+control of markov decision processes. Mathematics of
+operations research, 27(4):819–840, 2002.
+
+Bowling, Michael and Veloso, Manuela. Multiagent learn-
+ing using a variable learning rate. Artiﬁcial Intelligence,
+136(2):215–250, 2002.
+
+Brunskill, Emma and Li, Lihong.
+
+of multi-task reinforcement learning.
+arXiv:1309.6821, 2013.
+
+Sample complexity
+arXiv preprint
+
+Bus¸oniu, Lucian, Babuˇska, Robert, and De Schutter, Bart.
+Multi-agent reinforcement learning: An overview. In In-
+novations in multi-agent systems and applications-1, pp.
+183–221. Springer, 2010.
+
+Caruana, Rich. Multitask learning. In Learning to learn,
+
+pp. 95–133. Springer, 1998.
+
+Claus, Caroline and Boutilier, Craig. The dynamics of re-
+inforcement learning in cooperative multiagent systems.
+AAAI/IAAI, 1998:746–752, 1998.
+
+Fern´andez, Fernando and Veloso, Manuela. Probabilis-
+In
+tic policy reuse in a reinforcement learning agent.
+Proc. of the ﬁfth international joint conf. on Autonomous
+agents and multiagent sys., pp. 720–727. ACM, 2006.
+
+Foerster, Jakob, Nardelli, Nantas, Farquhar, Gregory, Torr,
+Philip, Kohli, Pushmeet, Whiteson, Shimon, et al. Sta-
+bilising experience replay for deep multi-agent rein-
+forcement learning. arXiv preprint arXiv:1702.08887,
+2017.
+
+Foerster, Jakob N, Assael, Yannis M, de Freitas, Nando,
+and Whiteson, Shimon. Learning to communicate to
+solve riddles with deep distributed recurrent Q-networks.
+arXiv preprint arXiv:1602.02672, 2016.
+
+Fulda, Nancy and Ventura, Dan. Predicting and preventing
+coordination problems in cooperative Q-learning sys-
+tems. In IJCAI, volume 2007, pp. 780–785, 2007.
+
+Gordon, Geoffrey J. Stable function approximation in dy-
+namic programming. In Proc. of the twelfth international
+conf. on machine learning, pp. 261–268, 1995.
+
+Hausknecht, Matthew and Stone, Peter. Deep recurrent Q-
+learning for partially observable MDPs. arXiv preprint
+arXiv:1507.06527, 2015.
+
+Hinton, Geoffrey, Vinyals, Oriol, and Dean, Jeff. Distill-
+ing the knowledge in a neural network. arXiv preprint
+arXiv:1503.02531, 2015.
+
+Hochreiter, Sepp and Schmidhuber, J¨urgen. Long short-
+term memory. Neural comp., 9(8):1735–1780, 1997.
+
+Kaelbling, Leslie Pack, Littman, Michael L, and Cassan-
+dra, Anthony R. Planning and acting in partially observ-
+able stochastic domains. Artiﬁcial intelligence, 101(1):
+99–134, 1998.
+
+Kapetanakis, Spiros and Kudenko, Daniel. Reinforcement
+learning of coordination in cooperative multi-agent sys-
+tems. AAAI/IAAI, 2002:326–331, 2002.
+
+Kingma, Diederik and Ba,
+
+Jimmy.
+method for stochastic optimization.
+arXiv:1412.6980, 2014.
+
+Adam:
+
+A
+arXiv preprint
+
+Lauer, Martin and Riedmiller, Martin. An algorithm for
+distributed reinforcement learning in cooperative multi-
+agent systems. In Proc. of the Seventeenth International
+Conf. on Machine Learning. Citeseer, 2000.
+
+Dutech, Alain, Buffet, Olivier, and Charpillet, Franc¸ois.
+Multi-agent systems by incremental gradient reinforce-
+ment learning. In Proc. of the International Joint Conf.
+on Artiﬁcial Intelligence, pp. 833–838, 2001.
+
+Laurent, Guillaume J, Matignon, La¨etitia, Fort-Piat, Le,
+et al. The world of independent learners is not marko-
+vian. International Journal of Knowledge-based and In-
+telligent Engineering Systems, 15(1):55–64, 2011.
+
+Deep Decentralized Multi-task Multi-Agent RL under Partial Observability
+
+Lin, Long-Ji. Self-improving reactive agents based on re-
+inforcement learning, planning and teaching. Machine
+learning, 8(3-4):293–321, 1992.
+
+Tan, Ming. Multi-agent reinforcement learning: Indepen-
+dent vs. cooperative agents. In Proc. of the tenth inter-
+national conf. on machine learning, pp. 330–337, 1993.
+
+Liu, Miao, Amato, Christopher, Liao, Xuejun, Carin,
+Lawrence, and How, Jonathan P. Stick-breaking policy
+learning in Dec-POMDPs. In Proc. of the International
+Joint Conf. on Artiﬁcial Intelligence, 2015.
+
+Liu, Miao, Amato, Christopher, Anesta, Emily, Grifﬁth,
+J. Daniel, and How, Jonathan P. Learning for decen-
+tralized control of multiagent systems in large partially
+observable stochastic environments. In AAAI, 2016.
+
+Matignon, La¨etitia, Laurent, Guillaume J, and Le Fort-Piat,
+Nadine. Hysteretic Q-learning: an algorithm for de-
+centralized reinforcement learning in cooperative multi-
+agent teams. In IROS, 2007.
+
+Matignon, Laetitia, Laurent, Guillaume J, and Le Fort-Piat,
+Nadine.
+Independent reinforcement learners in coop-
+erative markov games: a survey regarding coordination
+problems. The Knowledge Engineering Review, 27(01):
+1–31, 2012.
+
+Mnih, Volodymyr, Kavukcuoglu, Koray, Silver, David,
+Rusu, Andrei A, Veness, Joel, Bellemare, Marc G,
+Graves, Alex, Riedmiller, Martin, Fidjeland, Andreas K,
+Ostrovski, Georg, et al. Human-level control through
+deep reinforcement learning. Nature, 518(7540):529–
+533, 2015.
+
+Oliehoek, Frans A. and Amato, Christopher. A Concise
+Introduction to Decentralized POMDPs. Springer, 2016.
+
+Oliehoek, Frans A, Spaan, Matthijs TJ, Vlassis, Nikos A,
+et al. Optimal and approximate q-value functions for de-
+centralized POMDPs. Journal of Artiﬁcial Intelligence
+Research (JAIR), 32:289–353, 2008.
+
+Pan, Sinno Jialin and Yang, Qiang. A survey on transfer
+learning. IEEE Transactions on knowledge and data en-
+gineering, 22(10):1345–1359, 2010.
+
+Peshkin, Leonid, Kim, Kee-Eung, Meuleau, Nicolas, and
+Kaelbling, Leslie Pack. Learning to cooperate via policy
+search. In Proc. of the Sixteenth conf. on Uncertainty in
+artiﬁcial intelligence, pp. 489–496. Morgan Kaufmann
+Publishers Inc., 2000.
+
+Rusu, Andrei A, Colmenarejo, Sergio Gomez, Gulcehre,
+Caglar, Desjardins, Guillaume, Kirkpatrick, James, Pas-
+canu, Razvan, Mnih, Volodymyr, Kavukcuoglu, Koray,
+and Hadsell, Raia. Policy distillation. arXiv preprint
+arXiv:1511.06295, 2015.
+
+Sutton, Richard S and Barto, Andrew G. Reinforcement
+learning: An introduction, volume 1. MIT press Cam-
+bridge, 1998.
+
+Tanaka, Fumihide and Yamamura, Masayuki. Multitask
+reinforcement learning on the distribution of mdps. In
+Computational Intelligence in Robotics and Automation,
+2003. Proceedings. 2003 IEEE International Symposium
+on, volume 3, pp. 1108–1113. IEEE, 2003.
+
+Taylor, Adam, Dusparic, Ivana, Galv´an-L´opez, Edgar,
+Clarke, Siobh´an, and Cahill, Vinny. Transfer learn-
+ing in multi-agent systems through parallel transfer. In
+Workshop on Theoretically Grounded Transfer Learn-
+ing at the 30th International Conf. on Machine Learning
+(Poster), volume 28, pp. 28. Omnipress, 2013.
+
+Taylor, Matthew E and Stone, Peter. Transfer learning for
+reinforcement learning domains: A survey. Journal of
+Machine Learning Research, 10(Jul):1633–1685, 2009.
+
+Torrey, Lisa and Shavlik, Jude. Transfer learning. Hand-
+book of Research on Machine Learning Applications and
+Trends: Algs., Methods, and Techniques, 1:242, 2009.
+
+Watkins, Christopher JCH and Dayan, Peter. Q-learning.
+
+Machine learning, 8(3-4):279–292, 1992.
+
+Wierstra, Daan, Foerster, Alexander, Peters, Jan, and
+Schmidhuber, Juergen. Solving deep memory POMDPs
+with recurrent policy gradients. In International Conf. on
+Artiﬁcial Neural Networks, pp. 697–706. Springer, 2007.
+
+Wilson, Aaron, Fern, Alan, Ray, Soumya, and Tadepalli,
+Prasad. Multi-task reinforcement learning: a hierarchi-
+cal bayesian approach. In Proc. of the 24th international
+conf. on Machine learning, pp. 1015–1022. ACM, 2007.
+
+Wilson, Aaron, Fern, Alan, Ray, Soumya, and Tadepalli,
+Prasad. Learning and transferring roles in multi-agent
+reinforcement. In Proc. AAAI-08 Workshop on Transfer
+Learning for Complex Tasks, 2008.
+
+Wu, Feng, Zilberstein, Shlomo, and Chen, Xiaoping. Roll-
+out sampling policy iteration for decentralized POMDPs.
+arXiv preprint arXiv:1203.3528, 2012.
+
+Wu, Feng, Zilberstein, Shlomo, and Jennings, Nicholas R.
+Monte-carlo expectation maximization for decentralized
+POMDPs. In Proc. of the International Joint Conf. on
+Artiﬁcial Intelligence, pp. 397–403, 2013.
+
+Xu, Yinliang, Zhang, Wei, Liu, Wenxin, and Ferrese,
+Frank. Multiagent-based reinforcement learning for op-
+IEEE Transactions on
+timal reactive power dispatch.
+Systems, Man, and Cybernetics, Part C (Applications
+and Reviews), 42(6):1742–1751, 2012.
+
+

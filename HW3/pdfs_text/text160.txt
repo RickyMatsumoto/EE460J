@@ -1,0 +1,1369 @@
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+Marco Cuturi 1 Mathieu Blondel 2
+
+Input
+
+Output
+
+Abstract
+
+We propose in this paper a differentiable learning
+loss between time series, building upon the cel-
+ebrated dynamic time warping (DTW) discrep-
+ancy. Unlike the Euclidean distance, DTW can
+compare time series of variable size and is ro-
+bust to shifts or dilatations across the time di-
+mension. To compute DTW, one typically solves
+a minimal-cost alignment problem between two
+time series using dynamic programming. Our
+work takes advantage of a smoothed formula-
+tion of DTW, called soft-DTW, that computes the
+soft-minimum of all alignment costs. We show
+in this paper that soft-DTW is a differentiable
+loss function, and that both its value and gradi-
+ent can be computed with quadratic time/space
+complexity (DTW has quadratic time but linear
+space complexity). We show that this regular-
+ization is particularly well suited to average and
+cluster time series under the DTW geometry, a
+task for which our proposal signiﬁcantly outper-
+forms existing baselines (Petitjean et al., 2011).
+Next, we propose to tune the parameters of a ma-
+chine that outputs time series by minimizing its
+ﬁt with ground-truth labels in a soft-DTW sense.
+
+1. Introduction
+
+The goal of supervised learning is to learn a mapping that
+links an input to an output objects, using examples of such
+pairs. This task is noticeably more difﬁcult when the out-
+put objects have a structure, i.e. when they are not vec-
+tors (Bakir et al., 2007). We study here the case where each
+output object is a time series, namely a family of observa-
+tions indexed by time. While it is tempting to treat time
+as yet another feature, and handle time series of vectors
+as the concatenation of all these vectors, several practical
+
+1CREST, ENSAE, Universit´e Paris-Saclay, France 2NTT
+Communication Science Laboratories, Seika-cho, Kyoto, Japan.
+Correspondence to: Marco Cuturi <marco.cuturi@ensae.fr>,
+Mathieu Blondel <mathieu@mblondel.org>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Figure 1. Given the ﬁrst part of a time series, we trained two
+multi-layer perceptron (MLP) to predict the entire second part.
+Using the ShapesAll dataset, we used a Euclidean loss for the ﬁrst
+MLP and the soft-DTW loss proposed in this paper for the second
+one. We display above the prediction obtained for a given test
+instance with either of these two MLPs in addition to the ground
+truth. Oftentimes, we observe that the soft-DTW loss enables us
+to better predict sharp changes. More time series predictions are
+given in Appendix F.
+
+issues arise when taking this simplistic approach: Time-
+indexed phenomena can often be stretched in some areas
+along the time axis (a word uttered in a slightly slower pace
+than usual) with no impact on their characteristics; varying
+sampling conditions may mean they have different lengths;
+time series may not synchronized.
+
+The DTW paradigm. Generative models for time series
+are usually built having the invariances above in mind:
+Such properties are typically handled through latent vari-
+ables and/or Markovian assumptions (L¨utkepohl, 2005,
+Part I,§18). A simpler approach, motivated by geometry,
+lies in the direct deﬁnition of a discrepancy between time
+series that encodes these invariances, such as the Dynamic
+Time Warping (DTW) score (Sakoe & Chiba, 1971; 1978).
+DTW computes the best possible alignment between two
+time series (the optimal alignment itself can also be of in-
+terest, see e.g. Garreau et al. 2014) of respective length n
+and m by computing ﬁrst the n × m pairwise distance ma-
+trix between these points to solve then a dynamic program
+(DP) using Bellman’s recursion with a quadratic (nm) cost.
+
+The DTW geometry. Because it encodes efﬁciently a use-
+ful class of invariances, DTW has often been used in a dis-
+criminative framework (with a k-NN or SVM classiﬁer) to
+predict a real or a class label output, and engineered to run
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+faster in that context (Yi et al., 1998). Recent works by
+Petitjean et al. (2011); Petitjean & Ganc¸arski (2012) have,
+however, shown that DTW can be used for more innova-
+tive tasks, such as time series averaging using the DTW
+discrepancy (see Schultz & Jain 2017 for a gentle introduc-
+tion to these ideas). More generally, the idea of synthetis-
+ing time series centroids can be regarded as a ﬁrst attempt
+to output entire time series using DTW as a ﬁtting loss.
+From a computational perspective, these approaches are,
+however, hampered by the fact that DTW is not differen-
+tiable and unstable when used in an optimization pipeline.
+
+Soft-DTW. In parallel to these developments, several au-
+thors have considered smoothed modiﬁcations of Bell-
+man’s recursion to deﬁne smoothed DP distances (Bahl &
+Jelinek, 1975; Ristad & Yianilos, 1998) or kernels (Saigo
+et al., 2004; Cuturi et al., 2007). When applied to the
+DTW discrepancy, that regularization results in a soft-DTW
+score, which considers the soft-minimum of the distribution
+of all costs spanned by all possible alignments between
+two time series. Despite considering all alignments and
+not just the optimal one, soft-DTW can be computed with
+a minor modiﬁcation of Bellman’s recursion, in which all
+(min, +) operations are replaced with (+, ×). As a result,
+both DTW and soft-DTW have quadratic in time & linear
+in space complexity with respect to the sequences’ lengths.
+Because soft-DTW can be used with kernel machines, one
+typically observes an increase in performance when using
+soft-DTW over DTW (Cuturi, 2011) for classiﬁcation.
+
+Our contributions. We explore in this paper another
+important beneﬁt of smoothing DTW: unlike the original
+DTW discrepancy, soft-DTW is differentiable in all of its
+arguments. We show that the gradients of soft-DTW w.r.t
+to all of its variables can be computed as a by-product of
+the computation of the discrepancy itself, with an added
+quadratic storage cost. We use this fact to propose an al-
+ternative approach to the DBA (DTW Barycenter Averag-
+ing) clustering algorithm of (Petitjean et al., 2011), and
+observe that our smoothed approach signiﬁcantly outper-
+forms known baselines for that task. More generally, we
+propose to use soft-DTW as a ﬁtting term to compare the
+output of a machine synthesizing a time series segment
+with a ground truth observation, in the same way that, for
+instance, a regularized Wasserstein distance was used to
+compute barycenters (Cuturi & Doucet, 2014), and later
+to ﬁt discriminators that output histograms (Zhang et al.,
+2015; Rolet et al., 2016). When paired with a ﬂexible
+learning architecture such as a neural network, soft-DTW
+allows for a differentiable end-to-end approach to design
+predictive and generative models for time series, as illus-
+trated in Figure 1. Source code is available at https:
+//github.com/mblondel/soft-dtw.
+
+Structure. After providing background material, we show
+
+in §2 how soft-DTW can be differentiated w.r.t the locations
+of two time series. We follow in §3 by illustrating how
+these results can be directly used for tasks that require to
+output time series: averaging, clustering and prediction of
+time series. We close this paper with experimental results
+in §4 that showcase each of these potential applications.
+
+Notations. We consider in what follows multivariate dis-
+crete time series of varying length taking values in Ω ⊂ Rp.
+A time series can be thus represented as a matrix of p lines
+and varying number of columns. We consider a differen-
+tiable substitution-cost function δ : Rp × Rp → R+ which
+will be, in most cases, the quadratic Euclidean distance be-
+tween two vectors. For an integer n we write JnK for the set
+{1, . . . , n} of integers. Given two series’ lengths n and m,
+we write An,m ⊂ {0, 1}n×m for the set of (binary) align-
+ment matrices, that is paths on a n × m matrix that connect
+the upper-left (1, 1) matrix entry to the lower-right (n, m)
+one using only ↓, →, ց moves. The cardinal of An,m is
+known as the delannoy(n − 1, m − 1) number; that number
+grows exponentially with m and n.
+
+2. The DTW and soft-DTW loss functions
+
+We propose in this section a uniﬁed formulation for the
+original DTW discrepancy (Sakoe & Chiba, 1978) and
+the Global Alignment kernel (GAK) (Cuturi et al., 2007),
+which can be both used to compare two time series x =
+(x1, . . . , xn) ∈ Rp×n and y = (y1, . . . , ym) ∈ Rp×m.
+
+2.1. Alignment costs: optimality and sum
+
+ij ∈ Rn×m,
+Given the cost matrix ∆(x, y) :=
+the inner product hA, ∆(x, y) i of that matrix with an align-
+ment matrix A in An,m gives the score of A, as illustrated
+in Figure 2. Both DTW and GAK consider the costs of all
+possible alignment matrices, yet do so differently:
+
+δ(xi, yj)
+
+(cid:2)
+
+(cid:3)
+
+DTW(x, y) := min
+
+hA, ∆(x, y) i,
+
+kγ
+GA(x, y) :=
+
+e−hA,∆(x,y) i/γ.
+
+(1)
+
+A∈An,m
+
+XA∈An,m
+
+DP Recursion. Sakoe & Chiba (1978) showed that the
+Bellman equation (1952) can be used to compute DTW.
+That recursion, which appears in line 5 of Algorithm 1 (dis-
+regarding for now the exponent γ), only involves (min, +)
+operations. When considering kernel kγ
+GA and, instead, its
+integration over all alignments (see e.g. Lasserre 2009),
+Cuturi et al. (2007, Theorem 2) and the highly related for-
+mulation of Saigo et al. (2004, p.1685) use an old algo-
+rithmic appraoch (Bahl & Jelinek, 1975) which consists
+in (i) replacing all costs by their neg-exponential; (ii) re-
+place (min, +) operations with (+, ×) operations. These
+two recursions can be in fact uniﬁed with the use of a soft-
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+minimum operator, which we present below.
+
+∇xdtw0(x, y) =
+
+y1
+
+y2
+
+y3
+
+y4
+
+y5
+
+y6
+
+x1
+x2
+x3
+x4
+
+Figure 2. Three alignment matrices (orange, green, purple, in ad-
+dition to the top-left and bottom-right entries) between two time
+series of length 4 and 6. The cost of an alignment is equal to the
+sum of entries visited along the path. DTW only considers the
+optimal alignment (here depicted in purple pentagons), whereas
+soft-DTW considers all delannoy(n − 1, m − 1) possible align-
+ment matrices.
+
+Uniﬁed algorithm Both formulas in Eq. (1) can be com-
+puted with a single algorithm. That formulation is new to
+our knowledge. Consider the following generalized min
+operator, with a smoothing parameter γ ≥ 0:
+
+minγ{a1, . . . , an} :=
+
+γ = 0,
+mini≤n ai,
+n
+i=1 e−ai/γ, γ > 0.
+−γ log
+
+(
+
+With that operator, we can deﬁne γ-soft-DTW:
+
+P
+
+dtwγ(x, y) := minγ{hA, ∆(x, y) i, A ∈ An,m}.
+
+The original DTW score is recovered by setting γ to 0.
+When γ > 0, we recover dtwγ = −γ log kγ
+GA. Most
+importantly, and in either case, dtwγ can be computed
+using Algorithm 1, which requires (nm) operations and
+(nm) storage cost as well . That cost can be reduced to
+2n with a more careful implementation if one only seeks
+to compute dtwγ(x, y), but the backward pass we con-
+sider next requires the entire matrix R of intermediary
+alignment costs. Note that, to ensure numerical stabil-
+ity, the operator minγ must be computed using the usual
+i ezi =
+log-sum-exp stabilization trick, namely that log
+(maxj zj) + log
+
+i ezi−maxj zj .
+
+P
+
+P
+2.2. Differentiation of soft-DTW
+
+A small variation in the input x causes a small change
+in dtw0(x, y) or dtwγ(x, y). When considering dtw0,
+that change can be efﬁciently monitored only when the
+optimal alignment matrix A⋆ that arises when computing
+dtw0(x, y) in Eq. (1) is unique. As the minimum over a
+ﬁnite set of linear functions of ∆, dtw0 is therefore locally
+the cost matrix ∆, with gradient A⋆,
+differentiable w.r.t.
+a fact that has been exploited in all algorithms designed to
+
+Algorithm 1 Forward recursion to compute dtwγ(x, y)
+and intermediate alignment costs
+
+1: Inputs: x, y, smoothing γ ≥ 0, distance function δ
+2: r0,0 = 0; ri,0 = r0,j = ∞; i ∈ JnK, j ∈ JmK
+3: for j = 1, . . . , m do
+4:
+5:
+6:
+7: end for
+8: Output: (rn,m, R)
+
+for i = 1, . . . , n do
+ri,j = δ(xi, yj) + minγ{ri−1,j−1, ri−1,j, ri,j−1}
+end for
+
+average time series under the DTW metric (Petitjean et al.,
+2011; Schultz & Jain, 2017). To recover the gradient of
+dtw0(x, y) w.r.t. x, we only need to apply the chain rule,
+thanks to the differentiability of the cost function:
+
+∂∆(x, y)
+∂x
+
+(cid:18)
+
+(cid:19)
+
+T
+
+A⋆,
+
+(2)
+
+where ∂∆(x, y)/∂x is the Jacobian of ∆ w.r.t. x, a linear
+map from Rp×n to Rn×m. When δ is the squared Euclidean
+distance, the transpose of that Jacobian applied to a matrix
+B ∈ Rn×m is (◦ being the elementwise product):
+
+(∂∆(x, y)/∂x)T B = 2
+
+(1p1T
+
+mBT ) ◦ x − yBT
+
+.
+
+(cid:0)
+With continuous data, A⋆ is almost always likely to be
+unique, and therefore the gradient in Eq. (2) will be de-
+ﬁned almost everywhere. However, that gradient, when it
+exists, will be discontinuous around those values x where
+a small change in x causes a change in A⋆, which is likely
+to hamper the performance of gradient descent methods.
+
+(cid:1)
+
+The case γ > 0. An immediate advantage of soft-DTW
+is that it can be explicitly differentiated, a fact that was also
+noticed by Saigo et al. (2006) in the related case of edit
+distances. When γ > 0, the gradient of Eq. (1) is obtained
+via the chain rule,
+
+∇x dtwγ(x, y) =
+
+Eγ[A],
+
+(3)
+
+∂∆(x, y)
+∂x
+
+T
+
+(cid:19)
+
+(cid:18)
+
+where Eγ[A] :=
+
+1
+kγ
+GA(x, y)
+
+XA∈An,m
+
+e−hA,∆(x,y)/γ iA,
+
+is the average alignment matrix A under the Gibbs distri-
+bution pγ ∝ e−hA,∆(x,y) i/γ deﬁned on all alignments in
+An,m. The kernel kγ
+GA(x, y) can thus be interpreted as
+the normalization constant of pγ. Of course, since An,m
+has exponential size in n and m, a naive summation is not
+tractable. Although a Bellman recursion to compute that
+average alignment matrix Eγ[A] exists (see Appendix A)
+that computation has quartic (n2m2) complexity. Note that
+
+δ1,1δ1,2δ1,3δ1,4δ1,5δ1,6δ2,1δ2,2δ2,3δ2,4δ2,5δ2,6δ3,1δ3,2δ3,3δ3,4δ3,5δ3,6δ4,1δ4,2δ4,3δ4,4δ4,5δ4,6Soft-DTW: a Differentiable Loss Function for Time-Series
+
+this stands in stark contrast to the quadratic complexity ob-
+tained by Saigo et al. (2006) for edit-distances, which is due
+to the fact the sequences they consider can only take values
+in a ﬁnite alphabet. To compute the gradient of soft-DTW,
+we propose instead an algorithm that manages to remain
+quadratic (nm) in terms of complexity. The key to achieve
+this reduction is to apply the chain rule in reverse order of
+Bellman’s recursion given in Algorithm 1, namely back-
+propagate. A similar idea was recently used to compute the
+gradient of ANOVA kernels in (Blondel et al., 2016).
+
+2.3. Algorithmic differentiation
+
+Differentiating algorithmically dtwγ(x, y) requires doing
+ﬁrst a forward pass of Bellman’s equation to store all in-
+termediary computations and recover R = [ri,j] when
+running Algorithm 1. The value of dtwγ(x, y)—stored
+in rn,m at the end of the forward recursion—is then im-
+pacted by a change in ri,j exclusively through the terms
+in which ri,j plays a role, namely the triplet of terms
+ri+1,j, ri,j+1, ri+1,j+1. A straightforward application of
+the chain rule then gives
+
+∂rn,m
+∂ri,j
+
+= ∂rn,m
+∂ri+1,j
+
+∂ri+1,j
+∂ri,j
+
++ ∂rn,m
+∂ri,j+1
+
+∂ri,j+1
+∂ri,j
+
++ ∂rn,m
+∂ri+1,j+1
+
+∂ri+1,j+1
+∂ri,j
+
+,
+
+ei,j
+
+ei+1,j
+
+ei,j+1
+
+ei+1,j+1
+
+| {z }
+
+in which we have deﬁned the notation of the main object
+| {z }
+| {z }
+of interest of the backward recursion: ei,j := ∂rn,m
+. The
+∂ri,j
+Bellman recursion evaluated at (i + 1, j) as shown in line 5
+of Algorithm 1 (here δi+1,j is δ(xi+1, yj)) yields :
+
+{z
+
+}
+
+|
+
+ri+1,j = δi+1,j + minγ{ri,j−1, ri,j, ri+1,j−1},
+
+which, when differentiated w.r.t ri,j yields the ratio:
+
+∂ri+1,j
+∂ri,j
+
+= e−ri,j /γ/
+
+e−ri,j−1/γ + e−ri,j /γ + e−ri+1,j−1/γ
+
+.
+
+The logarithm of that derivative can be conveniently cast
+using evaluations of minγ computed in the forward loop:
+
+(cid:16)
+
+(cid:17)
+
+γ log
+
+∂ri+1,j
+∂ri,j
+
+= minγ{ri,j−1, ri,j, ri+1,j−1} − ri,j
+
+= ri+1,j − δi+1,j − ri,j.
+
+Similarly, the following relationships can also be obtained:
+
+γ log
+
+∂ri,j+1
+∂ri,j
+
+γ log
+
+∂ri+1,j+1
+∂ri,j
+
+= ri,j+1 − ri,j − δi,j+1,
+
+= ri+1,j+1 − ri,j − δi+1,j+1.
+
+We have therefore obtained a backward recursion to com-
+pute the entire matrix E = [ei,j], starting from en,m =
+∂rn,m
+= 1 down to e1,1. To obtain ∇x dtwγ(x, y), notice
+∂rn,m
+that the derivatives w.r.t. the entries of the cost matrix ∆
+can be computed by ∂rn,m
+= ei,j · 1 = ei,j,
+∂δi,j
+and therefore we have that
+
+= ∂rn,m
+∂ri,j
+
+∂ri,j
+∂δi,j
+
+∇x dtwγ(x, y) =
+
+∂∆(x, y)
+∂x
+
+T
+
+E,
+
+(cid:19)
+
+(cid:18)
+
+where E is exactly the average alignment Eγ[A]
+in
+Eq. (3). These computations are summarized in Algo-
+rithm 2, which, once ∆ has been computed, has complexity
+nm in time and space. Because minγ has a 1/γ-Lipschitz
+continuous gradient, the gradient of dtwγ is 2/γ-Lipschitz
+continuous when δ is the squared Euclidean distance.
+
+Algorithm 2 Backward recursion to compute ∇x dtwγ(x, y)
+1: Inputs: x, y, smoothing γ ≥ 0, distance function δ
+2: (·, R) = dtwγ(x, y), ∆ = [δ(xi, yj)]i,j
+3: δi,m+1 = δn+1,j = 0, i ∈ JnK, j ∈ JmK
+4: ei,m+1 = en+1,j = 0, i ∈ JnK, j ∈ JmK
+5: ri,m+1 = rn+1,j = −∞, i ∈ JnK, j ∈ JmK
+6: δn+1,m+1 = 0, en+1,m+1 = 1, rn+1,m+1 = rn,m
+7: for j = m, . . . , 1 do
+8:
+9:
+
+for i = n, . . . , 1 do
+a = exp 1
+b = exp 1
+c = exp 1
+ei,j = ei+1,j · a + ei,j+1 · b + ei+1,j+1 · c
+end for
+
+γ (ri+1,j − ri,j − δi+1,j)
+γ (ri,j+1 − ri,j − δi,j+1)
+γ (ri+1,j+1 − ri,j − δi+1,j+1)
+
+11:
+12:
+13:
+14: end for
+15: Output: ∇x dtwγ(x, y) =
+
+10:
+
+E
+
+T
+
+∂∆(x,y)
+∂x
+
+(cid:16)
+
+(cid:17)
+
+3. Learning with the soft-DTW loss
+
+3.1. Averaging with the soft-DTW geometry
+
+We study in this section a direct application of Algorithm 2
+to the problem of computing Fr´echet means (1948) of time
+series with respect to the dtwγ discrepancy. Given a
+family of N times series y1, . . . , yN , namely N matrices
+of p lines and varying number of columns, m1, . . . , mN ,
+we are interested in deﬁning a single barycenter time se-
+ries x for that family under a set of normalized weights
+N
+λ1, . . . , λN ∈ R+ such that
+i=1 λi = 1. Our goal is thus
+to solve approximately the following problem, in which we
+P
+have assumed that x has ﬁxed length n:
+
+min
+x∈Rp×n
+
+λi
+mi
+
+N
+
+i=1
+X
+
+dtwγ(x, yi).
+
+(4)
+
+Note that each dtwγ(x, yi) term is divided by mi, the
+length of yi. Indeed, since dtw0 is an increasing (roughly
+linearly) function of each of the input lengths n and mi, we
+follow the convention of normalizing in practice each dis-
+crepancy by n × mi. Since the length n of x is here ﬁxed
+across all evaluations, we do not need to divide the objec-
+tive of Eq. (4) by n. Averaging under the soft-DTW geom-
+etry results in substantially different results than those that
+can be obtained with the Euclidean geometry (which can
+only be used in the case where all lengths n = m1 = · · · =
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+ri−1,j−1
+
+ri,j−1
+
+ri+1,j−1
+
+δi,j
+
+δi+1,j
+
+ri−1,j
+
+ri,j
+
+ri+1,j
+
+δi,j+1
+
+δi+1,j+1
+
+ri−1,j+1
+
+ri,j+1
+
+ri+1,j+1
+
+ei,j
+
+1
+γ (ri,j+1−ri,j −δi,j+1)
+
+e
+
+ei,j+1
+
+1
+γ (ri+1,j −ri,j −δi+1,j )
+
+e
+
+ei+1,j
+
+1
+γ (ri+1,j+1−ri,j −δi+1,j+1)
+
+e
+
+ei+1,j+1
+
+Figure 3. Sketch of the computational graph for soft-DTW, in the forward pass used to compute dtwγ (left) and backward pass used to
+compute its gradient ∇x dtwγ (right). In both diagrams, purple shaded cells stand for data values available before the recursion starts,
+namely cost values (left) and multipliers computed using forward pass results (right). In the left diagram, the forward computation of
+ri,j as a function of its predecessors and δi,j is summarized with arrows. Dotted lines indicate a minγ operation, solid lines an addition.
+From the perspective of the ﬁnal term rn,m, which stores dtwγ(x, y) at the lower right corner (not shown) of the computational graph,
+a change in ri,j only impacts rn,m through changes that ri,j causes to ri+1,j, ri,j+1 and ri+1,j+1. These changes can be tracked using
+Eq. (2.3,2.3) and appear in lines 9-11 in Algorithm 2 as variables a, b, c, as well as in the purple shaded boxes in the backward pass
+(right) which represents the recursion of line 12 in Algorithm 2.
+
+mN are equal), as can be seen in the intuitive interpolations
+we obtain between two time series shown in Figure 4.
+
+Non-convexity of dtwγ. A natural question that arises
+from Eq. (4) is whether that objective is convex or not. The
+answer is negative, in a way that echoes the non-convexity
+of the k-means objective as a function of cluster centroids
+locations. Indeed, for any alignment matrix A of suitable
+size, each map x 7→ hA, ∆(x, y) i shares the same convex-
+ity/concavity property that δ may have. However, both min
+and minγ can only preserve the concavity of elementary
+functions (Boyd & Vandenberghe, 2004, pp.72-74). There-
+fore dtwγ will only be concave if δ is concave, or become
+instead a (non-convex) (soft) minimum of convex functions
+if δ is convex. When δ is a squared-Euclidean distance,
+dtw0 is a piecewise quadratic function of x, as is also the
+case with the k-means energy (see for instance Figure 2
+in Schultz & Jain 2017). Since this is the setting we con-
+sider here, all of the computations involving barycenters
+should be taken with a grain of salt, since we have no way
+of ensuring optimality when approximating Eq. (4).
+
+Smoothing helps optimizing dtwγ. Smoothing can be
+regarded, however, as a way to “convexify” dtwγ.
+In-
+deed, notice that dtwγ converges to the sum of all costs
+as γ → ∞. Therefore, if δ is convex, dtwγ will gradually
+become convex as γ grows. For smaller values of γ, one
+can intuitively foresee that using minγ instead of a mini-
+mum will smooth out local minima and therefore provide a
+better (although slightly different from dtw0) optimization
+landscape. We believe this is why our approach recovers
+better results, even when measured in the original dtw0
+discrepancy, than subgradient or alternating minimization
+approaches such as DBA (Petitjean et al., 2011), which can,
+on the contrary, get more easily stuck in local minima. Ev-
+idence for this statement is presented in the experimental
+section.
+
+(a) Euclidean loss
+
+(b) Soft-DTW loss (γ = 1)
+
+Figure 4. Interpolation between two time series (red and blue) on
+the Gun Point dataset. We computed the barycenter by solving Eq.
+(4) with (λ1, λ2) set to (0.25, 0.75), (0.5, 0.5) and (0.75, 0.25).
+The soft-DTW geometry leads to visibly different interpolations.
+
+3.2. Clustering with the soft-DTW geometry
+
+The (approximate) computation of dtwγ barycenters can
+be seen as a ﬁrst step towards the task of clustering time
+series under the dtwγ discrepancy. Indeed, one can nat-
+urally formulate that problem as that of ﬁnding centroids
+x1, . . . , xk that minimize the following energy:
+
+min
+x1,...,xk∈Rp×n
+
+1
+mi
+
+min
+j∈[[k]]
+
+N
+
+i=1
+X
+
+dtwγ(xj, yi).
+
+(5)
+
+To solve that problem one can resort to a direct generaliza-
+tion of Lloyd’s algorithm (1982) in which each centering
+step and each clustering allocation step is done according
+to the dtwγ discrepancy.
+
+3.3. Learning prototypes for time series classiﬁcation
+
+One of the de-facto baselines for learning to classify time
+series is the k nearest neighbors (k-NN) algorithm, com-
+bined with DTW as discrepancy measure between time se-
+ries. However, k-NN has two main drawbacks. First, the
+time series used for training must be stored, leading to
+potentially high storage cost. Second, in order to com-
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+pute predictions on new time series, the DTW discrep-
+ancy must be computed with all training time series, lead-
+ing to high computational cost. Both of these drawbacks
+can be addressed by the nearest centroid classiﬁer (Hastie
+et al., 2001, p.670), (Tibshirani et al., 2002). This method
+chooses the class whose barycenter (centroid) is closest
+to the time series to classify. Although very simple, this
+method was shown to be competitive with k-NN, while re-
+quiring much lower computational cost at prediction time
+(Petitjean et al., 2014). Soft-DTW can naturally be used
+in a nearest centroid classiﬁer, in order to compute the
+barycenter of each class at train time, and to compute the
+discrepancy between barycenters and time series, at predic-
+tion time.
+
+3.4. Multistep-ahead prediction
+
+Soft-DTW is ideally suited as a loss function for any task
+that requires time series outputs. As an example of such a
+task, we consider the problem of, given the ﬁrst 1, . . . , t
+observations of a time series, predicting the remaining
+′−t+1) be
+(t + 1), . . . , n observations. Let xt,t
+the submatrix of x ∈ Rp×n of all columns with indices be-
+tween t and t′, where 1 ≤ t < t′ < n. Learning to predict
+the segment of a time series can be cast as the problem
+
+∈ Rp×(t
+
+′
+
+min
+θ∈Θ
+
+N
+
+i=1
+X
+
+dtwγ
+
+fθ(x1,t
+
+i ), xt+1,n
+
+i
+
+,
+
+(cid:16)
+
+(cid:17)
+
+where {fθ} is a set of parameterized function that take
+as input a time series and outputs a time series. Natural
+choices would be multi-layer perceptrons or recurrent neu-
+ral networks (RNN), which have been historically trained
+with a Euclidean loss (Parlos et al., 2000, Eq.5).
+
+4. Experimental results
+
+Throughout this section, we use the UCR (University
+of California, Riverside) time series classiﬁcation archive
+(Chen et al., 2015). We use a subset containing 79 datasets
+encompassing a wide variety of ﬁelds (astronomy, geology,
+medical imaging) and lengths. Datasets include class infor-
+mation (up to 60 classes) for each time series and are split
+into train and test sets. Due to the large number of datasets
+in the UCR archive, we choose to report only a summary
+of our results in the main manuscript. Detailed results are
+included in the appendices for interested readers.
+
+4.1. Averaging experiments
+
+In this section, we compare the soft-DTW barycenter ap-
+proach presented in §3.1 to DBA (Petitjean et al., 2011)
+and a simple batch subgradient method.
+
+Table 1. Percentage of the datasets on which the proposed soft-
+DTW barycenter is achieving lower DTW loss (Equation (4) with
+γ = 0) than competing methods.
+
+Random
+initialization
+
+Euclidean mean
+initialization
+
+Comparison with DBA
+γ = 1
+γ = 0.1
+γ = 0.01
+γ = 0.001
+
+40.51%
+93.67%
+100%
+97.47%
+
+3.80%
+46.83%
+79.75%
+89.87%
+
+Comparison with subgradient method
+γ = 1
+γ = 0.1
+γ = 0.01
+γ = 0.001
+
+96.20%
+97.47%
+97.47%
+97.47%
+
+35.44%
+72.15%
+92.41%
+97.47%
+
+their barycenter. For quantitative results below, we repeat
+this procedure 10 times and report the averaged results. For
+each method, we set the maximum number of iterations
+to 100. To minimize the proposed soft-DTW barycenter
+objective, Eq. (4), we use L-BFGS.
+
+Qualitative results. We ﬁrst visualize the barycenters ob-
+tained by soft-DTW when γ = 1 and γ = 0.01, by DBA
+and by the subgradient method. Figure 5 shows barycen-
+ters obtained using random initialization on the ECG200
+dataset. More results with both random and Euclidean
+mean initialization are given in Appendix B and C.
+
+We observe that both DBA or soft-DTW with low smooth-
+ing parameter γ yield barycenters that are spurious. On
+the other hand, a descent on the soft-DTW loss with suf-
+ﬁciently high γ converges to a reasonable solution. For
+example, as indicated in Figure 5 with DTW or soft-DTW
+(γ = 0.01), the small kink around x = 15 is not repre-
+sentative of any of the time series in the dataset. However,
+with soft-DTW (γ = 1), the barycenter closely matches the
+time series. This suggests that DTW or soft-DTW with too
+low γ can get stuck in bad local minima.
+
+When using Euclidean mean initialization (only possible if
+time series have the same length), DTW or soft-DTW with
+low γ often yield barycenters that better match the shape of
+the time series. However, they tend to overﬁt: they absorb
+the idiosyncrasies of the data. In contrast, soft-DTW is able
+to learn barycenters that are much smoother.
+
+Quantitative results. Table 1 summarizes the percentage
+of datasets on which the proposed soft-DTW barycenter
+achieves lower DTW loss when varying the smoothing pa-
+rameter γ. The actual loss values achieved by different
+methods are indicated in Appendix G and Appendix H.
+
+Experimental setup. For each dataset, we choose a class
+at random, pick 10 time series in that class and compute
+
+As γ decreases, soft-DTW achieves a lower DTW loss than
+other methods on almost all datasets. This conﬁrms our
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+Figure 5. Comparison between our proposed soft barycenter and
+the barycenter obtained by DBA and the subgradient method,
+on the ECG200 dataset. When DTW is insufﬁciently smoothed,
+barycenters often get stuck in a bad local minimum that does not
+correctly match the time series.
+
+claim that the smoothness of soft-DTW leads to an objec-
+tive that is better behaved and more amenable to optimiza-
+tion by gradient-descent methods.
+
+4.2. k-means clustering experiments
+
+We consider in this section the same computational tools
+used in §4.1 above, but use them to cluster time series.
+
+Experimental setup. For all datasets, the number of clus-
+ters k is equal to the number of classes available in the
+dataset. Lloyd’s algorithm alternates between a centering
+step (barycenter computation) and an assignment step. We
+set the maximum number of outer iterations to 30 and the
+maximum number of inner (barycenter) iterations to 100,
+as before. Again, for soft-DTW, we use L-BFGS.
+
+Qualitative results. Figure 6 shows the clusters obtained
+when runing Lloyd’s algorithm on the CBF dataset with
+soft-DTW (γ = 1) and DBA, in the case of random initial-
+ization. More results are included in Appendix E. Clearly,
+DTW absorbs the tiny details in the data, while soft-DTW
+is able to learn much smoother barycenters.
+
+Quantitative results. Table 2 summarizes the percentage
+of datasets on which soft-DTW barycenter achieves lower
+k-means loss under DTW, i.e. Eq. (5) with γ = 0. The
+actual loss values achieved by all methods are indicated in
+Appendix I and Appendix J. The results conﬁrm the same
+trend as for the barycenter experiments. Namely, as γ de-
+creases, soft-DTW is able to achieve lower loss than other
+methods on a large proportion of the datasets. Note that
+we have not run experiments with smaller values of γ than
+0.001, since dtw0.001 is very close to dtw0 in practice.
+
+(a) Soft-DTW (γ = 1)
+
+(b) DBA
+
+Figure 6. Clusters obtained on the CBF dataset when plugging our
+proposed soft barycenter and that of DBA in Lloyd’s algorithm.
+DBA absorbs the idiosyncrasies of the data, while soft-DTW can
+learn much smoother barycenters.
+
+4.3. Time-series classiﬁcation experiments
+
+In this section, we investigate whether the smoothing in
+soft-DTW can act as a useful regularization and improve
+classiﬁcation accuracy in the nearest centroid classiﬁer.
+
+Experimental setup. We use 50% of the data for training,
+25% for validation and 25% for testing. We choose γ from
+15 log-spaced values between 10−3 and 10.
+
+Quantitative results. Each point in Figure 7 above the di-
+agonal line represents a dataset for which using soft-DTW
+for barycenter computation rather than DBA improves the
+accuracy of the nearest centroid classiﬁer. To summarize,
+we found that soft-DTW is working better or at least as well
+as DBA in 75% of the datasets.
+
+4.4. Multistep-ahead prediction experiments
+
+In this section, we present preliminary experiments for the
+task of multistep-ahead prediction, described in §3.4.
+
+Experimental setup. We use the training and test sets pre-
+deﬁned in the UCR archive. In both the training and test
+sets, we use the ﬁrst 60% of the time series as input and the
+remaining 40% as output, ignoring class information. We
+then use the training set to learn a model that predicts the
+outputs from inputs and the test set to evaluate results with
+both Euclidean and DTW losses. In this experiment, we
+focus on a simple multi-layer perceptron (MLP) with one
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+Table 2. Percentage of the datasets on which the proposed soft-
+DTW based k-means is achieving lower DTW loss (Equation (5)
+with γ = 0) than competing methods.
+
+Random
+initialization
+
+Euclidean mean
+initialization
+
+Table 3. Averaged rank obtained by a multi-layer perceptron
+(MLP) under Euclidean and soft-DTW losses. Euclidean initial-
+ization means that we initialize the MLP trained with soft-DTW
+loss by the solution of the MLP trained with Euclidean loss.
+
+Training loss
+
+Random
+initialization
+
+Euclidean
+initialization
+
+Comparison with DBA
+γ = 1
+γ = 0.1
+γ = 0.01
+γ = 0.001
+
+15.78%
+24.56%
+59.64%
+77.19%
+
+29.31%
+24.13%
+55.17%
+68.97%
+
+Comparison with subgradient method
+γ = 1
+γ = 0.1
+γ = 0.01
+γ = 0.001
+
+42.10%
+57.89%
+76.43%
+96.49%
+
+46.44%
+50%
+65.52%
+84.48%
+
+When evaluating with DTW loss
+Euclidean
+soft-DTW (γ = 1)
+soft-DTW (γ = 0.1)
+soft-DTW (γ = 0.01)
+soft-DTW (γ = 0.001)
+
+3.46
+3.55
+3.33
+2.79
+1.87
+
+When evaluating with Euclidean loss
+Euclidean
+soft-DTW (γ = 1)
+soft-DTW (γ = 0.1)
+soft-DTW (γ = 0.01)
+soft-DTW (γ = 0.001)
+
+1.05
+2.41
+3.42
+4.13
+3.99
+
+4.21
+3.96
+3.42
+2.12
+1.29
+
+1.70
+2.99
+3.38
+3.64
+3.29
+
+ple one-dimensional time series, an MLP works very well,
+showing its ability to capture patterns in the training set.
+Although the predictions under Euclidean and soft-DTW
+losses often agree with each other, they can sometimes be
+visibly different. Predictions under soft-DTW loss can con-
+ﬁdently predict abrupt and sharp changes since those have
+a low DTW cost as long as such a sharp change is present,
+under a small time shift, in the ground truth.
+
+Quantitative results. A comparison summary of our
+MLP under Euclidean and soft-DTW losses over the UCR
+archive is given in Table 3. Detailed results are given in
+the appendix. Unsurprisingly, we achieve lower DTW loss
+when training with the soft-DTW loss, and lower Euclidean
+loss when training with the Euclidean loss. Because DTW
+is robust to several useful invariances, a small error in the
+soft-DTW sense could be a more judicious choice than an
+error in an Euclidean sense for many applications.
+
+5. Conclusion
+
+We propose in this paper to turn the popular DTW discrep-
+ancy between time series into a full-ﬂedged loss function
+between ground truth time series and outputs from a learn-
+ing machine. We have shown experimentally that, on the
+existing problem of computing barycenters and clusters for
+time series data, our computational approach is superior to
+existing baselines. We have shown promising results on the
+problem of multistep-ahead time series prediction, which
+could prove extremely useful in settings where a user’s ac-
+tual loss function for time series is closer to the robust per-
+spective given by DTW, than to the local parsing of the
+Euclidean distance.
+
+Acknowledgements. MC gratefully acknowledges the
+support of a chaire de l’IDEX Paris Saclay.
+
+Figure 7. Each point above the diagonal represents a dataset
+where using our soft-DTW barycenter rather than that of DBA
+improves the accuracy of the nearest nearest centroid classiﬁer.
+This is the case for 75% of the datasets in the UCR archive.
+
+hidden layer and sigmoid activation. We also experimented
+with linear models and recurrent neural networks (RNNs)
+but they did not improve over a simple MLP.
+
+Implementation details. Deep learning frameworks such
+as Theano, TensorFlow and Chainer allow the user to spec-
+ify a custom backward pass for their function. Implement-
+ing such a backward pass, rather than resorting to automatic
+differentiation (autodiff), is particularly important in the
+case of soft-DTW: First, the autodiff in these frameworks
+is designed for vectorized operations, whereas the dynamic
+program used by the forward pass of Algorithm 2 is inher-
+ently element-wise; Second, as we explained in §2.2, our
+backward pass is able to re-use log-sum-exp computations
+from the forward pass, leading to both lower computational
+cost and better numerical stability. We implemented a cus-
+tom backward pass in Chainer, which can then be used to
+plug soft-DTW as a loss function in any network architec-
+ture. To estimate the MLP’s parameters, we used Chainer’s
+implementation of Adam (Kingma & Ba, 2014).
+
+Qualitative results. Visualizations of the predictions ob-
+tained under Euclidean and soft-DTW losses are given in
+Figure 1, as well as in Appendix F. We ﬁnd that for sim-
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+References
+
+Bahl, L and Jelinek, Frederick. Decoding for channels with
+insertions, deletions, and substitutions with applications
+to speech recognition. IEEE Transactions on Informa-
+tion Theory, 21(4):404–411, 1975.
+
+Bakir, GH, Hofmann, T, Sch¨olkopf, B, Smola, AJ, Taskar,
+Predicting Structured
+B, and Vishwanathan, SVN.
+Data. Advances in neural information processing sys-
+tems. MIT Press, Cambridge, MA, USA, 2007.
+
+Bellman, Richard. On the theory of dynamic programming.
+Proceedings of the National Academy of Sciences, 38(8):
+716–719, 1952.
+
+Blondel, Mathieu, Fujino, Akinori, Ueda, Naonori, and
+Ishihata, Masakazu. Higher-order factorization ma-
+chines. In Advances in Neural Information Processing
+Systems 29, pp. 3351–3359. 2016.
+
+Boyd, Stephen and Vandenberghe, Lieven. Convex Opti-
+
+mization. Cambridge University Press, 2004.
+
+Chen, Yanping, Keogh, Eamonn, Hu, Bing, Begum, Nurja-
+han, Bagnall, Anthony, Mueen, Abdullah, and Batista,
+Gustavo. The ucr time series classiﬁcation archive,
+www.cs.ucr.edu/˜eamonn/time_
+July 2015.
+series_data/.
+
+Cuturi, Marco. Fast global alignment kernels. In Proceed-
+ings of the 28th international conference on machine
+learning (ICML-11), pp. 929–936, 2011.
+
+Cuturi, Marco and Doucet, Arnaud. Fast computation of
+Wasserstein barycenters. In Proceedings of the 31st In-
+ternational Conference on Machine Learning (ICML-
+14), pp. 685–693, 2014.
+
+Cuturi, Marco, Vert, Jean-Philippe, Birkenes, Oystein, and
+Matsui, Tomoko. A kernel for time series based on
+In 2007 IEEE International Con-
+global alignments.
+ference on Acoustics, Speech and Signal Processing-
+ICASSP’07, volume 2, pp. II–413, 2007.
+
+Fr´echet, Maurice. Les ´el´ements al´eatoires de nature quel-
+conque dans un espace distanci´e. In Annales de l’institut
+Henri Poincar´e, volume 10, pp. 215–310. Presses uni-
+versitaires de France, 1948.
+
+Garreau, Damien, Lajugie, R´emi, Arlot, Sylvain, and Bach,
+Francis. Metric learning for temporal sequence align-
+In Advances in Neural Information Processing
+ment.
+Systems, pp. 1817–1825, 2014.
+
+Hastie, Trevor, Tibshirani, Robert, and Friedman, Jerome.
+The Elements of Statistical Learning. Springer New York
+Inc., 2001.
+
+Kingma, Diederik and Ba,
+
+Jimmy.
+method for stochastic optimization.
+arXiv:1412.6980, 2014.
+
+Adam:
+
+A
+arXiv preprint
+
+Lasserre, Jean B. Linear and integer programming vs
+linear integration and counting: a duality viewpoint.
+Springer Science & Business Media, 2009.
+
+Lloyd, Stuart. Least squares quantization in pcm.
+
+IEEE
+
+Trans. on Information Theory, 28(2):129–137, 1982.
+
+L¨utkepohl, Helmut. New introduction to multiple time se-
+ries analysis. Springer Science & Business Media, 2005.
+
+Parlos, Alexander G, Rais, Omar T, and Atiya, Amir F.
+Multi-step-ahead prediction using dynamic recurrent
+neural networks. Neural networks, 13(7):765–786, 2000.
+
+Petitjean, Franc¸ois and Ganc¸arski, Pierre. Summarizing a
+set of time series by averaging: From steiner sequence
+to compact multiple alignment. Theoretical Computer
+Science, 414(1):76–91, 2012.
+
+Petitjean, Franc¸ois, Ketterlin, Alain, and Ganc¸arski, Pierre.
+A global averaging method for dynamic time warping,
+with applications to clustering. Pattern Recognition, 44
+(3):678–693, 2011.
+
+Petitjean, Franc¸ois, Forestier, Germain, Webb, Geoffrey I,
+Nicholson, Ann E, Chen, Yanping, and Keogh, Eamonn.
+Dynamic time warping averaging of time series allows
+In ICDM, pp.
+faster and more accurate classiﬁcation.
+470–479. IEEE, 2014.
+
+Ristad, Eric Sven and Yianilos, Peter N. Learning string-
+IEEE Transactions on Pattern Analysis
+
+edit distance.
+and Machine Intelligence, 20(5):522–532, 1998.
+
+Rolet, A., Cuturi, M., and Peyr´e, G. Fast dictionary learn-
+ing with a smoothed Wasserstein loss. Proceedings of
+AISTATS’16, 2016.
+
+Saigo, Hiroto, Vert, Jean-Philippe, Ueda, Nobuhisa, and
+Protein homology detection using
+Akutsu, Tatsuya.
+string alignment kernels. Bioinformatics, 20(11):1682–
+1689, 2004.
+
+Saigo, Hiroto, Vert, Jean-Philippe, and Akutsu, Tatsuya.
+Optimizing amino acid substitution matrices with a local
+alignment kernel. BMC bioinformatics, 7(1):246, 2006.
+
+Sakoe, Hiroaki and Chiba, Seibi. A dynamic programming
+approach to continuous speech recognition. In Proceed-
+ings of the Seventh International Congress on Acoustics,
+Budapest, volume 3, pp. 65–69, 1971.
+
+Sakoe, Hiroaki and Chiba, Seibi. Dynamic program-
+ming algorithm optimization for spoken word recogni-
+tion. IEEE Trans. on Acoustics, Speech, and Sig. Proc.,
+26:43–49, 1978.
+
+Soft-DTW: a Differentiable Loss Function for Time-Series
+
+Schultz, David and Jain, Brijnesh. Nonsmooth analysis
+and subgradient methods for averaging in dynamic time
+warping spaces. arXiv preprint arXiv:1701.06393, 2017.
+
+Tibshirani, Robert, Hastie, Trevor, Narasimhan, Balasubra-
+manian, and Chu, Gilbert. Diagnosis of multiple cancer
+types by shrunken centroids of gene expression. Pro-
+ceedings of the National Academy of Sciences, 99(10):
+6567–6572, 2002.
+
+Yi, Byoung-Kee, Jagadish, HV, and Faloutsos, Christos.
+Efﬁcient retrieval of similar time sequences under time
+warping. In Data Engineering, 1998. Proceedings., 14th
+International Conference on, pp. 201–208. IEEE, 1998.
+
+Zhang, C., Frogner, C., Mobahi, H., Araya-Polo, M., and
+Poggio, T. Learning with a Wasserstein loss. Advances
+in Neural Information Processing Systems 29, 2015.
+
+

@@ -1,0 +1,575 @@
+Supplement for Variational Boosting: Iteratively Reﬁning Posterior
+Approximations
+
+A. Initializing Components
+
+Introducing a new component requires initialization of com-
+ponent parameters. When our component distributions are
+mixtures of Gaussians, we found that the optimization pro-
+cedure is sensitive to initialization. This section describes
+an importance-weighting scheme for initialization that pro-
+duces (empirically) good initial values of component and
+mixing parameters.
+
+Conceptually, a good initial component is located in a region
+of the target π(x) that is underrepresented by the existing
+approximation q(C). A good initial weight is close to the
+proportion of mass in the unexplained region. Following
+this principle, we construct this component by ﬁrst drawing
+importance-weighted samples from our existing approxima-
+tion
+
+x((cid:96)) ∼ q(C) , w((cid:96)) =
+
+for (cid:96) = 1, . . . , L.
+
+π(x((cid:96)))
+q(C)(x((cid:96)))
+
+(9)
+
+The samples with the largest weights w((cid:96)) tell us where
+regions of the target are poorly represented by our approxi-
+mation. In fact, as L grows, and if q(C) is “close” enough
+to π, we can interpret {x((cid:96)), w((cid:96))} as a weighted sample
+from π. Based on this interpretation, we can ﬁt a mixture
+distribution (or some components of a mixture distribution)
+to this weighted sample using maximum likelihood, and
+recover a type of target approximation. For mixture dis-
+tributions, an efﬁcient inference procedure is Expectation-
+Maximization (EM) (Dempster et al., 1977).
+
+This approach, however, presents a few complications. First,
+we must adapt EM to ﬁt a weighted sample. Second, im-
+portance weights can suffer from extremely high variance
+— one or two w((cid:96)) values may be extremely large compared
+to all other weights. This destabilizes our new component
+parameters and mixing weight, particularly the variance of
+the component. Intuitively, if a single weight w((cid:96)) is ex-
+tremely large, this would correspond to many samples being
+located in a single location, and maximum likelihood with
+EM would want to shrink the variance of the new compo-
+nent to zero right on that location. To combat this behavior,
+we use a simple method to break up the big weights using a
+resampling and re-weighting step before applying weighted
+
+EM. Empirically, this improves our new component initial-
+izations and subsequent ELBO convergence.
+
+Weighted EM Expectation-maximization is typically
+used to perform maximum likelihood in latent variable mod-
+els. Mixture distributions are easily represented with latent
+variables — a sample’s latent variable corresponds to the
+mixture component that produced it. EM starts with some
+initialization of model parameters (e.g.,component means,
+variances and mixing weights). The algorithm then iter-
+ates between two steps: 1) the E-step, which computes the
+distribution over the latent variables given the current set-
+ting of parameters, and 2) the M-step, which maximizes the
+expected complete data log-likelihood with respect to the
+distributions computed in the E-step.
+
+We suppress details of the general treatment of EM, and
+focus on EM for mixture models as presented in (Bishop,
+2006). For mixture distributions, the E-step computes “re-
+sponsibilities”, or the probability that a datapoint came
+from one of the components. The M-step then computes
+a weighted maximum likelihood, where the log-likelihood
+of a datapoint for a particular component is weighted by
+the associated “responsibility”. This weighted maximum
+likelihood is an easy entry-point for an additional set of
+weights — weights associated with each datapoint from the
+importance-weighting.
+
+More concretely, for a sample of data, x((cid:96)), C mixture
+components, and current mixture component parameters
+and weights λ = {ρc, λc}C
+c=1, the E-step computes the
+following quantities
+
+c = p(z((cid:96)) = c|x((cid:96)), λ)
+γ((cid:96))
+
+∝ p(x((cid:96))|z((cid:96)),λc = c)p(z((cid:96)) = c)
+
+c
+
+where γ((cid:96))
+is the “responsibility” of cluster c for datapoint
+(cid:96). The M-step then computes component parameters by a
+weighted maximum likelihood
+
+λ∗
+c = arg max
+
+γ((cid:96))
+c
+
+· ln p(x((cid:96))|z((cid:96)) = c, λc) .
+
+L
+(cid:88)
+
+(cid:96)=1
+
+λ
+
+To incorporate importance weights w((cid:96)), we only need to
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+slightly change the M-step:
+
+λ∗
+c = arg max
+
+w((cid:96)) · γ((cid:96))
+
+c
+
+· ln p(x((cid:96))|z((cid:96)) = c, λc) .
+
+L
+(cid:88)
+
+(cid:96)=1
+
+λ
+
+Because we are adding a new component, we would like our
+weighted EM routine to leave the remaining components
+unchanged. For instance, we want λ1, . . . , λC−1 to be ﬁxed,
+while λC is free to explain the weighted sample. This can
+be accomplished in a straightforward manner by simply
+clamping the ﬁrst C − 1 parameters during the M-step.
+
+Resampling importance weights
+If our current approx-
+imation q(C) is sufﬁciently different in certain regions of
+the posterior, then some weights w((cid:96)) will end up being
+large compared to other weights. For instance, the objec-
+tive KL(q||p) tends to under-cover regions of the posterior,
+allowing π(x) to be much larger than q(c)(x), meaning the
+weight associated with x will be large. This will create
+instability in the weighted EM approximation — likelihood
+maximization will want to put a zero-variance component
+on the single highest-weighted sample, which does not accu-
+rately reﬂect the local curvature of π(x). To combat this, we
+construct a slightly more complicated proposal distribution.
+Conceptually, we ﬁrst create this naïve importance-weighted
+sample, and then ﬁnd samples with outlier weights, and
+break those samples up. We do this by constructing a new
+proposal distribution that mixes the existing proposal, q(C),
+and component means located at the outlier samples. We
+deﬁne this proposal to be
+
+q(IW )(x) ∝ p0q(C)(x) +
+
+w((cid:96))N (x|x((cid:96)), Σ((cid:96)))
+
+(10)
+
+(cid:88)
+
+(cid:96)∈O
+
+where (cid:96) ∈ O denote the set of outlier samples from our
+original sample, and p0 = 1 − (cid:80)
+(cid:96)∈O w((cid:96)) is the mass not
+placed on outlier samples. The variance of each outlier com-
+ponent, Σ((cid:96)) is set to some heuristic value — we typically
+use the diagonal of the covariance of q(C) as a good-enough
+guess.
+
+We then create a new importance-weighted sample, using
+q(IW ) and π(x) just as we did before. By placing new
+components (with some non-zero variance) on the outlier
+samples, which are known to be in a region of high target
+probability and low approximate probability, we assume that
+there is more local probability around that region that needs
+to be explored. This allows us to inﬂate the local variance of
+the samples in this region — the region that weighted EM
+will place a component. Algorithm 1 unites the components
+from above sections into our ﬁnal initialization procedure.
+
+B. Fitting the Rank
+
+decide on the rank of the variational approximation, some
+more appropriate for certain settings given dimensionality
+and computation constraints. For instance, we can greedily
+incorporate new rank components. Alternatively, we can ﬁt
+a sequence of components r = 1, 2, . . . , rmax, and choose
+the best result (in terms of KL). In the Bayesian neural
+network model, we report results for a ﬁxed schedule of
+ranks. In the hierarchical Poisson model, we monitor the
+change in marginal variances to decide the appropriate rank.
+In both cases, we require a stopping criterion. For a sin-
+gle Gaussian, one such criterion is the average change in
+marginal variances — if the marginal variation along each
+dimension remains the same from rank r to r + 1, then the
+new covariance component is not incorporating explanatory
+power, particularly if marginal variances are of interest. As
+the KL(q||π) objective tends to underestimate variances
+when restricted to a particular model class, we observe that
+the marginal variances grow as new covariance rank compo-
+nents are added. When ﬁtting rank r + 1, we can monitor
+the average absolute change in marginal variance (or stan-
+dard deviation) as more covariance structure is incorporated.
+Figure 5 in this supplement depicts this measurement for
+the D = 37-dimensional ‘frisk‘ posterior.
+
+To justify sequentially adding ranks to mixture compo-
+nents we consider the KL-divergence between a rank-r
+Gaussian approximation to a full covariance Gaussian,
+(cid:124)
+KL(qr||p), where qr(θ) = N (0, I(v) + (cid:80)r
+k ) and
+p(θ) = N (0, Σ). For simplicity, we assume both distribu-
+tions have zero mean. If the true posterior is non-Gaussian
+we will attempt to approximate the best full-rank Gaussian
+with a low-rank Gaussian thus suffering an unrepresentable
+KL-divergence between the family of Gaussians and the
+true posterior. We also assume that the diagonal component,
+I(v), and the ﬁrst r − 1 columns of F = [f1, . . . , fr] are
+held ﬁxed. Then we have
+
+l=1 fkf
+
+KL(qr||p)
+(cid:32)
+
+=
+
+(cid:16)
+
+tr
+
+1
+2
+
+(cid:32)
+
+Σ−1
+
+I(v) +
+
+(cid:33)(cid:33)
+
+r
+(cid:88)
+
+l=1
+
+flf
+
+(cid:124)
+l
+
+− k + log det Σ
+
+(cid:32)
+
+− log det
+
+I(v) +
+
+(cid:33)
+
+(cid:17)
+
+flf
+
+(cid:124)
+l
+
+r
+(cid:88)
+
+l=1
+
+To specify the ELBO objective, we need to choose a rank
+r for the component covariance. There are a many ways to
+
+which we differentiate with respect to vr, remove terms that
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+Algorithm 1 Importance-weighted initialization of new components. This algorithm takes in the target distribution, π(x),
+the current approximate distribution q(C)(x), and a number of samples L. This returns an initial value of new component
+parameters, λC+1 and a new mixing weight ρC+1.
+1: procedure INITCOMP(π, q(C), L)
+2:
+
+(cid:46) sample from existing approx
+(cid:46) set importance weights
+
+(cid:46) break up big weights
+(cid:46) sample from new mixture
+(cid:46) re-sampled importance weights
+
+(cid:46) ﬁt new component
+
+C.1. Frisk Model
+
+Figures 6 and 7 depict VBoost approximations of the ‘frisk‘
+model.
+
+C.2. Bayes Neural Network Results
+
+Table 3 depict out of sample log probability results for the
+Bayesian neural network as ranks vary.
+
+do not depend on vr, and set to zero, yielding
+
+C. Experiment Figures
+
+3:
+
+4:
+5:
+
+6:
+
+7:
+
+x((cid:96)) ∼ q(C) for (cid:96) = 1, . . . , L
+w((cid:96)) ← π(x((cid:96)))
+q(C)(x((cid:96)))
+O ← outlier-weights({w((cid:96))})
+q(IW ) ← make-mixture(O, {w((cid:96)), x((cid:96))}, q(C))
+x((cid:96))
+r ∼ q(IW ) for (cid:96) = 1, . . . , L
+r ← π(x((cid:96))
+w((cid:96))
+r )
+λC+1, ρC+1 ← weighted-em({x((cid:96))
+return λC+1, ρC+1
+
+r , w((cid:96))
+
+q(IW )(x((cid:96)))
+
+r })
+
+8:
+9:
+10: end procedure
+
+KL(qr||p)
+
+
+Σ−1vr −
+
+(cid:32)
+
+I(v) +
+
+(cid:33)−1
+
+
+
+vr
+
+ = 0
+
+∂
+∂vr
+
+=
+
+1
+2
+
+
+
+
+
+
+
+
+(cid:124)
+
+(cid:18)
+
+r
+(cid:88)
+
+l=1
+
+(cid:124)
+flf
+l
+
+
+
+−1
+
+
+
+
+
+
+
+(cid:19)
+
+fr.
+
+→ Σ−1vr =
+
+I(v) +
+
+(cid:124)
+flf
+l
+
++frf (cid:124)
+r
+
+vr
+
+r−1
+(cid:88)
+
+l=1
+(cid:123)(cid:122)
+(cid:125)
+C
+C −1frf (cid:124)
+1 + f
+
+r C −1
+(cid:124)
+r C −1fr
+
+=
+
+C −1 −
+
+We can thus determine the optimal fr from the following
+equation
+
+(cid:0)Σ−1 − C −1(cid:1) fr =
+
+(cid:32)
+
+−
+
+r C −1
+
+C −1frf (cid:124)
+1 + ||fr||2
+C
+
+(cid:33)
+
+fr
+
+(11)
+
+l=1 flf
+
+r C −1fr = ||fr||2
+
+where we have deﬁned f (cid:124)
+C. Eq. (11) is
+reminiscent of an eigenvalue problem indicating that the
+optimal solution for fr should maximally explain Σ−1 −
+C −1, i.e.
+the parameter space not already explained by
+(cid:124)
+C = I(v) + (cid:80)r−1
+l . This provides justiﬁcation for
+the previously proposed stopping criterion that monitors
+the increase in marginal variances since incorporating a
+new vector into the low-rank approximation should grow
+the marginal variances if extra correlations are captured.
+This is due to minimizing KL(qr||p) which underestimates
+the variances when dependencies between parameters are
+broken.
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+Figure 5. Mean percent change in marginal variances for the Poisson GLM. After rank 5, the average percent change is less than 5% —
+this estimate is slightly noisy due to the stochastic optimization procedure.
+
+(a) Rank 0 (MFVI)
+
+(b) Rank 1
+
+(c) Rank 2
+
+(d) Rank 3
+
+Figure 6. Comparison of single Gaussian component marginals by rank for a 37-dimensional Poisson GLM posterior. The top left plot is a
+diagonal Gaussian approximation. The next plots show the how the marginal variances inﬂate as the covariance is allotted more capacity.
+
+123456789rank0.00.20.40.60.81.01.21.41.6ave % diff in marginal sdsalpha_0rank 0mcmcalpha_1rank 0mcmcbeta_0rank 0mcmcbeta_1rank 0mcmclnsigma_a_0rank 0mcmclnsigma_b_0rank 0mcmcalpha_0rank 1mcmcalpha_1rank 1mcmcbeta_0rank 1mcmcbeta_1rank 1mcmclnsigma_a_0rank 1mcmclnsigma_b_0rank 1mcmcalpha_0rank 2mcmcalpha_1rank 2mcmcbeta_0rank 2mcmcbeta_1rank 2mcmclnsigma_a_0rank 2mcmclnsigma_b_0rank 2mcmcalpha_0rank 3mcmcalpha_1rank 3mcmcbeta_0rank 3mcmcbeta_1rank 3mcmclnsigma_a_0rank 3mcmclnsigma_b_0rank 3mcmcVariational Boosting: Iteratively Reﬁning Posterior Approximations
+
+(a) Marginal standard deviations
+
+(b) Pairwise covariances
+
+Figure 7. A comparison of standard deviations and covariances for the frisk model. The MCMC-inferred values are along the horizontal
+axis, with the variational boosting values along the vertical axis. While the rank 3 plus diagonal covariance structure is able to account for
+most of the marginal variances, the largest one is still underestimated. Incorporating more rank 3 components allows the approximation to
+account for this variance. Similarly, the non-zero covariance measurements improve as more components are added.
+
+0.00.10.20.30.40.50.6MCMC Std Devs (~20k samples)0.00.10.20.30.40.50.6VI Std Devs1-component0.00.10.20.30.40.50.6MCMC Std Devs (~20k samples)0.00.10.20.30.40.50.6VI Std Devs2-component0.00.10.20.30.40.50.6MCMC Std Devs (~20k samples)0.00.10.20.30.40.50.6VI Std Devs3-component0.00.10.20.30.40.50.6MCMC Std Devs (~20k samples)0.00.10.20.30.40.50.6VI Std Devs4-component0.00.10.20.30.40.50.6MCMC Std Devs (~20k samples)0.00.10.20.30.40.50.6VI Std Devs8-component0.00.10.20.30.40.50.6MCMC Std Devs (~20k samples)0.00.10.20.30.40.50.6VI Std Devs12-component0.0100.0050.0000.0050.010MCMC Covs (~20k samples)0.0100.0050.0000.0050.010VI Covs1-component0.0100.0050.0000.0050.010MCMC Covs (~20k samples)0.0100.0050.0000.0050.010VI Covs2-component0.0100.0050.0000.0050.010MCMC Covs (~20k samples)0.0100.0050.0000.0050.010VI Covs3-component0.0100.0050.0000.0050.010MCMC Covs (~20k samples)0.0100.0050.0000.0050.010VI Covs4-component0.0100.0050.0000.0050.010MCMC Covs (~20k samples)0.0100.0050.0000.0050.010VI Covs8-component0.0100.0050.0000.0050.010MCMC Covs (~20k samples)0.0100.0050.0000.0050.010VI Covs12-componentVariational Boosting: Iteratively Reﬁning Posterior Approximations
+
+pbp
+
+mfvi
+
+rank 5
+
+rank 10
+
+rank 15
+
+wine
+boston
+concrete
+power-plant
+yacht
+energy-efﬁciency
+
+-0.990 (± 0.08)
+-2.902 (± 0.64)
+-3.162 (± 0.15)
+-2.798 (± 0.04)
+-0.990 (± 0.08)
+-1.971 (± 0.11)
+
+-0.973 (± 0.05)
+-2.658 (± 0.18)
+-3.248 (± 0.07)
+-2.812 (± 0.03)
+-0.973 (± 0.05)
+-2.451 (± 0.12)
+
+-0.972 (± 0.05)
+-2.670 (± 0.16)
+-3.247 (± 0.06)
+-2.814 (± 0.03)
+-0.972 (± 0.05)
+-2.452 (± 0.12)
+
+-0.972 (± 0.05)
+-2.696 (± 0.14)
+-3.261 (± 0.06)
+-2.838 (± 0.03)
+-0.972 (± 0.05)
+-2.469 (± 0.11)
+
+-0.973 (± 0.05)
+-2.743 (± 0.12)
+-3.286 (± 0.05)
+-2.867 (± 0.02)
+-0.973 (± 0.05)
+-2.502 (± 0.09)
+
+Table 3. Comparison of test log probability for PBP (Hernández-Lobato & Adams, 2015) to Variational Inference with various ranks.
+Each entry shows the average predictive performance of the model on a speciﬁc dataset and the standard deviation across the 20 trials —
+bold indicates the best average (though not necessarily statistical signiﬁcance).
+
+

@@ -1,0 +1,1317 @@
+Reduced Space and Faster Convergence in
+Imperfect-Information Games via Pruning
+
+Noam Brown 1 Tuomas Sandholm 1
+
+Abstract
+
+Iterative algorithms such as Counterfactual Regret
+Minimization (CFR) are the most popular way
+to solve large zero-sum imperfect-information
+games. In this paper we introduce Best-Response
+Pruning (BRP), an improvement to iterative algo-
+rithms such as CFR that allows poorly-performing
+actions to be temporarily pruned. We prove that
+when using CFR in zero-sum games, adding BRP
+will asymptotically prune any action that is not
+part of a best response to some Nash equilibrium.
+This leads to provably faster convergence and
+lower space requirements. Experiments show that
+BRP results in a factor of 7 reduction in space,
+and the reduction factor increases with game size.
+
+1. Introduction
+
+Imperfect-information extensive-form games model strate-
+gic multi-step scenarios between agents with hidden infor-
+mation, such as auctions, security interactions (both physical
+and virtual), negotiations, and military situations. Typically
+in imperfect-information games, one wishes to ﬁnd a Nash
+equilibrium, which is a proﬁle of strategies in which no
+player can improve her outcome by unilaterally changing
+her strategy. A linear program can ﬁnd an exact Nash equi-
+librium in two-player zero-sum games containing fewer
+than about 108 nodes (Gilpin & Sandholm, 2007). For
+larger games, iterative algorithms are used to converge to a
+Nash equilibrium. There are a number of such iterative al-
+gorithms (Heinrich et al., 2015; Nesterov, 2005; Hoda et al.,
+2010; Pays, 2014; Kroer et al., 2015), the most popular of
+which is Counterfactual Regret Minimization (CFR) (Zinke-
+vich et al., 2007). CFR minimizes regret independently at
+each decision point in the game. CFR+, a variant of CFR,
+
+1Computer Science Department, Carnegie Mellon Uni-
+versity, Pittsburgh, PA, USA. Correspondence to: Noam
+Brown <noamb@cs.cmu.edu>, Tuomas Sandholm <sand-
+holm@cs.cmu.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+was used to essentially solve Limit Texas Hold’em, the
+largest imperfect-information game ever to be essentially
+solved (Bowling et al., 2015).
+
+Both computation time and storage space are difﬁcult chal-
+lenges when solving large imperfect-information games.
+For example, solving Limit Texas Hold’em required nearly
+8 million core hours and a complex, domain-speciﬁc stream-
+ing compression algorithm to store the 262 TiB of uncom-
+pressed data in only 10.9 TiB. This data had to be repeatedly
+decompressed from disk into memory and then compressed
+back to disk in order to run CFR+ (Tammelin et al., 2015).
+
+In certain situations, pruning can be applied to speed up the
+traversal of the game tree in iterative algorithms (Lanctot
+et al., 2009; Brown & Sandholm, 2015a; Brown et al., 2017).
+However, these past pruning techniques do not reduce the
+space needed to solve a game and lack theoretical guarantees
+for improved performance.
+
+In this paper we introduce Best-Response Pruning (BRP)1,
+a new form of pruning for iterative algorithms such as CFR
+in large imperfect-information games. BRP leverages the
+fact that in iterative algorithms we are typically interested in
+performance against the opponent’s average strategy over all
+iterations, and that the opponent’s average strategy cannot
+change faster than a rate of 1
+t , where t is the number of iter-
+ations conducted so far. Thus, if part-way through a run one
+of our actions has done very poorly relative to other available
+actions against the opponent’s average strategy, then after
+just a few more iterations the opponent’s average strategy
+cannot change sufﬁciently for the poorly-performing action
+to now be doing well against the opponent’s updated average
+strategy. In fact, we can bound how much an action’s perfor-
+mance can improve over any number of iterations against
+the opponent’s average strategy. So long as the upper bound
+on that performance is still not competitive with the other
+actions, then we can safely ignore the poorly-performing
+action.
+
+BRP provably reduces the computation time needed to solve
+imperfect-information games. Additionally, a primary ad-
+vantage of BRP is that in addition to faster convergence,
+
+1Earlier versions of this paper referred to Best-Response Prun-
+
+ing as Total Regret-Based Pruning (Total RBP)
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+it also reduces the space needed over time. Speciﬁcally,
+once pruning begins on a branch, BRP discards the memory
+allocated on that branch and does not reallocate the memory
+until pruning ends and the branch cannot immediately be
+pruned again. In Section 3.1, we prove that after enough
+iterations of CFR are completed, space for certain pruned
+branches will never need to be allocated again. Speciﬁ-
+cally, we prove that when using BRP it is asymptotically
+only necessary to store data for parts of the game that are
+reached with positive probability in a best response to a
+Nash equilibrium. This is extremely advantageous when
+solving large imperfect-information games, which are often
+constrained by space and in which the set of best response
+actions may be orders of magnitude smaller than the size of
+the game (Schmid et al., 2014).
+
+While BRP still requires enough memory to store the entire
+game in the early iterations, recent work has shown that
+these early iterations can be skipped in CFR, and possibly
+other iterative algorithms, by ﬁrst solving a low-memory
+abstraction of the game and then using its solution to warm
+start CFR in the full game (Brown & Sandholm, 2016).
+BRP’s reduction in space is also helpful to the Simulta-
+neous Abstraction and Equilibrium Finding (SAEF) algo-
+rithm (Brown & Sandholm, 2015b), which starts CFR with
+a small abstraction of the game and progressively expands
+the abstraction while also solving the game. SAEF’s space
+requirements increase the longer the algorithm runs, and
+may eventually exceed the constraints of a system. BRP
+can counter this increase in space by eliminating the need
+to store suboptimal paths of the game tree.
+
+BRP shares some similarities to the earlier pruning algo-
+rithm Regret-Based Pruning, which has shown empirical
+evidence of improving the performance of CFR. In contrast,
+this paper proves that CFR converges faster when using
+BRP, because suboptimal paths in the game tree will only
+need to be traversed O(cid:0) ln(T )(cid:1) times over T iterations. We
+also prove that BRP uses asymptotically less space, while
+Regret-Based Pruning does not reduce the space needed
+to solve a game. Moreover, Best-Response Pruning eas-
+ily generalizes to iterative algorithms beyond CFR such as
+Fictitious Play (Heinrich et al., 2015).
+
+The magnitude of the gains in speed and space that BRP
+provides varies depending on the game. It is possible to
+construct games where BRP provides no beneﬁt. However,
+if there are many suboptimal actions in the game—as is
+frequently the case in large games—BRP can speed up
+CFR by multiple orders of magnitude and require orders of
+magnitude less space. Our experiments show an order of
+magnitude space reduction already in medium-sized games,
+and a reduction factor increase with game size.
+
+2. Background
+
+In a two-player zero-sum imperfect-information extensive-
+form game there are two players, P = {1, 2}. Let H be
+the set of all possible histories (nodes) in the game tree,
+represented as a sequence of actions. The actions available
+in a history is A(h) and the player who acts at that history
+is P (h) ∈ P ∪ c, where c denotes chance. Chance plays
+an action a ∈ A(h) with a ﬁxed probability. The history h(cid:48)
+reached after action a in h is a child of h, represented by
+h · a = h(cid:48), while h is the parent of h(cid:48). More generally, h(cid:48) is
+an ancestor of h (and h is a descendant of h(cid:48)), represented
+by h(cid:48) (cid:64) h, if there exists a sequence of actions from h(cid:48) to h.
+Z ⊆ H are terminal histories. For each player i ∈ P, there
+is a payoff function ui : Z → (cid:60) where u1 = −u2. Deﬁne
+∆i = maxz∈Z ui(z) − minz∈Z ui(z) and ∆ = maxi ∆i.
+
+Imperfect information is represented by information sets for
+each player i ∈ P by a partition Ii of h ∈ H : P (h) = i.
+For any information set I ∈ Ii, all histories h, h(cid:48) ∈ I are
+indistinguishable to player i, so A(h) = A(h(cid:48)). I(h) is
+the information set I where h ∈ I. P (I) is the player i
+such that I ∈ Ii. A(I) is the set of actions such that for
+all h ∈ I, A(I) = A(h).
+|Ai| = maxI∈Ii |A(I)| and
+|A| = maxi |Ai|. Deﬁne U (I) to be the maximum payoff
+reachable from a history in I, and L(I) to be the minimum.
+That is, U (I) = maxz∈Z,h∈I:h(cid:118)z uP (I)(z) and L(I) =
+minz∈Z,h∈I:h(cid:118)z uP (I)(z). Deﬁne ∆(I) = U (I) − L(I)
+to be the range of payoffs reachable from a history in I.
+Similarly U (I, a), L(I, a), and ∆(I, a) are the maximum,
+minimum, and range of payoffs (respectively) reachable
+from a history in I after taking action a. Deﬁne D(I, a) to
+be the set of information sets reachable by player P (I) after
+taking action a. Formally, I (cid:48) ∈ D(I, a) if for some history
+h ∈ I and h(cid:48) ∈ I (cid:48), h · a (cid:118) h(cid:48) and P (I) = P (I (cid:48)).
+
+A strategy σi(I) is a probability vector over A(I) for player
+i in information set I. The probability of a particular action
+a is denoted by σi(I, a). Since all histories in an information
+set belonging to player i are indistinguishable, the strategies
+in each of them must be identical. That is, for all h ∈ I,
+σi(h) = σi(I) and σi(h, a) = σi(I, a). Deﬁne σi to be a
+probability vector for player i over all available strategies
+Σi in the game. A strategy proﬁle σ is a tuple of strategies,
+one for each player. ui(σi, σ−i) is the expected payoff
+for player i if all players play according to the strategy
+proﬁle (cid:104)σi, σ−i(cid:105). If a series of strategies are played over T
+iterations, then ¯σT
+
+(cid:80)
+
+.
+
+i =
+
+t∈T σt
+T
+
+i
+
+πσ(h) = Πh(cid:48)→a(cid:118)hσP (h(cid:48))(h(cid:48), a) is the joint probability of
+reaching h if all players play according to σ. πσ
+i (h) is the
+contribution of player i to this probability (that is, the prob-
+ability of reaching h if all players other than i, and chance,
+always chose actions leading to h). πσ
+−i(h) is the contribu-
+tion of all players other than i, and chance. πσ(h, h(cid:48)) is the
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+.
+
+(cid:80)
+
+i (I)
+
+as ¯σT
+
+t∈T πσt
+
+i (I) =
+
+probability of reaching h(cid:48) given that h has been reached,
+and 0 if h (cid:54)(cid:64) h(cid:48). In a perfect-recall game, ∀h, h(cid:48) ∈ I ∈ Ii,
+πi(h) = πi(h(cid:48)). In this paper we focus on perfect-recall
+games. Therefore, for i = P (I) deﬁne πi(I) = πi(h) for
+h ∈ I. Moreover, I (cid:48) (cid:64) I if for some h(cid:48) ∈ I (cid:48) and some
+h ∈ I, h(cid:48) (cid:64) h. Similarly, I (cid:48) · a (cid:64) I if h(cid:48) · a (cid:64) h. The
+average strategy ¯σT
+i (I) for an information set I is deﬁned
+σt
+i (I)σt
+i
+t∈T π
+(cid:80)
+i (I)
+is a strategy σ∗
+A best response to σ−i
+such that
+i
+i∈Σi ui(σ(cid:48)
+ui(σ∗
+i, σ−i). A Nash equilib-
+i , σ−i) = maxσ(cid:48)
+rium σ∗ is a strategy proﬁle where every player plays a
+best response: ∀i, ui(σ∗
+−i). A
+Nash equilibrium strategy for player i as a strategy σi that
+is part of any Nash equilibrium. In two-player zero-sum
+games, if σi and σ−i are both Nash equilibrium strategies,
+then (cid:104)σi, σ−i(cid:105) is a Nash equilibrium. An (cid:15)-equilibrium
+as a strategy proﬁle σ∗ such that ∀i, ui(σ∗
+−i) + (cid:15) ≥
+maxσ(cid:48)
+
+−i) = maxσ(cid:48)
+
+i∈Σi ui(σ(cid:48)
+
+i , σ∗
+
+i , σ∗
+
+i, σ∗
+
+i∈Σi ui(σ(cid:48)
+
+i, σ∗
+
+−i).
+
+2.1. Counterfactual Regret Minimization
+
+Counterfactual Regret Minimization (CFR) is a popular al-
+gorithm for extensive-form games in which the strategy
+vector for each information set is determined according to a
+regret-minimization algorithm (Zinkevich et al., 2007). We
+use regret matching (RM) (Hart & Mas-Colell, 2000) as the
+regret-minimization algorithm, but the material presented in
+this paper also applies to other regret minimizing algorithms
+such as Hedge (Brown et al., 2017).
+
+The analysis of CFR makes frequent use of counterfactual
+value. Informally, this is the expected utility of an informa-
+tion set given that player i tries to reach it. For player i at
+information set I given a strategy proﬁle σ, this is deﬁned
+as
+
+vσ(I) =
+
+πσ
+−i(h)
+
+(cid:88)
+
+(cid:16)
+
+h∈I
+
+(cid:88)
+
+z∈Z
+
+(cid:0)πσ(h, z)ui(z)(cid:1)(cid:17)
+
+(1)
+
+The counterfactual value of an action a is
+
+vσ(I, a) =
+
+πσ
+−i(h)
+
+(cid:88)
+
+(cid:16)
+
+h∈I
+
+(cid:88)
+
+z∈Z
+
+(cid:0)πσ(h · a, z)ui(z)(cid:1)(cid:17)
+
+(2)
+
+A counterfactual best response (Moravcik et al., 2016)
+(CBR) is a strategy similar to a best response, except that
+it maximizes counterfactual value even at information sets
+that it does not reach due to its earlier actions. Specif-
+ically, a counterfactual best response to σ−i is a strat-
+egy CBR(σ−i) such that if CBR(σ−i)(I, a) > 0 then
+v(cid:104)CBR(σ−i),σ−i(cid:105)(I, a) = maxa(cid:48) v(cid:104)CBR(σ−i),σ−i(cid:105)(I, a(cid:48)).
+The counterfactual best response value CBV σ−i(I) is sim-
+ilar to counterfactual value, except that player i = P (I)
+plays according to a CBR to σ−i. Formally, CBV σ−i(I) =
+v(cid:104)CBRi(σ−i),σ−i(cid:105)(I).
+
+Let σt be the strategy proﬁle used on iteration t. The in-
+stantaneous regret on iteration t for action a in information
+set I is rt(I, a) = vσt
+(I, a) − vσt
+(I) and the regret for
+action a in I on iteration T is RT (I, a) = (cid:80)
+t∈T rt(I, a).
+Additionally, RT
++(I, a) = max{RT (I, a), 0} and RT (I) =
+maxa{RT
++(I, a)}. Regret for player i in the entire game is
+RT
+
+(cid:0)ui(σ(cid:48)
+In regret matching, a player picks a distribution over actions
+in an information set in proportion to the positive regret on
+those actions. Formally, on each iteration T + 1, player i
+selects actions a ∈ A(I) according to probabilities
+
+−i) − ui(σt
+
+i = maxσ(cid:48)
+
+−i)(cid:1) .
+
+i , σt
+
+i, σt
+
+i∈Σi
+
+(cid:80)
+
+t∈T
+
+σT +1(I, a) =
+
+
+
+
+
+
+(cid:80)
+
+RT
++(I,a)
+a(cid:48) ∈A(I) RT
+1
+|A(I)| ,
+
++(I,a(cid:48)) ,
+
+if (cid:80)
+
+a(cid:48) RT
+otherwise
+
++(I, a(cid:48)) > 0
+
+(3)
+If a player plays according to RM on every iteration then on
+iteration T , RT (I) ≤ ∆(I)(cid:112)|A(I)|
+
+T .
+
+√
+
+I∈Ii
+
+If a player plays according to CFR in every iteration then
+RT (I). So, as T → ∞, RT
+i ≤ (cid:80)
+RT
+In
+two-player zero-sum games, if both players’ average re-
+gret RT
+2 (cid:105) form a 2(cid:15)-
+equilibrium (Waugh et al., 2009). Thus, CFR constitutes
+an anytime algorithm for ﬁnding an (cid:15)-Nash equilibrium in
+zero-sum games.
+
+T ≤ (cid:15), their average strategies (cid:104)¯σT
+
+T → 0.
+
+1 , ¯σT
+
+i
+
+i
+
+2.2. Prior Approaches to Pruning
+
+This section reviews forms of pruning that allow parts of the
+game tree to be skipped in CFR. In vanilla CFR, the entire
+game tree is traversed separately for each player history-
+by-history. On each traversal, the regret for each action
+of a history’s information set is updated based on the ex-
+pected value for that action on that iteration, weighed by the
+probability of opponents taking actions to reach the history
+(that is, weighed by πσt
+−i(h)). However, if a history h is
+reached on iteration t in which πσt
+−i(h) = 0, then from (1)
+and (2) the strategy at h contributes nothing on iteration
+t to the regret of I(h) (or to the information sets above
+it). Moreover, any history that would be reached beyond h
+would also contribute nothing to its information set’s regret
+because πσt
+−i(h(cid:48)) = 0 for every history h(cid:48) where h (cid:64) h(cid:48)
+and P (h(cid:48)) = P (h). Thus, when traversing the game tree
+for player i, there is no need to traverse beyond any history
+h when πσt
+−i(h) = 0. The beneﬁt of this form of pruning,
+which we refer to as partial pruning, varies depending on
+the game, but empirical results show a factor of 30 improve-
+ment in some games (Lanctot et al., 2009).
+
+While partial pruning allows one to prune paths that an op-
+ponent reaches with zero probability, Regret-Based Pruning
+allows one to also prune paths that the traverser reaches
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+with zero probability (Brown & Sandholm, 2015a). How-
+ever, this pruning is necessarily temporary. Consider an
+action a ∈ A(I) such that σt(I, a) = 0, and assume that it
+is known action a will not be played with positive probabil-
+ity until some far-future iteration t(cid:48) (in RM, this would be
+the case if Rt(I, a) (cid:28) 0). Since action a is played with zero
+probability on iteration t, so from (1) the strategy played and
+reward received following action a (that is, in D(I, a)) will
+not contribute to the regret for any information set preceding
+action a on iteration t. In fact, what happens in D(I, a) has
+no bearing on the rest of the game tree until iteration t(cid:48) is
+reached. So one could, in theory, “procrastinate” in deciding
+what happened beyond action a on iteration t, t+1, ..., t(cid:48) −1
+until iteration t(cid:48).
+
+However, upon reaching iteration t(cid:48), rather than individu-
+ally making up the t(cid:48) − t iterations over D(I, a), one can
+instead do a single iteration, playing against the average of
+the opponents’ strategies in the t(cid:48) − t iterations that were
+missed, and declare that strategy was played on all the t(cid:48) − t
+iterations. This accomplishes the work of the t(cid:48) −t iterations
+in a single traversal. Moreover, since player i never plays
+action a with positive probability between iterations t and
+t(cid:48), that means every other player can apply partial pruning
+on that part of the game tree for iterations t(cid:48) − t, and skip
+it completely. This, in turn, means that player i has free
+rein to play whatever they want in D(I, a) without affecting
+the regrets of the other players. In light of that, and of the
+fact that player i gets to decide what is played in D(I, a)
+after knowing what the other players have played, player
+i might as well play a strategy that ensures zero regret for
+all information sets I (cid:48) ∈ D(I, a) in the iterations t to t(cid:48). A
+CBR to the average of the opponent strategies on the t(cid:48) − t
+iterations would qualify as such a zero-regret strategy.
+
+Regret-Based Pruning only allows a player to skip travers-
+ing D(I, a) for as long as σt(I, a) = 0. Thus,
+in
+RM, if Rt0(I, a) < 0, we can prune the game tree
+beyond action a from iteration t0 until iteration t1 so
+long as (cid:80)t0
+−i(I)U (I, a) ≤
+(cid:80)t1
+t=1 vσt
+(I).
+
+(I, a) + (cid:80)t1
+
+t=t0+1 πσt
+
+t=1 vσt
+
+3. Best-Response Pruning
+
+This section describes the behavior of BRP. In particular
+we focus on the case where BRP is applied to the most
+popular family of iterative algorithms, CFR. BRP begins
+pruning an action in an information set whenever playing
+perfectly beyond that action against the opponent’s average
+strategy (that is, playing a CBR) still does worse than what
+has been achieved in the iterations played so far (that is,
+(cid:80)T
+(I)). Pruning continues for the minimum number
+of iterations it could take for the opponent’s average strategy
+to change sufﬁciently such that the pruning starting condi-
+tion (that is, playing a CBR beyond the action against the
+
+t=1 vσt
+
+opponent’s average strategy does worse than what has been
+achieved in the iterations so far) no longer holds. When
+pruning ends, BRP calculates a CBR in the pruned branch
+against the opponent’s average strategy over all iterations
+played so far, and sets regret in the pruned branch as if that
+CBR strategy were played on every iteration played in the
+game so far—even those that were played before pruning
+began.
+
+a∈A(I)
+
+(cid:0)RT
+
+≤ (cid:0)∆(I)(cid:1)2
+
+While using a CBR works correctly when applying BRP to
+CFR, it is also sound to choose a strategy that is almost a
+CBR (formalized later in this section), as long as that strat-
++(I, a)(cid:1)2
+egy ensures (cid:80)
+|A(I)|T . In
+practice, this means that the strategy is close to a CBR, and
+approaches a CBR as T → ∞. We now present the theory
+to show that such a near-CBR can be used. However, in
+practice CFR converges much faster than the theoretical
+bound, so the potential function is typically far lower than
+the theoretical bound. Thus, while choosing a near-CBR
+rather than an exact CBR may allow for slightly longer prun-
+ing according to the theory, it may actually result in worse
+performance. All of the theoretical results presented in this
+paper, including the improved convergence bound as well
+as the lower space requirements, still hold if only a CBR is
+used, and our experiments use a CBR. Nevertheless, clever
+algorithms for deciding on a near-CBR may lead to even
+better performance in practice.
+
+We deﬁne a strategy β(σ−i, T ) as a T -near counterfactual
+best response (T -near CBR) to σ−i if for all I belonging to
+player i
+
+(cid:88)
+
+a∈A(I)
+
+(cid:0)v(cid:104)β(σ−i,T ),σ−i(cid:105)(I, a)−v(cid:104)β(σ−i,T ),σ−i(cid:105)(I)(cid:1)2
+
++ ≤
+
+xT
+I
+T 2
+
+If xT
+
+I can be any value in the range 0 ≤ xT
+|A(I)|T .
+
+(4)
+where xT
+I ≤
+(cid:0)∆(I)(cid:1)2
+I = 0, then a T -near CBR is
+always a CBR. The set of strategies that are T -near
+CBRs to σ−i is represented as Σβ(σ−i, T ). We also
+deﬁne the T -near counterfactual best response value
+as ψσ−i,T (I, a) = minσ(cid:48)
+i,σ−i(cid:105)(I, a) and
+ψσ−i,T (I) = minσ(cid:48)
+
+i∈Σβ (σ−i,T ) v(cid:104)σ(cid:48)
+i,σ−i(cid:105)(I).
+
+i∈Σβ (σ−i,T ) v(cid:104)σ(cid:48)
+
+When applying BRP to CFR, an action is pruned only if it
+would still have negative regret had a T -near CBR against
+the opponent’s average strategy been played on every itera-
+tion. Speciﬁcally, on iteration T of CFR with RM, if
+
+T (cid:0)ψ ¯σT
+
+−i,T (I, a)(cid:1) ≤
+
+vσt
+
+(I)
+
+(5)
+
+T
+(cid:88)
+
+t=1
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+then D(I, a) can be pruned for
+
+T (cid:48) =
+
+(cid:80)T
+
+t=1 vσt
+
+(I) − ψ ¯σT
+U (I, a) − L(I)
+
+−i,T (I, a)
+
+(6)
+
+iterations. After those T (cid:48) iterations are over, we calculate
+a T + T (cid:48)-near CBR in D(I, a) to the opponent’s average
+strategy and set regret as if that T + T (cid:48)-near CBR had been
+played on every iteration. Speciﬁcally, for each t ≤ T + T (cid:48)
+,T +T (cid:48)
+we set2 vσt
+
+(I, a) = ψ ¯σT +T (cid:48)
+
+(I, a) so that
+
+−i
+
+RT +T (cid:48)
+
+(I, a) = (cid:0)T +T (cid:48)(cid:1)(cid:0)ψ ¯σT +T (cid:48)
+
+−i
+
+,T +T (cid:48)
+
+(I, a)(cid:1)−
+
+vσt
+
+(I)
+
+(7)
+and for every information set I (cid:48) ∈ D(I, a) we
+set vσt
+(I (cid:48)) =
+ψ ¯σT +T (cid:48)
+
+(I (cid:48), a(cid:48)) = ψ ¯σT +T (cid:48)
+,T +T (cid:48)
+(I (cid:48)) so that
+
+(I (cid:48), a(cid:48)) and vσt
+
+,T +T (cid:48)
+
+−i
+
+−i
+
+T +T (cid:48)
+(cid:88)
+
+t=1
+
+RT +T (cid:48)
+
+(I (cid:48), a(cid:48)) =
+(cid:0)T + T (cid:48)(cid:1)(cid:0)ψ ¯σT +T (cid:48)
+
+−i
+
+,T +T (cid:48)
+
+(I (cid:48), a(cid:48)) − ψ ¯σT +T (cid:48)
+
+−i
+
+,T +T (cid:48)
+
+(I (cid:48))(cid:1)
+
+(8)
+
+Theorem 1 proves that if (5) holds for some action, then the
+action can be pruned for T (cid:48) iterations, where T (cid:48) is deﬁned
+in (6). The same theorem holds if one replaces the T -near
+counterfactual best response values with exact counterfac-
+tual best response values. The proof for Theorem 1 draws
+from recent work on warm starting CFR using only an aver-
+age strategy proﬁle (Brown & Sandholm, 2016). Essentially,
+we warm start regrets in the pruned branch using only the
+average strategy of the opponent and knowledge of T .
+
+Theorem 1. Assume T iterations of CFR with RM have
+been played in a two-player zero-sum game and assume
+T (cid:0)ψ ¯σT
+t=1 vσt
+(I) where P (I) = i. Let
+
+−i,T (I, a)(cid:1) ≤ (cid:80)T
+t=1 vσt
+
+(cid:80)T
+
+(I)−T (cid:0)ψ ¯σT
+U (I,a)−L(I)
+
+−i,T (I,a)(cid:1)
+
+−i
+
+(cid:99).
+
+,T +T (cid:48)
+
+T (cid:48) = (cid:98)
+If both players
+play according to CFR with RM for the next T (cid:48) itera-
+tions in all information sets I (cid:48)(cid:48)
+(cid:54)∈ D(I, a) except that
+σ(I, a) is set to zero and σ(I) is renormalized,
+then
+(T + T (cid:48))(cid:0)ψ ¯σT +T (cid:48)
+over, if one then sets vσt
+(I, a) for
+each t ≤ T + T (cid:48) and vσt
+(I (cid:48), a(cid:48))
+for each I (cid:48) ∈ D(I, a), then after T (cid:48)(cid:48) additional iterations
+of CFR with RM, the bound on exploitability of ¯σT +T (cid:48)+T (cid:48)(cid:48)
+is no worse than having played T + T (cid:48) + T (cid:48)(cid:48) iterations of
+CFR with RM without BRP.
+
+(I, a)(cid:1) ≤ (cid:80)T +T (cid:48)
+(I, a) = ψ ¯σT +T (cid:48)
+(I (cid:48), a(cid:48)) = ψ ¯σT +T (cid:48)
+
+t=1 vσt
+
+(I). More-
+
+,T +T (cid:48)
+
+,T +T (cid:48)
+
+−i
+
+−i
+
+In practice, rather than check whether (5) is met for an
+action on every iteration, one could only check actions that
+
+2In practice, only the sums (cid:80)T
+t=1 vσt
+
+(I, a) or RT (I, a) are stored.
+
+(cid:80)T
+
+t=1 vσt
+
+(I) and either
+
+have very negative regret, and do a check only once every
+several iterations. This would still be safe and would save
+some computational cost of the checks, but would lead to
+less pruning.
+
+Similar to Regret-Based Pruning, the duration of pruning in
+BRP can be increased by giving up knowledge beforehand
+of exactly how many iterations can be skipped. From (2)
+−i(I)(cid:0)U (I, a) − L(I)(cid:1).
+and (1) we see that rT (I, a) ≤ πσt
+Thus, if πσt
+−i(I) is very low, then (5) would continue to hold
+for more iterations than (6) guarantees. Speciﬁcally, we can
+prune D(I, a) from iteration t0 until iteration t1 as long as
+
+(cid:0)ψ ¯σt0
+
+−i,t0(I, a)(cid:1) +
+
+t0
+
+πσt
+−i(I)U (I, a) ≤
+
+vσt
+
+(I)
+
+t1(cid:88)
+
+t=t0+1
+
+t1(cid:88)
+
+t=1
+
+(9)
+
+3.1. Best-Response Pruning Requires Less Space
+
+A key advantage of BRP is that setting the new regrets ac-
+cording to (7) and (8) requires no knowledge of what the
+regrets were before pruning began. Thus, once pruning
+begins, all the regrets in D(I, a) can be discarded and the
+space that was allocated to storing the regret can be freed.
+That space need only be re-allocated once (9) ceases to hold
+and we cannot immediately begin pruning again (that is,
+(5) does not hold). Theorem 2 proves that for any infor-
+mation set I and action a ∈ A(I) that is not part of a best
+response to a Nash equilibrium, there is an iteration TI,a
+such that for all T ≥ TI,a, action a in information set I
+(and its descendants) can be pruned.3 Thus, once this TI,a
+is reached, it will never be necessary to allocate space for
+regret in D(I, a) again.
+if
+zero-sum game,
+Theorem 2.
+for every opponent Nash equilibrium strategy σ∗
+−P (I),
+CBV σ∗
+−P (I) (I), then there exists a
+TI,a and δI,a > 0 such that after T ≥ TI,a iterations of
+t=1 vσt
+CFR, CBV ¯σT
+T
+
+−P (I) (I, a) < CBV σ∗
+
+In a two-player
+
+−i (I, a) −
+
+≤ −δI,a.
+
+(cid:80)T
+
+(I)
+
+While such a constant TI,a exists for any suboptimal action,
+BRP cannot determine whether or when TI,a is reached.
+Thus, it is still necessary to check whether (5) is satisﬁed
+whenever (9) no longer holds, and to recalculate how much
+longer D(I, a) can safely be pruned. This requires the algo-
+rithm to periodically calculate a best response (or near-best
+response) in D(I, a). However, this (near-)best response
+calculation does not require knowledge of regret in D(I, a),
+
+3If CFR converges to a particular Nash equilibrium, then this
+condition could be broadened to any information set I and action
+a ∈ A(I) that is not a best response to that particular Nash equi-
+librium. While empirically CFR does appear to always converge
+to a particular Nash equilibrium, there is no known proof that it
+always does so.
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+so it is still never necessary to store regret after iteration
+TI,a is reached.
+
+empirically converges to an (cid:15)-Nash equilibrium in faster
+than O( 1
+(cid:15)2 ) iterations, such as CFR+ on some games.
+
+t=1
+
+(cid:0)πσt
+
+While it is possible to discard regrets in D(I, a) without
+penalty once pruning begins, regret is only half the space
+requirement of CFR. Every information set I also stores a
+i (I)σt(I)(cid:1) which is
+sum of the strategies played (cid:80)T
+normalized once CFR ends in order to calculate ¯σT (I). For-
+tunately, if action a in information set I is pruned for long
+enough, then the stored cumulative strategy in D(I, a) can
+also be discarded at the cost of a small increase in the dis-
+tance of the ﬁnal average strategy from a Nash equilibrium.
+Speciﬁcally, if π ¯σT
+, where C is some con-
+stant, then setting ¯σT (I, a) = 0 and renormalizing ¯σT (I),
+and setting ¯σT (I (cid:48), a(cid:48)) = 0 for I (cid:48) ∈ D(I, a), can result in
+at most C|I|∆
+higher exploitability for the whole strategy
+T
+
+(I, a) ≤ C√
+T
+
+√
+
+i
+
+2|I|∆
+√
+
+|A|
+
+T
+
+-
+
+t=1
+
+(cid:0)πσt
+
+for any C, so (cid:80)T
+
+¯σT . Since CFR only guarantees that ¯σT is a
+Nash equilibrium anyway, C|I|∆
+is only a constant factor
+√
+T
+of the bound. If an action is pruned from T (cid:48) to T , then
+i (I)σt(I, a)(cid:1) ≤ T (cid:48)
+(cid:80)T
+T . Thus, if an action is pruned
+i (I)σt(I, a)(cid:1) ≤
+for long enough, then eventually (cid:80)T
+i (I)σt(I, a)(cid:1) could be set to
+(cid:0)πσt
+C√
+T
+zero (as well as all descendants of I · a), while suffering at
+most a constant factor increase in exploitability. As more
+iterations are played, this penalty will continue to decrease
+and eventually be negligible. The constant C can be set by
+the user: a higher C allows the average strategy to be dis-
+carded sooner, while a lower C reduces the potential penalty
+in exploitability.
+
+(cid:0)πσt
+
+t=1
+
+t=1
+
+√
+
+We deﬁne IS as the set of information sets that are not guar-
+anteed to be asymptotically pruned by Theorem 2. Specif-
+ically, I ∈ IS if I (cid:54)∈ D(I (cid:48), a(cid:48)) for some I (cid:48) and a(cid:48) ∈ A(I (cid:48))
+such that for every opponent Nash equilibrium strategy
+−P (I(cid:48)) (I (cid:48), a(cid:48)) < CBV σ∗
+−P (I (cid:48)), CBV σ∗
+σ∗
+−P (I(cid:48) ) (I (cid:48)). Theo-
+rem 2 implies the following.
+
+Corollary 1. In a two-player zero-sum game with some
+threshold on the average strategy C√
+for C > 0, after
+T
+a ﬁnite number of iterations CFR with BRP requires only
+O(cid:0)|IS||A|(cid:1) space.
+
+T
+
+Using a threshold of C
+T rather than C√
+does not change the
+theoretical properties of the corollary, and may lead to faster
+convergence in some situations, but it may also result in a
+slower reduction in the space used by the algorithm (though
+the asymptotic space used is identical). In particular, if
+BRP can be extended to ﬁrst-order methods that converge to
+an (cid:15)-Nash equilibrium in O( 1
+(cid:15) ) iterations rather than O( 1
+(cid:15)2 )
+iterations, such as the Excessive Gap Technique (Hoda et al.,
+2010; Kroer et al., 2017), then a threshold of C
+T may be more
+appropriate when those algorithms are used. A threshold of
+C
+T may also be preferable when using an algorithm which
+
+3.2. Best-Response Pruning Converges Faster
+
+We now prove that BRP in CFR speeds up convergence to an
+(cid:15)-Nash equilibrium. Section 3 proved that CFR with BRP
+converges in the same number of iterations as CFR alone. In
+this section, we prove that BRP allows each iteration to be
+traversed more quickly. Speciﬁcally, if an action a ∈ A(I)
+is not a CBR to a Nash equilibrium, then D(I, a) need only
+be traversed O(ln(T )) times over T iterations. Intuitively,
+as both players converge to a Nash equilibrium, actions that
+are not a counterfactual best response will eventually do
+worse than actions that are, so those suboptimal actions
+will accumulate increasing amounts of negative regret. This
+negative regret allows the action to be safely pruned for
+increasingly longer periods of time.
+
+Speciﬁcally, let S ⊆ H be the set of histories where h·a ∈ S
+if h ∈ S and action a is part of some CBR to some Nash
+equilibrium. Formally, S contains ∅ and every history h · a
+such that h ∈ S and CBV σ∗
+−P (I)(I)
+for some Nash equilibrium σ∗.
+
+−P (I)(I, a) = CBV σ∗
+
+Theorem 3. In a two-player zero-sum game, if both players
+choose strategies according to CFR with BRP, then conduct-
+ing T iterations requires only O(cid:0)|S|T + |H| ln(T )(cid:1) nodes
+to be traversed.
+
+The deﬁnition of S uses properties of the Nash equilibria
+of the game, and an action a ∈ A(I) not in S is only
+guaranteed to be pruned by BRP after some TI,a is reached,
+which also depends on the Nash equilibria of the game.
+Since CFR converges to only an (cid:15)-Nash equilibrium, CFR
+cannot determine with certainty which nodes are in S or
+when TI,a is reached. Nevertheless, both S and TI,a are
+ﬁxed properties of the game.
+
+4. Experiments
+
+We compare the convergence speed of BRP to Regret-Based
+Pruning, to only partial pruning, and to no pruning at all.
+We also show that BRP uses less space as as more iterations
+are conducted, unlike prior pruning algorithms. The exper-
+iments are conducted on Leduc Hold’em (Southey et al.,
+2005) and Leduc-5 (Brown & Sandholm, 2015a). Leduc
+Hold’em is a common benchmark in imperfect-information
+game solving because it is small enough to be solved but
+still strategically complex. In Leduc Hold’em, there is a
+deck consisting of six cards: two each of Jack, Queen, and
+King. There are two rounds. In the ﬁrst round, each player
+places an ante of 1 chip in the pot and receives a single pri-
+vate card. A round of betting then takes place with a two-bet
+maximum, with Player 1 going ﬁrst. A public shared card is
+then dealt face up and another round of betting takes place.
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+amount. In Leduc-5, a threshold of 0.1 resulted in about a
+factor of 7 reduction for both CFR with RM and CFR with
+RM+. This space reduction factor appears to continue to
+increase.
+
+Again, Player 1 goes ﬁrst, and there is a two-bet maximum.
+If one of the players has a pair with the public card, that
+players wins. Otherwise, the player with the higher card
+wins. The bet size in the ﬁrst round is 2 chips, and 4 chips in
+the second round. Leduc-5 is like Leduc Hold’em but larger:
+there are 5 bet sizes to choose from. In the ﬁrst round a
+player may bet 0.5, 1, 2, 4, or 8 chips, while in the second
+round a player may bet 1, 2, 4, 8, or 16 chips.
+
+Nodes touched is a hardware and implementation-
+independent proxy for time which we use to measure per-
+formance of the various algorithms. Overhead costs are
+counted in nodes touched. CFR+ is a variant of CFR in
+which a ﬂoor on regret is set at zero and each iteration
+is weighted linearly in the average strategy (that is, iter-
+ation t is weighted by t) rather than each iteration being
+weighted equally. Since Regret-Based Pruning can only
+prune negative-regret actions, Regret-Based Pruning modi-
+ﬁes the deﬁnition of CFR+ so that regret can be negative, but
+immediately jumps up to zero as soon as regret increases.
+BRP does not require this modiﬁcation. Still, BRP also
+modiﬁes the behavior of CFR+ because without pruning,
+CFR+ would put positive probability on an action as soon
+as its regret increases, while BRP waits until pruning is over.
+This is not, by itself, a problem. However, CFR+’s linear
+weighting of the average strategy is only guaranteed to con-
+verge to a Nash equilibrium if pruning does not occur. While
+both Regret-Based Pruning and BRP do well empirically
+with CFR+, the convergence is noisy. This noise can be
+reduced by using the lowest-exploitability average strategy
+proﬁle found so far, which we do in the experiments.4 BRP
+does not do as well empirically with the linear-averaging
+component of CFR+. Thus, for BRP we only measure per-
+formance using RM+ with CFR, which is the same as CFR+
+but without linear averaging. CFR+ with and without linear
+averaging has the same theoretical performance as CFR,
+but CFR+ does better empirically (particularly with linear
+averaging).
+
+Figure 1 and Figure 2 show the reduction in space needed
+to store the average strategy and regrets for BRP—for var-
+ious values of the constant threshold C, where an action’s
+probability is set to zero if it is reached with probability
+less than C√
+in the average strategy, as we explained in
+T
+Section 3.1. In both games, a threshold between 0.01 and
+0.1 performed well in both space and number of iterations,
+with the lower thresholds converging somewhat faster and
+the higher thresholds reducing space faster. We also tested
+thresholds below 0.01, but the speed of convergence was es-
+sentially the same as when using 0.01. In Leduc, all variants
+resulted in a quick drop-off in space to about half the initial
+
+4Exploitability is no harder to compute than one iteration of
+CFR or CFR+. Snapshots are not plotted at every iteration but
+only after every 10,000,000 nodes touched—except for the ﬁrst
+few snapshots.
+
+Figure 1. Convergence and space required for CFR using RM and
+RM+ with best-response pruning in Leduc Hold’em. The y-axis
+on the top graph is linear scale.
+
+Figure 2. Convergence and space required for CFR using RM and
+RM+ with best-response pruning in Leduc-5. The y-axis on the
+top graph is linear scale.
+
+Figure 3 and Figure 4 compare the convergence rates of
+BRP, Regret-Based Pruning, and only partial pruning for
+CFR with RM, CFR with RM+, and CFR+. In Leduc, BRP
+and Regret-Based Pruning perform comparably when added
+to CFR. Regret-Based Pruning with CFR+ does signiﬁcantly
+better, while BRP with CFR using RM+ sees no improve-
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+ment over BRP with CFR. In Leduc-5, which is a far larger
+game, BRP outperforms Regret-Based Pruning by a factor
+of 2 when added to CFR. BRP with CFR using RM+ also
+performs comparably to Regret-Based Pruning with CFR+,
+while retaining theoretical guarantees and not suffering from
+noisy convergence.
+
+6. Acknowledgments
+
+This material is based on work supported by the National
+Science Foundation under grant IIS-1617590 and the ARO
+under award W911NF-17-1-0082.
+
+References
+
+Bowling, Michael, Burch, Neil, Johanson, Michael, and
+Tammelin, Oskari. Heads-up limit hold’em poker is
+solved. Science, 347(6218):145–149, January 2015.
+
+Brown, Noam and Sandholm, Tuomas. Regret-based prun-
+In Advances in Neural
+ing in extensive-form games.
+Information Processing Systems, pp. 1972–1980, 2015a.
+
+Brown, Noam and Sandholm, Tuomas. Simultaneous ab-
+straction and equilibrium ﬁnding in games. In Proceed-
+ings of the International Joint Conference on Artiﬁcial
+Intelligence (IJCAI), 2015b.
+
+Brown, Noam and Sandholm, Tuomas. Strategy-based
+warm starting for regret minimization in games. In AAAI
+Conference on Artiﬁcial Intelligence (AAAI), 2016.
+
+Brown, Noam, Kroer, Christian, and Sandholm, Tuomas.
+Dynamic thresholding and pruning for regret minimiza-
+In AAAI Conference on Artiﬁcial Intelligence
+tion.
+(AAAI), 2017.
+
+Gilpin, Andrew and Sandholm, Tuomas. Lossless abstrac-
+tion of imperfect information games. Journal of the ACM,
+54(5), 2007. Early version ‘Finding equilibria in large
+sequential games of imperfect information’ appeared in
+the Proceedings of the ACM Conference on Electronic
+Commerce (EC), pages 160–169, 2006.
+
+Hart, Sergiu and Mas-Colell, Andreu. A simple adaptive
+procedure leading to correlated equilibrium. Economet-
+rica, 68:1127–1150, 2000.
+
+Heinrich, Johannes, Lanctot, Marc, and Silver, David. Ficti-
+tious self-play in extensive-form games. In International
+Conference on Machine Learning (ICML), pp. 805–813,
+2015.
+
+Hoda, Samid, Gilpin, Andrew, Peña, Javier, and Sandholm,
+Tuomas. Smoothing techniques for computing Nash equi-
+libria of sequential games. Mathematics of Operations
+Research, 35(2):494–512, 2010. Conference version ap-
+peared in WINE-07.
+
+Kroer, Christian, Waugh, Kevin, Kılınç-Karzan, Fatma,
+and Sandholm, Tuomas. Faster ﬁrst-order methods for
+extensive-form game solving. In Proceedings of the ACM
+Conference on Economics and Computation (EC), 2015.
+
+Figure 3. Convergence for partial pruning, regret-based pruning,
+and best-response pruning in Leduc. “CFR - No Prune” is CFR
+without any pruning.
+
+Figure 4. Convergence for partial pruning, regret-based pruning,
+and best-response pruning in Leduc-5. “CFR - No Prune” is CFR
+without any pruning.
+
+5. Conclusions
+
+We introduced BRP, a new form of pruning that prov-
+ably reduces both the space needed to solve an imperfect-
+information game and the time needed to reach an (cid:15)-Nash
+equilibrium. This addresses both of the major bottlenecks
+in solving large imperfect-information games. Experimen-
+tally, BRP reduced the space needed to solve a game by a
+factor of 7, with the reduction factor increasing with game
+size. While the early iterations may still be slow and re-
+quire the same amount of space as CFR without BRP, these
+early iterations can be skipped by warm starting CFR with
+an abstraction of the game (Brown & Sandholm, 2016).
+This paper focused on the theory of BRP when applied
+to CFR, the most popular algorithm for solving imperfect-
+information games. However, BRP can also be applied to
+Fictitious Play (Heinrich et al., 2015) and likely extends to
+other iterative algorithms as well (Hoda et al., 2010).
+
+Reduced Space and Faster Convergence in Imperfect-Information Games via Pruning
+
+Kroer, Christian, Waugh, Kevin, Kılınç-Karzan, Fatma, and
+Sandholm, Tuomas. Theoretical and practical advances
+on smoothing for extensive-form games. In Proceedings
+of the ACM Conference on Economics and Computation
+(EC), 2017.
+
+Lanctot, Marc, Waugh, Kevin, Zinkevich, Martin, and Bowl-
+ing, Michael. Monte Carlo sampling for regret minimiza-
+tion in extensive games. In Proceedings of the Annual
+Conference on Neural Information Processing Systems
+(NIPS), pp. 1078–1086, 2009.
+
+Moravcik, Matej, Schmid, Martin, Ha, Karel, Hladik, Milan,
+and Gaukrodger, Stephen. Reﬁning subgames in large
+imperfect information games. In AAAI Conference on
+Artiﬁcial Intelligence (AAAI), 2016.
+
+Nesterov, Yurii. Excessive gap technique in nonsmooth
+convex minimization. SIAM Journal of Optimization, 16
+(1):235–249, 2005.
+
+Pays, François. An interior point approach to large games
+In AAAI Computer Poker
+
+of incomplete information.
+Workshop, 2014.
+
+Schmid, Martin, Moravcik, Matej, and Hladik, Milan.
+Bounding the support size in extensive form games with
+imperfect information. In AAAI Conference on Artiﬁcial
+Intelligence (AAAI), pp. 784–790, 2014.
+
+Southey, Finnegan, Bowling, Michael, Larson, Bryce, Pic-
+cione, Carmelo, Burch, Neil, Billings, Darse, and Rayner,
+Chris. Bayes’ bluff: Opponent modelling in poker. In
+Proceedings of the 21st Annual Conference on Uncer-
+tainty in Artiﬁcial Intelligence (UAI), pp. 550–558, July
+2005.
+
+Tammelin, Oskari, Burch, Neil, Johanson, Michael, and
+Bowling, Michael. Solving heads-up limit texas hold’em.
+In Proceedings of the International Joint Conference on
+Artiﬁcial Intelligence (IJCAI), pp. 645–652, 2015.
+
+Waugh, Kevin, Schnizlein, David, Bowling, Michael, and
+Szafron, Duane. Abstraction pathologies in extensive
+In International Conference on Autonomous
+games.
+Agents and Multi-Agent Systems (AAMAS), 2009.
+
+Zinkevich, Martin, Johanson, Michael, Bowling, Michael H,
+and Piccione, Carmelo. Regret minimization in games
+with incomplete information. In Proceedings of the An-
+nual Conference on Neural Information Processing Sys-
+tems (NIPS), pp. 1729–1736, 2007.
+
+

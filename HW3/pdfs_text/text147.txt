@@ -1,0 +1,2325 @@
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+Minsik Cho 1 Daniel Brand 1
+
+Abstract
+Convolution is a critical component in modern
+deep neural networks, thus several algorithms for
+convolution have been developed. Direct con-
+volution is simple but suffers from poor per-
+formance. As an alternative, multiple indirect
+methods have been proposed including im2col-
+based convolution, FFT-based convolution, or
+Winograd-based algorithm. However, all these
+indirect methods have high memory-overhead,
+which creates performance degradation and of-
+fers a poor trade-off between performance and
+In this work, we pro-
+memory consumption.
+pose a memory-efﬁcient convolution or MEC
+with compact lowering, which reduces memory-
+overhead substantially and accelerates convolu-
+tion process. MEC lowers the input matrix in
+a simple yet efﬁcient/compact way (i.e., much
+less memory-overhead), and then executes mul-
+tiple small matrix multiplications in parallel to
+get convolution completed. Additionally, the re-
+duced memory footprint improves memory sub-
+system efﬁciency, improving performance. Our
+experimental results show that MEC reduces
+memory consumption signiﬁcantly with good
+speedup on both mobile and server platforms,
+compared with other indirect convolution algo-
+rithms.
+
+1. Introduction
+
+image
+
+to perform a
+
+speech recognition, natural
+
+Deep neural network (DNN) consists of many lay-
+ers
+classiﬁca-
+task such as
+language
+tion/recognition,
+translation, and so on. Among these layers, the convo-
+lution layer is one of the most important, but the slow-
+est and most memory-intensive ones in advanced/modern
+convolutional DNN (Abuzaid et al., 2015; Chen et al.,
+2016; Cong & Xiao, 2014; Denton et al., 2014; Park et al.,
+
+1IBM T. J. Watson Research Center, NY, USA. Correspon-
+
+dence to: Minsik Cho <minsikcho@us.ibm.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+2016a; Vasilache et al., 2014). To address the performance
+issues in convolutional layers, efﬁcient/approximation al-
+gorithms have been proposed (Chellapilla et al., 2006;
+Denton et al., 2014; Jaderberg et al., 2014; Jia, 2014;
+tailed implementations for lim-
+Vasilache et al., 2014),
+ited cases have been actively investigated (Lavin, 2015),
+and industrial-strength libraries are offered (Chetlur et al.,
+2014).
+
+the previous approaches have not directly
+However,
+This
+addressed the memory consumption problem.
+is becoming a critical
+issue as DNNs are getting
+in end-point devices with limited memory (e.g., mo-
+(Chen et al., 2015; Collins & Kohli,
+bile/IOT devices)
+2014; Gong et al., 2014; Kim et al., 2015; Lebedev et al.,
+2014; Wang & Cheng, 2016) so as to minimize response
+delay (e.g., better user experience) and network over-
+head (Han et al., 2015; Lane et al., 2016; 2015). On the
+other hand,
+the reduced memory consumption leads to
+smaller SRAM usage, which can save energy consump-
+tion (e.g., leakage current) on mobile devices (Park et al.,
+2015). Moreover, memory footprint itself has critical im-
+pact on convolution computation efﬁciency (Li et al., 2016;
+Park et al., 2016b). Therefore, minimizing memory foot-
+print in convolution is critical for future deep-learning ap-
+plications on wide variety of devices and platforms.
+
+In this paper, we propose a new memory-efﬁcient convolu-
+tion algorithm, MEC which can reduce memory-overhead
+and further improve the performance of computing convo-
+lution in DNN. MEC uses a simple yet novel way of low-
+ering the input matrix in a highly compact way, while still
+exploiting fast matrix-matrix multiplication available in a
+highly-optimized package such as BLAS (Jia, 2014). The
+reduced memory footprint improves memory sub-system
+efﬁciency (i.e., improves cache locality), so that MEC ac-
+celerates the convolution computation itself without com-
+promising accuracy. Through extensive experiments on
+both mobile and server platforms with CPU/GPU, we show
+that MEC can be a very generic/efﬁcient algorithm suitable
+to various platforms with memory constraints. Further, the
+key ideas in MEC should be beneﬁcial/complementary to
+any variant of conventional im2col-based convolution by
+reducing either memory consumption or memory-bus traf-
+ﬁc (i.e., less trafﬁc from global memory to shared memory
+on GPU) (Chellapilla et al., 2006; Chetlur et al., 2014; Jia,
+
+I
+K
+O
+L
+sh, sw
+
+2014).
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+Table1. Notations.
+
+2.2. Previous Work
+
+a : b
+A[a, b]
+A[a : b, c : d]
+
+SEQUENCE
+MATRIX ELEMENT
+SUB-MATRIX
+
+{a, a + 1, ... b − 1}
+
+A[i, j], i ∈ a : b, j ∈ c : d
+
+INPUT TENSOR
+KERNEL TENSOR
+OUTPUT TENSOR
+LOWERED TENSOR in × ow × ih × kw × ic
+
+in × ih × iw × ic
+kh × kw × ic × kc
+in × oh × ow × kc
+
+KERNEL STRIDE
+
+relevant
+
+Due to the importance of DNN, several
+techniques
+for efﬁcient convolution computation have been pro-
+posed (Chetlur et al., 2014; Perkins, 2016).
+The
+to our work is im2col-based convo-
+most
+lution, FFT (Fast Fourier Transform)-based convolu-
+tion (Highlander & Rodriguez, 2016; Mathieu et al., 2013;
+Vasilache et al., 2014), and Winograd-based convolu-
+tion (Lavin, 2015). MEC provides the same functionality
+with reduced memory requirements.
+
+The rest of the paper is organized as follows. We review
+related works and present preliminaries in Section 2. Sec-
+tion 3 presents our proposed algorithm, MEC. Experimen-
+tal results are in Section 4. Section 5 concludes this paper.
+
+2. Preliminaries
+
+2.1. Notations
+
+Notation used in this paper is listed in Table 1. For integers
+we use small letters, for tensors and matrices we use capital
+letters. We adopt the C-language convention as represent-
+ing tensors and matrices in row-major order. For example,
+a p×q ×r tensor is an array of pqr elements. The array can
+be interpreted as consisting of p sections, each divided into
+q subsections, each having r elements. The same array can
+also be interpreted as p × qr matrix, or as pq × r matrix,
+etc. We speciﬁcally interpret a tensor as a matrix when it
+requires matrix operations, otherwise (i.e., for data move-
+ment) we keep the tensor form. If we work with a math li-
+brary, such as cuBLAS (cuBLAS), which requires column-
+major order, then we still use the same row-major represen-
+tation, but interpret all matrices as being transposed.
+
+We use the notation a : b to denote a sub-matrix. Thus, an
+m × n matrix could be written as A[0 : m, 0 : n]. The most
+common form of a sub-matrix will be of the form A[i :
+i+p, j : j +q]. It is a p×q sub-matrix with top left corner at
+the element A[i, j], which can be easily represented in the
+BLAS interface without moving any elements by having
+leading dimension ld = n.
+
+The subject of this paper is 2-dimensional convolution O =
+I ⋆ K with strides sh, sw. For simplicity of explanation
+any padding with zeroes is assumed to have been already
+applied to the input I. The output matrix O will have the
+dimensions
+
+• im2col-based convolution transforms/lowers the in-
+put matrix into a Toeplitz matrix with redundancy
+(a.k.a, lowered matrix) such that convolution can be
+performed as fast matrix-matrix multiplication, which
+can take advantage of highly optimized linear algebra
+packages including BLAS (Chellapilla et al., 2006;
+Chetlur et al., 2014; Jia, 2014).
+
+• FFT-based convolution relies on the fact that convolu-
+tion can be done as simple multiplication in the fre-
+quency domain. However, FFT-based convolution in-
+curs memory-overhead because all the kernels must
+be padded to be at the same size as the input ma-
+trix. Thus, memory-overhead becomes really high
+when kernels are relatively smaller (e.g., 3x3) than
+input matrices (Chetlur et al., 2014; He et al., 2015;
+Perkins, 2016; Simonyan & Zisserman, 2014).
+
+• Winograd-based
+
+is
+
+on
+
+based
+
+convolution
+
+the
+Coppersmith-Winograd algorithm (Winograd, 1980)
+which shows how to reduce multiplication counts at
+a cost of more addition counts and a large number of
+intermediate products.
+It is shown in (Lavin, 2015;
+Park et al., 2016a) that Winograd-based convolution
+can be efﬁcient for small kernels on GPU.
+
+proposed
+
+In contrast
+to the above schemes, which do not de-
+grade accuracy, various approximation strategies have
+low-rank/monochromatic
+been
+approximation
+Jaderberg et al.,
+2014;
+2014), vector quantization (Gong et al., 2014), ﬁne-
+tuning (Lebedev et al., 2014), and DCT (Discrete Cosine
+Transform)/hashing (Lebedev et al., 2014).
+
+including
+(Denton et al.,
+
+3. Algorithm
+
+In this section, we propose our algorithm for convolution,
+MEC, with detailed examples. The main goal of MEC is
+to reduce memory-overhead during convolution, which can
+be beneﬁcial for any convolutional DNN in three aspects:
+
+oh,w =
+
+ih,w − kh,w
+sh,w
+
++ 1
+
+(1)
+
+• MEC can enable training or inferencing with a larger
+
+model for a given memory capacity.
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+2
+
+2
+
+2
+
+1
+
+0
+
+0
+
+0
+
+2
+
+0
+
+0
+
+1
+
+0
+
+0
+
+0
+
+1
+
+1
+
+1
+
+1
+
+1
+
+0
+
+0
+
+1
+
+1
+
+2
+
+1
+
+0
+
+0
+
+0
+
+2
+
+0
+
+0
+
+1
+
+2
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+1
+
+1
+
+1
+
+0
+
+1
+
+0
+
+0
+
+1
+
+-1
+
+4
+
+2
+
+1
+
+2
+
+0
+
+6
+
+6
+
+5
+
+4
+
+2
+
+3
+
+2
+
+3
+
+3
+
+2
+
+5
+
+4
+
+4
+
+3
+
+4
+
+4
+
+4
+
+4
+
+4
+
+3
+
+0 0 0 0 2 2 0 2 0
+
+0 0 0 2 2 1 2 0 1
+
+0 0 0 2 1 1 0 1 1 
+.
+.
+.
+
+1 1 0 1 2 0 1 1 1
+.
+.
+
+1
+
+0
+
+0
+
+1
+
+1
+
+1
+
+1
+
+0
+
+1 1 0 0 2 0 0 0 0
+
+25 x 9
+
+-1
+
+9  x 1
+
+4
+
+2
+
+1
+
+2
+
+0
+
+6
+
+6
+
+5
+
+4
+
+2
+
+3
+
+2
+
+3
+
+3
+
+2
+
+5
+
+4
+
+4
+
+3
+
+4
+
+4
+
+4
+
+4
+
+4
+
+3
+
+(a) direct convolution
+
+(b) im2col-based convolution with lowered matrix
+
+Figure1. Conventional convolution examples with iw = ih = 7, kh = kw = 3, sh = sw = 1, ow = oh = 5 (in = ic = kc = 1).
+
+• MEC can allow larger mini-batch sizes to speedup
+
+turn-around/per-epoch-latency during training.
+
+• MEC can accelerate computation by improving mem-
+
+ory sub-system efﬁciency (e.g. more cache hits).
+
+In contrast to the widely-adopted im2col-based convo-
+lution (Chellapilla et al., 2006; Chetlur et al., 2014; Jia,
+2014), MEC performs compact/BLAS-friendly lowering
+such that memory-overhead can be minimized without
+degrading performance/accuracy. Section 3.1 motivates
+MEC, and Section 3.2 highlights the key idea in MEC.
+Section 3.3 formally presents MEC with implementation
+details.
+
+3.1. Motivation
+
+In this section, we review im2col-based convolution and its
+pros and cons with Fig. 1 which sketches direct convolu-
+tion in (a) and im2col-based convolution using BLAS in
+(b). In direct convolution, one element of the output matrix
+O is produced by a dot-product between the kernel K and
+a sub-matrix of the input I. The sub-matrices are obtained
+by sliding K over I in both dimensions. Each subsequent
+sub-matrix is obtained by sliding the distance sh or sw, re-
+spectively. For example, Fig. 1 (a) shows two sub-matrices
+in gray and dotted boxes w.r.t.
+the 3 × 3 kernel are pro-
+cessed to generate the corresponding output values in gray
+and dotted boxes (i.e., 3 and 4), respectively.
+
+Direct convolution is simple and straightforward without
+memory-overhead. However, it is known that the same con-
+volution can be done more efﬁciently with a lowered ma-
+trix (a.k.a. im2col) and gemm in BLAS (Chellapilla et al.,
+2006; Chetlur et al., 2014; Jia, 2014) by off-loading the
+geometry-speciﬁc specializations in convolution to a plain
+matrix, which is depicted in Fig. 1 (b). Speciﬁcally, each
+sub-matrix instance w.r.t. K is linearized into a row of the
+lowered matrix L as in (b). For example, the gray and
+dotted sub-matrices in (a) are transformed into the gray
+and dotted rows in (b), respectively. Then the output ma-
+
+trix O = L × K, can be computed efﬁciently by op-
+timized libraries (cuBLAS; K˚agstr¨om et al., 1998; MKL;
+OpenBLAS). im2col-based convolution is generic enough
+to be used in any DNN on both mobile/IoT and high-end
+platforms (Chetlur et al., 2014; Lane et al., 2015).
+
+The major drawback of im2col-based convolution is that
+it comes with memory-overhead of temporarily storing the
+lowered matrix L with dimension
+
+inohow × khkwkc
+
+(2)
+
+which shows that the memory requirement grows quadrat-
+ically with problem size. The example in Fig. 1 (b) shows
+that the lowered matrix has size 25 × 9, which is even lager
+than the original input matrix. MEC mainly aims to per-
+form the same convolution yet with less memory-overhead,
+while improving computational efﬁciency.
+
+3.2. MEC Overview
+
+In this section, we highlight the key idea in our memory-
+efﬁcient convolution algorithm, MEC based on a com-
+pact lowering scheme. The main reason why the im2col-
+based algorithm has large memory-overhead is because
+there is a signiﬁcant amount of redundancy in the low-
+ered matrix when sh or sw is small and K is large. And,
+the overhead becomes even worse when K is relatively
+smaller than I which occurs frequently in the state-of-
+the-art DNN architectures (He et al., 2015; Perkins, 2016;
+Simonyan & Zisserman, 2014; Szegedy et al., 2014). In or-
+der to reduce memory-overhead, therefore, it is critical to
+reduce the amount of redundancy in the lowered matrix
+and keep the computation pattern BLAS-compatible (oth-
+erwise, the poor computation itself may slow down the en-
+tire convolution).
+
+MEC overcomes such challenges by lowering multiple
+columns at once rather than each single individual sub-
+matrix w.r.t. K. Consider the example in Fig. 2 for key
+ideas and details. MEC copies sub-matrices W (shaded in
+Fig. 2) of size ih × kw (which is 7 × 3) into one row of L.
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+W
+
+A
+
+0
+
+2
+
+2
+
+2
+
+1
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+C
+
+0
+
+1
+
+1
+
+1
+
+1
+
+1
+
+0
+
+0
+
+2
+
+0
+
+0
+
+1
+
+0
+
+0
+
+B
+
+0
+
+1
+
+1
+
+2
+
+1
+
+0
+
+0
+
+D
+
+I
+
+E
+
+0
+
+2
+
+0
+
+0
+
+1
+
+2
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+0
+
+A
+
+B
+
+C
+
+D
+
+E
+
+L
+
+K
+
+P
+
+Q
+
+R
+
+S
+
+T
+
+0 0 0 0 2 2 0 2 0 0 2 0 0 1 1 0 0 0 0 0 0
+
+0 0 0 2 2 1 2 0 1 2 0 1 1 1 1 0 0 1 0 0 0
+
+0 0 0 2 1 1 0 1 1 0 1 2 1 1 1 0 1 0 0 0 0
+
+0 0 0 1 1 2 1 1 0 1 2 0 1 1 1 1 0 2 0 0 0
+
+0 0 0 1 2 0 1 0 0 2 0 0 1 1 0 0 2 0 0 0 0
+
+5 × 21
+
+5 × 9
+
+1
+
+0
+
+0
+
+1
+
+1
+
+1
+
+1
+
+0
+
+-1
+
+O
+
+3
+
+2
+
+3
+
+3
+
+2
+
+5
+
+4
+
+4
+
+3
+
+4
+
+4
+
+4
+
+4
+
+4
+
+3
+
+P
+
+Q
+
+R
+
+S
+
+T
+
+4
+
+2
+
+1
+
+2
+
+0
+
+6
+
+6
+
+5
+
+4
+
+2
+
+Figure2. MEC example for the same problem in Fig. 1
+
+For example, A is the ﬁrst partition of I, A = I[0 : 7, 0 : 3].
+Then, we slide W by sw (which is 1) to the right and cre-
+ate another partition B = I[0 : 7, 1 : 4]. As we continue
+this process in Fig. 2, there will be 5 horizontal partitions,
+{A, B, C, D, E} in L eventually. The resulting lowered
+matrix, L has dimensions 5 × 21, which is 54% smaller
+than one in Fig. 1 with dimensions 25 × 9.
+
+Once the lowered matrix L is formed, MEC multiplies L
+by K in a way signiﬁcantly different from im2col-based
+algorithms. MEC creates another set of vertical partitions,
+{P, Q, R, S, T } within L, where each partition is of size
+of ow × khkw (which is 5 × 9). Each subsequent parti-
+tion is obtained by shifting to the right by shkw (which
+is 3) elements. For example, P = L[0 : 5, 0 : 9] and
+Q = L[0 : 5, 3 : 12]. Then each row of the output
+matrix O is the product between one of the partitions in
+{P, Q, R, S, T } and K. Rows in O in Fig. 2 are annotated
+with the corresponding source partitions.
+
+These multiplications rely on the BLAS gemm interface in
+three ways. First, the kh × kw matrix K is interpreted as
+a khkw × 1 matrix. Second, the partitions {P, Q, R, S, T }
+are speciﬁed by providing a pointer to the initial element
+and ld = ihkw, which is the entire length of one row of L.
+Thirdly, each row of O is formed by 5 separate gemm calls
+between {P, Q, R, S, T } and K. Although the number of
+gemm calls increases, the total number of mult/add opera-
+tions remains identical to that of the im2col-based convo-
+lution, keeping computationally complexity same.
+
+Intuitively, MEC eliminates the vertical redundancy in the
+conventional im2col-based convolution. Then it recovers
+the information by merely shifting the vertical partitions
+(i.e., P, Q, R, S, T ) by a constant interval. These sub-
+matrix manipulations are made efﬁcient by keeping the pat-
+tern BLAS compatible. The lowering in MEC is highly
+efﬁcient as we move fewer elements from I to smaller L,
+
+L[w, h, 0 : kw] = I[h, sww : sww + kw]
+
+Algorithm 1 O = V anillaM EC(I, K, s)
+1: Allocate O with ohow elements
+2: Allocate L with owihkw elements
+3: Interpret L as ow × ih × kw tensor
+4: for w ∈ 0 : ow, h ∈ 0 : ih in parallel do
+5:
+6: end for
+7: Interpret L as ow × ihkw matrix
+8: Interpret K as khkw × 1 matrix
+9: Interpret O as oh × ow matrix
+10: for h ∈ 0 : oh in parallel do
+11: O[h, 0 : ow] =
+
+L[0 : ow, shkwh : shkwh + khkw] × K
+
+12: end for
+13: Return O
+
+compared with im2col-based convolution, saving memory-
+bus trafﬁc as well.
+
+The process is stated in Algorithm 1 where in = ic = kc =
+It ﬁrst allocates the output O and temporary L. The
+1.
+ﬁrst loop in line 4 forms the matrix L, which copies kw
+consecutive elements from I to L, and all these copies can
+be done in parallel. The second loop in line 10 forms the
+output O. Each execution of the body is done by one gemm
+call, and those matrix multiplications can be parallelized.
+
+3.3. MEC Algorithm
+
+In this section, we present the complete MEC by extend-
+ing Algorithm 1 to Algorithm 2 in order to handle channels
+(ic and kc) and mini-batches (in), and discuss the imple-
+mentation details in the context of deep-learning (mainly
+about image format issue). Due to the compact lowering
+in MEC, it is computationally advantageous to use I in
+in × ih × iw × ic (or n-h-w-c) as in Table 2, because
+it ensures vertical redundant pixels to be eliminated and re-
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+0 0 0 0 0 0
+0
+2 2 1 1 2
+0
+0
+2 0 1 1 0
+0
+0
+2 0 1 2 0
+0
+0
+1 1 1 1 1
+0
+0
+0 0 1 0 2
+0
+0
+0 0 0 0 0 0
+0
+0 0 0 0 0 0
+0
+2 2 1 1 2
+0
+0
+2 0 1 1 0
+0
+0
+2 0 1 2 0
+0
+0
+1 1 1 1 1
+0
+0
+0 0 1 0 2
+0
+0
+0 0 0 0 0 0
+0
+0 0 0 0 0 0
+0
+2 2 1 1 2
+0
+0
+2 0 1 1 0
+0
+0
+2 0 1 2 0
+0
+0
+1 1 1 1 1
+0
+0
+0 0 1 0 2
+0
+0
+0 0 0 0 0 0
+0
+
+n-h-w-c
+
+0 0 0 0 2 2 0 2 0 0 2 0 0 1 1 0 0 0 0 0 0
+
+0 0 0 2 2 1 2 0 1 2 0 1 1 1 1 0 0 1 0 0 0
+
+0 0 0 2 1 1 0 1 1 0 1 2 1 1 1 0 1 0 0 0 0
+
+0 0 0 1 1 2 1 1 0 1 2 0 1 1 1 1 0 2 0 0 0
+
+0 0 0 1 2 0 1 0 0 2 0 0 1 1 0 0 2 0 0 0 0
+
+0 0 0 0 2 2 0 2 0 0 2 0 0 1 1 0 0 0 0 0 0
+
+0 0 0 2 2 1 2 0 1 2 0 1 1 1 1 0 0 1 0 0 0
+
+0 0 0 2 1 1 0 1 1 0 1 2 1 1 1 0 1 0 0 0 0
+
+0 0 0 1 1 2 1 1 0 1 2 0 1 1 1 1 0 2 0 0 0
+
+0 0 0 1 2 0 1 0 0 2 0 0 1 1 0 0 2 0 0 0 0
+
+0 0 0 0 2 2 0 2 0 0 2 0 0 1 1 0 0 0 0 0 0
+
+0 0 0 2 2 1 2 0 1 2 0 1 1 1 1 0 0 1 0 0 0
+
+0 0 0 2 1 1 0 1 1 0 1 2 1 1 1 0 1 0 0 0 0
+
+0 0 0 1 1 2 1 1 0 1 2 0 1 1 1 1 0 2 0 0 0
+
+0 0 0 1 2 0 1 0 0 2 0 0 1 1 0 0 2 0 0 0 0
+
+4
+2
+1
+2
+0
+
+3 5
+6
+4
+2 4
+6
+4
+4
+5
+3
+4
+4 3 3 4
+2 2 4 3
+
+5 gemm
+
+15 gemm
+
+4
+2
+1
+2
+0
+
+3 5
+6
+4
+2 4
+6
+4
+4
+5
+3
+4
+4 3 3 4
+2 2 4 3
+
+1
+
+0
+
+0
+
+1
+
+1
+
+1
+
+1
+
+0
+
+-1
+
+Solution A
+3 5
+4
+6
+4
+4
+2
+2
+2 4
+6
+4
+4
+1
+5
+3
+1
+4
+2
+4 3 3 4
+2
+2 2 4 3
+0
+0
+h-n-w-c
+
+Solution B
+4
+3 5
+4
+6
+4
+2
+2
+2 4
+6
+4
+4
+1
+5
+3
+1
+4
+2
+4 3 3 4
+2
+0
+2 2 4 3
+0
+n-h-w-c
+
+3 5
+6
+4
+2 4
+6
+4
+4
+5
+3
+4
+4 3 3 4
+2 2 4 3
+
+3 5
+6
+4
+2 4
+6
+4
+4
+5
+3
+4
+4 3 3 4
+2 2 4 3
+
+Figure3. MEC with mini-batch example
+
+4
+2
+1
+2
+0
+
+3 5
+6
+4
+2 4
+6
+4
+4
+5
+3
+4
+4 3 3 4
+2 2 4 3
+
+4
+2
+1
+2
+0
+
+3 5
+6
+4
+2 4
+6
+4
+4
+5
+3
+4
+4 3 3 4
+2 2 4 3
+n-h-w-c
+
+4
+2
+1
+2
+0
+
+3 5
+6
+4
+2 4
+6
+4
+4
+5
+3
+4
+4 3 3 4
+2 2 4 3
+
+covered in a contiguous memory space.
+
+Algorithm 2 O = M EC(I, K, s)
+1: Allocate O with inohowkc elements
+2: Allocate L with inowihkwic elements
+3: Interpret L as in × ow × ih × kw × ic tensor
+4: for n ∈ 0 : in, w ∈ 0 : ow, h ∈ 0 : ih in parallel do
+5:
+
+L[n, w, h, 0 : kw, 0 : ic] =
+I[n, h, sww : sww+kw, 0 : ic]
+
+6: end for
+7: Interpret K as khkwic × kc matrix
+8: if ow ≤ T and |O| ≤ |L| then
+9:
+10:
+11:
+12:
+
+Interpret L as inow × ihkwic matrix
+Interpret O as oh × inowkc matrix
+for h ∈ 0 : oh in parallel do
+
+O[h, 0 : inowkc] =
+L[0 : inow, shkwich : shkwich+khkwic] × K
+
+end for
+Copy L = O
+Interpret L as oh × in × owkc tensor
+Interpret O as in × oh × owkc tensor
+for n ∈ 0 : in, h ∈ 0 : oh in parallel do
+O[n, h, 0 : owkc] = L[h, n, 0 : owkc]
+
+end for
+
+Interpret L as in matrices of ow × ihkwic
+Interpret O as in matrices of oh × owkc
+for n ∈ 0 : in, h ∈ 0 : oh in parallel do
+
+O[n][h, 0 : owkc] =
+L[n][0 : ow, shkwich : shkwich+khkwic] × K
+
+end for
+
+25:
+26: end if
+27: Return O as in × oh × owkc tensor
+
+Based on I as in × ih × iw × ic, Algorithm 2 still has the
+same key idea in presence of channels and mini-batches.
+The lowering step lines 4-6 in Algorithm 1 is similar to
+
+13:
+14:
+15:
+16:
+17:
+18:
+19:
+20: else
+21:
+22:
+23:
+24:
+
+lines 4-6 in Algorithm 2. However, the parallel multipli-
+cation loop in lines 10-12 in Algorithm 1 extends to lines
+8-25 in Algorithm 2 mainly due to the image format issue.
+
+A direct extension of Algorithm 1 would interpret O as
+oh × inowkc matrix, and perform oh multiplications for
+convolution of the whole mini-batch. This leads to the out-
+put format h-n-w-c, which is different from the input for-
+mat of I. This may be acceptable in DNNs, where each
+convolution layer is followed by a pooling layer expecting
+h-n-w-c format and generating the standard n-h-w-c
+format. However, it would be troublesome in a network
+where all layers expect and produce the n-h-w-c format.
+Therefore, we provide two solutions depicted in Fig. 3 to
+handle such format-related issues.
+
+Solution A (Lines 9 to 19 of Algorithm 2) First we per-
+form the direct extension of Algorithm 1 (lines 9 -
+13) and end up with O in format h-n-w-c. Then,
+we transform O into n-h-w-c format (lines 14-19)
+where we repurpose L as an auxiliary space.
+
+Solution B (lines 21 to 25 of Algorithm 2) We can han-
+dle the in samples in the mini-batch separately as
+in line 21, resulting in inoh parallel/batched gemm
+calls with smaller inputs, as opposed to oh gemm calls
+with larger inputs. This will directly generate O in
+n-h-w-c.
+
+In terms of complexity, both solutions perform the same
+number of ﬂoating point multiplications. In practice, how-
+ever, the size of sub-matrices can impact performance, par-
+ticularly on implementation-sensitive platform like GPU.
+Therefore, MEC tries to ﬁnd a good trade-off between So-
+lution A and B with a tunable parameter T in line 8. (In
+addition, Solution A is available only if L can be used as
+an auxiliary space, i.e. it is at least as large as O). T is a
+platform-dependent parameter (e.g., on CPU vs. GPU, or
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+on GPU-compute capability), and we found T around 100
+to be a good threshold for latest GPUs.
+
+3.4. Analysis
+
+In this section, we analyze the memory saving in MEC over
+im2col-based convolution. The size of the lowered matrix,
+L in MEC is:
+
+inowihkwkc
+
+(3)
+
+In comparison with the lowered matrix of im2col (see
+Eq. (2)), there is approximately a factor of kh. For a more
+exact comparison, let us form their difference R.
+
+R = inkc(ohowkhkw − owihkw)
+= inkcowkw(ohkh − ih)
+
+= inkcowkw(
+
+kh + kh − ih)
+
+ih − kh
+sh
+
+source Winograd-based convolution (Falcon, 2016) and op-
+timized it to reduce memory-overhead for CPU, and fur-
+ther modiﬁed/optimized it for GPU following (Lavin, 2015;
+Park et al., 2016a). The brief descriptions of the convolu-
+tion algorithms in this section are as follows:
+
+Conv.cpu Conventional
+
+im2col-based convolution for
+
+CPU with openBLAS/openMP
+
+Conv.gpu Conventional
+GPU with cuBLAS
+
+im2col-based convolution for
+
+Wino.cpu Winograd-based F (2×2, 3×3) convolution for
+
+CPU (applicable only when kh = kw = 3)
+
+Wino.gpu Winograd-based F (2 × 2, 3 × 3) convolution
+for GPU (applicable only when kh = kw = 3)
+
+= inkcowkw(ih − kh)(
+
+− 1)
+
+(4)
+
+kh
+sh
+
+FFT.gpu FFT-based convolution for GPU with cuFFT
+
+MEC.cpu MEC for CPU with OpenBLAS/OpenMP
+
+Since ih > kh, MEC always reduces memory footprint as
+long as kh > sh (i.e., there is an overlap between kernel
+instances). Note that in case kh ≤ sh, there is no redundant
+information to eliminate.
+
+4. Experimental Results
+
+We implemented MEC for CPU/GPU in C++ with multi-
+threaded OpenBLAS, OpenMP, and cuBLAS (cuBLAS)
+using single 32-bit precision. We also implemented a fully
+parallelized im2col-based convolution on CPU/GPU (Jia,
+2014) with the same libraries. We compared MEC with
+other open-source convolution packages in C++, in or-
+der to make fair point-by-point comparison and accu-
+rately capture the memory-overhead and performance.
+We downloaded an open-source FFT-based convolu-
+tion (cuFFT; Theano-FFT) for GPU. We took an open-
+
+Table2. Benchmarks.
+
+MEC.gpu MEC for GPU with cuBLAS
+
+Note that it is performance-critical to combine multiple
+sgemm calls into a single cublasSgemmBatched call
+in MEC.gpu. When modifying/optimizing Wino.gpu,
+we tried to make the best trade-off between parallelism
+and memory-overhead (i.e., global memory) by utilizing
+register/shared-memory as much as possible, and ensured
+experiments representative. Please see Appendix for de-
+tails on Wino.gpu optimization.
+
+For
+thorough comparison, we built a comprehensive
+benchmark set consisting of 12 unique convolution lay-
+ers, cv1-cv12 from various public DNNs (He et al.,
+2015; Krizhevsky et al., 2012; Sermanet et al., 2013;
+Simonyan & Zisserman, 2014; Szegedy et al., 2014) as in
+Table 2. The runtime in our experiments is measured as
+a wall-clock time by a standard C++ library, running each
+algorithm 10 times and reporting the average. Our experi-
+ments were performed on the two platforms:
+
+NAME
+
+INPUT
+ih × iw × ic
+
+KERNEL
+kh × kw × oc, sh(sw)
+
+Mobile Android phone with ARM7 (MSM8960) for user-
+side inference and training (mini-bath size=1)
+
+CV1
+CV2
+CV3
+CV4
+CV5
+CV6
+CV7
+CV8
+CV9
+CV10
+CV11
+CV12
+
+227×227×3
+231×231×3
+227×227×3
+224×224×64
+24×24×96
+12×12×256
+224×224×3
+112×112×64
+56×56×64
+28×28×128
+14×14×256
+7×7×512
+
+11×11×96, 4
+11×11×96, 4
+7×7×64, 2
+7×7×64, 2
+5×5×256, 1
+3×3×512, 1
+3×3×64, 1
+3×3×128, 1
+3×3×64, 1
+3×3×128, 1
+3×3×256, 1
+3×3×512, 1
+
+Server Linux server with Intel CPU (E5-2680) and Nvidia
+GPU (P100) for inference and training (mini-bath
+size=32)
+
+We present our results in Fig. 4, and made the following
+summaries:
+
+• (a) plots the factor by which MEC.cpu improves
+memory-overhead and performance over Conv.cpu
+for cv1 on Server-CPU. While the kernel K is ﬁxed at
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+memory
+runtime
+
+18.5
+
+Wino.cpu
+
+Conv.cpu
+
+MEC.cpu
+
+0
+
+1
+
+2
+
+3
+
+8
+
+9
+
+10 11
+
+5
+
+4
+7
+sh (sw) with K= 11x11
+
+6
+
+(a) Memory and runtime change for various sh = sw values
+
+(b) Memory-overhead on Mobile and Server-CPU
+
+cv1
+
+cv2
+
+cv3
+
+cv4
+
+cv5
+
+cv6
+
+cv7
+
+cv8
+
+cv9
+
+cv10 cv11 cv12
+
+Wino.cpu
+Conv.cpu Lowering
+Conv.cpu Sgemm
+MEC.cpu Lowering
+MEC.cpu Sgemm
+
+10.5 9.3
+
+9.7
+
+12.3
+
+10.9 15.4 11.0 8.8
+
+6.1
+
+Wino.cpu
+Conv.cpu Lowering
+Conv.cpu Sgemm
+MEC.cpu Lowering
+MEC.cpu Sgemm
+
+cv1
+
+cv2
+
+cv3
+
+cv4
+
+cv5
+
+cv6
+
+cv7
+
+cv8
+
+cv9
+
+cv10 cv11 cv12
+
+cv1
+
+cv2
+
+cv3
+
+cv4
+
+cv5
+
+cv6
+
+cv7
+
+cv8
+
+cv9
+
+cv10 cv11 cv12
+
+(c) Runtime on Mobile
+
+(d) Runtime on Server-CPU
+
+13.6 13.6 7.1
+
+6.5
+
+10.1 8.3
+
+5.0
+
+9.6
+
+21.3
+
+FFT.gpu
+Wino.gpu
+Conv.gpu
+MEC.gpu
+
+Wino.gpu
+FFT.gpu
+Conv.gpu Lowering
+Conv.gpu Sgemm
+MEC.gpu Lowering MEC.gpu Sgemm
+
+d
+a
+e
+h
+r
+e
+v
+O
+ 
+y
+r
+o
+m
+e
+
+M
+ 
+d
+e
+z
+i
+l
+a
+m
+r
+o
+N
+
+6
+
+5
+
+4
+
+3
+
+2
+
+1
+
+0
+
+e
+m
+
+i
+t
+n
+u
+R
+ 
+d
+e
+z
+i
+l
+a
+m
+r
+o
+N
+
+4.5
+
+3.5
+
+2.5
+
+1.5
+
+0.5
+
+5
+
+4
+
+3
+
+2
+
+1
+
+0
+
+e
+m
+
+i
+t
+n
+u
+R
+ 
+d
+e
+z
+i
+l
+a
+m
+r
+o
+N
+
+7
+
+6
+
+5
+
+4
+
+3
+
+2
+
+1
+
+0
+
+r
+o
+t
+c
+a
+F
+ 
+t
+n
+e
+m
+e
+v
+o
+r
+p
+m
+
+I
+
+15
+
+10
+
+5
+
+0
+
+3.5
+
+2.5
+
+3
+
+2
+
+1
+
+0
+
+1.5
+
+0.5
+
+e
+m
+
+i
+t
+n
+u
+R
+ 
+d
+e
+z
+i
+l
+a
+m
+r
+o
+N
+
+d
+a
+e
+h
+r
+e
+v
+O
+ 
+y
+r
+o
+m
+e
+
+M
+ 
+d
+e
+z
+i
+l
+
+m
+a
+r
+o
+N
+
+3.5
+
+2.5
+
+1.5
+
+4
+
+3
+
+2
+
+1
+
+0
+
+0.5
+
+cv1
+
+cv2
+
+cv3
+
+cv4
+
+cv5
+
+cv6
+
+cv7
+
+cv8
+
+cv9
+
+cv10 cv11 cv12
+
+cv1
+
+cv2
+
+cv3
+
+cv4
+
+cv5
+
+cv6
+
+cv7
+
+cv8
+
+cv9
+
+cv10 cv11 cv12
+
+(e) Memory-overhead on Server-GPU
+
+(f) Runtime on Server-GPU
+
+Figure4. Memory-overhead and Performance of various sorting convolution algorithms on Mobile and Server.
+
+11×11, sh = sw varies from 1 to 10 on the x-axis. We
+can clearly observe that both memory-overhead and
+runtime improve with a larger k/s ratio as explained
+in Eq. (4).
+
+• (c) shows that MEC.cpu is overall 20% faster than
+Conv.cpu on Mobile, yet can be over 90% faster
+for some layers like cv6. MEC.cpu is faster than
+Wino.cpu on 5 benchmarks out of 7.
+
+• (b) supports that MEC can substantially reduce the
+memory-overhead. Compared with Conv.cpu, the im-
+provement is as large as 3.4x with high k/s ratio, and
+is on average 3.2x. For cv6-cv12, MEC.cpu improves
+memory-overhead by 5.9x on average, compared with
+Wino.cpu.
+
+• (d) shows that on Server-CPU, MEC.cpu over-
+all shows about 8.8x better runtime than Conv.cpu.
+Compared with Wino.cpu, performance is highly de-
+pendent on the benchmarks: it is similar or faster for
+cv7,cv8, and cv9.
+
+• (e) presents memory-overheads from various algo-
+rithms on Server-GPU. MEC.gpu shows the least
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+Table3. ResNet-101 (He et al., 2015) on Mobile.
+
+5. Conclusion
+
+CONV.CPU
+
+MEC.CPU
+
+NAME WEIGHT
+
+MEM
+(MB)
+
+RUNTIME
+(MSEC)
+
+MEM
+(MB)
+
+RUNTIME
+(MSEC)
+
+CV4
+CV9
+CV10
+CV11
+CV12
+
+1
+3
+4
+23
+3
+
+142.1
+19.2
+11.9
+29.1
+1.3
+
+1228.9
+26.8
+126.7
+302.7
+16.5
+
+41.7
+6.7
+4.3
+11.3
+0.6
+
+1061.3
+16.0
+81.0
+222.9
+10.4
+
+SUM
+
+203.6
+
+1701.6
+
+64.6
+
+1391.6
+
+RATIO
+
+3.2
+
+1.2
+
+1.0
+
+1.0
+
+FFT.gpu
+memory-overhead on all benchmarks.
+large memory-overhead.
+requires
+Wino.gpu is tested for only cv6-cv12 due to its kernel
+conﬁguration limitation.
+
+substantially
+
+• (f) compares performance of various algorithms on
+Server-GPU. MEC.gpu can lower the matrix about
+85% faster than Conv.gpu due to much fewer bytes to
+write (which is especially critical on GPU). Wino.gpu
+still has larger memory-overhead than MEC.gpu due
+to the fully parallelized computation of transformed
+matrices (i.e., GgGT for each kernel and BT dB for
+each channel (Lavin, 2015; Park et al., 2016a)), even
+though M matrix is kept at registers/shared-memory.
+
+As observed, MEC shows greater performance boost on
+Server-CPU than on Mobile or Server-GPU, because
+Server-CPU is very sensitive to memory-footprint due to
+the complex cache-architecture. For the example of cv10,
+we observed through Valgrind cache simulation (Valgrind)
+that the last-level cache miss in MEC.cpu is 0.3%, sub-
+stantially smaller than 4% in Conv.cpu, on a default cache
+system. Mobile has tiny/simple caches, and GPU does not
+have a sophisticated memory sub-system (deep/big cache
+hierarchy) to beneﬁt from large memory footprint reduc-
+tion. Also, cuBLAS is highly optimized to efﬁciently use
+fast shared-memory. Overall, MEC is all-around player on
+both Mobile or Server-CPU/GPU that has no limitation
+on kernel conﬁguration, incurs the least memory-overhead,
+yet offers high-performance.
+
+In practice, some convolution layers appear more fre-
+quently than others. Therefore, we applied MEC.cpu and
+Conv.cpu to ResNet-101 in (He et al., 2015) and esti-
+mated the weighted impact on memory-overhead and run-
+time on Mobile as in Table 3, which shows that MEC.cpu
+can reduce the memory-overhead by 3x and improve run-
+time by 20% for a large scale convolutional DNN.
+
+In this paper, we presented MEC, a memory-efﬁcient con-
+volution algorithm for deep learning. We proposed a novel
+matrix lowering scheme to improve memory efﬁciency for
+MEC which also improves the computational efﬁciency
+due to reduced memory footprint. We can clearly ob-
+serve through extensive experiments that MEC needs the
+least memory-overhead, yet offers high-performance in
+most cases on both mobile and server platforms without
+any restriction, positioning MEC as an attractive convolu-
+tion engine on various platforms. MEC is well suited for
+DNN-based applications in memory-constrained environ-
+ment such as mobile/IoT, while allowing to increase the
+learning capacity of DNN on high-end server systems.
+
+Appendix
+
+In this appendix, we sketch Wino.gpu optimizations in
+Section 4 in detail. Our Wino.gpu are all hand-tuned/fully-
+unrolled F (2 × 2, 3 × 3) which can ﬁt into the instruction
+cache in GPU (Lavin, 2015) for maximum performance.
+We started with an open-source package (Falcon, 2016) and
+followed the techniques in (Lavin, 2015; Park et al., 2016a)
+to improve it for GPU. We mainly focused on the high-level
+optimization including the following:
+
+• For a given input matrix, all transformed kernel and
+input matrices across all kernels/channels are com-
+puted in full parallel for maximum GPU utilization.
+
+• The output matrix is computed by multiplying all pairs
+of the transformed kernel and input matrices in full
+parallel for maximum GPU utilization.
+
+• All intermediate products from multiplications are
+kept in thread registers ﬁrst and reduced using shared-
+memory.
+
+• All loops are manually unrolled for maximum perfor-
+
+mance.
+
+• Read-only cache ( ldg) is actively used when com-
+puting the output matrix with transformed kernel and
+input matrices which are shared across blocks.
+
+References
+
+Abuzaid, Firas, Hadjis, Stefan, Zhang, Ce, and R´e, Christo-
+pher. Caffe con troll: Shallow ideas to speed up deep
+learning. CoRR, abs/1504.04343, 2015.
+
+Chellapilla, Kumar, Puri, Sidd, and Simard, Patrice. High
+Performance Convolutional Neural Networks for Docu-
+In Tenth International Workshop on
+ment Processing.
+Frontiers in Handwriting Recognition, October 2006.
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+Chen, Wenlin, Wilson, James T., Tyree, Stephen, Wein-
+berger, Kilian Q., and Chen, Yixin. Compressing neural
+networks with the hashing trick. CoRR, abs/1504.04788,
+2015.
+
+Chen, Yu-Hsin, Krishna, Tushar, Emer, Joel, and Sze,
+Vivienne. Eyeriss: An Energy-Efﬁcient Reconﬁgurable
+Accelerator for Deep Convolutional Neural Networks.
+In IEEE International Solid-State Circuits Conference,
+ISSCC 2016, Digest of Technical Papers, pp. 262–263,
+2016.
+
+Chetlur, Sharan, Woolley, Cliff, Vandermersch, Philippe,
+Cohen, Jonathan, Tran, John, Catanzaro, Bryan, and
+Shelhamer, Evan. cudnn: Efﬁcient primitives for deep
+learning. CoRR, abs/1410.0759, 2014.
+
+Collins, Maxwell D. and Kohli, Pushmeet. Mem-
+CoRR,
+
+ory bounded deep convolutional networks.
+abs/1412.1442, 2014.
+
+Cong, Jason and Xiao, Bingjun. Minimizing computa-
+tion in convolutional neural networks. In International
+Conference on Artiﬁcial Neural Networks, pp. 281–290.
+Springer, 2014.
+
+cuBLAS. http://docs.nvidia.com/cuda/cublas.
+
+cuFFT. http://docs.nvidia.com/cuda/cufft.
+
+Denton, Emily, Zaremba, Wojciech, Bruna, Joan, LeCun,
+Yann, and Fergus, Rob. Exploiting linear structure
+within convolutional networks for efﬁcient evaluation.
+CoRR, abs/1404.0736, 2014.
+
+Falcon. https://colfaxresearch.com/falcon-library. 2016.
+
+Gong, Yunchao, Liu, Liu, Yang, Ming, and Bourdev,
+Lubomir D. Compressing deep convolutional networks
+using vector quantization. CoRR, abs/1412.6115, 2014.
+
+Han, Song, Mao, Huizi, and Dally, William J. Deep com-
+pression: Compressing deep neural network with prun-
+ing, trained quantization and huffman coding. CoRR,
+abs/1510.00149, 2015.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun,
+Jian. Deep residual learning for image recognition. In
+arXiv prepring arXiv:1506.01497, 2015.
+
+Highlander, Tyler and Rodriguez, Andres. Very efﬁ-
+cient training of convolutional neural networks using
+CoRR,
+fast fourier transform and overlap-and-add.
+abs/1601.06815, 2016.
+
+Jia, Yangqing. Learning Semantic Image Representations
+at a Large Scale. PhD thesis, EECS Department, Uni-
+versity of California, Berkeley, May 2014.
+
+K˚agstr¨om, Bo, Ling, Per, and van Loan, Charles. Gemm-
+based level 3 blas: High-performance model implemen-
+tations and performance evaluation benchmark. ACM
+Trans. Math. Softw., 24(3):268–302, September 1998.
+ISSN 0098-3500.
+
+Kim, Yong-Deok, Park, Eunhyeok, Yoo, Sungjoo, Choi,
+Taelim, Yang, Lu, and Shin, Dongjun. Compression
+of deep convolutional neural networks for fast and low
+power mobile applications. CoRR, abs/1511.06530,
+2015.
+
+Krizhevsky, Alex, Sutskever, Ilya, and Hinton, Geoffrey E.
+Imagenet classiﬁcation with deep convolutional neural
+networks. In Advances in Neural Information Processing
+Systems 25, pp. 1097–1105. 2012.
+
+Lane, N. D., Bhattacharya, S., Georgiev, P., Forlivesi, C.,
+Jiao, L., Qendro, L., and Kawsar, F. Deepx: A soft-
+ware accelerator for low-power deep learning inference
+In 2016 15th ACM/IEEE Interna-
+on mobile devices.
+tional Conference on Information Processing in Sensor
+Networks (IPSN), pp. 1–12, April 2016.
+
+Lane, Nicholas D., Bhattacharya, Sourav, Georgiev, Petko,
+Forlivesi, Claudio, and Kawsar, Fahim. An early re-
+source characterization of deep learning on wearables,
+smartphones and internet-of-things devices. In Proceed-
+ings of the 2015 International Workshop on Internet of
+Things Towards Applications, IoT-App ’15, pp. 7–12,
+2015. ISBN 978-1-4503-3838-7.
+
+Lavin, Andrew. Fast algorithms for convolutional neural
+
+networks. CoRR, abs/1509.09308, 2015.
+
+Lebedev, Vadim, Ganin, Yaroslav, Rakhuba, Maksim, Os-
+eledets, Ivan V., and Lempitsky, Victor S. Speeding-
+up convolutional neural networks using ﬁne-tuned cp-
+decomposition. CoRR, abs/1412.6553, 2014.
+
+Li, Chao, Yang, Yi, Feng, Min, Chakradhar, Srimat, and
+Zhou, Huiyang. Optimizing memory efﬁciency for deep
+convolutional neural networks on gpus. In Proceedings
+of the International Conference for High Performance
+Computing, Networking, Storage and Analysis, SC ’16,
+pp. 54:1–54:12, 2016. ISBN 978-1-4673-8815-3.
+
+Mathieu, Micha¨el, Henaff, Mikael, and LeCun, Yann. Fast
+training of convolutional networks through ffts. CoRR,
+abs/1312.5851, 2013.
+
+Jaderberg, Max, Vedaldi, Andrea, and Zisserman, Andrew.
+Speeding up convolutional neural networks with low
+rank expansions. CoRR, abs/1405.3866, 2014.
+
+MKL. https://software.intel.com/en-us/intel-mkl.
+
+OpenBLAS. http://www.openblas.net.
+
+MEC: Memory-efﬁcient Convolution for Deep Neural Network
+
+Park, Eunhyeok, Kim, Dongyoung, Kim, Soobeom, Kim,
+Yong-Deok, Kim, Gunhee, Yoon, Sungroh, and Yoo,
+Sungjoo. Big/little deep neural network for ultra low
+In Proceedings of the 10th Interna-
+power inference.
+tional Conference on Hardware/Software Codesign and
+System Synthesis, CODES ’15, 2015.
+
+Park, Hyunsun, Kim, Dongyoung, Ahn, Junwhan, and Yoo,
+Sungjoo. Zero and data reuse-aware fast convolution
+In Proceedings of
+for deep neural networks on gpu.
+the Eleventh IEEE/ACM/IFIP International Conference
+on Hardware/Software Codesign and System Synthesis,
+CODES ’16, 2016a.
+
+Park, Jongsoo, Li, Sheng R., Wen, Wei, Li, Hai, Chen,
+Yiran, and Dubey, Pradeep. Holistic sparsecnn: Forg-
+ing the trident of accuracy, speed, and size. CoRR,
+abs/1608.01409, 2016b.
+
+Perkins, Hugh. cltorch: a hardware-agnostic backend for
+the torch deep neural network library, based on opencl.
+CoRR, abs/1606.04884, 2016.
+
+Sermanet, Pierre, Eigen, David, Zhang, Xiang, Mathieu,
+Micha¨el, Fergus, Rob, and LeCun, Yann. Overfeat: Inte-
+grated recognition, localization and detection using con-
+volutional networks. CoRR, abs/1312.6229, 2013.
+
+Simonyan, K. and Zisserman, A. Very deep convolu-
+tional networks for large-scale image recognition. CoRR,
+abs/1409.1556, 2014.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet,
+Pierre, Reed, Scott E., Anguelov, Dragomir, Erhan, Du-
+mitru, Vanhoucke, Vincent, and Rabinovich, Andrew.
+Going deeper with convolutions. CoRR, abs/1409.4842,
+2014.
+
+Theano-FFT. https://github.com/andersbll/theano ops.
+
+Valgrind. http://valgrind.org.
+
+Vasilache, Nicolas, Johnson, Jeff, Mathieu, Micha¨el, Chin-
+tala, Soumith, Piantino, Serkan, and LeCun, Yann. Fast
+convolutional nets with fbfft: A GPU performance eval-
+uation. CoRR, abs/1412.7580, 2014.
+
+Wang, Peisong and Cheng, Jian. Accelerating convolu-
+tional neural networks for mobile applications. In Pro-
+ceedings of the 2016 ACM on Multimedia Conference,
+2016.
+
+Winograd, Shmuel. Arithmetic complexity of computa-
+
+tions. SIAM, 1980.
+
+

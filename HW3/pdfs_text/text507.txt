@@ -1,0 +1,8027 @@
+Active Learning for Accurate Estimation of Linear Models
+
+Carlos Riquelme 1 Mohammad Ghavamzadeh 2 Alessandro Lazaric 3
+
+Abstract
+We explore the sequential decision-making prob-
+lem where the goal is to estimate a number of lin-
+ear models uniformly well, given a shared budget
+of random contexts independently sampled from
+a known distribution. For each incoming context,
+the decision-maker selects one of the linear mod-
+els and receives an observation that is corrupted
+by the unknown noise level of that model. We
+present Trace-UCB, an adaptive allocation algo-
+rithm that learns the models’ noise levels while
+balancing contexts accordingly across them, and
+prove bounds for its simple regret in both expec-
+tation and high-probability. We extend the algo-
+rithm and its bounds to the high dimensional set-
+ting, where the number of linear models times
+the dimension of the contexts is more than the
+total budget of samples. Simulations with real
+data suggest that Trace-UCB is remarkably ro-
+bust, outperforming a number of baselines even
+when its assumptions are violated.
+
+1. Introduction
+
+We study the problem faced by a decision-maker whose
+goal is to estimate a number of regression problems equally
+well (i.e., with a small prediction error for each of them),
+and has to adaptively allocate a limited budget of samples
+to the problems in order to gather information and improve
+its estimates. Two aspects of the problem formulation are
+key and drive the algorithm design: 1) The observations
+Y collected from each regression problem depend on side
+information (i.e., contexts X ∈ Rd) and we model the re-
+lationship between X and Y in each problem i as a linear
+function with unknown parameters βi ∈ Rd, and 2) The
+“hardness” of learning each parameter βi is unknown in ad-
+vance and may vary across the problems. In particular, we
+
+1Stanford University, Stanford, CA, USA. 2DeepMind, Moun-
+tain View, CA, USA (The work was done when the author was
+with Adobe Research). 3Inria Lille, France. Correspondence to:
+Carlos Riquelme <rikel@stanford.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+assume that the observations are corrupted by noise levels
+that are problem-dependent and must be learned as well.
+
+This scenario may arise in a number of different domains
+where a ﬁxed experimentation budget (number of samples)
+should be allocated to different problems. Imagine a drug
+company that has developed several treatments for a partic-
+ular form of disease. Now it is interested in having an accu-
+rate estimate of the performance of each of these treatments
+for a speciﬁc population of patients (e.g., at a particular
+geographical location). Given the budget allocated to this
+experiment, a number of patients n can participate in the
+clinical trial. Volunteered patients arrive sequentially over
+time and they are represented by a context X ∈ Rd summa-
+rizing their proﬁle. We model the health status of patient X
+after being assigned to treatment i by scalar Yi ∈ R, which
+depends on the speciﬁc drug through a linear function with
+parameter βi (i.e., Yi ≈ X Tβi). The goal is to assign each
+incoming patient to a treatment in such a way that at the end
+of the trial, we have an accurate estimate for all βi’s. This
+will allow us to reliably predict the expected health status
+of each new patient X for any treatment i. Since the param-
+eters βi and the noise levels are initially unknown, achiev-
+ing this goal requires an adaptive allocation strategy for the
+n patients. Note that while n may be relatively small, as
+the ethical and ﬁnancial costs of treating a patient are high,
+the distribution of the contexts X (e.g., the biomarkers of
+cancer patients) can be precisely estimated in advance.
+
+This setting is clearly related to the problem of pure ex-
+ploration and active learning in multi-armed bandits (An-
+tos et al., 2008), where the learner wants to estimate the
+mean of a ﬁnite set of arms by allocating a ﬁnite budget
+of n pulls. Antos et al. (2008) ﬁrst introduced this setting
+where the objective is to minimize the largest mean square
+error (MSE) in estimating the value of each arm. While
+the optimal solution is trivially to allocate the pulls pro-
+portionally to the variance of the arms, when the variances
+are unknown an exploration-exploitation dilemma arises,
+where variance and value of the arms must be estimated at
+the same time in order to allocate pulls where they are more
+needed (i.e., arms with high variance). Antos et al. (2008)
+proposed a forcing algorithm where all arms are pulled at
+n times before allocating pulls proportionally to the
+least
+estimated variances. They derived bounds on the regret,
+measuring the difference between the MSEs of the learn-
+
+√
+
+Active Learning for Accurate Estimation of Linear Models
+
+ing algorithm and an optimal allocation showing that the
+regret decreases as O(n−3/2). A similar result is obtained
+by Carpentier et al. (2011) that proposed two algorithms
+that use upper conﬁdence bounds on the variance to es-
+timate the MSE of each arm and select the arm with the
+larger MSE at each step. When the arms are embedded
+in Rd and their mean is a linear combination with an un-
+known parameter, then the problem becomes an optimal
+experimental design problem (Pukelsheim, 2006), where
+the objective is to estimate the linear parameter and min-
+imize the prediction error over all arms (see e.g., Wiens &
+Li 2014; Sabato & Munos 2014). In this paper, we consider
+an orthogonal extension to the original problem where a ﬁ-
+nite number of linear regression problems is available (i.e.,
+the arms) and random contexts are observed at each time
+step. Similarly to the setting of Antos et al. (2008), we
+assume each problem is characterized by a noise with dif-
+ferent variance and the objective is to return regularized
+least-squares (RLS) estimates with small prediction error
+(i.e., MSE). While we leverage on the solution proposed
+by Carpentier et al. (2011) to deal with the unknown vari-
+ances, in our setting the presence of random contexts make
+the estimation problem considerably more difﬁcult. In fact,
+the MSE in one speciﬁc regression problem is not only de-
+termined by the variance of the noise and the number of
+samples used to compute the RLS estimate, but also by the
+contexts observed over time.
+
+Contributions. We propose TRACE-UCB, an algorithm
+that simultaneously learns the “hardness” of each problem,
+allocates observations proportionally to these estimates,
+and balances contexts across problems. We derive perfor-
+mance bounds for TRACE-UCB in expectation and high-
+probability, and compare the algorithm with several base-
+lines. TRACE-UCB performs remarkably well in scenarios
+where the dimension of the contexts or the number of in-
+stances is large compared to the total budget, motivating the
+study of the high-dimensional setting, whose analysis and
+performance bounds are reported in App. F of Riquelme
+et al. (2017a). Finally, we provide simulations with syn-
+thetic data that support our theoretical results, and with real
+data that demonstrate the robustness of our approach even
+when some of the assumptions do not hold.
+
+2. Preliminaries
+
+The problem. We consider m linear regression problems,
+where each instance i ∈ [m] = {1, . . . , m} is characterized
+by a parameter βi ∈ Rd such that for any context X ∈ Rd,
+a random observation Y ∈ R is obtained as
+
+Y = X Tβi + (cid:15)i,
+
+(1)
+
+where the noise (cid:15)i is an i.i.d. realization of a Gaussian dis-
+tribution N (0, σ2
+i and
+
+i ). We denote by σ2
+
+max = maxi σ2
+
+i σ2
+
+by σ2 = 1/m (cid:80)
+i , the largest and the average variance,
+respectively. We deﬁne a sequential decision-making prob-
+lem over n rounds, where at each round t ∈ [n], the learn-
+ing algorithm A receives a context Xt drawn i.i.d. from
+N (0, Σ), selects an instance It, and observes a random
+sample YIt,t according to (1). By the end of the experiment,
+a training set Dn = {Xt, It, YIt,t}t∈[n] has been collected
+and all the m linear regression problems are solved, each
+problem i ∈ [m] with its own training set Di,n (i.e., a sub-
+set of Dn containing samples with It = i), and estimates
+of the parameters { ˆβi,n}i∈[m] are returned. For each ˆβi,n,
+we measure its accuracy by the mean-squared error (MSE)
+
+Li,n( ˆβi,n) = EX
+
+(cid:2)(X Tβi −X T ˆβi,n)2(cid:3) = (cid:107)βi − ˆβi,n(cid:107)2
+Σ.
+
+(2)
+
+We evaluate the overall accuracy of the estimates returned
+by the algorithm A as
+
+Ln(A) = max
+i∈[m]
+
+EDn
+
+(cid:2)Li,n( ˆβi,n)(cid:3),
+
+(3)
+
+where the expectation is w.r.t. the randomness of the con-
+texts Xt and observations Yi,t used to compute ˆβi,n. The
+objective is to design an algorithm A that minimizes the
+loss (3). This requires deﬁning an allocation rule to select
+the instance It at each step t and the algorithm to com-
+pute the estimates ˆβi,n, e.g., ordinary least-squares (OLS),
+regularized least-squares (RLS), or Lasso. In designing a
+learning algorithm, we rely on the following assumption.
+
+Assumption 1. The covariance matrix Σ of the Gaussian
+distribution generating the contexts {Xt}n
+
+t=1 is known.
+
+This is a standard assumption in active learning, since in
+this setting the learner has access to the input distribu-
+tion and the main question is for which context she should
+ask for a label (Sabato & Munos, 2014; Riquelme et al.,
+2017b). Often times, companies, like the drug company
+considered in the introduction, own enough data to have
+an accurate estimate of the distribution of their customers
+(patients).
+
+While in the rest of the paper we focus on Ln(A), our al-
+gorithm and analysis can be easily extended to similar ob-
+jectives such as replacing the maximum in (3) with average
+(cid:2)Li,n( ˆβi,n)(cid:3), and
+across all instances, i.e., 1/m (cid:80)m
+EDn
+i=1
+(cid:2)Li,n( ˆβi,n)(cid:3), by
+using weighted errors, i.e., maxi wi EDn
+updating the score to focus on the estimated standard de-
+viation and by including the weights in the score, respec-
+tively. Later in the paper, we also consider the case where
+the expectation in (3) is replaced by the high-probability
+error (see Eq. 17).
+
+Optimal static allocation with OLS estimates. While the
+distribution of the contexts is ﬁxed and does not depend on
+the instance i, the errors Li,n( ˆβi,n) directly depend on the
+variances σ2
+i of the noise (cid:15)i. We deﬁne an optimal baseline
+
+Active Learning for Accurate Estimation of Linear Models
+
+obtained when the noise variances {σ2
+i=1 are known. In
+particular, we focus on a static allocation algorithm Astat
+that selects each instance i exactly ki,n times, indepen-
+dently of the context,1 and returns an estimate ˆβi,n com-
+puted by OLS as
+
+i }m
+
+(cid:98)βi,n = (cid:0)XT
+
+i,nXi,n
+
+(cid:1)−1
+
+XT
+
+i,nYi,n,
+
+(4)
+
+where Xi,n ∈ Rki,n×d is the matrix of (random) samples
+obtained at the end of the experiment, and Yi,n ∈ Rki,n
+is its corresponding vector of observations. It is simple to
+show that the global error corresponding to Astat is
+
+Ln(Astat) = max
+i∈[m]
+
+σ2
+i
+ki,n
+
+(cid:16)
+
+Tr
+
+ΣEDn
+
+(cid:2)
+(cid:98)Σ−1
+i,n
+
+(cid:3)(cid:17)
+
+,
+
+(5)
+
+i,nXi,n/ki,n ∈ Rd×d is the empirical co-
+where (cid:98)Σi,n = XT
+variance matrix of the contexts assigned to instance i. Since
+the algorithm does not change the allocation depending on
+the contexts and Xt ∼ N (0, Σ), (cid:98)Σ−1
+i,n is distributed as an
+inverse-Wishart and we may write (5) as
+
+Ln(Astat) = max
+i∈[m]
+
+dσ2
+i
+ki,n − d − 1
+
+.
+
+(6)
+
+Thus, we derive the following proposition for the optimal
+static allocation algorithm A∗
+stat.
+Proposition 1. Given m linear regression problems, each
+characterized by a parameter βi, Gaussian noise with vari-
+ance σ2
+i , and Gaussian contexts with covariance Σ, let
+n > m(d + 1), then the optimal OLS static allocation al-
+gorithm A∗
+
+stat selects each instance
+
+k∗
+i,n =
+
+σ2
+i
+j σ2
+j
+
+(cid:80)
+
+n + (d + 1)
+
+1 −
+
+(7)
+
+(cid:18)
+
+(cid:19)
+
+,
+
+σ2
+i
+σ2
+
+times (up to rounding effects), and incurs the global error
+
+L∗
+
+n = Ln(A∗
+
+stat) = σ2 md
+n
+
+(cid:32)
+
++ O
+
+σ2
+
+(cid:18) md
+n
+
+(cid:19)2(cid:33)
+
+.
+
+(8)
+
+Proof. See Appendix A.1.2
+
+Proposition 1 divides the problems into two types: those
+for which σ2
+i ≥ ¯σ2 (wild instances) and those for which
+σ2
+i < ¯σ2 (mild instances). We see that for the ﬁrst type,
+the second term in (7) is negative and the instance should
+be selected less frequently than in the context-free case
+(where the optimal allocation is given just by the ﬁrst term).
+On the other hand, instances whose variance is below the
+
+1This strategy can be obtained by simply selecting the ﬁrst
+
+instance k1,n times, the second one k2,n times, and so on.
+
+2All the proofs can be found in the appendices of the extended
+
+version of the paper (Riquelme et al., 2017a).
+
+mean variance should be pulled more often. In any case,
+we see that the correction to the context-free allocation
+(i.e., the second term) is constant, as it does not depend on
+n. Nonetheless, it does depend on d and this suggests that
+in high-dimensional problems, it may signiﬁcantly skew
+the optimal allocation.
+
+While A∗
+stat effectively minimizes the prediction loss Ln,
+it cannot be implemented in practice since the optimal al-
+location k∗
+i to be known at the
+beginning of the experiment. As a result, we need to devise
+a learning algorithm A whose performance approaches L∗
+n
+as n increases. More formally, we deﬁne the regret of A as
+
+i requires the variances σ2
+
+Rn(A) = Ln(A) − Ln(A∗
+
+stat) = Ln(A) − L∗
+n,
+
+(9)
+
+and we expect Rn(A) = o(1/n). In fact, any allocation
+strategy that selects each instance a linear number of times
+(e.g., uniform sampling) achieves a loss Ln = O(1/n), and
+thus, a regret of order O(1/n). However, we expect that the
+loss of an effective learning algorithm decreases not just at
+the same rate as L∗
+n but also with the very same constant,
+thus implying a regret that decreases faster than O(1/n).
+
+3. The TRACE-UCB Algorithm
+
+In this section, we present and analyze an algorithm of
+the form discussed at the end of Section 2, which we
+call TRACE-UCB, whose pseudocode is in Algorithm 1.
+
+Select problem instance i exactly d + 1 times
+Compute its OLS estimates ˆβi,m(d+1) and ˆσ2
+
+Algorithm 1 TRACE-UCB Algorithm
+1: for i = 1, . . . , m do
+2:
+3:
+4: end for
+5: for steps t = m(d + 1) + 1, . . . , n do
+for problem instance 1 ≤ i ≤ m do
+6:
+7:
+
+(∆i,t−1 is deﬁned in (11))
+
+i,m(d+1)
+
+Compute score
+si,t−1 = (cid:98)σ2
+
+i,t−1 + ∆i,t−1
+ki,t−1
+
+Tr(cid:0)Σ ˆΣ−1
+
+i,t−1
+
+(cid:1)
+
+end for
+Select problem instance It = arg maxi∈[m] si,t−1
+Observe Xt and YIt,t
+Update its OLS estimators ˆβIt,t and ˆσ2
+
+8:
+9:
+10:
+11:
+12: end for
+13: Return RLS estimates { ˆβλ
+
+i=1 with regularization λ
+
+i,n}m
+
+It,t
+
+The regularization parameter λ = O(1/n) is provided to
+the algorithm as input, while in practice one could set λ
+independently for each arm using cross-validation.
+
+Intuition. Equation (6) suggests that while the parameters
+of the context distribution, particularly its covariance Σ, do
+
+Active Learning for Accurate Estimation of Linear Models
+
+not impact the prediction error, the noise variances play the
+most important role in the loss of each problem instance.
+This is in fact conﬁrmed by the optimal allocation k∗
+i,n
+in (7), where only the variances σ2
+i appear. This evidence
+suggests that an algorithm similar to GAFS-MAX (Antos
+et al., 2008) or CH-AS (Carpentier et al., 2011), which
+were designed for the context-free case (i.e., each instance i
+is associated to an expected value and not a linear function)
+would be effective in this setting as well. Nonetheless, (6)
+holds only for static allocation algorithms that completely
+ignore the context and the history to decide which instance
+It to choose at time t. On the other hand, adaptive learning
+algorithms create a strong correlation between the dataset
+Dt−1 collected so far, the current context Xt, and the deci-
+sion It. As a result, the sample matrix Xi,t is no longer a
+random variable independent of A, and using (6) to design
+a learning algorithm is not convenient, since the impact of
+the contexts on the error is completely overlooked. Unfor-
+tunately, in general, it is very difﬁcult to study the potential
+correlation between the contexts Xi,t, the intermediate es-
+timates ˆβi,t, and the most suitable choice It. However, in
+the next lemma, we show that if at each step t, we select It
+as a function of Dt−1, and not Xt, we may still recover an
+expression for the ﬁnal loss that we can use as a basis for
+the construction of an effective learning algorithm.
+
+Lemma 2. Let A be a learning algorithm that selects
+the instances It as a function of the previous history,
+i.e., Dt−1 = {X1, I1, YI1,1, . . . , Xt−1, It−1, YIt−1,t−1}
+and computes estimates (cid:98)βi,n using OLS. Then, its loss after
+n steps can be expressed as
+
+Ln(A) = max
+i∈[m]
+
+EDn
+
+(cid:20) σ2
+i
+ki,n
+
+(cid:16)
+
+Tr
+
+Σ(cid:98)Σ−1
+i,n
+
+(cid:17)(cid:21)
+,
+
+(10)
+
+where ki,n = (cid:80)n
+
+t=1
+
+I{It = i} and (cid:98)Σi,n = XT
+
+i,nXi,n/ki,n.
+
+Proof. See Appendix B.
+
+Remark 1 (assumptions). We assume noise and contexts
+are Gaussian. The noise Gaussianity is crucial for the es-
+timates of the parameter (cid:98)βi,t and variance (cid:98)σ2
+i,t to be inde-
+pendent of each other, for each instance i and time t (we
+actually need and derive a stronger result in Lemma 9, see
+Appendix B). This is key in proving Lemma 2, as it allows
+us to derive a closed form expression for the loss function
+which holds under our algorithm, and is written in terms of
+the number of pulls and the trace of the inverse empirical
+covariance matrix. Note that (cid:98)βi,t drives our loss, while (cid:98)σ2
+i,t
+drives our decisions. One way to remove this assumption is
+by deﬁning and directly optimizing a surrogate loss equal
+to (10) instead of (3). On the other hand, the Gaussianity of
+contexts leads to the whitened inverse covariance estimate
+Σ(cid:98)Σ−1
+i,n being distributed as an inverse Wishart. As there
+
+is a convenient closed formula for its mean, we can ﬁnd
+the exact optimal static allocation k∗
+i,n in Proposition 1, see
+(7). In general, for sub-Gaussian contexts, no such closed
+formula for the trace is available. However, as long as the
+optimal allocation k∗
+i,n has no second order nα terms for
+1/2 ≤ α < 1, it is possible to derive the same regret rate
+results that we prove later on for TRACE-UCB.
+
+i ’s. Clearly, the larger the σ2
+
+Equation (10) makes it explicit that the prediction error
+comes from two different sources. The ﬁrst one is the noise
+in the measurements Y, whose impact is controlled by the
+unknown variances σ2
+i is, the
+more observations are required to achieve the desired ac-
+curacy. At the same time, the diversity of contexts across
+instances also impacts the overall prediction error. This is
+very intuitive, since it would be a terrible idea for the re-
+search center discussed in the introduction to estimate the
+parameters of a drug by providing the treatment only to a
+hundred almost identical patients. We say contexts are bal-
+anced when (cid:98)Σi,n is well conditioned. Therefore, a good
+algorithm should take care of both aspects.
+
+There are two extreme scenarios regarding the contribu-
+tions of the two sources of error. 1) If the number of
+contexts n is relatively large, since the context distribu-
+tion is ﬁxed, one can expect that contexts allocated to each
+instance eventually become balanced (i.e., TRACE-UCB
+does not bias the distribution of the contexts). In this case,
+it is the difference in σ2
+i ’s that drives the number of times
+each instance is selected. 2) When the dimension d or the
+number of arms m is large w.r.t. n, balancing contexts be-
+comes critical, and can play an important role in the ﬁnal
+prediction error, whereas the σ2
+i ’s are less relevant in this
+scenario. While a learning algorithm cannot deliberately
+choose a speciﬁc context (i.e., Xt is a random variable),
+we may need to favor instances in which the contexts are
+poorly balanced and their prediction error is large, despite
+the fact that they might have small noise variances.
+
+Algorithm. TRACE-UCB is designed as a combination of
+the upper-conﬁdence-bound strategy used in CH-AS (Car-
+pentier et al., 2011) and the loss in (10), so as to obtain a
+learning algorithm capable of allocating according to the
+estimated variances and at the same time balancing the er-
+ror generated by context mismatch. We recall that all the
+quantities that are computed at every step of the algorithm
+are indexed at the beginning and end of a step t by i, t − 1
+(e.g., (cid:98)σ2
+i,t−1) and i, t (e.g., (cid:98)βi,t), respectively. At the end of
+each step t, TRACE-UCB ﬁrst computes an OLS estimate
+(cid:98)βi,t, and then use it to estimate the variance (cid:98)σ2
+1
+ki,t − d
+
+(cid:13)
+(cid:13)Yi,t − XT
+
+(cid:98)σ2
+i,t =
+
+i,t (cid:98)βi,t
+
+i,t as
+
+(cid:13)
+2
+(cid:13)
+
+,
+
+which is the average squared deviation of the predictions
+based on (cid:98)βi,t. We rely on the following concentration in-
+
+Active Learning for Accurate Estimation of Linear Models
+
+equality for the variance estimate of linear regression with
+Gaussian noise, whose proof is reported in Appendix C.1.
+Proposition 3. Let the number of pulls ki,t ≥ d + 1 and
+R ≥ maxi σ2
+i . If δ ∈ (0, 3/4), then for any instance i and
+step t > m(d + 1), with probability at least 1 − δ
+2 , we have
+
+|ˆσ2
+
+i,t − σ2
+
+i | ≤ ∆i,t
+
+∆= R
+
+(cid:115)
+
+64
+ki,t − d
+
+(cid:18)
+
+log
+
+2mn
+δ
+
+(cid:19)2
+
+.
+
+(11)
+
+Given (11), we can construct an upper-bound on the pre-
+diction error of any instance i and time step t as
+
+si,t−1 =
+
+ˆσ2
+i,t−1 + ∆i,t−1
+ki,t−1
+
+(cid:16)
+
+Tr
+
+Σ ˆΣ−1
+
+i,t−1
+
+(cid:17)
+
+,
+
+(12)
+
+and then simply select the instance which maximizes this
+score, i.e., It = arg maxi si,t−1. Intuitively, TRACE-UCB
+favors problems where the prediction error is potentially
+large, either because of a large noise variance or because
+of signiﬁcant unbalance in the observed contexts w.r.t. the
+target distribution with covariance Σ. A subtle but critical
+aspect of TRACE-UCB is that by ignoring the current con-
+text Xt (but using all the past samples Xt−1) when choos-
+ing It, the distribution of the contexts allocated to each in-
+stance stays untouched and the second term in the score
+si,t−1, i.e., Tr(Σ(cid:98)Σ−1
+i,t−1), naturally tends to d as more and
+more (random) contexts are allocated to instance i. This is
+shown by Proposition 4 whose proof is in Appendix C.2.
+Proposition 4. Force the number of samples ki,t ≥ d + 1.
+If δ ∈ (0, 1), for any i ∈ [m] and step t > m(d + 1) with
+probability at least 1 − δ/2, we have
+
+(cid:18)
+
+1 − CTr
+
+(cid:115)
+
+(cid:19)2
+
+≤
+
+d
+ki,t
+
+(cid:16)
+
+Tr
+
+Σ ˆΣ−1
+i,t
+
+(cid:17)
+
+(cid:18)
+
+≤
+
+1 + 2CTr
+
+d
+
+(cid:115)
+
+(cid:19)2
+
+,
+
+d
+ki,t
+
+with CTr = 1 + (cid:112)2 log(4nm/δ)/d.
+
+While Proposition 4 shows that the error term due to con-
+text mismatch tends to the constant d for all instances i as
+the number of samples tends to inﬁnity, when t is small
+w.r.t. d and m, correcting for the context mismatch may
+signiﬁcantly improve the accuracy of the estimates (cid:98)βi,n re-
+turned by the algorithm. Finally, note that while TRACE-
+UCB uses OLS to compute estimates (cid:98)βi,t, it computes its
+returned parameters (cid:98)βi,n by ridge regression (RLS) with
+regularization parameter λ as
+
+ˆβλ
+i = (XT
+
+i,nXi,n + λI)−1XT
+
+i,nYi,n.
+
+(13)
+
+As we will discuss later, using RLS makes the algorithm
+more robust and is crucial in obtaining regret bounds both
+in expectation and high probability.
+
+App. D.1) that shows that TRACE-UCB behaves similarly
+to the optimal static allocation.
+Theorem 5. Let δ > 0. With probability at least 1 − δ,
+the total number of contexts that TRACE-UCB allocates to
+each problem instance i after n rounds satisﬁes
+
+ki,n ≥ k∗
+
+i,n −
+
+C∆ + 8CTr
+σ2
+
+min
+
+(cid:114) nd
+λmin
+
+− Ω(n1/4)
+
+(14)
+
+where R ≥ σ2
+C∆ = 16R log(2mn/δ) and λmin = σ2
+
+max is known by the algorithm, and we deﬁned
+
+min/ (cid:80)
+
+j σ2
+j .
+
+We now report our regret bound for the TRACE-UCB al-
+gorithm. The proof of Theorem 6 is in Appendix D.2.
+Theorem 6. The regret of
+the Trace-UCB algorithm,
+i.e., the difference between its loss and the loss of optimal
+static allocation (see Eq. (8)), is upper-bounded by
+(cid:17)3/2(cid:19)
+.
+
+Ln(A) − L∗
+
+(cid:16) d
+
+(15)
+
+n ≤ O
+
+(cid:18) 1
+σ2
+
+min
+
+λminn
+
+Eq. (15) shows that the regret decreases as O(n−3/2) as ex-
+pected. This is consistent with the context-free results (An-
+tos et al., 2008; Carpentier et al., 2011), where the regret
+decreases as n−3/2, which is conjectured to be optimal.
+However, it is important to note that in the contextual case,
+the numerator also includes the dimensionality d. Thus,
+when n (cid:29) d, the regret will be small, and it will be larger
+when n ≈ d. This motivates studying the high-dimensional
+setting (App. F). Eq. (15) also indicates that the regret
+depends on a problem-dependent constant 1/λmin, which
+measures the complexity of the problem. Note that when
+σ2
+max ≈ σ2
+min, we have 1/λmin ≈ m, but 1/λmin could be
+much larger when σ2
+
+max (cid:29) σ2
+
+min.
+
+Remark 2. We introduce a baseline motivated by the
+context-free problem. At round t, let VAR-UCB selects
+the instance that maximizes the score3
+
+s(cid:48)
+i,t−1 =
+
+ˆσ2
+i,t−1 + ∆i,t−1
+ki,t−1
+
+.
+
+(16)
+
+The only difference with the score used by TRACE-UCB
+is the lack of the trace term in (12). Moreover, the regret
+of this algorithm has similar rate in terms of n and d as
+that of TRACE-UCB reported in Theorem 6. However, the
+simulations of Sect. 4 show that the regret of VAR-UCB is
+actually much higher than that of TRACE-UCB, specially
+when dm is close to n. Intuitively, when n is close to dm,
+balancing contexts becomes critical, and VAR-UCB suffers
+because its score does not explicitly take them into account.
+
+Sketch of the proof of Theorem 6. The proof is divided
+into three parts. 1) We show that the behavior of the ridge
+
+Performance Analysis. Before proving a regret bound for
+TRACE-UCB, we report an intermediate result (proof in
+
+3Note that VAR-UCB is similar to both the CH-AS and B-AS
+
+algorithms in Carpentier et al. (2011).
+
+Active Learning for Accurate Estimation of Linear Models
+
+loss of TRACE-UCB is similar to that reported in Lemma 2
+for algorithms that rely on OLS; see Lemma 19 in Ap-
+pendix E. The independence of the ˆβi,t and ˆσ2
+i,t estimates
+is again essential (see Remark 1). Although the loss of
+TRACE-UCB depends on the ridge estimate of the param-
+eters ˆβλ
+i,n, the decisions made by the algorithm at each
+round only depend on the variance estimates ˆσ2
+i,t and ob-
+served contexts. 2) We follow the ideas in Carpentier et al.
+(2011) to lower-bound the total number of pulls ki,n for
+each i ∈ [m] under a good event (see Theorem 5 and its
+proof in Appendix D.1). 3) We ﬁnally use the ridge reg-
+ularization to bound the impact of those cases outside the
+good event, and combine everything in Appendix D.2.
+
+The regret bound of Theorem 6 shows that the largest
+expected loss across the problem instances incurred by
+TRACE-UCB quickly approaches the loss of the optimal
+static allocation algorithm (which knows the true noise
+variances). While Ln(A) measures the worst expected loss,
+at any speciﬁc realization of the algorithm, there may be
+one of the instances which is very poorly estimated. As a
+result, it would also be desirable to obtain guarantees for
+the (random) maximum loss
+
+(cid:101)Ln(A) = max
+i∈[m]
+
+(cid:107)βi − ˆβi,n(cid:107)2
+Σ.
+
+(17)
+
+In particular, we are able to prove the following high-
+probability bound on (cid:101)Ln(A) for TRACE-UCB.
+Theorem 7. Let δ > 0, and assume (cid:107)βi(cid:107)2 ≤ Z for all i,
+for some Z > 0. With probability at least 1 − δ,
+
+σ2
+j
+
+(cid:16)
+
+m
+(cid:80)
+j=1
+n
+
+(cid:101)Ln ≤
+
+d + 2 log
+
+(cid:17)
+
+3m
+δ
+
++O
+
+(cid:18) 1
+σ2
+
+min
+
+(cid:16) d
+
+(cid:19)
+
+(cid:17) 3
+2
+
+nλmin
+
+.
+
+(18)
+
+Note that the ﬁrst term in (18) corresponds to the ﬁrst term
+of the loss for the optimal static allocation, and the second
+term is, again, a n−3/2 deviation. However, in this case, the
+guarantees hold simultaneously for all the instances.
+
+Sketch of the proof of Theorem 7. In the proof we slightly
+modify the conﬁdence ellipsoids for the ˆβi,t’s, based
+on self-normalized martingales, and derived in (Abbasi-
+Yadkori et al., 2011); see Thm. 13 in App. C. By means of
+the conﬁdence ellipsoids we control the loss in (17). Their
+radiuses depend on the number of samples per instance, and
+we rely on a high-probability events to compute a lower
+bound on the number of samples. In addition, we need to
+make sure the mean norm of the contexts will not be too
+large (see Corollary 15 in App. C). Finally, we combine the
+lower bound on ki,n with the conﬁdence ellipsoids to con-
+clude the desired high-probability guarantees in Thm. 7.
+
+High-Dimensional Setting. High-dimensional linear mod-
+els are quite common in practice, motivating the study of
+the n < dm case, where the algorithms discussed so far
+
+break down. We propose SPARSE-TRACE-UCB in Ap-
+pendix F, an extension of TRACE-UCB that assumes and
+takes advantage of joint sparsity across the linear functions.
+The algorithm has two-stages: ﬁrst, an approximate sup-
+port is recovered, and then, TRACE-UCB is applied to the
+induced lower dimensional space. We discuss and extend
+our high-probability guarantees to SPARSE-TRACE-UCB
+under suitable standard assumptions in Appendix F.
+
+4. Simulations
+
+In this section, we provide empirical evidence to support
+our theoretical results. We consider both synthetic and real-
+world problems, and compare the performance (in terms of
+normalized MSE) of TRACE-UCB to uniform sampling,
+optimal static allocation (which requires the knowledge of
+noise variances), and the context-free algorithm VAR-UCB
+(see Remark 2). We do not compare to GFSP-MAX and
+GAFS-MAX (Antos et al., 2008) since they are outper-
+formed by CH-AS Carpentier et al. (2011) and VAR-UCB
+is the same as CH-AS, except for the fact that we use the
+concentration inequality in Prop. 3, since we are estimating
+the variance from a regression problem using OLS.
+
+First, we use synthetic data to ensure that all the assump-
+tions of our model are satisﬁed, namely we deal with lin-
+ear regression models with Gaussian context and noise.
+We set the number of problem instances to m = 7 and
+consider two scenarios: one in which all the noise vari-
+ances are equal to 1 and one where they are not equal,
+and σ2 = (0.01, 0.02, 0.75, 1, 2, 2, 3). In the latter case,
+σ2
+max/σ2
+min = 300. We study the impact of (independently)
+increasing dimension d and horizon n on the performance,
+while keeping all other parameters ﬁxed. Second, we con-
+sider real-world datasets in which the underlying model is
+non-linear and the contexts are not Gaussian, to observe
+how TRACE-UCB behaves (relative to the baselines) in set-
+tings where its main underlying assumptions are violated.
+
+Synthetic Data. In Figures 1(a,b), we display the results
+for ﬁxed horizon n = 350 and increasing dimension d.
+For each value of d, we run 10, 000 simulations and report
+the median of the maximum error across the instances for
+each simulation. In Fig. 1(a), where σ2
+i ’s are equal, uniform
+sampling and optimal static allocation execute the same al-
+location since there is no difference in the expected losses
+of different instances. Nonetheless we notice that VAR-
+UCB suffers from poor estimation as soon as d increases,
+while TRACE-UCB is competitive with the optimal perfor-
+mance. This difference in performance can be explained
+by the fact that VAR-UCB does not control for contextual
+balance, which becomes a dominant factor in the loss of a
+learning strategy for problems of high dimensionality. In
+Fig. 1(b), in which σ2
+i ’s are different, uniform sampling is
+no longer optimal but even in this case VAR-UCB performs
+
+Active Learning for Accurate Estimation of Linear Models
+
+(a) σ2 = (1, 1, 1, 1, 1, 1, 1).
+
+(b) σ2 = (0.01, 0.02, 0.75, 1, 2, 2, 3).
+
+(c) σ2 = (1, 1, 1, 1, 1, 1, 1).
+
+(d) σ2 = (0.01, 0.02, 0.75, 1, 2, 2, 3).
+
+(e) σ2 = (1, 1, 1, 1, 1, 1, 1).
+
+(f) σ2 = (0.01, 0.02, 0.75, 1, 2, 2, 3).
+
+Figure 1. White Gaussian synthetic data with m = 7. In Figures (a,b), we set n = 350. In Figures (c,d,e,f), we set d = 10.
+
+better than uniform sampling only for small d < 23, where
+it is more important to control for the σ2
+i ’s. For larger di-
+mensions, balancing uniformly the contexts eventually be-
+comes a better strategy, and uniform sampling outperforms
+VAR-UCB. In this case too, TRACE-UCB is competitive
+with the optimal static allocation even for large d, success-
+fully balancing both noise variance and contextual error.
+
+Next, we study the performance of the algorithms w.r.t. n.
+We report two different losses, one in expectation (3) and
+one in high probability (17), corresponding to the results
+we proved in Theorems 6 and 7, respectively. In order to
+approximate the loss in (3) (Figures 1(c,d)) we run 30, 000
+simulations, compute the average prediction error for each
+instance i ∈ [m], and ﬁnally report the maximum mean er-
+ror across the instances. On the other hand, we estimate the
+loss in (17) (Figures 1(e,f)) by running 30, 000 simulations,
+taking the maximum prediction error across the instances
+for each simulation, and ﬁnally reporting their median.
+
+In Figures 1(c, d), we display the loss for ﬁxed dimension
+d = 10 and horizon from n = 115 to 360. In Figure 1(c),
+TRACE-UCB performs similarly to the optimal static al-
+location, whereas VAR-UCB performs signiﬁcantly worse,
+
+ranging from 25% to 50% higher errors than TRACE-UCB,
+due to some catastrophic errors arising from unlucky con-
+textual realizations for an instance. In Fig. 1(d), as the num-
+ber of contexts grows, uniform sampling’s simple context
+balancing approach is enough to perform as well as VAR-
+In
+UCB that again heavily suffers from large mistakes.
+both ﬁgures, TRACE-UCB smoothly learns the σ2
+i ’s and
+outperforms uniform sampling and VAR-UCB. Its perfor-
+mance is comparable to that of the optimal static allocation,
+especially in the case of equal variances in Fig. 1(c).
+
+In Figure 1(e), TRACE-UCB learns and properly balances
+observations extremely fast and obtains an almost optimal
+performance. Similarly to ﬁgures 1(a,c), VAR-UCB strug-
+gles when variances ˆσ2
+i are almost equal, mainly because it
+gets confused by random deviations in variance estimates
+ˆσ2
+i , while overlooking potential and harmful context imbal-
+ances. Note that even when n = 360 (rightmost point), its
+median error is still 25% higher than TRACE-UCB’s. In
+Fig. 1(f), as expected, uniform sampling performs poorly,
+due to mismatch in variances, and only outperforms VAR-
+UCB for small horizons in which uniform allocation pays
+off. On the other hand, TRACE-UCB is able to success-
+
+5101520253035d0.00.20.40.60.81.0MSE (max 8.93)Var-UCBUniform AllocationOptimal Static AllocationTrace-UCB5101520253035d0.00.20.40.60.81.0MSE (max 8.49)Var-UCBUniform AllocationOptimal Static AllocationTrace-UCB150200250300350n0.00.20.40.60.81.0MSE (max 1.74)Var-UCBUniform AllocationOptimal Static AllocationTrace-UCB150200250300350n0.00.20.40.60.81.0MSE (max 3.5)Var-UCBUniform AllocationOptimal Static AllocationTrace-UCB150200250300350n0.00.20.40.60.81.0MSE (max 4.06)Var-UCBUniform AllocationOptimal Static AllocationTrace-UCB150200250300350n0.00.20.40.60.81.0MSE (max 4.07)Var-UCBUniform AllocationOptimal Static AllocationTrace-UCBActive Learning for Accurate Estimation of Linear Models
+
+Figure 2. Results on Jester (left) with d = 40, m = 10 and MovieLens (right) with d = 25, m = 5. Median over 1000 simulations.
+
+fully handle the tradeoff between learning and allocating
+according to variance estimates ˆσ2
+i , while accounting for
+the contextual trace (cid:98)Σi, even for very low n. We observe
+that for large n, VAR-UCB eventually reaches the perfor-
+mance of the optimal static allocation and TRACE-UCB.
+
+In practice the loss in (17) (ﬁgures 1(e,f)) is often more rel-
+evant than (3), since it is in high probability and not in ex-
+pectation, and TRACE-UCB shows excellent performance
+and robustness, regardless of the underlying variances σ2
+i .
+
+Real Data. TRACE-UCB is based on assumptions such as
+linearity, and Gaussianity of noise and context that may not
+hold in practice, where data may show complex dependen-
+cies. Therefore, it is important to evaluate the algorithm
+with real-world data to see its robustness to the violation
+of its assumptions. We consider two collaborative ﬁlter-
+ing datasets in which users provide ratings for items. We
+choose a dense subset of k users and p items, where every
+user has rated every item. Thus, each user is represented
+by a p-dimensional vector of ratings. We deﬁne the user
+context by d out of her p ratings, and learn to predict her
+remaining m = p − d ratings (each one is a problem in-
+stance). All item ratings are ﬁrst centered, so each item’s
+mean is zero. In each simulation, n out of the k users are se-
+lected at random to be fed to the algorithm, also in random
+order. Algorithms can select any instance as the dataset
+contains the ratings of every instance for all the users. At
+the end of each simulation, we compute the prediction error
+for each instance by using the k − n users that did not par-
+ticipate in training for that simulation. Finally, we report
+the median error across all simulations.
+
+Fig. 2(a) reports the results using the Jester Dataset
+by (Goldberg et al., 2001) that consists of joke ratings in
+a continuous scale from −10 to 10. We take d = 40 joke
+ratings as context and learn the ratings for another 9 jokes.
+In addition, we add another function that counts the total
+number of movies originally rated by the user. The latter
+is also centered, bounded to the same scale, and has higher
+variance (without conditioning on X). The number of to-
+
+tal users is k = 3811, and m = 10. When the number
+of observations is limited, the advantage of TRACE-UCB
+is quite signiﬁcant (the improvement w.r.t. uniform alloca-
+tion goes from 45% to almost 20% for large n, while w.r.t.
+VAR-UCB it goes from almost 30% to roughly 5%), even
+though the model and context distribution are far from lin-
+ear and Gaussian, respectively.
+
+for
+
+the
+
+2(b)
+
+shows
+
+results
+
+Fig.
+the MovieLens
+dataset (Maxwell Harper & Konstan, 2016) that con-
+sists of movie ratings between 0 and 5 with 0.5 increments.
+We select 30 popular movies rated by k = 1363 users,
+and randomly choose m = 5 of them to learn (so
+d = 25). In this case, all problems have similar variance
+(ˆσ2
+min ≈ 1.3) so uniform allocation seems appropri-
+ate. Both TRACE-UCB and VAR-UCB modestly improve
+uniform allocation, while their performance is similar.
+
+max/ˆσ2
+
+5. Conclusions
+We studied the problem of adaptive allocation of n con-
+textual samples of dimension d to estimate m linear func-
+tions equally well, under heterogenous noise levels σ2
+i
+that depend on the linear instance and are unknown to
+the decision-maker. We proposed TRACE-UCB, an opti-
+mistic algorithm that successfully solves the exploration-
+exploitation dilemma by simultaneously learning the σ2
+i ’s,
+allocating samples accordingly to their estimates, and bal-
+ancing the contextual information across the instances. We
+also provide strong theoretical guarantees for two losses of
+interest: in expectation and high-probability. Simulations
+were conducted in several settings, with both synthetic and
+real data. The favorable results suggest that TRACE-UCB
+is reliable, and remarkably robust even in settings that fall
+outside its assumptions, thus, a useful and simple tool to
+implement in practice.
+
+Acknowledgements. A. Lazaric is supported by French Ministry
+of Higher Education and Research, Nord-Pas-de-Calais Regional
+Council and French National Research Agency projects ExTra-
+Learn (n.ANR-14-CE24-0010-01).
+
+5006007008009001000n0.30.40.50.60.70.80.91.0MSE (max 418.88)Var-UCBUniform AllocationTrace-UCB200250300350400450n0.800.850.900.951.00MSE (max 1.27)Var-UCBUniform AllocationTrace-UCBActive Learning for Accurate Estimation of Linear Models
+
+References
+
+Abbasi-Yadkori, Y., P´al, D., and Szepesv´ari, Cs. Improved
+algorithms for linear stochastic bandits. In Advances in
+Neural Information Processing Systems, pp. 2312–2320,
+2011.
+
+Wainwright, M. High-dimensional statistics: A non-
+
+asymptotic viewpoint. Draft, 2015.
+
+Wang, W., Liang, Y., and Xing, E. Block regularized lasso
+for multivariate multi-response linear regression. In AIS-
+TATS, 2013.
+
+Antos, A., Grover, V., and Szepesv´ari, Cs. Active learning
+in multi-armed bandits. In International Conference on
+Algorithmic Learning Theory, pp. 287–302, 2008.
+
+Wiens, D. and Li, P. V-optimal designs for heteroscedas-
+tic regression. Journal of Statistical Planning and Infer-
+ence, 145:125–138, 2014.
+
+Carpentier, A., Lazaric, A., Ghavamzadeh, M., Munos, R.,
+and Auer, P. Upper-conﬁdence-bound algorithms for
+active learning in multi-armed bandits. In Algorithmic
+Learning Theory, pp. 189–203. Springer, 2011.
+
+Goldberg, K., Roeder, T., Gupta, D., and Perkins, C. Eigen-
+taste: A constant time collaborative ﬁltering algorithm.
+Information Retrieval, 4(2):133–151, 2001.
+
+Hastie, T., Tibshirani, R., and Wainwright, M. Statistical
+learning with sparsity: the lasso and generalizations.
+CRC Press, 2015.
+
+Maxwell Harper, F. and Konstan, J.
+
+The movielens
+datasets: History and context. ACM Transactions on In-
+teractive Intelligent Systems (TiiS), 5(4):19, 2016.
+
+Negahban, S. and Wainwright, M.
+
+Simultaneous sup-
+port recovery in high dimensions: Beneﬁts and perils of
+block-regularization. IEEE Transactions on Information
+Theory, 57(6):3841–3863, 2011.
+
+Obozinski, G., Wainwright, M., and Jordan, M. Support
+union recovery in high-dimensional multivariate regres-
+sion. The Annals of Statistics, pp. 1–47, 2011.
+
+Pukelsheim, F. Optimal Design of Experiments. Classics in
+Applied Mathematics. Society for Industrial and Applied
+Mathematics, 2006.
+
+Raskutti, G., Wainwright, M. J, and Yu, B. Restricted
+eigenvalue properties for correlated gaussian designs.
+Journal of Machine Learning Research, 11(8):2241–
+2259, 2010.
+
+Riquelme, C., Ghavamzadeh, M., and Lazaric, A. Active
+learning for accurate estimation of linear models. arXiv
+preprint arXiv:1703.00579, 2017a.
+
+Riquelme, C., Johari, R., and Zhang, B. Online active
+linear regression via thresholding. In Thirty-First AAAI
+Conference on Artiﬁcial Intelligence, 2017b.
+
+Sabato, S. and Munos, R. Active regression by stratiﬁ-
+In Advances in Neural Information Processing
+
+cation.
+Systems, pp. 469–477, 2014.
+
+Vershynin, R. Introduction to the non-asymptotic analysis
+
+of random matrices. arXiv:1011.3027, 2010.
+
+Active Learning for Accurate Estimation of Linear Models
+
+A. Optimal Static Allocation
+
+A.1. Proof of Proposition 1
+
+Proposition. Given m linear regression problems, each characterized by a parameter βi, Gaussian noise with variance
+σ2
+i , and Gaussian contexts with covariance Σ, let n > m(d + 1), then the optimal OLS static allocation algorithm A∗
+stat
+selects each instance
+
+times (up to rounding effects), and incurs the global error
+
+k∗
+i,n =
+
+σ2
+i
+j σ2
+j
+
+(cid:80)
+
+n + (d + 1)
+
+1 −
+
+(cid:18)
+
+(cid:19)
+
+,
+
+σ2
+i
+σ2
+
+L∗
+
+n = Ln(A∗
+
+stat) = σ2 md
+n
+
+(cid:32)
+
++ O
+
+σ2
+
+(cid:19)2(cid:33)
+
+.
+
+(cid:18) md
+n
+
+Proof. For the sake of readability in the following we drop the dependency on n.
+
+We ﬁrst derive the equality in Eq. 2
+
+As a result, we can write the global error as
+
+Li( ˆβi) = EX
+
+(cid:2)(X Tβi − X T ˆβi)2(cid:3)
+= EX [( ˆβi − βi)TXX T( ˆβi − βi)]
+= ( ˆβi − βi)TE[XX T]( ˆβi − βi)
+= ( ˆβi − βi)TΣ( ˆβi − βi)
+= (cid:107)βi − ˆβi(cid:107)2
+Σ.
+
+Ln(Astat) = max
+i∈[m]
+
+EDi,n
+
+(cid:107)βi − ˆβi(cid:107)2
+Σ
+
+(cid:105)
+
+(cid:104)
+
+(cid:20)
+
+(cid:20)
+
+(cid:16)
+
+(cid:16)
+
+Tr
+
+= max
+i∈[m]
+
+EDi,n
+
+Tr
+
+= max
+i∈[m]
+
+= max
+i∈[m]
+
+EDi,n
+(cid:18)
+
+Tr
+
+(cid:104)
+
+EDi,n
+
+(cid:17)(cid:21)
+
+(βi − ˆβi)TΣ(βi − ˆβi)
+Σ(βi − ˆβi)(βi − ˆβi)T(cid:17)(cid:21)
+Σ(βi − ˆβi)(βi − ˆβi)T(cid:105)(cid:19)
+
+,
+
+where Di,n is the training set extracted from Dn containing the samples for instance i. Since contexts and noise are
+independent random variables, we can decompose Di,n into the randomness related to the context matrix Xi ∈ Rki×d and
+the noise vector (cid:15)i ∈ Rki . We recall that for any ﬁxed realization of Xi ∈ Rki×d, the OLS estimates (cid:98)βi is distributed as
+
+ˆβi | Xi ∼ N (βi, σ2
+
+i (XT
+
+i Xi)−1),
+
+which means that ˆβi conditioned on Xi is unbiased with covariance matrix given by σ2
+develop Ln(Astat) as
+
+i (XT
+
+i Xi)−1. Thus, we can further
+
+Ln(Astat) = max
+i∈[m]
+
+Tr
+
+(cid:105)(cid:21)(cid:19)
+
+,
+
+(cid:12)Xi
+
+(cid:20)
+E(cid:15)i
+
+(cid:104)
+
+(cid:18)
+
+EXi
+(cid:18)
+
+σ2
+i Tr
+
+ΣEXi
+
+(cid:18)
+
+σ2
+i Tr
+
+EXi
+
+(cid:104)
+
+(X
+
+(cid:104)
+
+Σ(βi − ˆβi)(βi − ˆβi)T(cid:12)
+i Xi)−1(cid:105)(cid:19)
+(XT
+i Xi)−1(cid:105)(cid:19)
+
+T
+
+,
+
+= max
+i∈[m]
+
+= max
+i∈[m]
+
+where X = Σ−1/2X is a whitened context and Xi is its corresponding whitened matrix. Since whitened contexts X are
+T
+i Xi)−1 is distributed as an inverse Wishart W −1(Id, ki), whose expectation is
+distributed as N (0, I), we know that (X
+
+(19)
+
+(20)
+
+(21)
+
+(22)
+
+Id/(ki − d − 1), and thus,
+
+Active Learning for Accurate Estimation of Linear Models
+
+Ln(Astat) = max
+i∈[m]
+
+(cid:20)
+
+σ2
+i Tr
+
+(cid:21)
+
+1
+ki − d − 1
+
+Id
+
+= max
+i∈[m]
+
+σ2
+i d
+ki − d − 1
+
+.
+
+Note that this ﬁnal expression requires that ki > d + 1, since it is not possible to compute an OLS estimate with less than
+d + 1 samples. Therefore, we proceed by minimizing Eq. 23, subject to ki > d + 1. We write ki = k(cid:48)
+i + d + 1 for some
+k(cid:48)
+i > 0. Thus, equivalently, we minimize
+
+Since (cid:80)
+
+i k(cid:48)
+
+i = n − m(d + 1), we may conclude that the optimal k(cid:48)
+
+i is given by
+
+so that all the terms in the RHS of Eq. 24 are equal. This gives us the optimal static allocation
+
+Ln(Astat) = max
+
+i
+
+σ2
+i d
+k(cid:48)
+i
+
+.
+
+k(cid:48)
+i =
+
+σ2
+i
+j σ2
+j
+
+(cid:80)
+
+(cid:0)n − m(d + 1)(cid:1),
+
+k∗
+i =
+
+(cid:80)
+
+(n − m(d + 1)) + d + 1
+
+=
+
+(cid:80)
+
+n + (d + 1)
+
+1 −
+
+(cid:18)
+
+(cid:19)
+
+,
+
+σ2
+i
+σ2
+
+σ2
+i
+j σ2
+j
+σ2
+i
+j σ2
+j
+
+(23)
+
+(24)
+
+(25)
+
+where σ2 = (1/m) (cid:80)
+
+i σ2
+
+i is the mean variance across the m problem instances.
+
+Thus, for the optimal static allocation, the expected loss is given by
+
+L∗
+
+n = Ln(A∗
+
+stat) = d max
+
+i
+
+σ2
+i
+
+n − (d + 1) σ2
+i
+¯σ2
+
+(cid:80)
+
+σ2
+i
+j σ2
+j
+(cid:17)
+
+(cid:16)(cid:80)
+
+d
+
+j σ2
+j
+n − m(d + 1)
+(cid:16)(cid:80)
+j σ2
+j
+n
+
++
+
+(cid:17)
+
+d
+
+(cid:16)(cid:80)
+
+(cid:17)
+
+d
+
+j σ2
+j
+n
+
+=
+
+=
+
+=
+
+(cid:16)(cid:80)
+
+(cid:17)
+
+j σ2
+j
+
+md(d + 1)
+n(cid:0)n − m(d + 1)(cid:1)
+
+
+(cid:17)
+
+(cid:16)(cid:80)
+
+
+
+md2
+
++ O
+
+
+
+ ,
+
+j σ2
+j
+n2
+
+which concludes the proof. Furthermore the following bounds trivially holds for any n ≥ 2m(d + 1)
+
+mdσ2
+n
+
+≤ L∗
+
+n ≤ 2
+
+mdσ2
+n
+
+.
+
+Active Learning for Accurate Estimation of Linear Models
+
+B. Loss of an OLS-based Learning Algorithm (Proof of Lemma 2)
+
+Unlike in the proof of Proposition 1, when the number of pulls is random and depends on the value of the previous
+observations (through Dn), then in general, the OLS estimates (cid:98)βi,n are no longer distributed as Eq. 21 and the derivation
+for Astat no longer holds.
+In fact, for a learning algorithm, the value ki,t itself provides some information about the
+observations that have been obtained up until time t and were used by the algorithm to determine ki,t. In the following, we
+show that by ignoring the current context Xt when choosing instance It, we are still able to analyze the loss of TRACE-
+UCB and obtain a result very similar to the static case.
+
+We ﬁrst need two auxiliary lemmas (Lemmas 8 and 9), one on the computation of an empirical estimate of the variance of
+the noise, and an independence result between the variance estimate and the linear regression estimate.
+Lemma 8. In any linear regression problem with noise (cid:15) ∼ N (0, σ2), after t ≥ d + 1 samples, given an OLS estimator
+(cid:98)βt, the noise variance estimator can be computed in a recurrent form as
+
+ˆσ2
+t+1 =
+
+t − d
+t − d + 1
+
+ˆσ2
+t +
+
+1
+t − d + 1
+
+ˆβt − Yt+1)2
+
+(X T
+1 + X T
+
+t+1
+t+1(XT
+
+t Xt)−1Xt+1
+
+,
+
+(26)
+
+where Xt ∈ Rt×d is the sample matrix.
+
+Proof. We ﬁrst recall the “batch” deﬁnition of the variance estimator
+
+(cid:98)σ2
+t =
+
+1
+t − d
+
+t
+(cid:88)
+
+s=1
+
+(Ys − X T
+
+s (cid:98)βt)2 =
+
+(cid:107)Yt − XT
+
+t (cid:98)βt(cid:107)2
+
+1
+t − d
+
+Since Yt = Xtβ + (cid:15)t and (cid:98)βt = β + (XT
+
+t Xt)−1XT
+
+t (cid:15)t, we have
+
+(cid:98)σ2
+t =
+
+1
+t − d
+
+(cid:16)
+
+1
+t − d
+
+(cid:107)(XT
+
+t Xt)−1XT
+
+t (cid:15)t − (cid:15)t(cid:107)2 =
+
+t (cid:15)t − (cid:15)T
+(cid:15)T
+
+t Xt(XT
+
+t Xt)−1XT
+
+t (cid:15)t
+
+(Et+1 − Vt+1).
+
+(cid:17)
+
+=
+
+1
+t − d
+
+We now devise a recursive formulation for the two terms in the previous expression. We have
+
+Et+1 = (cid:15)T
+
+t+1(cid:15)t+1 = (cid:15)T
+
+t (cid:15)t + (cid:15)2
+
+t+1 = Et + (cid:15)2
+
+t+1.
+
+In order to analyze the second term we ﬁrst introduce the design matrix St = XT
+St+1 = St + Xt+1X T
+
+t+1. Then we have
+
+t Xt, which has the simple update rule
+
+Vt+1 = (cid:15)T
+= (cid:0)(cid:15)T
+
+t+1Xt+1(XT
+t Xt + (cid:15)t+1X T
+
+t+1
+
+t+1Xt+1)−1XT
+
+t+1(cid:15)t+1
+(cid:1)(cid:0)St + Xt+1X T
+(cid:18)
+
+= (cid:0)(cid:15)T
+
+t Xt + (cid:15)t+1X T
+
+t+1
+
+(cid:1)
+
+S−1
+
+t −
+
+t Xt + (cid:15)t+1X T
+(cid:19)
+
+t+1
+
+(cid:1)T
+
+(cid:1)−1(cid:0)(cid:15)T
+
+t+1
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+
+t+1S−1
+t
+t Xt+1
+
+(cid:0)(cid:15)T
+
+t Xt + (cid:15)t+1X T
+
+t+1
+
+(cid:1)T
+
+,
+
+where we used the Sherman-Morrison formula in the last equality. We further develop the previous expression as
+
+Vt+1 = Vt + (cid:15)t+1X T
+
+t+1S−1
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+
+t Xt+1(cid:15)t+1 + 2(cid:15)t+1X T
+t+1S−1
+t
+t Xt+1
+
+t (cid:15)t − (cid:15)t+1X T
+
+t+1S−1
+t XT
+t (cid:15)t
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+
+XT
+
+t+1
+
+t+1S−1
+t
+t Xt+1
+
+− (cid:15)T
+
+t Xt
+
+Xt+1(cid:15)t+1 − 2(cid:15)T
+
+t Xt
+
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+
+t+1S−1
+t
+t Xt+1
+
+Xt+1(cid:15)t+1.
+
+We deﬁne αt+1 = X T
+
+t+1S−1
+
+t XT
+
+t (cid:15)t and ψt+1 = X T
+
+t+1S−1
+
+t Xt+1, and then obtain
+
+Vt+1 = Vt + (cid:15)2
+
+t+1ψt+1 + 2αt+1(cid:15)t+1 −
+
+α2
+t+1
+1 + ψt+1
+
+− (cid:15)2
+
+t+1
+
+− 2(cid:15)t+1
+
+αt+1ψt+1
+1 + ψt+1
+
+= Vt + (cid:15)2
+
+t+1
+
+ψt+1 +
+
+(cid:16)
+
+(cid:17)
+
+ψ2
+t+1
+1 + ψt+1
+
++ 2(cid:15)t+1
+
+αt+1
+1 + ψt+1
+
+ψ2
+t+1
+1 − ψt+1
+α2
+t+1
+1 + ψt+1
+
+−
+
+.
+
+Active Learning for Accurate Estimation of Linear Models
+
+Bringing everything together we obtain
+
+Et+1 − Vt+1 = Et − Vt + (cid:15)2
+
+t+1
+
+1 − ψt+1 +
+
+(cid:16)
+
+(cid:17)
+
+ψ2
+t+1
+1 + ψt+1
+
+− 2(cid:15)t+1
+
+αt+1
+1 + ψt+1
+
++
+
+α2
+t+1
+1 + ψt+1
+
+= Et − Vt +
+
+(cid:15)2
+t+1 − 2(cid:15)t+1αt+1 + αt+1
+
+= Et − Vt +
+
+(cid:17)
+
+(cid:16)
+
+1
+1 + ψt+1
+
+(cid:0)(cid:15)t+1 − αt+1
+1 + ψt+1
+
+(cid:1)2
+
+.
+
+Since (cid:15)t+1 = Yt+1 − X T
+
+t+1β, we may write
+
+Et+1 − Vt+1 = Et − Vt +
+
+(cid:0)Yt+1 − X T
+
+t XT
+
+t (cid:15)t)(cid:1)2
+
+t+1(β + S−1
+1 + ψt+1
+
+= Et − Vt +
+
+(cid:0)Yt+1 − X T
+1 + ψt+1
+
+t+1 (cid:98)βt
+
+(cid:1)2
+
+.
+
+Recalling the deﬁnition of the variance estimate, we ﬁnally obtain
+
+ˆσ2
+t+1 =
+
+1
+t − d + 1
+
+(Et+1 − Vt+1) =
+
+(Et − Vt) +
+
+1
+t − d + 1
+
+(cid:0)Yt+1 − X T
+t+1S−1
+1 + X T
+
+t+1 (cid:98)βt
+t Xt+1
+
+(cid:1)2
+
+=
+
+t − d
+t − d + 1
+
+ˆσ2
+t +
+
+1
+t − d + 1
+
+1
+t − d + 1
+(cid:0)Yt+1 − X T
+t+1S−1
+1 + X T
+
+(cid:1)2
+
+t+1 (cid:98)βt
+t Xt+1
+
+,
+
+which concludes the proof.
+
+Lemma 9. Let Fj be the σ-algebra generated by X1, . . . , Xn and ˆσ2
+
+1, . . . , ˆσ2
+
+j . Then, for any j ≥ d,
+
+ˆβj | Fj ∼ N (β, σ2 (X T
+
+1:jX1:j)−1).
+
+(27)
+
+(28)
+
+Proof. We prove the lemma by induction. The statement is true for t = d. We want to prove the induction, that is if
+ˆβt | Ft ∼ N (β, σ2 (XT
+
+t Xt)−1), then
+
+ˆβt+1 | Ft+1 ∼ N (β, σ2(XT
+
+t+1Xt+1)−1).
+
+Let us ﬁrst derive a recursive expression for ˆβt+1. Let St = XT
+
+(cid:98)βt+1 = β + S−1
+(cid:18)
+
+=
+
+S−1
+
+t −
+
+t Xt, then
+t+1(cid:15)t+1 = (cid:0)St + Xt+1X T
+t+1XT
+t+1S−1
+S−1
+t Xt+1X T
+t
+t+1S−1
+1 + X T
+t Xt+1
+
+(cid:0)XT
+
+(cid:19)
+
+t+1
+
+t (cid:15)t + (cid:15)t+1Xt+1
+
+(cid:1),
+
+(cid:1)−1(cid:0)XT
+
+t (cid:15)t + (cid:15)t+1Xt+1
+
+(cid:1)
+
+where we used Sherman-Morrison formula. By developing the previous expression we obtain
+
+(cid:98)βt+1 = (cid:0)β + S−1
+
+t XT
+
+t (cid:15)t
+
+(cid:1) + (cid:15)t+1S−1
+
+t Xt+1
+
+1 −
+
+(cid:18)
+
+= (cid:98)βt +
+
+(cid:15)t+1S−1
+
+t Xt+1
+
+1 + X T
+
+t+1S−1
+
+t Xt+1
+
+−
+
+S−1
+t Xt+1X T
+1 + X T
+
+t+1S−1
+
+t Xt+1
+
+t+1S−1
+
+t Xt+1
+
+X T
+1 + X T
+
+t+1S−1
+t+1( (cid:98)βt − β)
+t Xt+1
+
+.
+
+(cid:19)
+
+−
+
+S−1
+t Xt+1X T
+1 + X T
+
+t+1S−1
+
+t XT
+t Xt+1
+
+t+1S−1
+
+t (cid:15)t
+
+We can conveniently rewrite the previous expression as
+
+(cid:18)
+
+(cid:98)βt+1 − β =
+
+I −
+
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+
+t+1
+t Xt+1
+
+(cid:19)
+
+( (cid:98)βt − β) +
+
+(cid:15)t+1S−1
+
+t Xt+1
+
+1 + X T
+
+t+1S−1
+
+t Xt+1
+
+= (I − αt)( (cid:98)βt − β) + γt(cid:15)t+1,
+
+(29)
+
+where αt ∈ Rd×d and γt ∈ Rd are deﬁned implicitly. By Lemma 8, we notice that the sequence of empirical variances in
+Ft is equivalent to the sequence of squared deviations up to t. In order to make this equivalence more apparent we deﬁne
+the ﬁltration
+
+(cid:110)
+
+Gt =
+
+{Xs}n
+
+s=1 ∪ ˆσ2
+
+2 ∪ {(X T
+
+s+1
+
+ˆβs − (cid:15)s+1)2}t−1
+s=2
+
+(cid:111)
+
+,
+
+Active Learning for Accurate Estimation of Linear Models
+
+so that ˆβt+1 | Ft+1 ∼ ˆβt+1 | Gt+1. We introduce two auxiliary random vectors conditioned on G
+
+U = (cid:15)t+1 − X T
+
+t+1( ˆβt − β) | Gt,
+
+V = ˆβt+1 − β | Gt.
+
+We want to show that the random vectors U ∈ R and V ∈ Rd are independent. We ﬁrst recall that the noise (cid:15)t+1 | Gt ∼
+N (0, σ2), and it is independent of (cid:15)1, . . . , (cid:15)t, and ˆβt under Gt. Furthermore, by the induction assumption ˆβt | Gt is also
+Gaussian, so we have that ( ˆβt, (cid:15)t+1) are jointly Gaussian given Gt. Then we can conveniently rewrite U as
+
+which shows that it is a Gaussian vector. Using the recursive formulation in Eq. 29 we can also rewrite V as
+
+U = (−Xt+1, 1)T( ˆβt, (cid:15)t+1) + X T
+
+t+1β,
+
+V = (Id − αt)( ˆβt − β) + γt (cid:15)t+1 = (cid:2)I − αt
+
+(cid:3)
+
+γt
+
+(cid:21)
+
+(cid:20) ˆβt − β
+(cid:15)t+1
+
+,
+
+which is also Gaussian. Furthermore, we notice that under the induction assumption, EGt[U ] = 0 and EGt[V ] = 0 and thus
+we need to show that E[U V | Gt] = 0 to prove that U and V are uncorrelated
+
+(Id − αt)( ˆβt − β) + γt (cid:15)t+1
+(cid:105)
+
+(cid:17)(cid:105)
+
+E[U V | Gt] = EGt
+
+(cid:104)(cid:16)
+
+t+1( ˆβt − β)
+
+(cid:17) (cid:16)
+
+(cid:15)t+1 − X T
+(cid:104)
+X T
+
+= γt EGt
+
+= σ2γt − EGt
+
+(cid:2)(cid:15)2
+
+(cid:3) − EGt
+t+1
+(cid:104)
+(I − αt)( ˆβt − β)( ˆβt − β)TXt+1
+
+t+1( ˆβt − β)(I − αt)( ˆβt − β)
+
+(cid:105)
+
+= σ2γt − (I − αt) EGt
+= σ2γt − σ2(I − αt)(XT
+S−1
+t Xt+1
+t+1S−1
+1 + X T
+
+t Xt+1
+
+= σ2
+
+(cid:104)
+
+( ˆβt − β)( ˆβt − β)T(cid:105)
+t Xt)−1Xt+1
+(cid:32)
+
+− σ2
+
+Xt+1
+
+= σ2 S−1
+
+t Xt+1 − (1 + X T
+
+t+1S−1
+
+I −
+
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+t Xt+1)S−1
+1 + X T
+
+t+1
+t Xt+1
+t Xt+1 + S−1
+
+t+1S−1
+
+t Xt+1
+
+= 0.
+
+(cid:33)
+
+S−1
+
+t Xt+1
+
+t Xt+1X T
+
+t+1S−1
+
+t Xt+1
+
+It thus follows that, as U and V are uncorrelated, they are also independent. Combining the deﬁnition of Gt, U and its
+independence w.r.t V , we have
+
+V | Gj+1 = V | U, Gj
+
+= V | {X1, . . . , XT , ˆσ2
+(cid:20) ˆβt − β
+(cid:15)t+1
+
+= (cid:2)I − αt
+
+γt
+
+(cid:3)
+
+2, {(X T
+(cid:21)
+
+s+1
+
+| Gt.
+
+ˆβs − (cid:15)s+1)2}t−1
+s=2}
+
+By the induction hypothesis the vector in the previous expression is distributed as
+
+(cid:21)
+
+(cid:20) ˆβt − β
+(cid:15)t+1
+
+∼ N
+
+(cid:21)
+
+(cid:18)(cid:20)0
+0
+
+, σ2
+
+(cid:20)S−1
+t
+0
+
+(cid:21)(cid:19)
+0
+1
+
+.
+
+Therefore, we conclude that
+
+V | Gt+1 ∼ N
+
+(cid:18)
+0, σ2 (cid:2)I − αt
+
+(cid:3)
+
+γt
+
+(cid:20)S−1
+t
+0
+
+(cid:21)
+
+0
+1
+
+(cid:2)I − αt
+
+(cid:3)T(cid:19)
+
+γt
+
+= N (0, σ2 Σ(cid:48)),
+
+where the covariance matrix Σ(cid:48) can be written as
+
+Σ(cid:48) = (cid:2)I − αt
+
+(cid:3)
+
+γt
+
+(cid:2)I − αt
+
+(cid:3)T
+
+γt
+
+(cid:21)
+0
+1
+
+(cid:20)S−1
+t
+0
+(cid:20)S−1
+
+(cid:21)
+
+(cid:3)
+
+t
+
+(I − αt)T
+γT
+t
+(I − αt)T + γtγT
+t .
+
+= (cid:2)I − αt
+
+γt
+
+= (I − αt)S−1
+
+t
+
+Active Learning for Accurate Estimation of Linear Models
+
+Recalling the deﬁnitions of αt and γt, and deﬁning ψt+1 = X T
+
+t+1S−1
+
+t Xt+1
+
+(cid:32)
+
+Σ(cid:48) =
+
+I −
+
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+
+t+1
+t Xt+1
+
+(cid:33)
+
+(cid:32)
+
+S−1
+t
+
+I −
+
+(cid:33)T
+
+S−1
+t Xt+1X T
+t+1S−1
+1 + X T
+(cid:33)T
+
+t+1
+t Xt+1
+
+(cid:33) (cid:32)
+
+(cid:32)
+
++
+
+S−1
+t Xt+1
+t+1S−1
+1 + X T
+t Xt+1
+S−1
+t Xt+1X T
+1 + r
+S−1
+t Xt+1X T
+1 + ψt+1
+
+t − 2
+
+t −
+
+= S−1
+
+= S−1
+
+t+1S−1
+t
+
+t+1S−1
+t
+
+S−1
+t Xt+1
+t+1S−1
+1 + X T
+t Xt+1
+S−1
+t Xt+1X T
+
++ ψt+1
+
+= S−1
+
+t+1 = (XT
+
+t+1Xt+1)−1,
+
+t+1S−1
+t
+
+S−1
+t Xt+1X T
+
+t+1S−1
+t
+
++
+
+(1 + ψt+1)2
+
+(1 + ψt+1)2
+
+where we applied the Woodbury matrix identity in the last step. Finally, it follows that
+
+ˆβt+1 | Ft+1 ∼ N (β, σ2 (XT
+
+t+1Xt+1)−1),
+
+and the induction is complete.
+
+Now we can prove Lemma 2:
+
+Lemma. Let A be a learning algorithm that selects instances It as a function of the previous history, that is, Dt−1 =
+{X1, I1, YI1,1, . . . , Xt−1, It−1, YIt−1,t−1} and computes estimates (cid:98)βi,n using OLS. Then, its loss after n steps can be
+expressed as
+
+Ln(A) = max
+i∈[m]
+
+EDt
+
+(cid:20) σ2
+i
+ki,n
+
+(cid:16)
+
+Tr
+
+Σ(cid:98)Σ−1
+i,n
+
+(cid:17)(cid:21)
+,
+
+(30)
+
+where ki,n = (cid:80)n
+
+t=1
+
+I{It = i} and (cid:98)Σi,n = XT
+
+i,nXi,n/ki,n.
+
+Proof. For any instance i, we can assume that the following random variables are sampled before TRACE-UCB starts
+collecting observations (we omit the i index in the table):
+
+t = 1
+X1
+(cid:15)1
+ˆβ1
+ˆσ2
+1
+
+t = 2
+X2
+(cid:15)2
+ˆβ2
+ˆσ2
+2
+
+. . .
+. . .
+. . .
+. . .
+. . .
+
+t = n
+Xn
+(cid:15)n
+ˆβn
+ˆσ2
+n
+
+As a result, we can interpret TRACE-UCB as controlling the stopping time ti = ki,n for each problem i, that is, the total
+number of samples ki,n, leading to the ﬁnal estimates ˆβti and ˆσ2
+ti. In the following we introduce the notation X1:j as the
+sample matrix constructed from exactly j samples, unlike Xi,n which is the sample matrix obtained with ki,n. So we have
+X1:ki,n = Xi,n. Crucially, when the errors (cid:15)j are Gaussian, then ˆβj | X1:j and ˆσ2
+j | X1:j are independent for any ﬁxed j
+(note these random variables have nothing to do with the algorithm’s decisions).
+
+Let Fj be the σ-algebra generated by X1, . . . , Xn and ˆσ2
+
+1, . . . , ˆσ2
+
+j . We recall that from Lemma 9
+
+(cid:98)βj|X1:j = ˆβj | Fj ∼ N (βj, σ2 (X T
+
+1:jX1:j)−1).
+
+(31)
+
+Intuitively, this results says that, given the data X1:n, if we are additionally given all the estimates for the variance {ˆσ2
+s=2
+—which obviously depend on (cid:15)1, . . . , (cid:15)j—, then the updated distribution for ˆβj does not change at all. This is a crucial
+property since TRACE-UCB ignores the current context Xt and it makes decisions only based on previous contexts and
+the variance estimates {ˆσ2
+
+s=2, thus allowing us to proceed and do inference on ˆβj as in the ﬁxed allocation case.
+
+s }j
+
+s }j
+
+Active Learning for Accurate Estimation of Linear Models
+
+We now need to take into consideration the ﬁltration Fi,j for a speciﬁc instance i and the environment ﬁltration E−i
+containing all the contexts X and noise (cid:15) from all other instances (different from i). Since the environment ﬁltration E−i is
+independent from the samples from instance i, then we can still apply Lemma 9 and obtain
+
+(cid:98)βi,j | Fi,j, E−i ∼ (cid:98)βi,j | Fi,j.
+
+Now we can ﬁnally study the expected prediction error
+
+Li,n( (cid:98)βi,n) =E[( ˆβi − βi)( ˆβi − βi)T]
+= EX1:n,ε−i
+
+(cid:105)
+(cid:104)
+E[( ˆβi − βi)( ˆβi − βi)T | X1:n, ε−i]
+
+
+= EX1:n,ε−i
+
+E[( ˆβki − βi)( ˆβki − βi)T | X1:n, ε−i, ki = j] P(ki = j)
+
+
+
+
+
+= EX1:n,ε−i
+
+E
+
+(cid:104)
+EFj [( ˆβj − βi)( ˆβj − βi)T | Fj, X1:n, ε−i, ki = j] | X1:n, ε−i, ki = j
+
+(cid:105)
+
+P(ki = j)
+
+= EX1:n,ε−i
+
+E
+
+(cid:104)
+EFj [( ˆβj − βi)( ˆβj − βi)T | Fj, X1:n] | X1:n, ε−i, ki = j
+
+(cid:105)
+
+P(ki = j)
+
+
+
+
+
+(32)
+
+
+
+
+
+(33)
+
+n
+(cid:88)
+
+j=1
+
+n
+(cid:88)
+
+j=1
+
+n
+(cid:88)
+
+j=1
+
+n
+(cid:88)
+
+j=1
+
+n
+(cid:88)
+
+j=1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+= EX1:n,ε−i
+
+E (cid:2)σ2
+
+i (XT
+
+1:jX1:j)−1 | X1:n, ki = j(cid:3) P(ki = j)
+
+
+
+
+
+= EX1:n,ε−i
+
+
+1:jX1:j)−1 P(ki = j)
+
+
+i (XT
+σ2
+
+= σ2
+i
+= σ2
+i
+
+EX1:n,ε−i
+E (cid:2)(XT
+
+1:ki
+
+(cid:2)Eki[(XT
+X1:ki)−1(cid:3) ,
+
+1:ki
+
+X1:ki)−1](cid:3)
+
+Ln(A) = max
+
+i Tr(Σ(XT
+
+i
+
+i
+
+= max
+
+E (cid:2)σ2
+(cid:20) σ2
+i
+ki,n
+
+E
+
+i,nXi,n)−1)(cid:3)
+(cid:17)(cid:21)
+
+(cid:16)
+
+Tr
+
+Σ ˆΣ−1
+i,n
+
+.
+
+where in Eq. 33 we applied Lemma 9. Hence, going back to the deﬁnition of loss (see e.g., Eq. 22), we obtain an expression
+for the loss which applies under TRACE-UCB (while not in general for other algorithms)
+
+Active Learning for Accurate Estimation of Linear Models
+
+C. Concentration Inequalities (Proofs of Propositions 3 and 4)
+
+In the next two subsections, we prove Propositions 3 and 4, respectively. In addition, we also show a conﬁdence ellipsoid
+result for the (cid:98)β estimates, and a concentration inequality for the norm of the observations Xt.
+
+C.1. Concentration Inequality for the Variance (Proof of Proposition 3)
+
+We use the following concentration inequality for sub-exponential random variables.
+Proposition 10. Let X be a mean-zero (τ 2, b)-subexponential random variable. Then, for all η > 0,
+
+P(|X| ≥ η) ≤ exp
+
+−
+
+min
+
+(cid:18)
+
+1
+2
+
+(cid:26) η2
+τ 2 ,
+
+η
+b
+
+(cid:27)(cid:19)
+
+.
+
+Proof. See Proposition 2.2 in (Wainwright, 2015).
+
+We ﬁrst prove the concentration inequality for one single instance.
+
+Proposition 11. Let t > d, Xt ∈ Rt×d be a random matrix whose entries are independent standard normal random
+variables, Yt = XT
+t Id) is independent from Xt, and δ ∈ (0, 3/4]. Then, with
+probability at least 1 − δ, we have
+
+t β + (cid:15)t, where the noise (cid:15)t ∼ N (0, σ2
+
+|ˆσ2
+
+t − σ2| ≤ σ2
+
+(cid:115)
+
+64
+t − d
+
+(cid:18)
+
+log
+
+(cid:19)2
+
+,
+
+1
+δ
+
+where ˆσ2
+
+t is the unbiased estimate (cid:98)σ2
+
+t = 1
+
+t−d (cid:107)Yt − Xt (cid:98)βt(cid:107)2 and (cid:98)βt is the OLS estimator of β, given Xt and Yt.
+
+Proof. First note that the distribution of ˆσ2
+
+t conditioned on Xt follows the scaled chi-squared distribution, i.e.,
+
+(34)
+
+(35)
+
+Also note that the distribution of the estimate does not depend on Xt and we can integrate out the randomness in Xt. In
+order to show concentration around the mean, we directly use the sub-exponential properties of ˆσ2
+k distribution is
+sub-exponential with parameters (4k, 4).4 Furthermore, we know that for any constant C > 0, Cχ2
+k is (4C 2k, 4C)-sub-
+exponential. As a result, we have that ˆσ2
+
+t is subexponential with parameters
+
+t . The χ2
+
+Now we use Proposition 10 as our concentration bound. In our case, η2/τ 2 < η/b, when η < σ2. In such a case, if we
+denote the RHS of (34) by δ, we conclude that
+
+Then, η < σ2 holds when t ≥ d + 8 log(1/δ). Otherwise, if η2/τ 2 > η/b, by Eq. 34, we have
+
+ˆσ2
+t | X ∼
+
+σ2
+t − d
+
+χ2
+
+t−d.
+
+(τ 2, b) =
+
+(cid:18) 4σ4
+t − d
+
+,
+
+4σ2
+t − d
+
+(cid:19)
+
+.
+
+η = σ2
+
+(cid:114) 8
+
+t − d
+
+log
+
+1
+δ
+
+.
+
+η =
+
+8σ2
+t − d
+
+log
+
+1
+δ
+
+.
+
+t − σ2| ≤ σ2 8
+|ˆσ2
+t − d
+
+log
+
+1
+δ
+
+.
+
+In this case, when t < d + 8 log(1/δ), we have that
+
+4See Example 2.5 in (Wainwright, 2015).
+
+Active Learning for Accurate Estimation of Linear Models
+
+We would like to derive a bound that is valid in both cases. Let x = 8 log(1/δ)/(t − d), then we have
+
+Suppose x ≥
+
+x, so t < d + log(1/δ). Then, we would like to ﬁnd C, such that x ≤ C
+
+x. As t ≥ d + 1, we see that
+
+√
+
+√
+
+P (cid:0)|ˆσ2
+
+t − σ2| ≥ σ2 max(x,
+
+√
+
+x)(cid:1) ≤ δ.
+
+(36)
+
+if C > 1, it does follow that max(x,
+we now conclude that
+
+√
+
+x) < max(C
+
+x,
+
+√
+
+√
+
+x) < (cid:112)8 log(1/δ)x, which corresponds to δ < 0.88. By (36),
+
+√
+
+x =
+
+(cid:114) 8 log(1/δ)
+t − d
+
+≤ (cid:112)8 log(1/δ) ∆= C.
+
+
+|ˆσ2
+
+P
+
+t − σ2| ≥ σ2
+
+(cid:115)
+
+64
+t − d
+
+(cid:18)
+
+log
+
+1
+δ
+
+(cid:19)2
+
+ ≤ δ,
+
+and the proof is complete.
+
+In order to prove Proposition 3, we are just left to apply a union bound over steps t ∈ {1, . . . , n} and instances i ∈
+{1, . . . , m}. In order to avoid confusion, let ˆσi,t be the estimate obtained by the algorithm after t steps and ˆσi(j) the
+estimate obtained using j samples. Let j > d, then
+
+is the high-probability event introduced in Proposition 11, which holds with probability 1 − δ. Then we have that the event
+
+(cid:26)
+
+Ei(j) =
+
+|ˆσ2
+
+i (j) − σ2
+
+i | ≥ σ2
+i
+
+(cid:115)
+
+64
+j − d
+
+(cid:18)
+
+log
+
+(cid:19)2(cid:27)
+
+,
+
+1
+δ
+
+E =
+
+Ei(j),
+
+m
+(cid:92)
+
+n
+(cid:92)
+
+i=1
+
+j=1
+
+holds with probability 1 − δ(cid:48), with δ(cid:48) = mnδ. We complete the proof of Proposition 3 by properly tuning δ and taking
+R ≥ maxi σ2
+Proposition. Let the number of pulls ki,t ≥ d + 1 and R ≥ maxi σ2
+t > m(d + 1), with probability at least 1 − δ
+
+i . If δ ∈ (0, 3/4), then for any instance i and step
+
+i . Recall that Proposition 3 is as follows.
+
+2 , we have
+
+|ˆσ2
+
+i,t − σ2
+
+i | ≤ ∆i,t
+
+∆= R
+
+(cid:115)
+
+64
+ki,t − d
+
+(cid:18)
+
+log
+
+(cid:19)2
+
+.
+
+2mn
+δ
+
+(37)
+
+C.2. Concentration Inequality for the Trace (Proof of Proposition 4)
+
+We ﬁrst recall some basic deﬁnitions. For any matrix A ∈ Rn×d, the i-th singular value si(A) is equivalent to si(A)2 =
+λi(ATA), where λi is the i-th eigenvalue. The smallest and largest singular values smin and smax satisfy
+
+smin (cid:107)x(cid:107)2 ≤ (cid:107)Ax(cid:107)2 ≤ smax (cid:107)x(cid:107)2
+
+for all x ∈ Rd.
+
+The extreme singular values measure the maximum and minimum distortion of points and their distance when going from
+Rd to Rn via the linear operator A. We also recall that the spectral norm of A is given by
+
+(cid:107)A(cid:107) = sup
+
+x∈Rd\0
+
+(cid:107)Ax(cid:107)2
+(cid:107)x(cid:107)2
+
+= sup
+
+(cid:107)Ax(cid:107)2,
+
+x∈Sn−1
+
+and thus, smax(A) = (cid:107)A(cid:107) and smin(A) = 1/(cid:107)A−1(cid:107), if A is invertible.
+
+We report the following concentration inequality for the eigenvalues of random Gaussian matrices.
+
+Active Learning for Accurate Estimation of Linear Models
+
+Proposition 12. Let n ≥ d, X ∈ Rn×d be a random matrix whose entries are independent standard normal random
+X/n be the corresponding empirical covariance matrix. Let α > 0, then with probability at least
+variables, and Σ = X
+1 − 2 exp(−α2d/2), we have
+
+T
+
+and
+
+In particular, we have
+
+(cid:16)
+
+−1(cid:17)
+
+Tr
+
+Σ
+
+≥ d
+
+1 −
+
+√
+
+2(1 + α)
+n + 2(1 + α)
+
+d + (1 + α)2d/
+√
+
+n
+√
+d + (1 + α)2d/
+
+n
+
+√
+
+(cid:33)
+
+(cid:16)
+
+−1(cid:17)
+
+Tr
+
+Σ
+
+≤ d
+
+1 +
+
+√
+
+2(1 + α)
+n − 2(1 + α)
+
+d − (1 + α)2d/
+√
+
+n
+√
+d + (1 + α)2d/
+
+n
+
+√
+
+(cid:33)
+
+(cid:32)
+
+(cid:32)
+
+√
+
+√
+
+,
+
+.
+
+(cid:16)
+
+d
+
+1 − (1 + α)
+
+≤ Tr
+
+Σ
+
+≤ d
+
+1 + 2(1 + α)
+
+(cid:16)
+
+−1(cid:17)
+
+(cid:16)
+
+(cid:114)
+
+(cid:17)2
+
+d
+n
+
+(cid:114)
+
+(cid:17)2
+
+.
+
+d
+n
+
+Proof. We ﬁrst derive the concentration inequality for the eigenvalues of the empirical covariance matrix and then we
+invert it to obtain the guarantee for the inverse matrix. From Corollary 5.35 in (Vershynin, 2010), we have that for any
+t > 0
+
+(cid:16)√
+
+√
+
+n −
+
+d − t
+
+(cid:17)2
+
+≤ λmin(X
+
+X) = smin(X)2 ≤ smax(X)2 = λmax(X
+
+X) ≤
+
+T
+
+T
+
+(cid:16)√
+
+√
+
+(cid:17)2
+
+n +
+
+d + t
+
+,
+
+(38)
+
+with probability at least 1 − 2 exp(−t2/2). Let α > 0 and take t = α
+we obtain the desired statement
+
+d, then with probability at least 1 − 2 exp(−α2d/2),
+
+√
+
+(cid:32)
+
+(cid:32)
+
+1 − (1 + α)
+
+(cid:114)
+
+(cid:33)2
+
+d
+n
+
+≤ λmin
+
+(cid:0)Σ(cid:1) ≤ λmax
+
+(cid:0)Σ(cid:1) ≤
+
+1 + (1 + α)
+
+.
+
+(cid:114)
+
+(cid:33)2
+
+d
+n
+
+We now proceed by studying the eigenvalues of the inverse of the empirical covariance matrix λmin(Σ
+and λmax(Σ
+
+) = 1/λmin(Σ). Combined with Eq. 38 we have
+
+−1
+
+−1
+
+) = 1/λmax(Σ)
+
+Similarly, we have that
+
+(cid:16)
+
+−1(cid:17)
+
+λmin
+
+Σ
+
+≥
+
+(cid:18)
+
+1
+
+1 + (1 + α)
+
+(cid:19)2
+
+(cid:113) d
+n
+
+=
+
+1 + 2(1 + α)
+
+1
+(cid:113) d
+n + (1 + α)2 d
+(cid:113) d
+
+n
+
+= 1 −
+
+2(1 + α)
+
+1 + 2(1 + α)
+
+n + (1 + α)2 d
+(cid:113) d
+
+n + (1 + α)2 d
+
+n
+
+n
+
+.
+
+(cid:16)
+
+−1(cid:17)
+
+λmax
+
+Σ
+
+≤
+
+(cid:18)
+
+1
+
+1 − (1 + α)
+
+(cid:19)2
+
+(cid:113) d
+n
+
+=
+
+1 − 2(1 + α)
+
+1
+(cid:113) d
+n + (1 + α)2 d
+(cid:113) d
+
+n
+
+= 1 +
+
+2(1 + α)
+
+1 − 2(1 + α)
+
+n − (1 + α)2 d
+(cid:113) d
+
+n + (1 + α)2 d
+
+n
+
+n
+
+.
+
+Using the fact that for any matrix A ∈ Rd×d, we may write d λmin(A) ≤ Tr(A) ≤ d λmax(A), we obtain the ﬁnal
+. The ﬁrst of the two bounds can be further simpliﬁed by using 1/(1 + x) ≥ 1 − x for any
+statement on the trace of Σ
+
+−1
+
+Active Learning for Accurate Estimation of Linear Models
+
+x ≥ 0, thus obtaining
+
+λmin
+
+(cid:0)Σ
+
+−1(cid:1) ≥
+
+(cid:16)
+
+1 − (1 + α)
+
+λmax
+
+(cid:0)Σ
+
+−1(cid:1) ≤
+
+(cid:16)
+
+1 + 2(1 + α)
+
+(cid:114)
+
+(cid:17)2
+
+.
+
+d
+n
+
+(cid:114)
+
+(cid:17)2
+
+.
+
+d
+n
+
+While under the assumption that n ≥ 4(1 + α)2d we can use 1/(1 − x) ≤ 1 + 2x (for any x ≥ 1/2) and obtain
+
+The statement of Proposition 4 (below) is obtained by recalling that Σ(cid:98)Σ−1
+whitened sample matrix Xi,n and by a union bound over the number of samples ki,n and the number of instances i.
+Proposition. Force the number of samples ki,t ≥ d + 1. If δ ∈ (0, 1), for any i ∈ [m] and step t > m(d + 1) with
+probability at least 1 − δ/2, we have
+
+i,n is the empirical covariance matrix of the
+
+(cid:18)
+
+1 − CTr
+
+(cid:114)
+
+(cid:19)2
+
+d
+n
+
+≤
+
+d
+
+≤
+
+1 + 2CTr
+
+,
+
+(cid:114)
+
+(cid:19)2
+
+d
+n
+
+(cid:16)
+
+Tr
+
+Σ ˆΣ−1
+i,t
+
+(cid:17)
+
+(cid:18)
+
+with CTr = 1 + (cid:112)2 log(4nm/δ)/d.
+
+C.3. Concentration Inequality for (cid:98)β Estimates
+
+We slightly modify Theorem 2 from (Abbasi-Yadkori et al., 2011) to obtain a conﬁdence ellipsoid over the (cid:98)βi’s.
+Theorem 13. Let {Ft}∞
+and ηt is conditionally R-subgaussian for some R ≥ 0, i.e.
+
+t=1 be a real-valued stochastic process such that ηt is Ft measurable
+
+t=0 be a ﬁltration. Let {ηt}∞
+
+Let {Xt}∞
+deﬁnite matrix. For any t ≥ 0, deﬁne
+
+t=1 be an Rd-valued stochastic process such that Xt is Ft−1 measurable. Assume that V is a d × d positive
+
+∀λ ∈ R
+
+E[eληt | Ft−1] ≤ exp
+
+(cid:18) λ2R2
+2
+
+(cid:19)
+
+.
+
+¯Vt = V +
+
+XsX T
+s ,
+
+St =
+
+ηsXs.
+
+t
+(cid:88)
+
+s=1
+
+t
+(cid:88)
+
+s=1
+
+Let V = λId, λ > 0, and deﬁne Yt = X T
+estimate for β after t observations Xt, Yt. Then, for any δ > 0, with probability at least 1 − δ, for all t ≥ 0, β∗ lies in
+
+t β∗ + ηt. Assume that (cid:107)β∗(cid:107)2 ≤ S. Also, let ˆβt = ¯V −1
+
+t Yt be the ridge
+
+t XT
+
+Ct =
+
+β ∈ Rd : (cid:107) ˆβt − β(cid:107) ¯Vt/t ≤
+
+
+
+
+
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)2 log
+
+R
+√
+t
+
+(cid:32)
+
+det (cid:0) ¯Vt
+
+(cid:1)1/2
+
+det (λI)−1/2
+δ
+
+(cid:33)
+
+(cid:114)
+
++
+
+
+
+
+
+
+S
+
+.
+
+λ
+t
+
+Proof. Take x = ¯Vt
+
+t ( ˆβt − β∗) in equation 5 in the proof of Theorem 2 in (Abbasi-Yadkori et al., 2011).
+
+(39)
+
+(40)
+
+(41)
+
+We use the previous theorem by lower bounding the ¯Vt/t norm in Σ norm.
+
+C.4. Bounded Norm Lemma
+
+Lemma 14. Let X1, . . . , Xt ∈ Rd be iid subgaussian random variables.
+If (cid:107)X1(cid:107)2 is subexponential with parameters (a2, b), then, for α > 0
+
+
+
+P
+
+
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+(cid:107)Xj(cid:107)2 ≤ E[(cid:107)X1(cid:107)2] +
+
+
+
+ ≥
+
+α
+t
+
+(cid:17)
+
+(cid:40)
+
+(cid:16)
+
+− α2
+1 − exp
+2ta2
+1 − exp (cid:0)− α
+(cid:1)
+
+2b
+
+if 0 ≤ α ≤ ta2/b,
+if α > ta2/b.
+
+(42)
+
+Active Learning for Accurate Estimation of Linear Models
+
+Proof. The proof directly follows by Proposition 10, by deﬁning zero-mean subexponential random variable Z with pa-
+rameters (a2/t, b/t)
+
+Z =
+
+(cid:107)Xj(cid:107)2 − E
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+
+
+
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+
+
+(cid:107)Xj(cid:107)2
+
+ .
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+(cid:107)Xj(cid:107)2 ≤ d + 8 log
+
+(cid:19) (cid:114)
+
+(cid:18) 1
+δ
+
+d
+t
+
+,
+
+Corollary 15. Let X1, . . . , Xt ∈ Rd be iid gaussian variables, X ∼ N (0, Id). Assume t ≥ d + 1. Let δ > 0. Then, with
+probability at least 1 − δ,
+
+Proof. For standard Gaussian X ∼ N (0, Id), (cid:107)X(cid:107)2 ∼ χ2
+of Lemma 14 and (44)
+
+d, and a2 = 4d and b = 4. Note that E[(cid:107)Xj(cid:107)2] = d. By the proof
+
+Substituting a = 2
+
+d and b = 4 leads to
+
+√
+
+P
+
+|Z| ≥ a
+
+log
+
+≤ δ,
+
+when t ≥ 2
+
+(cid:32)
+
+(cid:115)
+
+(cid:18)
+
+2
+t
+
+2b
+t
+
+(cid:19)(cid:33)
+
+(cid:19)(cid:19)
+
+(cid:18) 1
+δ
+(cid:18) 1
+δ
+
+P
+
+|Z| ≥
+
+log
+
+≤ δ,
+
+when t < 2
+
+P
+
+|Z| ≥
+
+log
+
+≤ δ,
+
+when t ≥
+
+log
+
+(cid:32)
+
+(cid:115)
+
+(cid:18)
+
+8d
+t
+
+8
+t
+
+(cid:19)(cid:33)
+
+(cid:19)(cid:19)
+
+(cid:18) 1
+δ
+(cid:18) 1
+δ
+
+P
+
+|Z| ≥
+
+log
+
+≤ δ,
+
+when t <
+
+log
+
+(cid:19)2
+
+(cid:19)2
+
+(cid:18) b
+a
+(cid:18) b
+a
+
+log
+
+log
+
+(cid:19)
+
+(cid:19)
+
+.
+
+.
+
+(cid:18) 1
+δ
+(cid:18) 1
+δ
+
+8
+d
+
+8
+d
+
+(cid:19)
+
+(cid:19)
+
+.
+
+.
+
+(cid:18) 1
+δ
+(cid:18) 1
+δ
+
+We would like to upper bound 8 log (1/δ) /t in (48). As t > d, we see
+
+8
+t
+
+log
+
+(cid:19)
+
+(cid:18) 1
+δ
+
+≤
+
+8
+√
+dt
+
+log
+
+(cid:19)
+
+.
+
+(cid:18) 1
+δ
+
+As a consequence,
+
+It follows that for all t > d
+
+P
+
+|Z| ≥
+
+log
+
+≤ δ,
+
+when t <
+
+log
+
+(cid:18)
+
+8
+√
+dt
+
+(cid:19)(cid:19)
+
+(cid:18) 1
+δ
+
+8
+d
+
+(cid:19)
+
+.
+
+(cid:18) 1
+δ
+
+(cid:32)
+
+P
+
+|Z| ≥ max
+
+(cid:32)
+
+8
+√
+dt
+
+log
+
+(cid:19)
+
+,
+
+(cid:18) 1
+δ
+
+(cid:115)
+
+8d
+t
+
+log
+
+(cid:18) 1
+δ
+
+(cid:19)(cid:33)(cid:33)
+
+≤ δ.
+
+As δ < 1, we ﬁnally conclude that
+
+Therefore, with probability at least 1 − δ,
+
+as stated in the corollary.
+
+(cid:32)
+
+P
+
+|Z| ≥ 8
+
+log
+
+≤ δ.
+
+(cid:114)
+
+d
+t
+
+(cid:19)(cid:33)
+
+(cid:18) 1
+δ
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+(cid:107)Xj(cid:107)2 ≤ d + 8 log
+
+(cid:19) (cid:114)
+
+(cid:18) 1
+δ
+
+d
+t
+
+,
+
+(43)
+
+(44)
+
+(45)
+
+(46)
+
+(47)
+
+(48)
+
+(49)
+
+(50)
+
+(51)
+
+(52)
+
+(53)
+
+Active Learning for Accurate Estimation of Linear Models
+
+D. Performance Guarantees for TRACE-UCB
+
+D.1. Lower Bound on Number of Samples (Proof of Theorem 5)
+
+We derive the high-probability guarantee on the number of times each instance is selected.
+
+Theorem. Let δ > 0. With probability at least 1 − δ, the total number of contexts that TRACE-UCB allocates to each
+problem instance i after n rounds satisﬁes
+
+ki,n ≥ k∗
+
+i,n −
+
+C∆ + 8CTr
+σ2
+
+min
+
+(cid:114) nd
+λmin
+
+− Ω(n1/4)
+
+(54)
+
+where R ≥ σ2
+λmin = σ2
+
+min/ (cid:80)
+
+j σ2
+j .
+
+max is known by the algorithm, and we deﬁned C∆ = 16R log(2mn/δ), CTr = 1 + (cid:112)2 log(4nm/δ)/d, and
+
+Proof. We denote by Eδ the joint event on which Proposition 3 and Proposition 4 hold at the same time with an overall
+probability 1 − δ. This immediately gives upper and lower conﬁdence bounds on the score si,t used in TRACE-UCB as
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2
+
+1 − CTr
+
+d
+ki,t
+
+σ2
+i
+ki,t
+
+≤
+
+si,t
+d
+
+≤
+
+1 + 2CTr
+
+d
+ki,t
+
+σ2
+i + 2∆i,t
+ki,t
+
+.
+
+Recalling the deﬁnition of ∆i,t we can rewrite the last term as
+
+σ2
+i + 2∆i,t
+ki,t
+
+(cid:32)
+
+=
+
+1 +
+
+16R log(2mn/δ)
+(cid:112)ki,t − d
+
+σ2
+i
+
+σ2
+i
+ki,t
+
+(cid:33)
+
+(cid:32)
+
+=
+
+1 +
+
+C∆
+(cid:112)ki,t − d
+
+σ2
+i
+
+(cid:33)
+
+σ2
+i
+ki,t
+
+,
+
+where C∆ = 16R log(2mn/δ). We consider a step t + 1 ≤ n at which It+1 = q. By algorithmic construction we have
+that sp,t ≤ sq,t for every arm p ∈ [m]. Using the inequalities above we obtain
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2
+
+1 − CTr
+
+d
+kp,t
+
+σ2
+p
+kp,t
+
+≤
+
+sp,t
+d
+
+≤
+
+sq,t
+d
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2
+
+≤
+
+1 + 2CTr
+
+d
+kq,t
+
+σ2
+q + 2∆q,t
+kq,t
+
+If t + 1 is the last time step at which arm q is pulled, then kq,t = kq,t+1 − 1 = kq,n − 1 and kp,n ≥ kp,t. Then we can
+rewrite the previous inequality as
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2
+
+d
+kp,n
+
+σ2
+p
+kp,n
+
+1 − CTr
+
+=: Ap,n ≤ Bq,n :=
+
+1 + 2CTr
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2 (cid:32)
+
+d
+kq,n − 1
+
+1 +
+
+C∆
+(cid:112)kq,n − d − 1
+
+σ2
+q
+
+(cid:33)
+
+σ2
+q
+kq,n − 1
+
+.
+
+(55)
+
+If every arm is pulled exactly the optimal number of times, then for any i ∈ [m], ki,n = k∗
+theorem trivially holds. Otherwise, there exists at least one arm that is pulled more than k∗
+kq,n > k∗
+
+q,n − d − 1) and we rewrite the RHS of Eq. 55 as
+
+q,n. We recall that L∗
+
+n = dσ2
+
+q /(k∗
+
+i,n and the statement of the
+i,n. Let q be this arm, then
+
+Bq,n ≤
+
+1 + 2CTr
+
+(cid:32)
+
+(cid:32)
+
+(cid:33)2 (cid:32)
+
+(cid:115)
+
+(cid:115)
+
+d
+k∗
+q,n − d − 1
+(cid:33)2 (cid:32)
+
+L∗
+n
+σ2
+q
+
+σ2
+q
+(cid:33)
+
+1 +
+
+(cid:115)
+
+L∗
+n
+dσ6
+q
+
+L∗
+n
+d
+
+.
+
+≤
+
+1 + 2CTr
+
+1 + C∆
+
+C∆
+q,n − d − 1
+
+(cid:112)k∗
+
+(cid:33)
+
+σ2
+q
+k∗
+q,n − d − 1
+
+We also simplify the LHS of Eq. 55 as
+
+(cid:32)
+
+(cid:115)
+
+Ap,n =
+
+1 − 2CTr
+
+d
+kp,n
+
++ C 2
+Tr
+
+d
+kp,n
+
+(cid:33)
+
+σ2
+p
+kp,n
+
+(cid:32)
+
+≥
+
+1 − 2CTr
+
+(cid:115)
+
+(cid:33)
+
+d
+kp,n
+
+σ2
+p
+kp,n
+
+.
+
+Active Learning for Accurate Estimation of Linear Models
+
+At this point we can solve Eq. 55 for kp,n and obtain a lower bound on it. We study the inequality 1/Ap,n ≥ 1/Bp,n.
+
+We ﬁrst notice that
+
+1
+Ap,n
+
+≤
+
+kp,n
+σ2
+p
+
+(cid:32)
+
+1 + 4CTr
+
+(cid:115)
+
+(cid:33)
+
+d
+kp,n
+
+≤
+
+1
+σ2
+p
+
+(cid:16)(cid:112)kp,n + 2CTr
+
+√
+
+(cid:17)2
+
+d
+
+,
+
+where we used 1/(1 − x) ≤ 1 + 2x for x ≤ 1/2 and we added a suitable positive term to obtain the ﬁnal quadratic form.
+Similarly we have
+
+1
+Bq,n
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2 (cid:32)
+
+(cid:115)
+
+(cid:33)
+
+(cid:32)
+
+(cid:115)
+
+(cid:33)2 (cid:32)
+
+≥
+
+1 − 2CTr
+
+1 − C∆
+
+=
+
+1 − 2CTr
+
+L∗
+n
+σ2
+q
+
+d
+L∗
+n
+
+− C∆
+
+(cid:115)
+
+(cid:33)
+
+,
+
+d
+nσ6
+L∗
+q
+
+L∗
+n
+dσ6
+q
+
+d
+L∗
+n
+
+L∗
+n
+σ2
+q
+
+where we used 1/(1 + x) ≥ 1 − x for any x ≥ 0. In order to ease the derivation of an explicit lower-bound on kp,n,
+we further simplify the previous expression by replacing higher order terms with a big-Ω notation. We ﬁrst recall that
+L∗
+n) clearly dominate the expression, while all other terms
+are asymptotically constant or decreasing in n and thus we can rewrite the previous bound as
+
+n = (cid:101)Θ(mdσ2/n), then the terms of order (1/L∗
+
+n) and (1/(cid:112)L∗
+
+By setting C = C∆ + 4CTr
+
+d we can ﬁnally use the upper bound on 1/Ap,n and the lower bound on 1/Bq,n to obtain
+
+1
+Bq,n
+
+d
+L∗
+n
+
+√
+
+≥
+
+− (C∆ + 4CTr
+
+d)
+
+− Ω(1).
+
+(cid:115)
+
+√
+
+d
+nσ6
+L∗
+q
+
+(cid:16)(cid:112)kp,n + 2CTr
+
+√
+
+(cid:17)2
+
+d
+
+≥
+
+1
+σ2
+p
+
+(cid:115)
+
+d
+L∗
+n
+
+− C
+
+d
+nσ6
+L∗
+q
+
+− Ω(1).
+
+We proceed with solving the previous inequality for kp,n and obtain
+
+kp,n ≥ σ2
+p
+
+
+
+
+
+(cid:32)
+
+(cid:115)
+
+d
+L∗
+n
+
+− C
+
+d
+nσ6
+L∗
+q
+
+(cid:33)1/2
+
+
+2
+
+√
+
+− Ω(1)
+
+− 2CTr
+
+d
+
+
+
+.
+
+Taking the square on RHS and adding and subtracting d + 1 we have
+
+kp,n ≥ d + 1 + σ2
+p
+
+
+
+− C
+
+
+
+d
+L∗
+n
+
+(cid:115)
+
+d
+nσ6
+L∗
+q
+
+− 4CTr
+
+d
+
+− C
+
+(cid:32)
+
+√
+
+d
+L∗
+n
+
+(cid:115)
+
+d
+nσ6
+L∗
+q
+
+(cid:33)1/2
+
+
+
+− Ω(1)
+
++ 4C 2
+
+Trd
+
+ − d − 1 − Ω(1).
+
+We clearly notice that the ﬁrst three terms in the RHS are dominant (they are higher order function of n through L∗
+thus we can isolate them and replace all other terms by their asymptotic lower bound as
+
+n) and
+
+kp,n ≥ d + 1 +
+
+dσ2
+p
+L∗
+n
+
+−
+
+(cid:115)
+
+(cid:115)
+
+(cid:16)
+
+C
+
+1
+L∗
+n
+
+dσ4
+p
+σ6
+q
+
+(cid:17)
+
++ 4CTrd
+
+− Ω(n1/4),
+
+where we used the fact that L∗
+dσ2
+
+p/L∗
+
+n + d + 1 and thus we can ﬁnally write the previous bound as
+
+n = (cid:101)Θ(mdσ2/n) to bound the higher order terms. Furthermore, we recall that k∗
+
+p,n =
+
+kp,n ≥ k∗
+
+p,n −
+
+(cid:115)
+
+(cid:115)
+
+(cid:16)
+
+C
+
+1
+L∗
+n
+
+dσ4
+p
+σ6
+q
+
+(cid:17)
+
++ 4CTrd
+
+− Ω(n1/4).
+
+The ﬁnal bound is obtained by using σ2
+
+p/ (cid:80)
+
+j σ2
+√
+
+j = λp ≥ λmin and σ2
+(cid:114) 1
+λmin
+
+(cid:16) C
+σ2
+
+n
+
+q ≥ σ2
+min with the ﬁnal expression
+√
+
+(cid:17)
+
+d
+
+− Ω(n1/4).
+
++ 4CTr
+
+kp,n ≥ k∗
+
+p,n −
+
+min
+A quite loose bound based on the deﬁnition of C for the previous expression gives the ﬁnal more readable result
+
+kp,n ≥ k∗
+
+p,n −
+
+C∆ + 8CTr
+σ2
+
+min
+
+(cid:114) nd
+λmin
+
+− Ω(n1/4).
+
+Active Learning for Accurate Estimation of Linear Models
+
+D.2. Regret Bound (Proof of Theorem 6)
+
+Theorem. The regret of the Trace-UCB algorithm, i.e., the difference between its loss and the loss of optimal static
+allocation (see Eq. 8), is upper-bounded by
+
+Ln(A) − L∗
+
+n ≤ O
+
+(cid:18) 1
+σ2
+
+min
+
+(cid:16) d
+
+λminn
+
+(cid:17)3/2(cid:19)
+,
+
+where λmin = σ2
+
+min/(cid:80)
+
+j σ2
+j .
+
+Proof. We ﬁrst simplify the expression of the loss for TRACE-UCB in Lemma 19. We invert trace operator and expectation
+and have
+
+Li,n( (cid:98)βλ
+
+i ) = E (cid:0)Tr (cid:2)ΣWi,n
+
+(cid:0)σ2
+
+i XT
+
+i,nXi,n + λ2βiβT
+i
+
+(cid:1) WT
+
+i,n
+
+(cid:3)(cid:1) .
+
+i,nXi,n)−1, where (cid:22) is the Lower ordering between positive-deﬁnite
+
+i,nXi,n + λI)−1 (cid:22) (XT
+
+We notice that Wi,n = (XT
+matrices. We focus on the two additive terms in the trace separately. We have
+i,nΣ(cid:1)
+i,nXi,nWT
+1
+ki,n
+
+(cid:1) = Tr(cid:0)Wi,nXT
+≤ Tr(cid:0)(XT
+≤ Tr(cid:0)Σ(XT
+
+i,nXi,n)−1XT
+i,nXi,n)−1(cid:1) =
+
+Tr(cid:0)ΣWi,nXT
+
+i,nXi,nWT
+i,n
+
+i,nXi,nWT
+
+i,nΣ(cid:1) = Tr(cid:0)ΣWT
+(cid:1),
+Tr(cid:0)Σ(cid:98)Σ−1
+
+i,n
+
+i,n
+
+(cid:1)
+
+where we used the fact that Tr(AB) = Tr(BA), Tr(AB) ≤ Tr(CB) if A (cid:22) C and the deﬁnition of (cid:98)Σi,n.
+
+(56)
+
+(57)
+
+Similarly, we have
+
+Tr(cid:0)ΣWi,nβiβT
+
+i WT
+i,n
+
+(cid:1) = (cid:107)βi(cid:107)2Tr(cid:0)ΣWi,nWT
+
+(cid:1)
+
+i,n
+
+≤ (cid:107)βi(cid:107)2Tr(cid:0)(XT
+
+i,nXi,n)−1ΣWi,n
+
+≤ (cid:107)βi(cid:107)2 λmax((cid:98)Σ−1
+i,n)
+
+Tr(cid:0)Σ(XT
+
+ki,n
+
+(cid:1) ≤ (cid:107)βi(cid:107)2 λmax((cid:98)Σ−1
+i,n)
+i,nXi,n)−1(cid:1) = (cid:107)βi(cid:107)2 λmax((cid:98)Σ−1
+i,n)
+
+ki,n
+
+Tr(cid:0)ΣWi,n
+
+(cid:1)
+
+Tr(cid:0)Σ(cid:98)Σ−1
+
+i,n
+
+(cid:1).
+
+k2
+i,n
+
+Going back to the loss expression we have
+
+Li,n( (cid:98)βλ
+
+i ) ≤ E
+
+(cid:1)
+
+(cid:18)
+
+(cid:34) Tr(cid:0)Σ(cid:98)Σ−1
+ki,n
+
+i,n
+
+i + (cid:107)βi(cid:107)2 λmax((cid:98)Σ−1
+i,n)
+σ2
+
+(cid:19)(cid:35)
+
+.
+
+ki,n
+
+We decompose the loss in two terms depending on the high-probability event Eδ under which the concentration inequalities
+Proposition 3 and Proposition 4 hold at the same time
+
+Li,n( (cid:98)βλ
+
+i ) ≤ E
+
+(cid:1)
+
+(cid:18)
+
+(cid:34) Tr(cid:0)Σ(cid:98)Σ−1
+ki,n
+
+i,n
+
+i + (cid:107)βi(cid:107)2 λmax((cid:98)Σ−1
+i,n)
+σ2
+
+ki,n
+
+(cid:35)
+
+(cid:19)(cid:12)
+(cid:12)
+(cid:12)Eδ
+
++ δE (cid:0)Tr (cid:2)ΣWi,n
+
+(cid:0)σ2
+
+i XT
+
+i,nXi,n + λ2βiβT
+i
+
+(cid:1) WT
+
+i,n
+
+(cid:3) (cid:12)
+(cid:12)E c
+δ
+
+(cid:1) ,
+
+where we used P(E c
+Eq. 57 and obtain
+
+δ ≤ δ). If we denote the second expectation in the previous expression by Lc
+
+i,n( (cid:98)βλ
+
+i ), then we can use
+
+Lc
+
+i,n( (cid:98)βλ
+
+i ) ≤ σ2
+i
+
+E (cid:0)Tr(cid:0)ΣWT
+
+(cid:1)(cid:12)
+(cid:12)E c
+δ
+
+(cid:1) + (cid:107)βi(cid:107)λ2E (cid:0)Tr(cid:0)ΣWi,nWT
+
+(cid:1)(cid:12)
+(cid:12)E c
+δ
+
+(cid:1)
+
+i,n
+
+i,n
+
+Using the fact that Tr(AB) ≤ λmax(A)Tr(B), we can upper bound the previous equation as
+i Tr(Σ)E (cid:0)λmax(Wi,n)(cid:12)
+
+(cid:1) + (cid:107)βi(cid:107)Tr(Σ)λ2E (cid:0)λmax(Wi,n)2(cid:12)
+
+i ) ≤ σ2
+
+i,n( (cid:98)βλ
+
+(cid:12)E c
+δ
+
+Lc
+
+(cid:1)
+
+(cid:12)E c
+δ
+
+Recalling that thanks to the regularization λmax(Wi,n) ≤ 1/λ, we ﬁnally obtain
+
+Lc
+
+i,n( (cid:98)βλ
+
+i ) ≤ Tr(Σ)
+
+(cid:16) σ2
+i
+λ
+
++ (cid:107)βi(cid:107)
+
+(cid:17)
+
+.
+
+(58)
+
+Active Learning for Accurate Estimation of Linear Models
+
+The analysis of the high-probability part of the bound relies on the concentration inequalities for the trace and λmax and
+the lower bound on the number of samples ki,n from Thm. 5. We recall the three main inequalities we are going to use to
+bound the loss
+
+√
+
+ki,n ≥ k∗
+i,n − C
+(cid:18)
+
+nd − Ω(n1/4),
+(cid:114)
+
+(cid:19)2
+
+Tr(Σ(cid:98)Σ−1
+
+i,n) ≤ d
+
+1 + 2(1 + α)
+
+,
+
+d
+n
+
+λmax((cid:98)Σ−1
+
+i,n) ≤
+
+(cid:18)
+
+1
+λmin(Σ)
+
+1 + 2(1 + α)
+
+,
+
+(cid:114)
+
+(cid:19)2
+
+d
+n
+
+where C = C∆+8CTr
+λmin
+and λmax(AB) ≤ λmax(A)λmax(B) and ﬁnally λmax(Σ−1) = 1/λmin(Σ). We can invert the ﬁrst inequality as
+
+and the last inequality is obtained by multiplying by Σ−1Σ to whiten (cid:98)Σi,n and using Proposition 12,
+
+σ2
+
+min
+
+√
+
+1
+ki,n
+
+≤
+
+√
+
+1
+nd − Ω(n1/4)
+
+≤
+
+1
+k∗
+i,n
+
++ O
+
+k∗
+i,n − C
+
+(cid:18) 2C
+k∗
+i,n
+
+(cid:114)
+
+(cid:19)
+
+d
+n
+
+≤
+
+1
+k∗
+i,n
+
+(cid:18)
+
++ O
+
+d
+σ2
+min(λminn)3/2
+
+(cid:19)
+
+,
+
+√
+
+(59)
+
+where the last inequality is obtained by recalling that k∗
+and CTr). We can then rewrite the high-probability loss as
+i + (cid:107)βi(cid:107)2 λmax((cid:98)Σ−1
+i,n)
+σ2
+
+≤
+
+(cid:18)
+
+i,n
+
+(cid:34) Tr(cid:0)Σ(cid:98)Σ−1
+ki,n
+
+(cid:19)(cid:12)
+(cid:12)
+(cid:12)Eδ
+
+ki,n
+
+dσ2
+i
+k∗
+i,n
+
+E
+
+(cid:35)
+
+(cid:1)
+
+i,n = Θ(λin) and using the deﬁnition of C (where we ignore C∆
+
++ O
+
+(cid:18) 1
+σ2
+
+min
+
+(cid:16) d
+
+(cid:17)3/2(cid:19)
+
+λminn
+
+≤ L∗
+
+n + O
+
+(cid:18) 1
+σ2
+
+min
+
+(cid:16) d
+
+λminn
+
+(cid:17)3/2(cid:19)
+
+.
+
+By recalling the regret Rn = maxi Li,n(βλ
+any (cid:15) > 0 and a suitable multiplicative constant, we obtain the ﬁnal regret bound
+
+i,n) − L∗
+
+n, bringing the bounds above together and setting δ = O(n−3/2−(cid:15)) for
+
+Rn ≤ O
+
+(cid:18) 1
+σ2
+
+min
+
+(cid:16) d
+
+λminn
+
+(cid:17)3/2(cid:19)
+
+.
+
+D.3. High Probability Bound for Trace-UCB Loss (Proof of Theorem 7)
+
+In this section, we start by deﬁning a new loss function for algorithm A:
+
+(cid:101)Ln(A) = max
+i∈[m]
+
+(cid:107)βi − ˆβi,n(cid:107)2
+Σ.
+
+Note that (cid:101)Ln(A) is a random variable as ˆβi,n is random, and the expectation is only taken with respect to the test point
+X ∼ F (leading to the Σ-norm). We expect results of the following ﬂavor: let δ > 0, then with probability at least 1 − δ,
+
+(cid:101)Ln(A) − (cid:101)L∗
+
+n ≤ ˜O
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+d
+n
+
+(cid:88)
+
+σ2
+j
+
+j
+
+3/2
+
+
+ ,
+
+when A corresponds to TRACE-UCB, and (cid:101)L∗
+
+n to the optimal static allocation under ordinary least squares.
+
+We start by focusing on (cid:101)Ln(A), and proving Theorem 7:
+
+Theorem. Let δ > 0, and assume (cid:107)βi(cid:107)2 ≤ Z for all i, for some Z > 0. With probability at least 1 − δ,
+
+(cid:101)Ln(A) ≤
+
+d + 2 log
+
++ O
+
+(cid:18)
+
+(cid:80)m
+
+j=1 σ2
+j
+n
+
+(cid:19)
+
+3m
+δ
+
+(cid:32)
+
+1
+σ2
+
+min
+
+(cid:18) d
+
+nλmin
+
+(cid:19)3/2(cid:33)
+
+,
+
+where λmin = σ2
+
+min/(cid:80)
+
+j σ2
+j .
+
+(60)
+
+(61)
+
+(62)
+
+Active Learning for Accurate Estimation of Linear Models
+
+Proof. We deﬁne a set of events that help us control the loss, and then we show that these events simultaneously hold with
+high probability. In particular, we need the following events:
+
+1. EG ≡ the good event holds (for all arms i, and all times t), which includes a conﬁdence interval for ˆσ2
+
+i,t and the trace
+
+of the empirical covariance matrix.
+
+Holds with probability 1 − δG. This event is described and controlled in Proposition 3 and Proposition 4.
+
+2. EM,i ≡ the conﬁdence intervals Ci,t created for arm i at time t contain the true βi at all times t —based on the
+
+vector-valued martingale in (Abbasi-Yadkori et al., 2011).
+
+Holds with probability 1 − δM,i. This event is described and controlled in Theorem 13.
+
+3. EC,i,t ≡ the empirical covariance ˆΣi,t for arm i at time t is close to Σ. This event is a direct consequence of event EG.
+
+4. EB,i,t ≡ the ﬁrst t observations pulled at arm i have norm reasonably bounded. The empirical average norm is not too
+
+far from its mean. Holds with probability 1 − δB,i,t. This event is described and controlled in Corollary 15.
+
+Let H be the set of all the previous events. Then, by the union bound
+
+P (∩(cid:15)∈H (cid:15)) ≥ 1 −
+
+δ(cid:15).
+
+(cid:88)
+
+(cid:15)∈H
+
+(63)
+
+(64)
+
+Our goal is to show that if ∩(cid:15)∈H (cid:15) holds, then the loss (cid:101)Ln(A) = maxi∈[m] (cid:107)βi − ˆβi,n(cid:107)2
+that resembles the expected loss of the algorithm that knows the σ2
+Fix δ > 0. We want δ = (cid:80)
+Also, (cid:80)
+(cid:80)
+(cid:80)
+i
+
+(cid:15)∈H δ(cid:15), and we would like to assign equal weight to all the sets of events. First, δG = δ/3.
+i δM,i = δ/3, implying δM,i = δ/3m for every arm i ∈ [m]. Finally, to bound observation norms, we set
+
+t δB,i,t = δ/3. It follows that we can take δB,i,t = δ/3mT , even though t really ranges from d to n.
+
+Σ is upper bounded by a quantity
+
+i ’s in advance.
+
+Assume that EG, EM,i and EB,i,t hold for all arms i and times t. Then, by Theorem 5, the ﬁnal number of pulls for arm i
+can be lower bounded by
+
+ki ≥
+
+n − c
+
+σ2
+i
+j σ2
+j
+
+(cid:80)
+
+(cid:32)(cid:115)
+
+(cid:33) (cid:115)
+
+σ2
+i
+σ2
+
+min
+
++ 1
+
+σ2
+i
+j σ2
+j
+
+(cid:80)
+
+dn + o
+
+(cid:16)√
+
+(cid:17)
+
+dn
+
+,
+
+where c = 2
+
+(cid:16)
+
+1 + (cid:112)2 log(12mn/δ)/d
+
+(cid:17)
+
+.
+
+For notational simplicity, we denote by ˆβi,t the estimate after t pulls. Thus, with respect to our previous notation where
+ˆβi,n referred to our ﬁnal estimate, we have that ˆβi,ki,n = ˆβi,n as ki,n is the total number of pulls for arm i.
+If the EM,i events hold, then we know that our ˆβi,t estimates are not very far from the true values βi when t is large. In
+particular, we know that the error is controlled by the radius Ri,t of the conﬁdence ellipsoids. We expect these radiuses to
+decrease with the number of observations per arm, t. As we have a lower bound on the total number of pulls for arm i, ki,n,
+if the conﬁdence ellipsoids apply, then we can directly obtain an upper bound on the radius Ri,t at the end of the process.
+We need to do a bit of work to properly bound (cid:107) ˆβi,ki,n − βi(cid:107)2
+Σ.
+Fix arm i, and assume EM,i holds. In addition, assume (cid:107)βi(cid:107)2 ≤ Z for all i. Let ¯Vi,t = λI + XT
+i,tXi,t, where Xi,t contains
+the ﬁrst t observations pulled by arm i. We modify the proof of Theorem 2 in (Abbasi-Yadkori et al., 2011) by taking
+x = ( ˆVt/t)( ˆβt − β∗) in their equation 5 (we are using their notation in the latter expression). Assume the algorithm pulls
+arm i a total of t times —ki,n is a stopping time with respect to the σ-algebra that includes the environment (other arms)—
+then, by Theorem 13
+
+(cid:107) ˆβi,t − βi(cid:107) ¯Vi,t/t ≤
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)2 log
+
+σi√
+t
+
+(cid:32)
+
+det (cid:0) ¯Vi,t
+
+(cid:1)1/2
+
+det (λI)−1/2
+
+(cid:33)
+
+(cid:114)
+
++
+
+λ
+t
+
+Z.
+
+δM,i
+
+(65)
+
+Active Learning for Accurate Estimation of Linear Models
+
+We would like to upper bound (cid:107) ˆβi,ki,n − βi(cid:107)Σ by means of (cid:107) ˆβi,ki,n − βi(cid:107) ¯Vi,ki,n /ki,n . Note that when t grows, ¯Vi,t/t → Σ
+as the regularization is washed out. The distance between ˆΣi,t = ¯Vi,t/t − (λ/t)I and Σ is captured by event (cid:15)C,i,t.
+Formally, as EG holds, we know that the difference between Σ and ˆΣi,t is bounded in operator norm for any i and t by
+
+(cid:107)Σ − ˆΣi,t(cid:107) ≤ 2
+
+1 +
+
+(cid:18)
+
+(cid:114) 2
+d
+
+log
+
+2
+δG
+
+(cid:19) (cid:114)
+
+d
+t
+
+(cid:114)
+
+d
+t
+
+(cid:107)Σ(cid:107) = c
+
+λmax(Σ).
+
+Then, as a consequence, for all x ∈ Rs
+
+In particular, by taking x = ˆβi,t − βi,
+
+xT (Σ − ˆΣi,t)x ≤ c λmax(Σ)
+
+(cid:107)x(cid:107)2
+2.
+
+(cid:114)
+
+d
+t
+
+c λmax(Σ)
+
+(cid:107) ˆβi,t − βi(cid:107)2
+
+(cid:114)
+
+d
+t
+
+2 ≥ ( ˆβi,t − βi)T (Σ − ˆΣi,t)( ˆβi,t − βi)
+= (cid:107) ˆβi,t − βi(cid:107)2
+
+Σ − (cid:107) ˆβi,t − βi(cid:107)2
+
+.
+
+ˆΣi,t
+
+In addition, note that (cid:107)x(cid:107)2
+
+= (cid:107)x(cid:107)2
+
+¯Vi,t/t − (λ/t)(cid:107)x(cid:107)2
+
+2. We conclude that
+
+ˆΣi,t
+
+(cid:107) ˆβi,t − βi(cid:107)2
+
+Σ ≤ (cid:107) ˆβi,t − βi(cid:107)2
+
++ c λmax(Σ)
+
+ˆΣi,t
+
+(cid:32)
+
+= (cid:107) ˆβi,t − βi(cid:107)2
+
+¯Vi,t/t +
+
+c λmax(Σ)
+
+(cid:107) ˆβi,t − βi(cid:107)2
+2.
+
+(cid:114)
+
+d
+(cid:107) ˆβi,t − βi(cid:107)2
+2
+t
+(cid:114)
+
+(cid:33)
+
+d
+t
+
+−
+
+λ
+t
+
+On the other hand, we know that (cid:107) ˆβi,t − βi(cid:107)2
+
+Σ ≥ λmin(Σ)(cid:107) ˆβi,t − βi(cid:107)2
+2.
+
+Therefore, by (65)
+
+(cid:107) ˆβi,t − βi(cid:107)2
+
+Σ ≤
+
+1
+
+(cid:18)
+
+1 −
+
+1
+λmin(Σ)
+
+c λmax(Σ)
+
+(cid:113) d
+
+t − λ
+
+t
+
+(cid:19) (cid:107) ˆβi,t − βi(cid:107)2
+
+¯Vi,t/t
+
+≤
+
+1
+1 − γt
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)2 log
+
+
+
+
+
+σi√
+t
+
+(cid:32)
+
+det (cid:0) ¯Vi,t
+
+(cid:1)1/2
+
+det (λI)−1/2
+
+(cid:33)
+
+δM,i
+
+2
+
+
+
+
+√
+λZ
+√
+t
+
++
+
+≤
+
+1
+1 − γt
+
+≤
+
+1
+1 − γt
+
+1
+t
+
+1
+t
+
+(cid:32)
+
+
+
+σi
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)2
+
+1
+2
+
+log
+
+(cid:32)
+
+(cid:1)
+
+det (cid:0) ¯Vi,t
+det (λI)
+
+(cid:33)
+
++ log
+
+(cid:18) 1
+δM,i
+
+2
+
+
+(cid:19)(cid:33)
+
+√
+
++
+
+λZ
+
+
+
+
+
+
+σi
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:117)
+(cid:116)2
+
+
+
+
+
+1
+2
+
+t
+(cid:88)
+
+j=1
+
+(cid:107)Xj(cid:107)2
+
+¯V −1
+i,t
+
++ log
+
+
+
+(cid:19)
+
+ +
+
+√
+
+2
+
+
+λZ
+
+
+
+
+,
+
+(cid:18) 1
+δM,i
+
+where we deﬁned γt =
+
+c λmax(Σ)
+
+/λmin(Σ), and we used Lemma 11 in (Abbasi-Yadkori et al., 2011) which
+
+(cid:18)
+
+(cid:19)
+
+(cid:113) d
+
+t − λ
+
+t
+
+shows that
+
+(cid:33)
+
+(cid:32)
+
+(cid:1)
+
+det (cid:0) ¯Vi,t
+det (λI)
+
+log
+
+≤
+
+t
+(cid:88)
+
+j=1
+
+(cid:107)Xj(cid:107)2
+
+.
+
+¯V −1
+i,t
+
+We would like to approximate the ¯V −1
+is equivalent to (67) — see Lemma 12 — is given by (cid:107)I − ˆ¯Σi,t(cid:107) ≤ (cid:15), with (cid:15) = c(cid:112)d/t.
+
+i,t norm, by means of the inverse covariance norm, Σ−1. The whitened equation that
+
+(66)
+
+(67)
+
+(68)
+
+(69)
+
+(70)
+
+(71)
+
+(72)
+
+(73)
+
+(74)
+
+(75)
+
+(76)
+
+It implies that for any j = 1, . . . , d,
+
+Active Learning for Accurate Estimation of Linear Models
+
+1 − c
+
+− O
+
+(cid:114)
+
+d
+t
+
+(cid:19)
+
+(cid:18) d
+t
+
+≤ λj( ˆ¯Σi,t) ≤ 1 + c
+
+(cid:114)
+
+d
+t
+
++ O
+
+(cid:19)
+
+.
+
+(cid:18) d
+t
+
+The ¯V −1
+
+i,t norm can be bounded as follows
+
+i,tXi,t
+
+(cid:1)−1
+
+x
+
+(cid:1)−1
+
+i,tXi,t
+
+Σ1/2Σ−1/2x
+
+(cid:107)x(cid:107)2
+
+¯V −1
+i,t
+
+= xT ¯V −1
+
+i,t x = xT (cid:0)λI + XT
+= xT Σ−1/2Σ1/2 (cid:0)λI + XT
+= ¯xT (cid:0)λΣ−1 + ¯XT
+(cid:1)−1
+(cid:18) λ
+t
+
+Σ−1 + ˆ¯Σ−1
+i,t
+
+¯Xi,t
+
+(cid:19)−1
+
+¯xT
+
+1
+t
+
+=
+
+i,t
+
+¯x
+
+¯x,
+
+where ¯x denotes the whitened version of x. We can now apply the matrix inversion lemma to see that
+
+(cid:107)x(cid:107)2
+
+¯V −1
+i,t
+
+=
+
+¯xT
+
+(cid:19)−1
+
+Σ−1 + ˆ¯Σ−1
+i,t
+
+(cid:18) λ
+t
+
+(cid:32)
+
+¯x
+
+(cid:18) t
+λ
+
+=
+
+¯xT
+
+ˆ¯Σi,t − ˆ¯Σi,tΣ−1/2
+
+I + Σ−1/2 ˆ¯Σi,tΣ−1/2
+
+Σ−1/2 ˆ¯Σi,t
+
+¯x
+
+(cid:19)−1
+
+(cid:33)
+
+¯xT (cid:16) ˆ¯Σi,t − ˆ¯Σi,tΣ−1/2R−1Σ−1/2 ˆ¯Σi,t
+
+(cid:17)
+
+¯x,
+
+=
+
+1
+t
+
+1
+t
+
+1
+t
+
+where we implicitly deﬁned R = (t/λ)I + Σ−1/2 ˆ¯Σi,tΣ−1/2, a positive deﬁnite matrix. We upper bound the previous
+expression to conclude that
+
+(cid:107)x(cid:107)2
+
+¯V −1
+i,t
+
+=
+
+1
+t
+
+1
+t
+
+¯xT (cid:16) ˆ¯Σi,t − ˆ¯Σi,tΣ−1/2R−1Σ−1/2 ˆ¯Σi,t
+λmax( ˆ¯Σi,t)
+t
+
+¯xT ˆ¯Σi,t ¯x ≤
+
+(cid:107)¯x(cid:107)2
+
+2 ≤
+
+(cid:17)
+
+¯x
+
+≤
+
+1 + c(cid:112)d/t + O (d/t)
+t
+
+(cid:107)¯x(cid:107)2
+2.
+
+If we now go back to (76), using the previous results, we see that
+
+t
+(cid:88)
+
+j=1
+
+(cid:107)Xj(cid:107)2
+
+¯V −1
+i,t
+
+(cid:32)
+
+(cid:114)
+
+d
+t
+
+≤
+
+1 + c
+
++ O
+
+(cid:19)(cid:33) 
+
+
+(cid:18) d
+t
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+
+
+(cid:107) ¯Xj(cid:107)2
+2
+
+ .
+
+Substituting the upper bound in (75):
+
+(cid:107) ˆβi,t − βi(cid:107)2
+
+Σ ≤
+
+1
+1 − γt
+
+1
+t
+
+
+
+
+σi
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:117)
+(cid:116)2
+
+
+
+
+
+1
+2
+
+t
+(cid:88)
+
+j=1
+
+(cid:107)Xj(cid:107)2
+
+¯V −1
+i,t
+
++ log
+
+
+
+(cid:19)
+
+ +
+
+√
+
+2
+
+
+λZ
+
+
+
+
+(cid:18) 1
+δM,i
+
+≤
+
+1
+1 − γt
+
+1
+t
+
+
+
+
+σi
+
+(cid:32)
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:117)
+(cid:116)
+
+1 + c
+
++ O
+
+(cid:114)
+
+d
+t
+
+(cid:19)(cid:33) 
+
+
+(cid:18) d
+t
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+
+
+(cid:107) ¯Xj(cid:107)2
+2
+
+ + 2 log
+
+2
+
+
+√
+
++
+
+1
+δM,i
+
+λZ
+
+
+
+
+.
+
+By Corollary 15, with probability 1 − δB,i,t, the empirical average norm of the white gaussian observations is controlled
+by
+
+1
+t
+
+t
+(cid:88)
+
+j=1
+
+(cid:107) ¯Xj(cid:107)2 ≤ d + 8 log
+
+(cid:18) 1
+
+(cid:19) (cid:114)
+
+δB,i,t
+
+d
+t
+
+.
+
+(77)
+
+(78)
+
+(79)
+
+(80)
+
+(81)
+
+(82)
+
+(83)
+
+(84)
+
+(85)
+
+(86)
+
+(87)
+
+(88)
+
+(89)
+
+(90)
+
+(91)
+
+(92)
+2
+
+
+Active Learning for Accurate Estimation of Linear Models
+
+As δB,i,t = δ/3mn and δM,i = δ/3m, we conclude that
+
+(cid:107) ˆβi,t − βi(cid:107)2
+
+Σ ≤
+
+1
+1 − γt
+
+1
+t
+
+
+
+σi
+
+(cid:32)
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)
+
+1 + c
+
++ O
+
+d + 8 log
+
+(cid:114)
+
+d
+t
+
+(cid:19)(cid:33) (cid:32)
+
+(cid:18) d
+t
+
+(cid:18) 3mn
+δ
+
+(cid:19) (cid:114)
+
+(cid:33)
+
+d
+t
+
++ 2 log
+
+2
+
+
+(cid:18) 3m
+δ
+
+(cid:19)
+
+√
+
++
+
+λZ
+
+
+
+≤
+
+(cid:18)
+
+1
+(cid:113) d
+
+(cid:19)
+
+1 −
+
+cλmax(Σ)
+
+t − λ
+
+t
+
+/λmin(Σ)
+
+
+
+σi
+
+(cid:32)
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)
+
+1
+t
+
+(cid:18)
+
+d +
+
+c + 8 log
+
+3mn
+δ
+
+(cid:19) (cid:114)
+
+(cid:19)(cid:33)
+
+d
+t
+
++ O
+
+(cid:18) d
+t
+
+2
+
+
+√
+
++ 2 log
+
++
+
+λZ
+
+
+
+.
+
+3m
+δ
+
+At this point, recall that under our events
+
+ki,n ≥ k∗
+
+i,n − C
+
+nd − Ω(n1/4),
+
+√
+
+where C = C∆+8CTr
+σ2
+λmin
+j σ2
+t = (σ2
+j )n + O(
+
+i /(cid:80)
+
+min
+
+√
+
+. As (90) decreases in t, we will bound the error (cid:107) ˆβi,t − βi(cid:107)2
+√
+
+dn) (in particular, the RHS of (91)).
+
+Σ by taking the number of pulls
+
+If we take λ = 1/n, we have that
+
+(cid:107) ˆβi,t − βi(cid:107)2
+Σ
+
+≤
+
+(cid:18)
+
+(cid:19)
+
+1 −
+
+cλmax(Σ)
+
+t − λ
+
+t
+
+/λmin(Σ)
+
+1
+(cid:113) d
+
+(cid:114)
+
+≤
+
+1 + c
+
+λmax(Σ)
+λmin(Σ)
+
+(cid:32)
+
+(cid:32)
+
+(cid:32)(cid:114)
+
+(cid:33)(cid:33)
+
+d
+t
+
+(cid:18) d
+t
+
+(cid:32)
+
+d
+t
+
+1
+t
+
++ O
+
+
+σ2
+i
+
+
+
+σi
+
+(cid:32)
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)
+
+1
+t
+
+(cid:18)
+
+d +
+
+c + 8 log
+
+3mn
+δ
+
+(cid:19) (cid:114)
+
+(cid:19)(cid:33)
+
+d
+t
+
++ O
+
+(cid:18) d
+t
+
++ 2 log
+
+√
+
++
+
+λZ
+
+
+
+3m
+δ
+
+(cid:19)(cid:33)
+
+
+
+σi
+
+(cid:32)
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)
+
+1
+t
+
+(cid:18)
+
+d +
+
+c + 8 log
+
+3mn
+δ
+
+(cid:19) (cid:114)
+
+(cid:19)(cid:33)
+
+d
+t
+
++ O
+
+(cid:18) d
+t
+
++ 2 log
+
+2
+
+
+√
+
++
+
+λZ
+
+
+
+3m
+δ
+
+≤
+
+1 + O
+
+d + 2 log
+
++
+
+c + 8 log
+
+(cid:18)
+
+3m
+δ
+
+3mn
+δ
+
+(cid:19) (cid:114)
+
+(cid:33)
+
+d
+t
+
++
+
+Z 2
+n
+
++ 2Zσi
+
+(cid:115)
+
+d + 2 log 3m
+δ
+n
+
++ o
+
+(cid:32)(cid:114)
+
+(cid:33)
+ .
+
+d
+n
+
+Now, by (91) and (59), and using the λi = σ2
+
+i / (cid:80)
+
+j σ2
+
+j notation
+
+(cid:20)
+
+σ2
+i
+
+(cid:20)
+
+σ2
+i
+
+(cid:107) ˆβi,t − βi(cid:107)2
+Σ
+
+≤
+
+1 + O
+
+(cid:32)
+
+(cid:32)
+
+(cid:32)
+
+=
+
+1 + O
+
+=
+
+1 + O
+
+(cid:18)
+
+=
+
+σ2
+i
+k∗
+i,n
+
+d
+n
+
+d
+n
+
+d
+n
+
+(cid:32)(cid:114)
+
+(cid:33)(cid:33)
+
+(cid:0)d + 2 log 3m
+
+(cid:1) + σ2
+
+(cid:1) (cid:113) d
+
+(cid:113) d
+
+t + 2Zσi
+
+n + o
+
+(cid:18)(cid:113) d
+
+(cid:19)(cid:21)
+
+n
+
+(cid:32)(cid:114)
+
+(cid:33)(cid:33)
+
+(cid:0)d + 2 log 3m
+
+(cid:1) + (cid:0)σ2
+
+(cid:1) + 2Zσi
+
+(cid:1) (cid:113) d
+
+t + o
+
+(cid:18)(cid:113) d
+
+(cid:19)(cid:21)
+
+δ
+
+δ
+
+i
+
+(cid:0)c + 8 log 3mn
+√
+
+δ
+
+k∗
+i,n − C
+(cid:0)c + 8 log 3mn
+√
+
+δ
+
+i
+
+nd − Ω(n1/4)
+
+k∗
+i,n − C
+
+nd − Ω(n1/4)
+
+(cid:19)(cid:33) (cid:34)
+
+(cid:18)
+
+σ2
+i
+
+d + 2 log
+
+(cid:19)
+
+3m
+δ
+
++ ˜O
+
+(cid:32)(cid:114)
+
+(cid:33)(cid:35)
+
+n
+
+d
+n
+
+(cid:32)(cid:114)
+
+(cid:33)(cid:33) (cid:32)
+
+1
+k∗
+i,n
+(cid:19)
+
+(cid:18)
+
++ O
+
+(cid:18) 1
+σ2
+
+min
+
+√
+
+d
+σ2
+min(λminn)3/2
+(cid:17)3/2(cid:19)
+(cid:16) d
+.
+
+λminn
+
+d + 2 log
+
++ O
+
+3m
+δ
+
+(93)
+
+(94)
+
+Active Learning for Accurate Estimation of Linear Models
+
+E. Loss of a RLS-based Learning Algorithm
+
+E.1. Distribution of RLS estimates
+
+Proposition 16. Given a linear regression problem with observations Y = X Tβ + (cid:15) with Gaussian noise with variance
+σ2, after n contexts X and the corresponding observations Y, the ridge estimate of parameter λ is obtained as
+
+with W = (XTX + λI)−1, and its distribution conditioned on X is
+
+ˆβλ = (XTX + λI)−1XTY = WXTY,
+
+ˆβλ | X ∼ N (cid:0)β − λWβ, σ2 W(XTX)WT(cid:1) .
+
+(95)
+
+Proof. Recalling the deﬁnition of the OLS estimator (cid:98)β (assuming it exists), we can easily rewrite the RLS estimator as
+ˆβλ = (XTX + λI)−1(XTX)(XTX)−1XTY = (XTX + λI)−1(XTX) (cid:98)β.
+This immediately gives that the conditional distribution of ˆβλ is Gaussian as for (cid:98)β. We just need to compute the corre-
+sponding mean vector and the covariance matrix. We ﬁrst notice that the RLS estimator is biased as
+
+Let S = XTX, then we can further rewrite the bias as
+
+E[ ˆβλ(cid:12)
+
+(cid:12)X] = (XTX + λI)−1(XTX)β.
+
+E[ ˆβλ(cid:12)
+
+(cid:16)
+
+(cid:12)X] = (S + λSS−1)−1Sβ =
+
+S(cid:0)I + λS−1(cid:1)(cid:17)−1
+= (I + λS−1)−1β = (cid:0)I − λ(S + λI)−1(cid:1)β
+= β − λ(S + λI)−1β = β − λWβ,
+
+Sβ
+
+where we used the matrix inversion lemma. Recalling that the covariance of (cid:98)β is σ2(XTX)−1, the covariance of (cid:98)βλ is then
+(cid:105)
+(cid:104) ˆβ|X
+
+(XTX)WT = σ2W(XTX)WT.
+
+= W(XTX)Cov
+
+(cid:104) ˆβλ|X
+
+Cov
+
+(cid:105)
+
+E.2. Loss Function of a RLS-based Algorithm
+
+We start by proving the loss function in the case of a static algorithm.
+Lemma 17. Let A be a learning algorithm that selects instance i for ki,n times, where ki,n is a ﬁxed quantity chosen in
+advance, and that returns estimates (cid:98)βλ
+i obtained by RLS with regularization λ. Then its loss after n steps can be expressed
+as
+
+Ln(Astat) = max
+i∈[m]
+
+Tr (cid:0)ΣE (cid:2)Wi,n
+
+(cid:0)σ2
+
+i XT
+
+i,nXi,n + λ2βiβT
+i
+
+(cid:1) WT
+
+i,n
+
+(cid:3)(cid:1) ,
+
+(96)
+
+where Wi,n = (XT
+
+i,nXi,n + λI)−1, and Xni is the matrix with the ki,n contexts from instance i.
+
+Proof. The proof follows the same steps as in App. A up to Eq. 22, where we have
+
+Ln(Astat) = max
+i∈[m]
+
+Tr
+
+(cid:18)
+
+(cid:20)
+
+EXi
+
+E(cid:15)i
+
+(cid:104)
+
+Σ(βi − ˆβi)(βi − ˆβi)T(cid:12)
+
+(cid:12)Xi
+
+(cid:105)(cid:21)(cid:19)
+
+.
+
+Following Proposition 16, we can reﬁne the inner expectation as
+
+(cid:104)
+
+E
+
+( ˆβ − β)( ˆβ − β)T | X
+
+(cid:105)
+
+= E
+
+= E
+
+= E
+
+(cid:104)
+( ˆβ − β + λWβ − λWβ)( ˆβ − β + λWβ − λWβ)T | X
+(cid:104)
+( ˆβ − E[ ˆβ | X] − λWβ)( ˆβ − E[ ˆβ | X] − λWβ)T | X
+(cid:104)
+( ˆβ − E[ ˆβ | X])( ˆβ − E[ ˆβ | X])T | X
+
++ λ2WββTWT
+
+(cid:105)
+
+(cid:105)
+
+(cid:105)
+
+= σ2 W(XTX)WT + λ2WββTWT
+= W (cid:2)σ2XTX + λ2ββT(cid:3) WT.
+
+Active Learning for Accurate Estimation of Linear Models
+
+Plugging the ﬁnal expression back into Ln(Astatic) we obtain the desired expression.
+
+We notice that a result similar to Lemma 9 holds for RLS estimates as well.
+Proposition 18. Assume the noise (cid:15) is Gaussian. Let ˆσ2 be the estimate for σ2 computed by using the residuals of the OLS
+solution ˆβ. Then, ˆβλ and ˆσ2 are independent random variable conditionally to X.
+
+Proof. As shown in the proof of Proposition 16, we have ˆβλ = (XTX + λI)−1(XTX) (cid:98)β and we know that functions of
+independent random variables are themselves independent. Since the matrix mapping (cid:98)β to (cid:98)βλ is ﬁxed given X, and ˆβ and
+ˆσ2 are conditionally independent from Lemma 9, then the statement follows.
+
+We can now combine Proposition 18 and Lemma 17 to conclude that a similar expression to Eq. 97 holds for the ridge
+estimators also when a non-static algorithm such as TRACE-UCB is run.
+
+Lemma 19. Let A be a learning algorithm such that
+{X1, I1, YI1,1, . . . , Xt−1, It−1, YIt−1,t−1}, and that it returns estimates (cid:98)βλ
+Then its loss after n steps can be expressed as
+
+It
+
+is
+
+chosen as a function of Dt−1
+=
+i obtained by RLS with regularization λ.
+
+Ln(A) = max
+i∈[m]
+
+Tr (cid:0)ΣE (cid:2)Wi,n
+
+(cid:0)σ2
+
+i XT
+
+i,nXi,n + λ2βiβT
+i
+
+(cid:1) WT
+
+i,n
+
+(cid:3)(cid:1) ,
+
+(97)
+
+where Wi,n = (XT
+
+i,nXi,n + λI)−1, and Xi,n is the matrix with the ki,n contexts from instance i.
+
+Proof. The proof follows immediately by extending Lemma 9 to ˆβλ as, by Proposition 18, ˆβλ and ˆσ2
+Then, we proceed in a way similar to that in the proof of Lemma 2 to perform the required conditioning.
+
+OLS are independent.
+
+Active Learning for Accurate Estimation of Linear Models
+
+F. Sparse Trace-UCB Algorithm
+
+F.1. Summary
+
+High-dimensional linear regression models are remarkably common in practice. Companies tend to record a large number
+of features of their customers, and feed them to their prediction models. There are also cases in which the number of prob-
+lem instances under consideration m is large, e.g., too many courses in the MOOC example described in the introduction.
+Unless the horizon n is still proportionally large w.r.t. md, these scenarios require special attention. In particular, algo-
+rithms like TRACE-UCB that adaptively use contexts in their allocation strategy become more robust than their context-free
+counterparts.
+
+A natural assumption in such scenarios is sparsity, i.e., only a small subset of features are relevant to the prediction
+problem at hand (have non-zero coefﬁcient). In our setting of m problem instances, it is often reasonable to assume that
+these instances are related to each other, and thus, it makes sense to extend the concept of sparsity to joint sparsity, i.e., a
+sparsity pattern across the instances. Formally, we assume that there exists a s (cid:28) d such that
+
+|S| ∆= | ∪i∈[m] supp(βi)| = s,
+
+(98)
+
+where supp(βi) = {j ∈ [d] : β(j)
+when |supp(βi)| ≈ s, for all i, i.e., most of the relevant features are shared across the instances.
+
+(cid:54)= 0} denotes the support of the i’th problem instance. A special case of joint sparsity is
+
+i
+
+In this section, we focus on the scenario where dm > n. When we can only allocate a small (relative to d) number of
+contexts to each problem instance, proper balancing of contexts becomes extremely important, and thus, the algorithms
+that do not take into account context in their allocation are destined to fail. Although TRACE-UCB has the advantage of
+using context in its allocation strategy, it still needs to quickly discover the relevant features (those in the support) and only
+use those in its allocation strategy.
+
+This motivates a two-stage algorithm, we call it SPARSE-TRACE-UCB, whose pseudocode is in Algorithm 2. In the ﬁrst
+stage, the algorithm allocates contexts uniformly to all the instances, L contexts per instance, and then recovers the support.
+In the second stage, it relies on the discovered support (cid:98)S, and applies the standard TRACE-UCB to all the instances, but
+only takes into account the features in (cid:98)S. Note that L should be large enough that with high probability, support is exactly
+discovered, i.e., (cid:98)S = S.
+
+There exists a large literature on how to perform simultaneous support discovery in jointly sparse linear regression prob-
+lems (Negahban & Wainwright, 2011; Obozinski et al., 2011; Wang et al., 2013), which we discuss in detail below.
+
+Most of these algorithms minimize the regularized empirical loss
+
+min
+M∈Rd×m
+
+1
+k
+
+m
+(cid:88)
+
+i=1
+
+(cid:107)Yi − Xi M[, i](cid:107)2 + λ (cid:107)M(cid:107),
+
+where k is the number of samples per problem, M be the matrix whose i’th column is M[, i] = ˆβi, Xi ∈ Rk×d, and
+Yi = Xiβi + (cid:15)i. In particular, they use la/lb block regularization norm, i.e., (cid:107)M(cid:107)la/lb = (cid:107)v(cid:107)la , where vi = (cid:107)M[i, ](cid:107)lb
+and M[i, ] is the i’th row of M. In short, the SPARSE-TRACE-UCB algorithm uses the l1/l2 block regularization Lasso
+algorithm (Wang et al., 2013), an extension of the algorithm in (Obozinski et al., 2011), for its support discovery stage.
+
+We extend the guarantees of Theorem 7 to the high dimensional case with joint sparsity, assuming s is known.
+
+The following is the main result of this section:
+Theorem 20. Let δ1 > 0. Assume (cid:107)βi(cid:107)2 ≤ Z for all i, for some Z > 0, and assume the parameters (n, d, s, βi, Σ) satisfy
+conditions C1 to C5 in (Wang et al., 2013). Let ψ be the sparsity overlap function deﬁned in (Obozinski et al., 2011). If
+L > 2(1 + v) ψ log(d − s)ρu(Σ(1:m)
+SC SC |S)/γ2 for some constant v > 0, and n − Lm ≥ (s + 1)m, then, with probability at
+least 1 − δ1 − δ2,
+
+(cid:101)Ln(A) ≤
+
+s + 2 log
+
+(cid:18)
+
+(cid:80)
+
+j σ2
+j
+n − Lm
+
+(cid:19)
+
++
+
+3m
+δ1
+
+2c
+(cid:112)σ2
+
+min
+
+(cid:33)3/2
+
+(cid:32) s (cid:80)
+
+j σ2
+j
+n − Lm
+
++ o (z) ,
+
+(99)
+
+and we deﬁned δ2 = m exp(−c0 log s) + exp(−c1 log(d − s)) for positive
+
+(cid:16)
+
+1 + (cid:112)2 log(12mn/δ1)/s
+
+where c ≤ 2
+constants c0, c1 > 0, and z = (s/(n − Lm))3/2.
+
+(cid:17)
+
+Active Learning for Accurate Estimation of Linear Models
+
+The exact technical assumptions and the proof are given and discussed in below. We simply combine the high-probability
+results of Theorem 7, and the high-probability support recovery of Theorem 2 in (Wang et al., 2013).
+
+In addition, we provide Corollary 21, where we study the regime of interest where the support overlap is complete (for
+simplicity), n = C1 ms log d (cid:28) md for C1 > 0, and L = C2 s log d, for C1 − C2 > 0.
+Corollary 21. Under the assumptions of Theorem 20, let δ1 > 0, assume n = C1 ms log d, the support of all arms are
+equal, and set L = C2 s log d, for ¯C := C1 − C2 > 0. Then, with probability at least 1 − δ1 − δ2,
+
+(cid:101)Ln(A) ≤
+
+(cid:18)
+
+(cid:80)
+
+j σ2
+j
+¯Cms log d
+
+s + 2 log
+
+(cid:19)
+
++
+
+3m
+δ1
+
+2c
+(cid:112)σ2
+
+min
+
+(cid:33)3/2
+
+(cid:32) (cid:80)
+
+j σ2
+j
+¯Cm log d
+
++ o (z)
+
+(100)
+
+and we deﬁned δ2 = m exp(−c0 log s) + exp(−c1 log(d − s)) for constants
+
+(cid:16)
+
+(cid:17)
+1 + (cid:112)2 log(12mn/δ1)/s
+
+where c ≤ 2
+c0, c1 > 0, and z = (cid:0) ¯Cm log d(cid:1)−3/2
+
+.
+
+Algorithm 2 contains the pseudocode of our Sparse-TRACE-UCB algorithm.
+
+Select problem instance i exactly L times
+
+Algorithm 2 Sparse-TRACE-UCB Algorithm.
+1: for i = 1, . . . , m do
+2:
+3: end for
+4: Run l1/l2 Lasso to recover support ¯S = ∪i supp( ˆβi,L)
+5: for i = 1, . . . , m do
+6:
+7:
+8: end for
+9: for steps t = m(L + s + 1) + 1, . . . , n do
+for problem instance 1 ≤ i ≤ m do
+10:
+11:
+
+Select problem instance i exactly s + 1 times
+Compute its OLS estimates ˆβi,m(L+s+1) and ˆσ2
+
+Compute score based on ¯S dimensions only:
+
+end for
+Select problem instance It = arg maxi∈[m] si,t
+Observe Xt and YIt,t
+Update OLS estimators ˆβIt,t and ˆσ2
+
+12:
+13:
+14:
+15:
+16: end for
+17: Return RLS estimates { ˆβλ
+
+i=1, with ˆβλ
+
+i }m
+
+It,t based on ¯S
+
+ij = 0 if j /∈ ¯S
+
+i,m(L+s+1) with respect to dimensions in ¯S.
+
+si,t−1 = (cid:98)σ2
+
+i,t−1 + ∆i,t−1
+ki,t−1
+
+Tr(cid:0)Σ ˆΣ−1
+
+i,t−1
+
+(cid:1)
+
+Given our pure exploration perspective, it is obviously more efﬁcient to learn the true supports as soon as possible. That
+way we can adjust our behavior by collecting the right data based on our initial ﬁndings. Note that this is not always the
+case; for example, if the total number of pulls is unknown. Then it is not clear what is the right amount of budget to invest
+upfront to recover the supports (see tracking algorithms and doubling trick).
+
+We brieﬂy describe Algorithm 2 in words. First, in the recovery stage we sequentially pull all arms a number of times,
+say L times. We do not take into account the context, and just apply a round robin technique to pull each arm exactly L
+times. In total, there are exactly s components that are non-zero for at least one arm (out of d). After the Lm pulls, we
+use a block-regularized Lasso algorithm to recover the joint sparsity pattern. We discuss some of the alternatives later. The
+outcome of this stage is a common support (cid:98)S := ∪i supp( ˆβi). With high probability we recover the true support (cid:98)S = S. In
+the second stage, or pure exploration stage, the original TRACE-UCB algorithm is applied. The TRACE-UCB algorithm
+works by computing an estimate ˆσ2
+
+i at each step t for each arm i. Then, it pulls the arm maximizing the score
+
+si,t−1 = (cid:98)σ2
+
+i,t−1 + ∆i,t−1
+ki,t−1
+
+Tr(cid:0)Σ ˆΣ−1
+
+i,t−1
+
+(cid:1).
+
+Active Learning for Accurate Estimation of Linear Models
+
+The key observation is that in the second stage we only consider the components of each context that are in (cid:98)S. In particular,
+we start by pulling s + 1 times each arm so that we can compute the initial OLS estimates ˆβOLS
+i . We keep updating
+those estimates when an arm is pulled, and the trace is computed with respect to the components in (cid:98)S only.
+
+and ˆσ2
+
+i
+
+Finally, we return the Ridge estimates based only on the data collected in the second stage.
+
+F.2. A note on the Static Allocation
+
+i / (cid:80)
+
+What is the optimal static performance in this setting if the σ2’s are known? For simplicity, suppose we pull arm i exactly
+(σ2
+j σ2
+2. Note in this case we can actually set λi
+as a function of σ2
+
+j ) n times. We are interested in Lasso guarantees for (cid:107)X T ( ˆβi − βi)(cid:107)2
+
+i as required in most Lasso analyses, because σ2
+
+i is known.
+
+A common guarantee is as follows (see (Hastie et al., 2015; Raskutti et al., 2010)). With high probability
+
+(cid:107) ˆβi − βi(cid:107)2
+
+2 ≤
+
+c2σ2
+i
+γ2
+
+τ s log d
+k
+
+,
+
+(cid:107) ˆβi − βi(cid:107)2
+
+2 ≤
+
+c2τ
+γ2
+
+
+
+σ2
+j
+
+
+
+
+
+
+
+m
+(cid:88)
+
+j=1
+
+s log d
+n
+
+.
+
+where k is the number of observations, d the ambient dimension, s the efﬁcient dimension, γ is the restricted eigenvalues
+constant for Σ, τ > 2 is the parameter that tunes the probability bound, and c is a universal constant.
+
+Thus, if we set k = (σ2
+
+i / (cid:80)
+
+j σ2
+
+j ) n, then we obtain that whp
+
+(101)
+
+(102)
+
+Note that the latter event is independent across different i ∈ [m], so all of them simultaneously hold with high probability.
+The term γ−2 was expected as depending on the correlation levels in Σ the problem can be easier or harder. In addition,
+note that as (cid:107) ˆβi − βi(cid:107)2
+
+Σ = Tr(Σ( ˆβi − βi)( ˆβi − βi)T ), we have that
+
+λmin(Σ) (cid:107) ˆβi − βi(cid:107)2
+
+2 ≤ (cid:107) ˆβi − βi(cid:107)2
+
+Σ ≤ λmax(Σ)(cid:107) ˆβi − βi(cid:107)2
+2.
+
+F.3. Simultaneous Support Recovery
+
+There has been a large amount of research on how to perform simultaneous support recovery in sparse settings for multiple
+regressions. Let M be the matrix whose i-th column is M(i) = βi.
+
+A common objective function after k observations per problem is
+
+min
+¯M∈Rd×m
+
+1
+k
+
+m
+(cid:88)
+
+j=1
+
+(cid:107)Yj − Xj ¯M(j)(cid:107)2 + λ (cid:107) ¯M(cid:107),
+
+(103)
+
+where we assumed Yj = Xjβj + (cid:15)j, and Xj ∈ Rk×d, Yj, (cid:15)j ∈ Rk and βj ∈ Rd.
+
+The la/lb block regularization norm is
+
+(cid:107) ¯M(cid:107)la/lb = (cid:107)v(cid:107)a,
+
+where vj = (cid:107) ¯Mj(cid:107)b
+
+¯Mj is the j-th row of ¯M.
+
+(104)
+
+There are a few differences among the most popular pieces of work.
+
+Negahban and Wainwright (Negahban & Wainwright, 2011) consider random Gaussian designs Xj ∼ N (0, Σj) with
+random Gaussian noise (and common variance). The regularization norm is l1/l∞. In words, they take the sum of the
+absolute values of the maximum element per row in ¯M. This forces sparsity (via the l1 norm), but once a row is selected
+there is no penalty in increasing the ¯β components up to the current maximum of the row. They tune λ as in the standard
+analysis of Lasso, that is, proportionally to σ2, which is unknown in our case. Results are non-asymptotic, and recovery
+happens with high probability when the number of observations is k > Cs(m + log d). They show that if the overlap is not
+large enough (2/3 of the support, for m = 2 regression problems), then running independent Lasso estimates has higher
+statistical efﬁciency. We can actually directly use the results in (Negahban & Wainwright, 2011) if we assume an upper
+bound σ2
+
+max ≤ R is known.
+
+Active Learning for Accurate Estimation of Linear Models
+
+Obozinski, Wainwright and Jordan (Obozinski et al., 2011) use l1/l2 block regularization (aka Multivariate Group Lasso).
+Their design is random Gaussian, but it is ﬁxed across regressions: Xj = X. They provide asymptotic guarantees under the
+scaling k, d, s → ∞, d − s → ∞, and standard assumptions like bounded Σ-eigenspectrum, the irrepresentable condition,
+and self-incoherence. The ﬁrst condition is not only required for support recovery, but also for l2 consistency. The last two
+conditions are not required for risk consistency, while essential for support recovery. To capture the amount of non-zero
+pattern overlap among regressions, they deﬁne the sparsity overlap function ψ, and their sample requirements are a function
+of ψ. In particular, one needs k > C ψ log(d − s), where the constant C depends on quantities related to the covariance
+matrix of the design matrices, and ψ can be equal to s/m, if all the patterns overlap, and at most s if they are disjoint.
+
+Their theorems use a sequence of regularization parameters
+
+(cid:114)
+
+λk =
+
+f (d) log d
+k
+
+,
+
+where f (d) → ∞ as d → ∞,
+
+in such a way that λk → 0 as k, d → ∞. Finally, k > 2s is also required. They also provide a two-stage algorithm for
+efﬁcient estimation of individual supports for each regression problem. All these optimization problems are convex, and
+can be efﬁciently solved in general.
+
+To overcome the issue of common designs (we do not pull each context several times), we use the results by Wang, Liang,
+and Xing in (Wang et al., 2013). They extend the guarantees in (Obozinski et al., 2011) to the case where the design
+matrices are independently sampled for each regression problem. In order to formally present their result, we describe
+some assumptions. Let Σ(i) be the covariance matrix for the design observations of the i-th regression (in our case, they
+are all equal to Σ), and S the union of the sparse supports across regressions.
+
+• C1 There exists γ ∈ (0, 1] such that (cid:107)|A(cid:107)|∞ ≤ 1 − γ, where
+
+Ajs = max
+1≤i≤m
+
+(cid:18)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+Σ(i)
+
+SC S
+
+(cid:16)
+
+Σ(i)
+SS
+
+(cid:17)−1(cid:19)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+,
+
+js
+
+for j ∈ SC and s ∈ S.
+
+• C2 There are constants 0 < Cmin ≤ Cmax < ∞, such that the eigenvalues of all matrices Σ(i) are in [Cmin, Cmax].
+
+• C3 There exists a constant Dmax < ∞ such that
+
+max
+1≤i≤m
+
+|(cid:107)
+
+(cid:17)−1
+
+(cid:16)
+
+Σ(i)
+SS
+
+(cid:107)|∞ ≤ Dmax.
+
+• C4 Deﬁne the regularization parameter
+
+such that λk → 0 as k → ∞.
+
+• C5 Deﬁne ρ(k, s, λk) as
+
+(cid:114)
+
+λk =
+
+f (d) log d
+k
+
+,
+
+where f (d) → ∞ as d → ∞,
+
+(107)
+
+ρ(k, s, λk) :=
+
+(cid:115)
+
+8σ2
+
+maxs log s
+k Cmin
+
+(cid:18)
+
++ λk
+
+Dmax +
+
+(cid:19)
+
+,
+
+12s
+√
+Cmin
+
+k
+
+and assume ρ(k, s, λk)/b∗
+
+min = o(1), where b∗
+
+min = minj∈S (cid:107)Mj(cid:107)2.
+
+We state the main theorem in (Wang et al., 2013); k is the number of observations per regression.
+Theorem 22. Assume the parameters (k, d, s, M, Σ(1:m)) satisfy conditions C1 to C5. If for some small constant v > 0,
+
+k > 2(1 + v) ψ log(d − s)
+
+ρu(Σ(1:m)
+SC SC |S)
+γ2
+
+,
+
+(105)
+
+(106)
+
+(108)
+
+(109)
+
+Active Learning for Accurate Estimation of Linear Models
+
+then the l1/l2 regularized problem given in (103) has a unique solution ˆM, the support union supp( ˆM) equals the true
+support S, and (cid:107) ˆM − M(cid:107)l∞/l2 = o(b∗
+
+min), with probability greater than
+
+1 − m exp(−c0 log s) − exp(−c1 log(d − s)),
+
+where c0 and c1 are constants.
+
+The following proposition is also derived in (Wang et al., 2013) (Proposition 1):
+Proposition 23. Assume Σ(1:m) satisfy C2, then ψ is bounded by
+
+s
+m Cmin
+
+≤ ψ = ψ
+
+(cid:16)
+
+M, Σ(1:m)(cid:17)
+
+≤
+
+s
+Cmin
+
+.
+
+(110)
+
+(111)
+
+For our purposes, there is a single Σ, which implies that we can remove the max expressions in C1 and C3. Corollary
+2 in (Wang et al., 2013) establishes that when supports are equal for all arms, the number of samples required per arm is
+reduced by a factor of m.
+
+F.4. High-Dimensional Trace-UCB Guarantees
+
+If the support overlap is complete we can reduce the sampling complexity of the ﬁrst stage by a factor of m; we only need
+
+Lm > 2(1 + v) s log(d − s)
+
+(112)
+
+SC SC |S)
+
+ρu(Σ(1:m)
+Cmin γ2
+
+observations in total, for some small constant v > 0.
+
+Now we show our main result for high-dimensional Trace-UCB, Theorem 20.
+Theorem. Let δ1 > 0. Assume (cid:107)βi(cid:107)2 ≤ Z for all i, for some Z > 0, and assume the parameters (n, d, s, βi, Σ) satisfy
+conditions C1 to C5 in (Wang et al., 2013). Let ψ be the sparsity overlap function deﬁned in (Obozinski et al., 2011). If
+L > 2(1 + v) ψ log(d − s)ρu(Σ(1:m)
+SC SC |S)/γ2 for some constant v > 0, and n − Lm ≥ (s + 1)m, then, with probability at
+least 1 − δ1 − δ2,
+
+(cid:101)Ln(A) ≤
+
+s + 2 log
+
+(cid:18)
+
+(cid:80)
+
+j σ2
+j
+n − Lm
+
+(cid:19)
+
++
+
+3m
+δ1
+
+2c
+(cid:112)σ2
+
+min
+
+(cid:33)3/2
+
+(cid:32) s (cid:80)
+
+j σ2
+j
+n − Lm
+
++ o (z) ,
+
+(113)
+
+and we deﬁned δ2 = m exp(−c0 log s) + exp(−c1 log(d − s)) for positive
+
+(cid:16)
+
+1 + (cid:112)2 log(12mn/δ1)/s
+
+where c ≤ 2
+constants c0, c1 > 0, and z = (s/(n − Lm))3/2.
+
+(cid:17)
+
+Proof. We start by assuming the recovered support ˆS is equal to the true support S. This event, say ES, holds with
+probability at least 1 − δ2 by Theorem 22 when L satisﬁes (112).
+
+Then, we ﬁx δ1 > 0, and run the second stage applying the Trace-UCB algorithm in the s-dimensional space given by the
+components in ˆS.
+
+By Theorem 7, if n − Lm ≥ (s + 1)m, then, with probability at least 1 − δ1, the following holds:
+
+(cid:101)Ln(A)S ≤
+
+s + 2 log
+
+(cid:18)
+
+(cid:80)
+
+j σ2
+j
+n − Lm
+
+(cid:19)
+
++
+
+3m
+δ1
+
+2c
+(cid:112)σ2
+
+min
+
+(cid:32) s (cid:80)
+
+j σ2
+j
+n − Lm
+
+(cid:33)3/2
+
+(cid:32)(cid:18)
+
++ o
+
+s
+n − Lm
+
+(cid:19)3/2(cid:33)
+
+,
+
+(114)
+
+where (cid:101)Ln(A)S denotes the loss restricted to the components in β that are in ˆS (and ΣS). However, under event ES, we
+recovered the true support, and our ﬁnal estimates for βij for each j (cid:54)∈ S and arm i will be equal to zero, which corresponds
+to their true value. Hence (cid:101)Ln(A) = (cid:101)Ln(A)S.
+
+We conclude that (114) holds with probability at least 1 − δ1 − δ2.
+
+One regime of interest is when n = C1 ms log d (cid:28) md. In addition, let us assume complete support overlap across arms,
+so ψ = s/Cm. Then, we set the number of initial pulls per arm to be L = C2 s log d, with C1 > C2.
+
+In this case, we have that Corollary 21 holds.
+
+

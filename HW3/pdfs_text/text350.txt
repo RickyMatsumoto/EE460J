@@ -1,0 +1,1128 @@
+Coordinated Multi-Agent Imitation Learning
+
+Hoang M. Le 1 Yisong Yue 1 Peter Carr 2 Patrick Lucey 3
+
+Abstract
+
+We study the problem of imitation learning from
+demonstrations of multiple coordinating agents.
+One key challenge in this setting is that learn-
+ing a good model of coordination can be difﬁcult,
+since coordination is often implicit in the demon-
+strations and must be inferred as a latent vari-
+able. We propose a joint approach that simulta-
+neously learns a latent coordination model along
+with the individual policies.
+In particular, our
+method integrates unsupervised structure learn-
+ing with conventional imitation learning. We il-
+lustrate the power of our approach on a difﬁcult
+problem of learning multiple policies for ﬁne-
+grained behavior modeling in team sports, where
+different players occupy different roles in the co-
+ordinated team strategy. We show that having a
+coordination model to infer the roles of players
+yields substantially improved imitation loss com-
+pared to conventional baselines.
+
+1. Introduction
+
+The areas of multi-agent planning and control have wit-
+nessed a recent wave of strong interest due to the practical
+desire to deal with complex real-world problems, such as
+smart-grid control, autonomous vehicles planning, manag-
+ing teams of robots for emergency response, among others.
+From the learning perspective, (cooperative) multi-agent
+learning is not a new area of research (Stone & Veloso,
+2000; Panait & Luke, 2005). However, compared to the
+progress in conventional supervised learning and single-
+agent reinforcement learning, the successes of multi-agent
+learning have remained relatively modest. Most notably,
+multi-agent learning suffers from extremely high dimen-
+sionality of both the state and actions spaces, as well as
+relative lack of data sources and experimental testbeds.
+
+1California Institute of Technology, Pasadena, CA 2Disney
+Research, Pittsburgh, PA 3STATS LLC, Chicago, IL. Correspon-
+dence to: Hoang M. Le <hmle@caltech.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Figure 1. Our motivating example of learning coordinating be-
+havior policies for team sports from tracking data. Red is the
+attacking team, blue is the defending team, and yellow is the ball.
+
+The growing availability of data sources for coordi-
+nated multi-agent behavior, such as sports tracking data
+(Bialkowski et al., 2014), now enables the possibility of
+learning multi-agent policies from demonstrations, also
+known as multi-agent imitation learning. One particularly
+interesting aspect of domains such as team sports is that the
+agents must coordinate. For example, in the professional
+soccer setting depicted in Figure 1, different players must
+coordinate to assume different roles (e.g., defend left ﬁeld).
+However, the roles and role assignment mechanism are un-
+observed from the demonstrations. Furthermore, the role
+for a player may change during the same play sequence. In
+the control community, this issue is known as “index-free”
+multi-agent control (Kingston & Egerstedt, 2010).
+
+Motivated by these challenges, we study the problem of
+imitation learning for multiple coordinating agents from
+demonstrations. Many realistic multi-agent settings require
+coordination among collaborative agents to achieve some
+common goal (Guestrin et al., 2002; Kok et al., 2003). Be-
+yond team sports, other examples include learning policies
+for game AI, controlling teams of multiple robots, or mod-
+eling collective animal behavior. As discussed above, we
+are interested in settings where agents have access to the
+outcome of actions from other agents, but the coordination
+mechanism is neither clearly deﬁned nor observed, which
+makes the full state only partially observable.
+
+We propose a semi-supervised learning framework that in-
+tegrates and builds upon conventional imitation learning
+and unsupervised, or latent, structure learning. The latent
+
+Coordinated Multi-Agent Imitation Learning
+
+structure model encodes a coordination mechanism, which
+approximates the implicit coordination in the demonstra-
+tion data. In order to make learning tractable, we develop
+an alternating optimization method that enables integrated
+and efﬁcient training of both individual policies and the
+latent structure model. For learning individual policies,
+we extend reduction-based single-agent imitation learn-
+ing approaches into multi-agent domain, utilizing powerful
+black-box supervised techniques such as deep learning as
+base routines. For latent structure learning, we develop a
+stochastic variational inference approach.
+
+We demonstrate the effectiveness of our method in two set-
+tings. The ﬁrst is a synthetic experiment based on the pop-
+ular predator-prey game. The second is a challenging task
+of learning multiple policies for team defense in profes-
+sional soccer, using a large training set1 of play sequences
+illustrated by Figure 1. We show that learning a good la-
+tent structure to encode implicit coordination yields signiﬁ-
+cantly superior imitation performance compared to conven-
+tional baselines. To the best of our knowledge, this is the
+ﬁrst time an imitation learning approach has been applied to
+jointly learn cooperative multi-agent policies at large scale.
+
+2. Problem Formulation
+
+In coordinated multi-agent imitation learning, we have K
+agents acting in coordination to achieve a common goal (or
+sequence of goals). Training data D consists of multiple
+demonstrations of K agents. Importantly, we assume the
+identity (or indexing) of the K experts may change from
+one demonstration to another. Each (unstructured) set of
+demonstrations is denoted by U “ tU1, . . . , UKu, where
+Uk “ tut,kuT
+t“1 is the sequence of actions by agent k at
+time t. Note that each set of demonstrations can have vary-
+ing sequence length T. Let C “ tctuT
+t“1 be the context
+associated with each demonstration sequence.
+
+Policy Learning. Our ultimate goal is to learn a (largely)
+decentralized policy, but for clarity we ﬁrst present the
+problem of learning a fully centralized multi-agent pol-
+icy. Following the notation of (Ross et al., 2011), let
+(cid:126)πp(cid:126)sq :“ (cid:126)a denote the joint policy that maps the joint
+state, (cid:126)s “ rs1, . . . , sKs, of all K agents into K actions
+(cid:126)a “ ra1, . . . , aKs. The goal is to minimize imitation loss:
+Limitation “ E(cid:126)s„d(cid:126)π r(cid:96)p(cid:126)πp(cid:126)sqqs ,
+
+where d(cid:126)π denotes the distribution of states experienced by
+joint policy (cid:126)π and (cid:96) is the imitation loss deﬁned over the
+demonstrations (e.g., squared loss for deterministic poli-
+cies, or cross entropy for stochastic policies).
+
+The decentralized setting decomposes the joint policy (cid:126)π “
+
+1Data at http://www.stats.com/data-science/
+and see video result at http://hoangminhle.github.io
+
+rπ1, . . . , πKs into K policies, each tailored to a speciﬁc
+agent index or “role”.2 The loss function is then:
+Kÿ
+
+Limitation “
+
+Es„dπk
+
+r(cid:96)pπkpskqqs .
+
+k“1
+
+Black-Box Policy Classes. In order to leverage powerful
+black-box policy classes such as random forests and deep
+learning, we take a learning reduction approach to training
+(cid:126)π. One consequence is that the state space representation
+s “ rs1, . . . , sKs must be consistently indexed, e.g., agent
+k in one instance must correspond to agent k in another in-
+stance. This requirement applies for both centralized and
+decentralized policy learning, and is often implicitly as-
+sumed in prior work on multi-agent learning. A highly re-
+lated issue arises in distributed control of index-free coordi-
+nating robots, e.g., to maintain a deﬁned formation (Kloder
+& Hutchinson, 2006; Kingston & Egerstedt, 2010).
+
+Motivating example: Soccer Domain. Consider the task of
+imitating professional soccer players, where training data
+includes play sequences from different teams and games.
+Context C corresponds to the behavior of the opposing
+team and the ball. The data includes multiple sequences
+of K-set of trajectories U “ tU1, U2, . . . , UKu, where the
+actual identity of player generating Uk may change from
+one demonstration to the next.
+
+One important challenge for black-box policy learning is
+constructing an indexing mechanism over the agents to
+yield a consistent state representation. For example, the
+same index should correspond to the “left defender” in all
+instances. Otherwise, the inputs to the policy will be incon-
+sistent, making learning difﬁcult if not impossible. Note
+that barring extensive annotations or some heuristic rule-
+based deﬁnitions, it is unnatural to quantitatively deﬁne
+what makes a player “left defender”. In addition, even if
+we had a way to deﬁne who the “left defender” is, he may
+not stay in the same role during the same sequence.
+
+Role-based Indexing. We address index-free policy learn-
+ing via role learning and role-based index assignment. To
+motivate our notion of role, let’s ﬁrst consider the sim-
+plest indexing mechanism: one could equate role to agent
+identity. However, the data often comes from various se-
+quences, with heterogeneous identities and teams of agents.
+Thus instead of learning identity-speciﬁc policies, it is
+more natural and data-efﬁcient to learn a policy per role.
+However, a key challenge in learning policies directly is
+that the roles are undeﬁned, unobserved, and could change
+dynamically within the same sequence. We thus view learn-
+ing the coordination, via role assignment, as an unsuper-
+vised structured prediction problem.
+
+2It is straightforward to extend our formulation to settings
+where multiple agents can occupy the same role, and where not
+all roles are occupied across all execution sequences.
+
+Coordinated Multi-Agent Imitation Learning
+
+Algorithm 1 Coordinated Multi-Agent Imitation Learning
+
+Input: Multiple unstructured trajectory sets U “ tU1, . . . , UK u
+
+with Uk “ tut,kuT
+
+t“1 and context C “ tctuT
+
+t“1.
+
+Input: Graphical model q with global/local parameters θ and z.
+Input: Initialized policies πk, k “ 1, . . . , K
+Input: Step size sequence ρn, n “ 1, 2, . . .
+1: repeat
+2:
+3:
+4:
+5: Ak Ð pAk @k
+
+rA1, . . . , AK s Ð AssigntU1, . . . , UK |qpθ, zqu
+rπ1, . . . , πK s Ð Learn rA1, . . . , AK , Cs
+Roll-out π1, . . . , πK to obtain pA1, . . . , pAK
+
+(Alternatively: Ak Ð pAk with prob η for η Ñ 1)
+qpθ, zq Ð LearnStructuretA1, . . . , AK , C, θ, ρnu
+
+6:
+7: until No improvement on validation set
+output K policies π1, π2, . . . , πK
+
+We propose an alternating optimization approach to solving
+(1), summarized in Figure 2. The main idea is to integrate
+imitation learning with unsupervised structure learning by
+taking turns to (i) optimize for imitation policies while ﬁx-
+ing a structured model (minimizing imitation loss), and (ii)
+re-train the latent structure model and reassign roles while
+ﬁxing the learning policies (maximizing role assignment
+entropy). The alternating nature allows us to circumvent
+the circular dependency between policy learning and latent
+structure learning. Furthermore, for (i) we develop a stable
+multi-agent learning reduction approach.
+
+3.1. Approach Outline
+
+Algorithm 1 outlines our framework. We assume the latent
+structure model for computing role assignments is formu-
+lated as a graphical model. The multi-agent policy training
+procedure Learn utilizes a reduction approach, and can
+leverage powerful off-the-shelf supervised learning tools
+such as deep neural networks (Hochreiter & Schmidhuber,
+1997). The structure learning LearnStructure and
+role assignment Assign components are based on graphi-
+cal model training and inference. For efﬁcient training, we
+employ alternating stochastic optimization (Hoffman et al.,
+2013; Johnson & Willsky, 2014; Beal, 2003) on the same
+mini-batches. Note that batch training can be deployed
+similarly, as illustrated by one of our experiments.
+
+We interleave the three components described above into
+a complete learning algorithm. Given an initially unstruc-
+tured set of training data, an initialized set of policies, and
+prior parameters of the structure model, Algorithm 1 per-
+forms alternating structure optimization on each mini-batch
+(size 1 in Algorithm 1).
+
+• Line 2: Role assignment is performed on trajectories
+tA1, . . . , AKu by running inference procedure (Algo-
+rithm 4). The result is an ordered set rA1, . . . , AKs,
+where trajectory Ak corresponds to policy πk.
+
+• Line 3-5: Each policy πk is updated using joint multi-
+agent training on the ordered set rA1, . . . , AK, Cs
+
+Figure 2. Alternating stochastic optimization training scheme for
+our semi-supervised structure regularization model.
+
+Coordination via Structured Role Assignment. Instead
+of handcrafting the deﬁnition of roles, we learn the roles
+in an unsupervised fashion, without attaching any semantic
+labels to the roles. At the same time, role transition should
+obey certain structural regularity, due to coordination. This
+motivates using graphical models to represent the coordi-
+nation structure.
+
+Coordinated Policy Learning. We formulate the indexing
+mechanism as an assignment function A which maps the
+unstructured set U and some probabilistic structured model
+q to an indexed set of trajectory A rearranged from U , i.e.,
+
+A : tU1, .., UKu ˆ q ÞÑ rA1, .., AKs ,
+
+where the set tA1, .., AKu ” tU1, .., UKu. We view q as
+a latent variable model that infers the role assignments for
+each set of demonstrations. Thus, q drives the indexing
+mechanism A so that state vectors can be consistently con-
+structed to facilitate optimizing for the imitation loss.
+
+We employ entropy regularization, augmenting the imita-
+tion loss with some low entropy penalty (Grandvalet et al.,
+2004; Dudik et al., 2004), yielding our overall objective:
+
+min
+π1,..,πK ,A
+
+Esk„dπk
+
+Kÿ
+
+k“1
+
+r(cid:96)pπkpskqq|A, Ds´λHpA|Dq (1)
+
+where both imitation loss and entropy are measured with
+respect to the state distribution induced by the policies, and
+D is training data. This objective can also be seen as maxi-
+mizing the mutual information between latent structure and
+observed trajectories (Krause et al., 2010).
+
+3. Learning Approach
+
+Optimizing (1) is challenging for two reasons. First, be-
+yond the challenges inherited from single-agent settings,
+multi-agent imitation learning must account for multi-
+ple simultaneously learning agents, which is known to
+cause non-stationarity for multi-agent reinforcement learn-
+ing (Busoniu et al., 2008). Second, the latent role assign-
+ment model, which forms the basis for coordination, de-
+pends on the actions of the learning policies, which in turn
+depend on the structured role assignment.
+
+Coordinated Multi-Agent Imitation Learning
+
+(Algorithm 2). The updated models are executed to
+yield a rolled-out set of trajectories, which replace the
+previous set of trajectories tAku.
+
+• Line 6: Parameters of latent structured model are up-
+dated from the rolled-out trajectories (Algorithm 3).
+
+The algorithm optionally includes a mixing step on line
+5, where the rolled-out trajectories may replace the train-
+ing trajectories with increasing probability approaching 1,
+which is similar to scheduled sampling (Bengio et al.,
+2015), and may help stabilize learning in the early phase
+of the algorithm. In our main experiment, we do not notice
+a performance gain using this option.
+
+3.2. Joint Multi-Agent Imitation Learning
+
+In this section we describe the Learn procedure for multi-
+agent imitation learning in Line 3 of Algorithm 1. As
+background, for single agent imitation learning, reduction-
+based methods operate by iteratively collecting a new data
+set Dn at each round n of training, consisting of state-
+action pairs pst, a˚
+t is some optimal or demon-
+strated action given state st. A new policy can be formed
+by (i) combining a new policy from this data set Dn with
+previously learned policy π (Daum´e III et al., 2009) or (ii)
+learning a new policy π directly from the data set formed by
+aggregating D1, . . . , Dn (Ross et al., 2011). Other variants
+exist although we do not discuss them here.
+
+t q where a˚
+
+The intuition behind the iterative reduction approach is to
+prevent a mismatch in training and prediction distributions
+due to sequential cascading errors (also called covariate-
+shift). The main idea is to use the learned policy’s own
+predictions in the construction of subsequent states, thus
+simulating the test-time performance during training. This
+mechanism enables the agent to learn a policy that is ro-
+bust to its own mistakes. Reduction-based methods also
+accommodate any black-box supervised training subrou-
+tine. We focus on using expressive function classes such
+as Long Short-Term Memory networks (LSTM) (Hochre-
+iter & Schmidhuber, 1997) as the policy class.3
+
+Algorithm 2 outlines the Learn procedure for stable
+multi-agent imitation learning. Assume we are given
+consistently indexed demonstrations A “ rA1, . . . , AKs,
+where each Ak “ tat,kuT
+t“1 corresponds action of pol-
+icy πk. Let the corresponding expert action be a˚
+t,k. To
+lighten the notation, we denote the per-agent state vector
+by st,k “ ϕkprat,1, . . . , at,k, . . . , at,K, ctsq4
+
+3Note that conventional training of LSTMs does not address
+the cascading error problem. While LSTMs are very good at
+sequence-to-sequence prediction tasks, they cannot naturally deal
+with the drifting of input state distribution drift caused by action
+output feedback in dynamical systems (Bengio et al., 2015).
+
+4Generally, state vector st,k of policy πk at time t can be con-
+
+structed as st,k “ rφkpra1:t,1, c1:tsq, . . . , φkpra1:t,K , c1:tsqs
+
+t“1 @k, context tctuT
+
+Algorithm 2 Joint Multi-Agent Imitation Learning
+LearnpA1, A2, . . . , AK, Cq
+Input: Ordered actions Ak “ tat,kuT
+Input: Initialized policies π1, . . . , πK
+Input: base routine TrainpS, Aq mapping state to actions
+1: Set increasing prediction horizon j P t1, . . . , T u
+2: for t “ 0, j, 2j, . . . , T do
+3:
+4:
+5:
+
+Roll-out ˆat`i,k “ πkpˆst`i´1,kq @ agent k
+Cross-update for each policy k P t1, . . . , Ku
+ˆst`i,k “ ϕk prˆat`i,1, . . . , ˆat`i,k, . . . , ˆat`i,K , ct`isq
+
+for i “ 0, 1, . . . , j ´ 1 do
+
+t“1
+
+6:
+7:
+
+end for
+Policy update for all agent k
+πk Ð Trainptˆst`i,k, a˚
+
+t`i`1,kuj
+
+i“0q
+
+8: end for
+output K updated policies π1, π2, . . . , πK
+
+Algorithm 2 employs a roll-out horizon j, which divides
+the entire trajectory into T {j segments. The following hap-
+pens for every segment:
+
+• Iteratively perform roll-out at each time step i for all
+
+K policies (line 4) to obtain actions tpai,ku.
+
+• Each policy simultaneously updates its state psi,k, us-
+ing the prediction from all other policies (line 5).
+• At the end of the current segment, all policies are up-
+dated using the error signal from the deviation be-
+tween predicted pai,k versus expert action a˚
+i,k, for all i
+along the sub-segment (line 7).
+
+After policy updates, the training moves on to the next j-
+length sub-segment, using the freshly updated policies for
+subsequent roll-outs. The iteration proceeds until the end
+of the sequence is reached. In the outer loop the roll-out
+horizon j is incremented.
+
+Two key insights behind our approach are:
+
+• In addition to the training-prediction mismatch issue
+in single-agent learning, each agent’s prediction must
+also be robust to imperfect predictions from other
+agents. This non-stationarity issue also arises in multi-
+agent reinforcement learning (Busoniu et al., 2008)
+when agents learn simultaneously. We perform joint
+training by cross-updating each agent’s state using
+previous predictions from other agents.
+
+• Many single-agent imitation learning algorithms as-
+sume the presence of a dynamic oracle to provide one-
+step corrections a˚
+t along the roll-out trajectories. In
+practice, dynamic oracle feedback is very expensive
+to obtain and some recent work have attempted to re-
+lax this requirement (Le et al., 2016; Ho & Ermon,
+2016). Without dynamic oracles, the rolled-out trajec-
+tory can deviate signiﬁcantly from demonstrated tra-
+jectories when the prediction horizon j is large (« T ),
+leading to training instability. Thus j is gradually in-
+creased to allow for slowly learning to make good se-
+quential predictions over longer horizons.
+
+Coordinated Multi-Agent Imitation Learning
+
+For efﬁcient training, we focus on stochastic optimiza-
+tion, which can invoke base routine Train multiple times
+and thus naturally accommodates varying j. Note that the
+batch-training alternatives to Algorithm 2 can also employ
+similar training schemes, with similar theoretical guaran-
+tees lifted to the multi-agent case. The Appendix shows
+how to use DAgger (Ross et al., 2011) for Algorithm 2,
+which we used for our synthetic experiment.
+
+3.3. Coordination Structure Learning
+
+The coordination mechanism is based on a latent structured
+model that governs the role assignment. The training and
+inference procedures seek to address two main issues:
+
+• LearnStructure: unsupervised learning a proba-
+
+bilistic role assignment model q.
+
+• Assign: how q informs the indexing mechanism so
+that unstructured trajectories can be mapped to struc-
+tured trajectories amenable to Algorithm 2.
+
+Given an arbitrarily ordered set of trajectories U “
+tU1, . . . , UK, Cu, let the coordination mechanism under-
+lying each such U be governed by a true unknown model
+p, with global parameters θ. We suppress the agent/policy
+subscript and consider a generic featurized trajectory xt “
+rut, cts @t. Let the latent role sequence for the same agent
+be z “ z1:T . At any time t, each agent is acting according
+to a latent role zt „ Categoricalt¯1, ¯2, . . . , ¯Ku, which
+are the local parameters to the structured model.
+
+Ideally, role and index asignment can be obtained by cal-
+culating the true posterior ppz|x, θq, which is often in-
+tractable. We instead aim to approximate ppz|x, θq by a
+simpler distribution q via techniques from stochastic vari-
+ational inference (Hoffman et al., 2013), which allows for
+efﬁcient stochastic training on mini-batches that can natu-
+rally integrate with our imitation learning subroutine.
+
+In variational inference, posterior approximation is often
+cast as optimizing over a simpler model class Q, via search-
+ing for parameters θ and z that maximize the evidence
+lower bound (ELBO) L:
+
+L pqpz, θqq ﬁ Eq rln ppz, θ, xqs ´ Eq rln qpz, θqs ď ln ppxq
+
+Maximizing L is equivalent to ﬁnding q P Q to minimize
+the KL divergence KL pqpz, θ|xq||ppz, θ|xqq. We focus on
+the structured mean-ﬁeld variational family, which factor-
+izes q as qpz, θq “ qpzqqpθq. This factorization breaks the
+dependency between θ and z, but not between single latent
+states zt, unlike variational inference for i.i.d data (Kingma
+& Welling, 2013).
+
+3.3.1. TRAINING TO LEARN MODEL PARAMETERS
+
+The procedure to learn the parameter of our structured
+model is summarized in Algorithm 3. Parameter learning
+
+Algorithm 3 Structure Learning
+LearnStructure tU1, . . . , UK, C, θ, ρu ÞÑ qpθ, zq
+t“1 “ trut,k, ctsu @t, k.X “ tXkuK
+Input: Xk “ txt,kuT
+
+k“1
+
+Graphical model parameters θ, stepsize ρ
+
+1: Local update: compute qpzq via message-passing while ﬁx-
+
+ing θ (See Appendix for derivations)
+
+2: Global parameter update: via natural gradient ascent
+θ Ð θp1 ´ ρq ` ρpθprior ` bJEqpzq rtpz, xqsq
+
+output Updated model qpθ, zq “ qpθqqpzq
+
+proceeds via alternating updates over the factors qpθq and
+qpzq, while keeping other factor ﬁxed. Stochastic varia-
+tional inference performs such updates efﬁciently in mini-
+batches. We slightly abuse notations and overload θ for the
+natural parameters of global parameter θ in the exponential
+family. Assuming the usual conjugacy in the exponential
+family, the stochastic natural gradient takes a convenient
+form (line 2 of Algo 3, and derivation in Appendix), where
+tpz, xq is the vector of sufﬁcient statistics, b is a vector of
+scaling factors adjusting for the relative size of the mini-
+batches. Here the global update assumes optimal local up-
+date qpzq has been computed.
+
+Fixing the global parameters, the local updates are based
+on message-passing over the underlying graphical model.
+The exact mathematical derivation depends on the speciﬁc
+graph structure. The simplest scenario is to assume inde-
+pendence among zt’s, which resembles naive Bayes. In our
+experiments, we instead focus on Hidden Markov Models
+to capture ﬁrst-order dependencies in role transitions over
+play sequences. In that case, line 1 of Algorithm 3 resem-
+bles running the forward-backward algorithm to compute
+the update qpzq. The forward-backward algorithm in the
+local update step takes OpK 2T q time for a chain of length
+T and K hidden states. For completeness, derivation of
+parameter learning for HMMs is included in the Appendix.
+
+3.3.2. INFERENCE FOR ROLE AND INDEX ASSIGNMENT
+
+We can compute two types of inference on a learned q:
+
+Role inference. Compute the most likely role sequence
+t“1 P t¯1, . . . , ¯KuT , e.g., using Viterbi (or dynamic
+tzt,kuT
+programming-based forward message passing for graph
+structures). This most likely role sequence for agent k,
+which is the low-dimensional representation of the coordi-
+nation mechanism, can be used to augment the contextual
+feature tctuT
+t“1for each agent’s policy training.
+Role-based Index Assignment Transform the unstruc-
+tured set U into an ordered set of trajectories A to facilitate
+the imitation learning step. This is the more important task
+for the overall approach. The intuitive goal of an index-
+ing mechanism is to facilitate consistent agent trajectory to
+policy mapping. Assume for notational convenience that
+we want index k assigned to an unique agent who is most
+likely assuming role ¯k. Our inference technique rests on the
+
+Coordinated Multi-Agent Imitation Learning
+
+Algorithm 4 Multi-Agent Role Assignment
+Assign tU1, . . . , UK|qu ÞÑ rA1, . . . , AKs
+Input: Approximate inference model q. Unordered trajectories
+
+U “ tUkuK
+
+k“1.
+
+1: Calculate cost matrix M P RKˆK per equation 2
+2: A Ð MinCostAssignmentpM q
+output Ak “ UApkq @k “ 1, 2, . . . , K
+
+well-known Linear Assignment Problem (Papadimitriou &
+Steiglitz, 1982), which is solved optimally via the Kuhn-
+Munkres algorithm. Speciﬁcally, construct the cost matrix
+M as:
+M “ M1 d M2
+
+(2)
+
+“
+
+M1 “
+
+qptxt,ku|zt,k “ ¯kq
+
+“
+
+‰
+
+«
+
+Tź
+
+ﬀ
+qpxt,k|zt,k “ ¯kq
+
+“
+
+‰
+ln qptxt,ku|zt,k “ ¯kq
+
+“
+
+M2 “
+
+ln qpxt,k|zt,k “ ¯kq
+
+ﬀ
+
+t“1
+«
+
+Tÿ
+
+t“1
+
+where k “ 1, . . . , K, ¯k “ ¯1, . . . , ¯K, d is the Hadamard
+product, and matrices M1, M2 take advantage of the
+Markov property of the graphical model. Now solving
+the linear assignment problem for cost matrix M , we ob-
+tain the matching A from role ¯k to index k, such that the
+total cost per agent is minimized. From here, we rear-
+range the unordered set tU1, . . . , UKu to the ordered se-
+quence rA1, . . . , AKs ” rUAp1q, . . . , UApKqs according to
+the minimum cost mapping.
+
+To see why this index assignment procedure results in an
+increased entropy in the original objective (1), notice that:
+
+HpA|Dq « ´
+
+P p¯kqqpApAkq “ ¯kq log qpApAkq “ ¯kq
+
+Kÿ
+
+¯k“1
+
+1
+K
+
+Kÿ
+
+¯k“1
+
+“ ´
+
+M p¯k, kq,
+
+where we assume each latent role ¯k has equal probability.
+The RHS increases from the linear assignment and conse-
+quent role assignment procedure. Our inference procedure
+to perform role assignment is summarized in Algorithm 4.
+
+4. Experiments
+
+We present empirical results from two settings. The ﬁrst is
+a synthetic setting based on predator-prey, where the goal
+is to imitate a coordinating team of predators. The second
+is a large-scale imitation learning setting from player tra-
+jectores in professional soccer games, where the goal is to
+imitate defensive team play.
+
+4.1. Predator-Prey Domain
+
+Setting. The predator-prey problem, also frequently called
+the Pursuit Domain (Benda, 1985), is a popular setting for
+
+multi-agent reinforcement learning. The traditional setup
+is with four predators and one prey, positioned on a grid
+board. At each time step, each agent has ﬁve moves:
+N,S,E,W or no move. The
+world is toroidal: the agents
+can move off one end of
+the board and come back
+on the other end. Agents
+make move simultaneously,
+but two agents cannot oc-
+cupy the same position, and
+collisions are avoided by assigning a random move priority
+to the agents at each time step. The predators can capture
+the prey only if the prey is surrounded by all four preda-
+tors. The goal of the predators is to capture the prey as fast
+as possible, which necessarily requires coordination.
+
+Figure 3.
+
+Data. The demonstration data is collected from 1000 game
+instances, where four experts, indexed 1 to 4, are prescribed
+the consistent and coordinated role as illustrated in the cap-
+ture state of Figure 3. In other words, agent 1 would at-
+tempt to capture the prey on the right hand side, which al-
+lows for one ﬁxed role for each expert throughout the game.
+However, the particular role assignment is hidden from the
+imitation learning task. Each expert is then exhaustively
+trained using Value Iteration (Sutton & Barto, 1998) in the
+reinforcement learning setting, with the reward of 1 if the
+agent is in the position next to the prey according to its de-
+ﬁned role, and 0 otherwise. A separate set of 100 games
+was collected for evaluation. A game is terminated after
+50 time steps if the predators fail to capture the prey. In
+the test set, the experts fail to capture the prey in 2% of the
+games, and on average take 18.3 steps to capture the prey.
+
+Experiment Setup. For this experiment, we use the batch
+version of Algorithm 1 (see appendix) to learn to imitate
+the experts using only demonstrations. Each policy is rep-
+resented by a random forest of 20 trees, and were trained
+over 10 iterations. The expert correction for each rolled-out
+state is collected via Value Iteration. The experts thus act as
+dynamic oracles, which result in a multi-agent training set-
+ting analogous to DAgger (Ross et al., 2011). We compare
+two versions of multi-agent imitation learning:
+
+• Coordinated Training. We use our algorithm, with
+the latent structure model represented by a discrete
+Hidden Markov Model with binomial emission. We
+use Algorithm 4 to maximize the role consistency of
+the dynamic oracles across different games.
+
+• Unstructured Training. An arbitrary role is assigned
+to each dynamic oracle for each game, i.e., the agent
+index is meaningless.
+
+In both versions, training was done using the same data ag-
+gregation scheme and batch training was conducted using
+the same random forests conﬁguration.
+
+Coordinated Multi-Agent Imitation Learning
+
+Figure 4. Comparing performance in Predator-Prey between our
+approach and unstructured multi-agent imitation learning, as a
+function of the number of training rounds. Our approach demon-
+strates both signiﬁcantly lower failure rates as well as lower av-
+erage time to success (for successful trials).
+
+Results. Figure 4 compares the test performance of our
+method versus unstructured multi-agent imitation learning.
+Our method quickly approaches expert performance (av-
+erage 22 steps with 8% failure rate in the last iteration),
+whereas unstructured multi-agent imitation learning perfor-
+mance did not improve beyond the ﬁrst iteration (average
+42 steps with 70% failure rate). Note that we even gave the
+unstructured baseline some advantage over our method, by
+forcing the prey to select the moves last after all predators
+make decisions (effectively making the prey slower). With-
+out this advantage, the unstructured policies fail to capture
+the prey almost 100% of the time. Also, if the same restric-
+tion is applied to the policies obtained from our method,
+performance would be on par with the experts (100% suc-
+cess rate, with similar number of steps taken).
+
+4.2. Multi-agent Imitation Learning for Soccer
+
+Setting. Soccer is a popular domain for multi-agent learn-
+ing. RoboCup, the robotic and simulation soccer platform,
+is perhaps the most popular testbed for multi-agent rein-
+forcement learning research to date (Stone, 2016). The
+success of MARL has been limited, however, due to the ex-
+tremely high dimensionality of the problem. In this experi-
+ment, we aim to learn multi-agent policies for team soccer
+defense, based on tracking data from real-life professional
+soccer (Bialkowski et al., 2014).
+
+Data. We use the tracking data from 45 games of real
+professional soccer from a recent European league. The
+data was chunked into sequences with one team attacking
+and the other defending. Our goal is to learn up to 10 poli-
+cies for team defense (11 players per team, minus the goal
+keeper). The training data consists of 7500 sets of trajec-
+tories A “ tA1, . . . , A10u , where Ak “ tat,kuT
+t“1 is the
+sequence of positions of one defensive player, and C is the
+
+Figure 5. Experimental results on soccer domain. We see that us-
+ing coordination substantially improves the imitation loss, and
+that the decentralized policy is comparable to the centralized.
+
+context consisting of opponents and the ball. Overall, there
+are about 1.3 million frames at 10 frames per second. The
+average sequence length is 176 steps, and the maximum is
+1480.
+
+Experiment Setup. Each policy is represented by a re-
+current neural network structure (LSTM), with two hid-
+den layers of 512 units each. As LSTMs generally require
+ﬁxed-length input sequences, we further chunk each tra-
+jectory into sub-sequences of length 50, with overlapping
+window of 25 time steps. The joint multi-agent imitation
+learning procedure follows Algorithm 2 closely. In this set-
+up, without access to dynamic oracles for imitation learn-
+ing in the style of SEARN (Daum´e III et al., 2009) and
+DAgger (Ross et al., 2011), we gradually increase the hori-
+zon of the rolled-out trajectories from 1 to 10 steps look-
+ahead. Empirically, this has the effect of stabilizing the
+policy networks early in training, and limits the cascading
+errors caused by rolling-out to longer horizons.
+
+The structured model component is learned via stochastic
+variational inference on a continuous HMM, where the per-
+state emission distribution is a mixture of Gaussians. Train-
+ing and inference operate on the same mini-batches used
+for joint policy learning.
+
+We compare against two variations. The ﬁrst employs cen-
+tralized policy that aggregates the state vectors of all de-
+centralized learner and produces the actions for all players,
+i.e., a multi-task policy. The centralized approach generally
+requires more model parameters, but is potentially much
+more accurate. The second variation is to not employ joint
+multi-agent training: we modify Algorithm 2 to not cross-
+update states between agents, and each role is trained con-
+ditioned on the ground truth of the other agents.
+
+Results. Figure 5 shows the results. Our coordinated
+learning approach substantially outperforms conventional
+imitation learning without structured coordination. The
+imitation loss measures average distance of roll-outs and
+ground truth in meters (note the typical size of soccer ﬁeld
+
+Coordinated Multi-Agent Imitation Learning
+
+Figure 6. Result of 10 coordinated imitation policies, correspond-
+ing with Figure 1. White is the rolled-out imitation policies.
+is 110 ˆ 70 meters). As expected, average loss increases
+with longer sequences, due to cascading errors. However,
+this error scales sub-linearly with the length of the hori-
+zon, even though the policies were trained on sequences
+of length 50. Note also that the performance difference be-
+tween decentralized and centralized policies is insigniﬁcant
+compared to the gap between coordinated and unstructured
+policies, further highlighting the beneﬁts of structured co-
+ordination in multi-agent settings. The loss of a single net-
+work, non-joint training scheme is very large and thus omit-
+ted from Figure 5 (see the appendix).
+
+Visualizations.
+Imitation loss, of course, is not a full
+reﬂection of the quality of the learned policies. Unlike
+predator-prey, the long-term reward signal is not available,
+so we rely on visual inspection as part of evaluation. Fig-
+ure 6 overlays policy prediction on top of the actual game
+sequence from Figure 1. Additional test examples are in-
+cluded in our supplemental video 5. We note that learned
+policies are qualitatively similar to the ground truth demon-
+strations, and can be useful for applications such as coun-
+terfactual replay analysis (Le et al., 2017). Figure 7 dis-
+plays the Gaussian components of the underlying HMM.
+The components correspond to the dominant modes of the
+roles assigned. Unlike the predator-prey domain, roles can
+be switched during a sequence of play. See the appendix
+for more details on role swap frequency.
+
+5. Other Related Work
+
+The problem of multi-agent imitation learning has not been
+widely considered, perhaps with the exception of (Cher-
+nova & Veloso, 2007) which focused on very different ap-
+plications and technical challenges (i.e., learning a model
+of a joint task by collecting samples from direct interaction
+with teleoperating human teachers). The actual learning al-
+gorithm there requires the learner to collect enough data
+points from human teachers for conﬁdent classiﬁcation of
+
+5Watch video at http://hoangminhle.github.io
+
+Figure 7. Components of role distributions, corresponding to a
+popular formation arrangement in professional soccer
+
+task. It is not clear how well the proposed method would
+translate to other domains.
+
+Index-free policy learning is generally difﬁcult for black-
+box machine learning techniques. Some recent work has
+called attention to the importance of order to learning when
+input or output are sets (Vinyals et al., 2015), motivated by
+classic algorithmic and geometric problems such as learn-
+ing to sort a set of numbers, or ﬁnding convex hull for a
+set of points, where no clear indexing mechanism exists.
+Other permutation invariant approaches include those for
+standard classiﬁcation (Shivaswamy & Jebara, 2006).
+
+6. Limitations and Future Work
+
+In principle, the training and inference of the latent struc-
+ture model can accommodate different types of graphical
+models. However, the exact procedure varies depending
+on the graph structure. It would be interesting to ﬁnd do-
+mains that can beneﬁt from more general graphical mod-
+els. Another possible direction is to develop fully end-
+to-end differentiable training methods that can accommo-
+date our index-free policy learning formulation, especially
+deep learning-based method that could provide computa-
+tional speed-up compared to traditional graphical model in-
+ference. One potential issue with the end-to-end approach
+is the need to depart from a learning-reductions style ap-
+proach.
+
+Although we addressed learning from demonstrations in
+this paper, the proposed framework can also be employed
+for generative modeling, or more efﬁcient structured explo-
+ration for reinforcement learning. Along that line, our pro-
+posed method could serve as a useful component of general
+reinforcement learning, especially in multi-agent settings
+where traditional exploration-based approaches such as Q-
+learning prove computationally intractable.
+
+Acknowledgement. This work was funded in part by NSF
+Awards #1564330 & #1637598, JPL PDF IAMS100224, a
+Bloomberg Data Science Research Grant, and a gift from
+Northrop Grumman.
+
+Coordinated Multi-Agent Imitation Learning
+
+References
+
+Beal, Matthew James. Variational algorithms for approximate
+Bayesian inference. University of London United Kingdom,
+2003.
+
+Benda, Miroslav. On optimal cooperation of knowledge sources.
+
+Technical Report BCS-G2010-28, 1985.
+
+Bengio, Samy, Vinyals, Oriol, Jaitly, Navdeep, and Shazeer,
+Noam. Scheduled sampling for sequence prediction with re-
+In Advances in Neural Information
+current neural networks.
+Processing Systems, pp. 1171–1179, 2015.
+
+Bialkowski, Alina, Lucey, Patrick, Carr, Peter, Yue, Yisong, and
+Matthews, Iain. “win at home and draw away”: Automatic for-
+mation analysis highlighting the differences in home and away
+In MIT Sloan Sports Analytics Conference
+team behaviors.
+(SSAC), 2014.
+
+Blei, David M, Kucukelbir, Alp, and McAuliffe, Jon D. Vari-
+ational inference: A review for statisticians. Journal of the
+American Statistical Association, (just-accepted), 2017.
+
+Busoniu, Lucian, Babuska, Robert, and De Schutter, Bart. A com-
+prehensive survey of multiagent reinforcement learning. IEEE
+Transactions on Systems Man and Cybernetics Part C Applica-
+tions and Reviews, 38(2):156, 2008.
+
+Chernova, Sonia and Veloso, Manuela. Multiagent collaborative
+task learning through imitation. In Proceedings of the fourth
+International Symposium on Imitation in Animals and Arti-
+facts, pp. 74–79, 2007.
+
+Kingma, Diederik P and Welling, Max. Auto-encoding variational
+
+bayes. arXiv preprint arXiv:1312.6114, 2013.
+
+Kingston, Peter and Egerstedt, Magnus. Index-free multi-agent
+IFAC Proceedings Volumes,
+
+systems: An eulerian approach.
+43(19):215–220, 2010.
+
+Kloder, Stephen and Hutchinson, Seth.
+
+permutation-invariant multirobot formations.
+tions on Robotics, 22(4):650–665, 2006.
+
+Path planning for
+IEEE Transac-
+
+Kok, Jelle R, Spaan, Matthijs TJ, Vlassis, Nikos, et al. Multi-robot
+In Proceedings
+decision making using coordination graphs.
+of the 11th International Conference on Advanced Robotics,
+ICAR, volume 3, pp. 1124–1129, 2003.
+
+Krause, Andreas, Perona, Pietro, and Gomes, Ryan G. Discrimi-
+native clustering by regularized information maximization. In
+Advances in neural information processing systems, pp. 775–
+783, 2010.
+
+Le, Hoang, Kang, Andrew, Yue, Yisong, and Carr, Peter. Smooth
+imitation learning for online sequence prediction. In Proceed-
+ings of The 33rd International Conference on Machine Learn-
+ing, pp. 680–688, 2016.
+
+Le, Hoang M., Carr, Peter, Yue, Yisong, and Lucey, Patrick. Data-
+driven ghosting using deep imitation learning. In MIT Sloan
+Sports Analytics Conference (SSAC), 2017.
+
+Panait, Liviu and Luke, Sean. Cooperative multi-agent learning:
+The state of the art. Autonomous agents and multi-agent sys-
+tems, 11(3):387–434, 2005.
+
+Daum´e III, Hal, Langford, John, and Marcu, Daniel. Search-
+based structured prediction. Machine learning, 75(3):297–325,
+2009.
+
+Papadimitriou, Christos H and Steiglitz, Kenneth. Combinatorial
+optimization: algorithms and complexity. Courier Corporation,
+1982.
+
+Dudik, Miroslav, Phillips, Steven J, and Schapire, Robert E. Per-
+formance guarantees for regularized maximum entropy den-
+sity estimation. In International Conference on Computational
+Learning Theory, pp. 472–486. Springer, 2004.
+
+Ross, Stephane, Gordon, Geoff, and Bagnell, J. Andrew. A reduc-
+tion of imitation learning and structured prediction to no-regret
+In Conference on Artiﬁcial Intelligence and
+online learning.
+Statistics (AISTATS), 2011.
+
+Grandvalet, Yves, Bengio, Yoshua, et al. Semi-supervised learn-
+ing by entropy minimization. In NIPS, volume 17, pp. 529–
+536, 2004.
+
+Shivaswamy, Pannagadatta K and Jebara, Tony. Permutation in-
+variant svms. In Proceedings of the 23rd international confer-
+ence on Machine learning, pp. 817–824. ACM, 2006.
+
+Guestrin, Carlos, Lagoudakis, Michail, and Parr, Ronald. Coor-
+dinated reinforcement learning. In ICML, volume 2, pp. 227–
+234, 2002.
+
+Ho, Jonathan and Ermon, Stefano. Generative adversarial imita-
+tion learning. In Advances in Neural Information Processing
+Systems, pp. 4565–4573, 2016.
+
+Hochreiter, Sepp and Schmidhuber, J¨urgen. Long short-term
+
+memory. Neural computation, 9(8):1735–1780, 1997.
+
+Hoffman, Matt and Blei, David. Structured stochastic variational
+
+inference. CoRR abs/1404.4114, 2014.
+
+Hoffman, Matthew D, Blei, David M, Wang, Chong, and Pais-
+ley, John William. Stochastic variational inference. Journal of
+Machine Learning Research, 14(1):1303–1347, 2013.
+
+Johnson, Matthew James and Willsky, Alan S. Stochastic varia-
+tional inference for bayesian time series models. In ICML, pp.
+1854–1862, 2014.
+
+Stone, Peter. What’s hot at RoboCup. In The AAAI Conference
+
+on Artiﬁcial Intelligence (AAAI), 2016.
+
+Stone, Peter and Veloso, Manuela. Multiagent systems: A survey
+from a machine learning perspective. Autonomous Robots, 8
+(3):345–383, 2000.
+
+Sutton, Richard S and Barto, Andrew G. Reinforcement learning:
+
+An introduction, volume 1. MIT press Cambridge, 1998.
+
+Vinyals, Oriol, Bengio, Samy, and Kudlur, Manjunath. Or-
+der matters: Sequence to sequence for sets. arXiv preprint
+arXiv:1511.06391, 2015.
+
+

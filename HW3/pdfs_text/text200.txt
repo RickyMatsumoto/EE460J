@@ -1,0 +1,2067 @@
+Coresets for Vector Summarization
+with Applications to Network Graphs
+
+Dan Feldman 1 Sedat Ozer 2 Daniela Rus 2
+
+Abstract
+
+(cid:80)
+
+We provide a deterministic data summarization
+algorithm that approximates the mean ¯p =
+p∈P p of a set P of n vectors in Rd, by a
+1
+n
+weighted mean ˜p of a subset of O(1/ε) vectors,
+i.e., independent of both n and d. We prove that
+the squared Euclidean distance between ¯p and ˜p
+is at most ε multiplied by the variance of P . We
+use this algorithm to maintain an approximated
+sum of vectors from an unbounded stream, us-
+ing memory that is independent of d, and loga-
+rithmic in the n vectors seen so far. Our main
+application is to extract and represent in a com-
+pact way friend groups and activity summaries
+of users from underlying data exchanges. For ex-
+ample, in the case of mobile networks, we can
+use GPS traces to identify meetings; in the case
+of social networks, we can use information ex-
+change to identify friend groups. Our algorithm
+provably identiﬁes the Heavy Hitter entries in a
+proximity (adjacency) matrix. The Heavy Hitters
+can be used to extract and represent in a com-
+pact way friend groups and activity summaries of
+users from underlying data exchanges. We eval-
+uate the algorithm on several large data sets.
+
+1. Introduction
+
+The wide-spread use of smart phones, wearable devices,
+and social media creates a vast space of digital footprints
+for people, which include location information from GPS
+traces, phone call history, social media postings, etc. This
+is an ever-growing wealth of data that can be used to iden-
+tify social structures and predict activity patterns. We wish
+to extract the underlying social network of a group of mo-
+bile users given data available about them (e.g. GPS traces,
+phone call history, news articles, etc.) in order to identify
+and predict their various activities such as meetings, friend
+
+1University of Haifa, Israel, 2CSAIL, MIT. Correspondence
+
+to: Dan Feldman <dannyf.post@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+groups, gathering places, collective activity patterns, etc.
+There are several key challenges to achieve these capabil-
+ities. First, the data is huge so we need efﬁcient methods
+for processing and representing the data. Second, the data
+is multi-modal heterogeneous. This presents challenges in
+data processing and representation, but also opportunities
+to extract correlations that may not be visible in a single
+data source. Third, the data is often noisy.
+
+We propose an approach based on coresets to extract under-
+lying connectivity information while performing data sum-
+marization for a given a large data set. We focus our intu-
+ition examples and evaluations on social networks because
+of their intuitive nature and access to data sets, although
+the method is general and applies to networks of informa-
+tion in general. Our approach works on streaming datasets
+to represent the data in a compact (sparse) way. Our coreset
+algorithm gets a stream of vectors and approximates their
+sum using small memory. Essentially, a coreset C is a sig-
+niﬁcantly smaller portion (a scaled subset) of the original
+and large set D of vectors. Given D and the algorithm A,
+where running algorithm A on D is intractable due to lack
+of memory, the task-speciﬁc coreset algorithm efﬁciently
+reduces the data set D to a coreset C so that running the al-
+gorithm A on C requires a low amount of memory and the
+result is provable approximately the same as running the
+algorithm on D. Coreset captures all the important vectors
+in D for a given algorithm A. The challenges are comput-
+ing C fast and proving that C is the right scaled subset, i.e.,
+running the algorithm on C gives approximately the same
+result as running the algorithm on D.
+
+More speciﬁcally, the goal of this paper is to suggest a way
+to maintain a sparse representation of an n × d matrix, by
+maintaining a sparse approximation of each of its rows. For
+example, in a proximity matrix associated with a social net-
+work, instead of storing the average proximity to each of n
+users, we would like to store only the N (cid:28) n largest en-
+tries in each row (known as “Heavy Hitters”), which cor-
+respond to the people seen by the user most often. Given
+an unbounded stream of movements, it is hard to tell which
+are the people the user met most, without maintaining a
+counter to each person. For example, consider the special
+case N = 1. We are given a stream of pairs (i, val) where
+i ∈ {1, · · · , n} is an index of a counter, and val is a real
+number that represents a score for this counter. Our goal is
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+to identify which counter has the maximum average score
+till now, and approximate that score. While that is easy to
+do by maintaining the sum of n scores, our goal is to main-
+tain only a constant set of numbers (memory words). In
+general, we wish to have a provable approximation to each
+of the n accumulated scores (row in a matrix), using, say,
+only O(1) memory. Hence, maintaining an n × n matrix
+would take O(n) instead of O(n2) memory. For millions
+of users or rows, this means 1 Gigabytes of memory can be
+stored in RAM for real-time updates, compared to millions
+of Gigabytes. Such data reduction will make it practical to
+keep hundreds of matrices for different types of similarities
+(sms, phone calls, locations), different types of users, and
+different time frames (average proximity in each day, year,
+etc). This paper contributes the following: (1) A compact
+representation for streaming proximity data for a group of
+many users; (2) A coreset construction algorithm for main-
+taining the social network with error guarantees; (3) An
+evaluation of the algorithm on several data sets.
+
+Theoretical Contribution: These results are based on an
+algorithm that computes an ε-coreset C of size |C| =
+O(1/ε) for the mean of a given set, and every error param-
+eter ε ∈ (0, 1) as deﬁned in Section 2. Unlike previous re-
+sults, this algorithm is deterministic, maintains a weighted
+subset of the input vectors (which keeps their sparsity), can
+be applied on a set of vectors whose both cardinality n and
+dimension d is arbitrarily large or unbounded. Unlike ex-
+isting randomized sketching algorithms for summing item
+frequencies (1-sparse binary vectors), this coreset can be
+used to approximate the sum of arbitrary real vectors, in-
+cluding negative entries (for decreasing counters), dense
+vectors (for fast updates), fractions (weighted counter) and
+with error that is based on the variance of the vectors (sum
+of squared distances to their mean) which might be arbitrar-
+ily smaller than existing errors: sum/max of squared/non-
+squared distances to the origin ((cid:96)2/(cid:96)1/(cid:96)∞).
+
+1.1. Solution Overview
+
+We implemented a system that demonstrates the use and
+performance of our suggested algorithm. The system con-
+structs a sparse social graph from the GPS locations of real
+moving smart-phone users and maintains the graph in a
+streaming fashion as follows.
+
+is
+
+represented in the vector
+
+Input stream: The input
+to our system is an un-
+(real-time) GPS points, where
+bounded stream of
+each point
+format of
+(time, userID, longitude, latitude). We maintain an ap-
+proximation of the average proximity of each user to all
+the other n − 1 users seen so far, by using space (memory)
+that is only logarithmic in n. The overall memory would
+then be near-linear in n, in contrast to the quadratic O(n2)
+memory that is needed to store the exact average proxim-
+ity vector for each of the n users. We maintain a dynamic
+array of the n user IDs seen so far and assume, without
+
+loss of generality, that the user IDs are distinct and increas-
+ing integers from 1 to n. Otherwise we use a hash table
+from user IDs to such integers. In general, the system is
+designed to handle any type of streaming records in the for-
+mat (streamID, v) where v is a d-dimensional vector of
+reals, to support the other applications. Here, the goal is to
+maintain a sparse approximation to the sum of the vectors
+v that were assigned to each stream ID.
+
+Proximity matrix: We also maintain an (non-sparse) ar-
+ray pos of length n that stores the current location of each
+of the n users seen so far. That array forms the current n2
+pairs of proximities prox(u, v) between every pair of users
+and their current locations u and v. These pairs correspond
+to what we call the proximity matrix at time t, which is a
+symmetric adjacency n × n matrix of a social graph, where
+the edge weight of a pair of users (an entry in this matrix)
+is their proximity at the current time t. We are interested in
+maintaining the sum of these proximity matrices over time,
+which, after division by n, will give the average proxim-
+ity between every two users over time. This is the average
+proximity matrix. Since the average proximity matrix and
+each proximity matrix at a given time require O(n2) mem-
+ory, we cannot keep them all in memory. Our goal is to
+maintain a sparse approximation version of each of row in
+the average proximity matrix which will use only O(log n)
+memory. Hence, the required memory by the system will
+be O(n log n) instead of O(n2).
+
+Average proximity vector: The average proximity vec-
+tor is a row vector of length n in the average proxim-
+ity matrix for each of the n users. We maintain only a
+sparse approximation vector for each user, thus, only the
+non-zeroes entries are kept in memory as a set of pairs
+of type (index, value). We deﬁne the proximity between
+the current location vectors u, v ∈ R3 of two users as:
+prox(u, v) := e−dist(u,v).
+
+Coreset for a streamed average: Whenever a new
+record (time, userID, longitude, latitude) is inserted to
+the stream, we update the entries for that user as his/her
+current position array pos is changed. Next, we compute
+that n proximities from that user to each of the other users.
+Note that in our case, the proximity from a user to himself
+is always e0 = 1. Each proximity proxj where 1 ≤ j ≤ n
+is converted to a sparse vector (0, · · · , 0, proxj, 0, · · · , 0)
+with one non-zero entry. This vector should be added to the
+average proximity vector of user j, to update the jth entry.
+Since maintaining the exact average proximity vector will
+take O(n) memory for each of the n users, we instead add
+this sparse vector to an object (“coreset”) that maintains an
+approximation to the average proximity vector of user j.
+
+Our problem is then reduced to the problem of maintain-
+ing a sparse average of a stream of sparse vectors in Rn,
+using O(log n) memory. Maintaining such a stream for
+each of the n users seen so far, will take overall memory
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+of O(n log n) as desired, compared to the exact solution
+that requires O(n2) memory. We generalize and formal-
+ize this problem, as well as the approximation error and its
+practical meaning, in Section 2.
+
+1.2. Related Work
+
+As mobile applications become location-aware, the repre-
+sentation and analysis of location-based data sets become
+more important and useful in various domains (Wasser-
+man, 1980; Hogan, 2008; Carrington et al., 2005; Dinh
+et al., 2010; Nguyen et al., 2011; Lancichinetti & Fortu-
+nato, 2009). An interesting application is to extract the re-
+lationships between mobile users (in other words, their so-
+cial network) from their location data (Liao, 2006; Zheng,
+2011; Dinh et al., 2013). Therefore, in this paper, we use
+coresets to represent and approximate (streaming) GPS-
+based location data for the extraction of the social graphs.
+The problem in social network extraction from GPS data
+is closely related to the frequency moment problem. Fre-
+quency approximation is considered the main motivation
+for streaming in the seminal work of (Alon et al., 1996a),
+known as the “AMS paper”, which introduced the stream-
+ing model.
+
+Coresets have been used in many related applications. The
+most relevant are coresets for k-means; see (Barger & Feld-
+man, 2015) and reference therein. Our result is related to
+coreset for 1-mean that approximates the mean of a set
+of points. A coreset as deﬁned in this paper can be eas-
+ily obtained by uniform sampling of O(log d log(1/δ))/ε2
+or O(1/(δε)) points from the input, where δ ∈ (0, 1) is
+the probability of failure. However, for sufﬁciently large
+stream the probability of failure during the stream ap-
+proaches 1.
+In addition, we assume that d may be arbi-
+trarily large. In (Barger & Feldman, 2015) such a coreset
+was suggested but its size is exponential in 1/ε. We aim
+for a deterministic construction of size independent of d
+and linear in 1/ε.
+
+A special case of such coreset for the case that the mean is
+the origin (zero) was suggested in (Feldman et al., 2016),
+based on Frank-Wolfe, with applications to coresets for
+PCA/SVD. In this paper we show that the generalization
+to any center is not trivial and requires a non-trivial embed-
+ding of the input points to a higher dimensional space.
+
+Each of the above-mentioned prior techniques has at least
+one of the following disadvantages: (1) It holds only for
+positive entries. Our algorithm supports any real vector.
+Negative values may be used for deletion or decreasing of
+counters, and fraction may represent weights. (2) It is ran-
+domized, and thus will always fail on unbounded stream.
+Our algorithm is deterministic. (3) It supports only s = 1
+non-zero entries. Our algorithm supports arbitrary number
+of non-zeroes entries with only linear dependency of the
+required memory on s. (4) It projects the input vectors on
+
+a random subspace, which diminishes the sparsity of these
+vectors. Our algorithm maintains a small weighted subset
+of the vectors. This subset keeps the sparsity of the input
+and thus saves memory, but also allows us to learn the rep-
+resentative indices of points (time stamps in our systems)
+that are most important in this sense.
+
+The most important difference and the main contribution of
+our paper is the error guarantee. Our error function in (1)
+is similar to (cid:107)¯p − ˆp(cid:107)(cid:96) ≤ ε (cid:107)¯p(cid:107)q for (cid:96) = 2 on the left hand
+side. Nevertheless, the error on the right hand side might be
+signiﬁcantly smaller: instead of taking the sum of squared
+distances to the origin (norm of the average vector), we use
+the variance, which is the sum of squared distances to the
+mean. The later one is always smaller, since the mean of a
+set of vectors minimized their sum of squared distances.
+
+2. Problem Statement
+
+The input is an unbounded stream vectors p1, p2, · · · in Rd.
+Here, we assume that each vector has one non-zero entry.
+In the social network example, d is the number of users
+and each vector is in the form (0, · · · , 0, proxj, 0, · · · , 0),
+where proxj is the proximity between the selected user and
+user j. Note that for each user, we independently maintain
+an input stream of proximities to each of the other users,
+and the approximation of its average. In addition, we get
+another input: the error parameter N , which is related to
+the memory used by the system. Roughly, the required
+memory for an input stream will be O(N log n) and the
+approximation error will be ε := 1/N . That is, our al-
+gorithms are efﬁcient when N is a constant that is much
+smaller than the number of vectors that were read from
+stream, 2 < N (cid:28) n. For example, to get roughly 1 per-
+cents of error, we have ε = 0.01, and the memory is about
+100n, compared to n2 for the exact average proximity.
+
+(cid:80)
+
+The output ˆp is an N -sparse approximation to the average
+vector in the stream over the n vectors p1, · · · , pn seen so
+far. That is, an approximation to the centroid, or center of
+mass, ¯p = 1
+i pi. Here and in what follows, the sum is
+n
+over i ∈ {1, · · · , n}. Note that even if s = 1, the aver-
+age ¯p might have n (cid:29) N non-zero entries, as in the case
+where pi = (0, · · · , 0, 1, 0, · · · , 0) is the ith row of the
+identity matrix. The sparse approximation ˆp of the aver-
+age vector ¯p has the following properties: (1) The vector ˆp
+has at most N non-zero entries. (2) The vector ˆp approxi-
+mates the vector of average proximities ¯p in the sense that
+the (Euclidean) distance between the two vectors is var/N
+where var is the variance of all the vectors seen so far in the
+stream. More formally, (cid:107)¯p − ˆp(cid:107)2 ≤ εvar, where ε = 1/N
+i=1 pi is the average vector in Rd for
+is the error, ¯p = 1
+n
+the n input vectors, and the variance is the sum of squared
+distances to the average vector.
+
+(cid:80)n
+
+Distributed and parallel computation. Our system sup-
+ports distributed and streaming input simultaneously in a
+“embarrassingly parallel” fashion. E.g., this allows multi-
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+3. New Coreset Algorithms
+
+In this section we ﬁrst describe an algorithm for approxi-
+mating the sum of n streaming vectors using one pass. The
+algorithm calls its off-line version as a sub-procedure. We
+then explain how to run the algorithm on distributed and
+unbounded streaming data using M machines or parallel
+threads. The size of the weighted subset of vectors that are
+maintained in memory, and the insertion time per new vec-
+tor in the stream are logarithmic on the number n of vectors
+in the stream. Using M machines, the memory and running
+time per machine is reduced by a factor of M .
+
+3.1. Streaming and Distributed Data
+
+Overview. The input to Algorithm 1 is a stream provided
+as a pointer to a device that sends the next input vectors in
+a stream that consists of n vectors, upon request, For exam-
+ple, a hard drive, a communication socket, or a web-service
+that collects information from the users. The second pa-
+rameter ε deﬁnes the approximation error. The required
+memory grows linearly with respect to 1/ε.
+
+Algorithm 1 maintains a binary tree whose leaves are the
+input vectors, and each inner node is a coreset, as in the left
+or right hand side of Fig. 1. However, at most one core-
+set in each level of the tree is actually stored in memory.
+In Line 1, we initialize the current height of this tree. Us-
+ing log(n)/ε vectors in memory our algorithm returns an
+O(ε)-coreset, but to get exactly ε-coreset, we increase it in
+Line 2 by a constant factor α that can be ﬁnd in the proof
+of Theorem 1.
+In Lines 3-14, we read batches (sets) of
+O(log(n)/ε) vectors from the stream and compress them.
+The last batch may be smaller. Line 4 deﬁnes the next batch
+P . Unlike the coresets in the nodes of the tree, we assume
+that the input vectors are unweighted, so, Line 5 deﬁnes a
+weight 1 for each input vector. Line 6 reduce the set P by
+half to the weighted coreset (S, w) using Algorithm 2 (the
+off-line coreset construction.) Theorem 1 guarantees that
+such a compression is possible.
+
+In Lines 8–12 we add the new coreset (S, w) to the lowest
+level (cid:96) of the binary tree, if it is not assigned to a coreset
+already, i.e., S(cid:96) is not empty. Otherwise, we merge the new
+coreset (S, w) with the level’s coreset S(cid:96), mark the level as
+empty from coresets (S(cid:96) ← ∅), and continue to the next
+higher level of the tree until we reach a level (cid:96) that is not
+assigned to a coreset , i.e., S(cid:96) = ∅. Line 13 handle the
+case where we reach to the root of the tree, and a new (top)
+level is created. In this case, only the new root of the tree
+contains a coreset.
+
+When the streaming is over, in Lines 15–16 we collect the
+active coreset in each of the O(log n) tree levels (if it has
+one) and return the union of these coresets.
+
+Parallel computation on distributed data. In this model
+each machine has its own stream of data, and computes its
+
+Figure 1. Coreset computation of streaming data that
+is dis-
+tributed among M = 2 machines. The odd/even vectors in the
+stream (leaves) are compressed by the machine on the left/right,
+respectively. A server (possibly one of these machine) collects the
+coreset C7 and D7 from each machine to obtain the ﬁnal coreset
+C of the n = 32 vectors seen so far. Each level of each tree stores
+at most one coreset in memory, and overall of O(log n) coresets.
+
+ple users to send their streaming smart-phone data to the
+cloud simultaneously in real-time. There is no assumption
+regarding the order of the data in user ID. Using M nodes,
+each node will have to use only 1/M fraction of the mem-
+ory to (log n)O(1)/M that is used by one node for the same
+problem, and the average insertion time for a new point will
+be reduced by a factor of M to (log n)O(1)/M .
+
+Parallel coreset computation of unbounded streams of dis-
+tributed data was suggested in (Feldman & Tassa, 2015),
+as an extension to the classic merge-and-reduce framework
+in (Bentley & Saxe, 1980; Har-Peled, 2006). We apply this
+framework on our off-line algorithm to handle streaming
+and distributed data (see Section 3).
+
+Generalizations.
+Above we assume that each vector
+in the stream has a single non-zero entry. To generalize
+that, we now assume that each vector has at most s non-
+zeroes entries and that these vectors are weighted (e.g. by
+their importance). Under these assumptions, we wish to
+approximate the weighted mean ¯p = (cid:80)n
+i=1 uipi where
+u = (u1, · · · , un) is a weight vector that represents dis-
+tribution, i.e., ui ≥ 0 for every i ∈ [n]. Then, our problem
+is formalized as follows.
+
+Problem 1 Consider an unbounded stream of real vec-
+tors p1, p2, · · · , where each vector is represented only by
+its non-zero entries, i.e., pairs (entryIndex, value) ∈
+{1, 2, 3, . . .} × R. Maintain a subset of N (cid:28) n input vec-
+tors, and a corresponding vector of positive reals (weights)
+w1, w2, · · · , wN , where the sum ˆp := (cid:80)N
+i=1 wipi approx-
+imates the sum ¯p = (cid:80)n
+i=1 pi of the n vectors seen so far
+in the stream up to a provably small error that depends on
+its variance var(p) := (cid:80)n
+i=1 (cid:107)pi − ¯p(cid:107)2
+2. Formally, for an
+error parameter ε that may depend on N ,
+
+(cid:107)¯p − ˆp(cid:107) ≤ εvar(p).
+
+(1)
+
+We provide a solution for this problem mainly by proving
+Theorem 1 for off-line data, and turn it into algorithms for
+streaming and distributed data as explained in Section 3.
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+coreset independently and in parallel to the other machines,
+as described above. Whenever we wish to get the coreset
+for the union of streaming vectors, we collect the current
+coreset from each machine on a single machine or a server.
+Since each machine sends only a coreset, the communica-
+tion is also logarithmic in n. For M ≥ 2 machines and a
+single input stream, we send every ith point in the stream
+to the ith machine, for every i between 1 and M . For ex-
+ample, if M = 2, the odd vectors will be sent to the ﬁrst
+machine, and every second (even) vector will be sent to the
+second machine. Then, each machine will compute a core-
+set for its own unbounded stream; See Fig 1.
+
+3.2. Off-line data reduction
+
+Algorithm 2 is called by Algorithm 1 and its variant in the
+last sub-section for compressing a given small set P of vec-
+tors in memory by computing its coreset. As in Line 10
+of Algorithm 1, the input itself might be a coreset of an-
+other set, thus we assume that the input has a corresponding
+weight vector u. Otherwise, we assign a weight 1 for each
+input vector, i.e., u = (1, · · · , 1). The output of Algorithm
+1 is an ε-coreset (S, w) of size |S| = O(1/ε) for a given
+ε ∈ (0, 1). While the number n of input vectors can be of
+an arbitrary size, Algorithm 2 always passes an input set of
+n = 2|S| points to get output that is smaller by half.
+
+Overview of Algorithm 2: In Line 1 the desired mean
+Eu that we wish to approximate is computed. Lines 2–
+4 are used for adding an extra dimension for each input
+vector later. In Lines 4-6 we normalize the augmented in-
+put, by constructing a set q1, · · · , qn of unit vectors with a
+new set of weights s1, · · · , sn whose mean is (cid:80)
+i siqi =
+(0, · · · , 0, x/v). We then translate this mean to the origin
+by deﬁning the new set H in Line 7.
+
+The main coreset construction is computed in Lines 9–13
+on the normalized set H whose mean is the origin and its
+vectors are on the unit ball. This is a greedy, gradient de-
+scent method, based on the Frank-Wolfe framework (Feld-
+man et al., 2016). In iteration i = 1, we begin with an arbi-
+trary input point c1 in H. Since c1 is a unit vector, its dis-
+tance from the mean of H (origin) is 1. In Line 11– 12 we
+compute the farthest point h2 from c1, and approximates
+the mean using only c1 and the new point h2. This is done,
+by projecting the origin on the line segment through c1 and
+h2, to get an improved approximation c2 that is closer to
+the origin. We continue to add input points in this manner,
+where in the ith iteration another input point is selected for
+the coreset, and the new center is a convex combination of
+i points. In the proof of Theorem 1 it is shown that the dis-
+tance to the origin in the ith iteration is α/i, which yields
+an ε-approximation after β = O(α/ε) iterations.
+
+The resulting center cβ is spanned by β input vectors.
+In Line 11 we compute their new weights based on their
+distances from cβ. Lines 14–16 are used to convert the
+
+weights of the vectors in the normalized H back to the
+original input set of vectors. The algorithm then returns the
+small subset of β input vectors with their weights vector w.
+
+Input:
+
+Algorithm 1: STREAMING-CORESET(stream, ε)
+An input stream of n vectors in Rd.
+an error parameter ε ∈ (0, 1)
+An ε-coreset (S, w) for the set of n vectors;
+see Theorem 1.
+
+Output:
+
+1 Set max ← 0
+2 Set α to be a sufﬁciently large constant that can be
+
+derived from the proof of Theorem 1.
+
+3 while stream is not empty do
+4
+
+Set P ← next (cid:100)2α ln(n)/ε(cid:101) input vectors in
+stream
+Set u ← (1, · · · , 1) where u has |P | entries.
+Set (S, w) ← CORESET(P, u, ε/(α ln(n))
+Set (cid:96) ← 1
+while S(cid:96) (cid:54)= ∅ and (cid:96) ≤ max do
+
+Set S(cid:96) ← S ∪ S(cid:96)
+Set (S, w) ← CORESET(S(cid:96), w(cid:96), ε)
+Set S(cid:96) ← ∅
+Set (cid:96) ← (cid:96) + 1
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+11
+
+12
+
+13
+
+if (cid:96) > max then
+Set max ← (cid:96)
+Set (S(cid:96), w(cid:96)) ← (S, w)
+
+14
+15 Set S ← (cid:83)max
+16 return (S, w)
+
+4. Correctness
+
+i=1 Si and w ← (w1, w2, · · · , wmax)
+
+In this section we show that Algorithm 1 computes cor-
+rectly the coreset for the average vector in Theorem 1.
+
+Let Dn denote all the possible distributions over n items,
+i.e., D is the unit simplex
+
+Dn = {(u1, · · · , un) ∈ Rn | ui ≥ 0 and (cid:80)n
+
+i=1 ui = 1} .
+
+(cid:80)
+
+Given a set P = {p1, · · · , pn} of vectors, the mean of P is
+1
+i=1 pi. This is also the expectation of a random vector
+n
+that is chosen uniformly at random from P . The sum of
+variances of this vector is the sum of squared distances to
+the mean. More generally, for a distribution u ∈ S over the
+vectors of P , the (weighted) mean is (cid:80)n
+i=1 uipi, which is
+the expected value of a vector chosen randomly using the
+distribution u. The variance varu is the sum of weighted
+squared distances to the mean. By letting N = 1/ε in
+the following theorem, we conclude that there is always a
+sparse distribution w of at most 1/ε non-zeroes entries, that
+yields an approximation to its weighted mean, up to an ε-
+fraction of the variance.
+Theorem 1 (Coreset for the average vector) Let u ∈
+Dn be a distribution over a set P = {p1, · · · , pn} of
+n vectors in Rd, and let N ≥ 1. Let (S, w) denote
+the output of a call to CORESET(P, u, 1/N ); see Algo-
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+Algorithm 2: CORESET(P, u, ε)
+
+Input:
+
+A set P of vectors in Rd,
+a positive weight vector u = (u1, · · · , un),
+an error parameter ε ∈ (0, 1)
+An ε-coreset (S, w) for (P, u)
+i=1 uipi
+
+Output:
+1 Set Eu ← (cid:80)n
+2 Set x ← (cid:80)n
+3 Set v ← (cid:80)n
+4 for i ← 1 to n do
+
+j=1 uj (cid:107)pj − Eu(cid:107)
+j=1 uj (cid:107)(pj − Eu, x)(cid:107)
+
+5
+
+6
+
+Set qi ←
+
+Set si ←
+
+(pi − Eu, x)
+(cid:107)(pi − Eu, x)(cid:107)
+ui (cid:107)(pi − Eu, x)(cid:107)
+v
+
+7 Set H ← {qi − (0, · · · , 0, x/v) | i ∈ [n]}
+8 Set α ← a sufﬁciently large constant that can be
+
+derived from the proof of Theorem 1.
+
+12
+
+9 Set c1 ← an arbitrary vector in H
+10 for i ← 1 to β := (cid:100)α/ε(cid:101) do
+11
+
+hi+1 ← farthest point from ci in H
+ci+1 ← the projection of the origin on the
+segment ci, hi+1
+13 Compute w(cid:48) = (w(cid:48)
+ihi+1
+
+β) ∈ Sβ such that
+
+cβ = (cid:80)β
+
+1, · · · , w(cid:48)
+
+i=1 w(cid:48)
+
+14 for i ← 1 to β do
+
+15
+
+w(cid:48)(cid:48)i ←
+
+vw(cid:48)
+i
+(pi − Eu, x)
+
+16
+
+(cid:80)β
+
+wi ←
+
+w(cid:48)(cid:48)
+i
+j=1 w(cid:48)(cid:48)
+j
+17 w ← (w1, · · · , wβ)
+18 S ← {v1, · · · , wβ}
+19 return (S, w)
+
+rithm 1. Then w ∈ Dn consists O(N ) non-zero entries,
+such that the sum ¯p = (cid:80)
+i=1 uipi deviates from the sum
+ˆp = (cid:80)n
+i=1 wipi by at most a (1/N )-fraction of the vari-
+ance varu = (cid:80)n
+
+i=1 ui (cid:107)pi − ¯p(cid:107)2
+
+2, i.e., (cid:107)¯p − ˆp(cid:107)2
+
+2 ≤ varu
+N .
+
+By the O(·) notation above, it sufﬁces to prove that there is
+a constant α > 0 such that N ≥ α and
+2 ≤ αvaru
+N ,
+
+(2)
+where Eu = ¯p and Ew = ˆp. The proof is constructive and
+thus immediately implies Algorithm 1. Indeed, let
+j uj (cid:107)pj − Eu(cid:107) , and v = (cid:80)
+
+j uj (cid:107)(pj − Eu, x)(cid:107).
+
+(cid:107)Eu − Ew(cid:107)2
+
+x = (cid:80)
+
+Here and in what follows, (cid:107)·(cid:107) = (cid:107)·(cid:107)2 and all the sums are
+over [n] = {1, · · · , n}. For every i ∈ [n] let
+
+qi = (pi−Eu,x)
+
+(cid:107)(pi−Eu,x)(cid:107) , and si = ui(cid:107)(pi−Eu,x)(cid:107)
+
+v
+
+.
+
+Hence,
+
+w(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:80)
+
+(cid:32)
+
+(cid:88)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+i
+
+siqi =
+
+ui(pi − Eu, x)
+
+(cid:88)
+
+(cid:88)
+
+i
+
+1
+v
+
+1
+v
+
+1
+v
+
+i
+(cid:32)
+
+
+
+
+
+=
+
+=
+
+(cid:88)
+
+i
+
+i
+
+(cid:88)
+
+uipi −
+
+(cid:88)
+
+umEu,
+
+ukx
+
+(cid:33)
+
+k
+
+
+(cid:16)
+
+uipi −
+
+ujpj, x
+
+ =
+
+0, · · · , 0,
+
+(cid:17)
+
+.
+
+x
+v
+
+(cid:88)
+
+m
+
+(cid:88)
+
+j
+
+(3)
+
+Since (s1, · · · , sn) ∈ Dn we have that the point p =
+(cid:80)
+i siqi is in the convex hull of Q = {q1, · · · , qn}. By
+applying the Frank-Wolfe algorithm as described in (Clark-
+son, 2005) for the function f (s) = (cid:107)As(cid:107), where each row
+of A corresponds to a vector in Q, we conclude that there
+is w(cid:48) = (w(cid:48)
+n) ∈ Dn that has at most N non-zero
+entries such that
+i(si − w(cid:48)
+
+= (cid:107)p − q(cid:107)2 ≤ 1
+N .
+
+1, · · · , w(cid:48)
+
+i siqi − (cid:80)
+
+i)qi(cid:107)2 =
+
+j w(cid:48)
+
+(cid:107)(cid:80)
+
+(4)
+
+jqj
+
+(cid:80)
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+(cid:13)
+(cid:13)
+(cid:13)
+
+For every i ∈ [n], deﬁne
+
+w(cid:48)(cid:48)
+
+i =
+
+vw(cid:48)
+i
+(cid:107)(pi − Eu, x)(cid:107)
+
+and wi =
+
+w(cid:48)(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+.
+
+(cid:80)
+
+We thus have:
+
+(cid:107)Eu − Ew(cid:107)2 =
+
+(cid:80)
+
+i uipi − (cid:80)
+
+j wjpj
+
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+= (cid:13)
+
+(cid:13)(cid:80)
+
+i(ui − wi)pi
+
+(cid:13)
+(cid:13)
+
+2 (5)
+
+= (cid:13)
+
+(cid:13)(cid:80)
+
+i(ui − wi)(pi − Eu, x)(cid:13)
+(cid:13)
+
+2
+
+= v2 (cid:13)
+(cid:13)
+(cid:13)
+
+(cid:80)
+i
+
+(cid:16) ui(cid:107)(pi−Eu,x)(cid:107)
+v
+
+− wi(cid:107)(pi−Eu,x)(cid:107)
+v
+
+= v2 (cid:13)
+(cid:13)
+(cid:13)
+
+(cid:80)
+i
+
+(cid:16)
+
+si −
+
+(w(cid:48)(cid:48)
+
+i / (cid:80)
+
+j w(cid:48)(cid:48)
+
+j )·(cid:107)(pi−Eu,x)(cid:107)
+
+v
+
+(cid:17)
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+qi
+
+(cid:17)
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+
+qi
+
+= v2 (cid:13)
+(cid:13)
+(cid:13)
+
+(cid:80)
+i
+
+(cid:16)
+
+si − w(cid:48)
+
+(cid:80)
+
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:17)
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+
+,
+
+qi
+
+(6)
+
+(7)
+
+(8)
+
+(9)
+
+i ui = (cid:80)
+
+where (5) is by the deﬁnitions of Eu and Ew, (6) follows
+since (cid:80)
+i wi = 1 and thus (cid:80)
+j ujy for
+every vector y, (8) follows by the deﬁnitions of wi and qi,
+and (9) by the deﬁnition of w(cid:48)
+i. Next, we bound (9). Since
+for every two reals y, z,
+
+i uiy = (cid:80)
+
+2yz ≤ y2 + z2
+
+by letting y = (cid:107)a(cid:107) and z = (cid:107)b(cid:107) for a, b ∈ Rd,
+
+(cid:107)a + b(cid:107)2 ≤ (cid:107)a(cid:107)2 + (cid:107)b(cid:107)2 + 2 (cid:107)a(cid:107) (cid:107)b(cid:107)
+
+≤ (cid:107)a(cid:107)2 + (cid:107)b(cid:107)2 + ((cid:107)a(cid:107)2 + (cid:107)b(cid:107)2) = 2 (cid:107)a(cid:107)2 + 2 (cid:107)b(cid:107)2 .
+
+By substituting a = (cid:80)
+
+i(si − w(cid:48)
+
+i)qi and b = (cid:80)
+
+i(w(cid:48)
+
+i −
+
+)qi in (11), we obtain
+
+si −
+
+(cid:80)
+
+(cid:33)
+
+w(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+qi
+
+≤ 2
+
+(cid:88)
+
+(si − w(cid:48)
+
+i)qi
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:32)
+
+(cid:88)
+
+i
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+i
+
++ 2
+
+w(cid:48)
+
+i −
+
+(cid:33)
+
+w(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:80)
+
+(10)
+
+(11)
+
+(12)
+
+qi
+
+.
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(13)
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+Bound on (13): Observe that
+
+(cid:32)
+
+(cid:88)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+i
+
+w(cid:48)
+
+i −
+
+w(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:80)
+
+(cid:33)
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+qi
+
+=
+
+2
+
+(cid:33)(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:32)
+
+(cid:88)
+
+w(cid:48)
+i
+
+i
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:32)
+
+1 −
+
+(cid:80)
+
+(cid:33)2
+
+=
+
+1 −
+
+1
+j w(cid:48)(cid:48)
+j
+
+(cid:80)
+
+1
+j w(cid:48)(cid:48)
+j
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+·
+
+i
+
+(cid:88)
+
+w(cid:48)
+
+iqi
+
+.
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(14)
+
+Let τ = v√
+
+N x
+
+. By the triangle inequality
+
+v = (cid:80)
+
+j uj (cid:107)(pj − Eu, x)(cid:107) ≤ (cid:80)
+
+j uj (cid:107)pj − Eu(cid:107) + x = 2x.
+
+(15)
+
+By choosing c > 16 in (2) we have N ≥ 16, so
+
+τ ≤ 2√
+N
+Substituting a = − (cid:80)
+i siqi and b = (cid:80)
+bounds the right expression of (14) by
+
+≤ 1
+2 .
+
+i(si − w(cid:48)
+
+j)qj in (11)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+i
+
+(cid:88)
+
+w(cid:48)
+
+iqi
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+≤ 2
+
+siqi
+
+(cid:88)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+2x2
+v2 +
+
+i
+
+2
+N
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+=
+
+(cid:88)
+
++ 2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+2(1 + τ 2)
+τ 2N
+
+i
+
+,
+
+≤
+
+(si − w(cid:48)
+
+j)qj
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+where the last inequality follows from (3) and (4). For
+bounding the left expression of (14), note that
+
+(1 −
+
+(cid:88)
+
+j
+
+w(cid:48)(cid:48)
+
+j )2 =
+
+1 −
+
+(cid:88)
+
+w(cid:48)
+
+j ·
+
+j
+
+(cid:33)2
+
+v
+(cid:107)(pj − Eu, x)(cid:107)
+
+(16)
+
+(17)
+
+(18)
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:32)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+≤
+
+(0, · · · , 0, 1) −
+
+(cid:88)
+
+w(cid:48)
+
+j ·
+
+( v
+x (pj − Eu), v)
+(cid:107)(pj − Eu, x)(cid:107)
+
+j
+
+(cid:17)
+
+x
+v
+
+=
+
+=
+
+v2
+x2
+
+v2
+x2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:16)
+
+0, · · · , 0,
+
+(cid:88)
+
+−
+
+w(cid:48)
+
+j ·
+
+(pj − Eu, x)
+(cid:107)(pj − Eu, x)(cid:107)
+
+(si − w(cid:48)
+
+i)qi
+
+(cid:88)
+
+i
+
+j
+
+≤
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+v2
+N x2 = τ 2,
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+where (18) follows since (cid:107)b(cid:107)2 ≤ (cid:107)(a, b)(cid:107)2 for every pair
+a, b of vectors, and the last inequality is by (3) and (4).
+Hence, (cid:80)
+
+j ≥ 1 − τ , and
+
+j w(cid:48)(cid:48)
+(cid:16)
+
+1 − 1
+
+(cid:80)
+
+j w(cid:48)(cid:48)
+j
+
+(cid:17)2
+
+=
+
+(cid:16) 1−(cid:80)
+(cid:80)
+
+i w(cid:48)(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:17)2
+
+≤ τ 2
+
+(1−τ )2 .
+
+Combining (14) and (17) bounds (13) by
+
+(cid:32)
+
+(cid:88)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+2
+
+i
+
+w(cid:48)
+
+i −
+
+(cid:33)
+
+w(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:80)
+
+2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:32)
+
+qi
+
+= 2
+
+1 −
+
+(cid:33)2
+
+·
+
+(cid:80)
+
+1
+j w(cid:48)(cid:48)
+j
+2(1 + τ 2)
+τ 2N
+
+2
+
+w(cid:48)
+
+iqi
+
+(cid:88)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+4(1 + τ 2)
+N (1 − τ )2 .
+
+i
+
+≤
+
+2τ 2
+(1 − τ )2 ·
+Bound on (12): Plugging the last inequality, (4) and (12)
+in (9) yields
+(cid:107)Eu − Ew(cid:107)2 = v2
+
+si −
+
+(cid:88)
+
+(cid:32)
+
+(cid:33)
+
+=
+
+qi
+
+Figure 2. Given a set of vectors from a standard Gaussian distribu-
+tion, the graph shows the (cid:96)2 error (y-axis) between their sum and
+their approximated sum using only N samples (the x-axis) based
+on Count Sketch (Charikar et al., 2004), Count Min (Cormode &
+Muthukrishnan, 2005a), Count Median (Cormode & Muthukrish-
+nan, 2005b), BJKST (Bar-Yossef et al., 2002), F2-Sketch (Alon
+et al., 1996b), and our coreset.
+
+Figure 3. The overview of our designed system to extract and rep-
+resent social networks is given.
+
+for a sufﬁciently large constant α, e.g. α = 3, where in the
+last inequality we used (16). Since v ≤ 2x by (15) we have
+
+v ≤ 2x = 2
+
+uj (cid:107)pj − Eu(cid:107)
+
+(cid:88)
+
+j
+(cid:113)√
+
+(cid:88)
+
+2 ·
+
+=
+
+√
+
+varu
+
+uj ·
+
+√
+
+uj (cid:107)pj − Eu(cid:107)
+(cid:112)√
+
+varu
+
+(cid:18)√
+
+(cid:88)
+
+≤
+
+varuuj +
+
+uj (cid:107)pj − Eu(cid:107)2
+varu
+
+√
+
+(cid:19)
+
+j
+
+j
+√
+
+=
+
+varu +
+
+√
+
+1
+varu
+
+(cid:88)
+
+j
+
+uj (cid:107)pj − Eu(cid:107)2 = 2
+
+varu,
+
+√
+
+where in the second inequality we used (10). Plugging this
+in (19) and replacing N by 4αN = O(N ) in the proof
+above, yields the desired bound
+
+(cid:107)Eu − Ew(cid:107)2 ≤ αv2
+
+N ≤ 4α·varu
+N .
+
+5. Experimental Results
+
+(cid:80)
+
+w(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:19)
+
+i)qi
+
+2
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
++
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+αv2
+N
+
+,
+
+≤ 2v2(cid:16)
+
+(cid:88)
+
+(si − w(cid:48)
+
+≤
+
+2v2
+N
+
+2(1 + τ 2)
+(1 − τ )2
+
+≤
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+i
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:18)
+
+i
+
+1 +
+
+(cid:32)
+
+(cid:88)
+
+i
+
+w(cid:48)
+
+i −
+
+w(cid:48)
+i
+j w(cid:48)(cid:48)
+j
+
+(cid:80)
+
+(cid:33)
+
+(cid:17)
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+qi
+
+We implemented the coreset algorithms in 1 and 2. We also
+implemented a brute force method for determining the so-
+cial network that considers the entire data. We used this
+method to derive the ground truth for the social network
+for small scale data. Our system’s overview is given in Fig-
+ure 3 and explained in Section 1.1. The coreset algorithm
+computes the heavy hitters by approximating the sum of
+
+(19)
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+Figure 4. The normalized error (y-axis) of proximities for the
+GPS traces taxi-drivers in the New York City Cab dataset using
+only N samples (N increases along x-axis).
+
+the columns of the proximity matrix as explained in Sec-
+tion 1.1. In this section, we have used different data sets
+from three different sources: In our ﬁrst experiment, we
+compared our coreset algorithm’s error with other sketch
+algorithms (Charikar et al., 2004; Cormode & Muthukr-
+ishnan, 2005a). The second dataset is the New York City
+Cab dataset1 and the third data set is from Stanford2 and
+includes six different graph-based data sets.
+In all the
+ﬁgures shown in this section, the x axis shows the core-
+set size (N) and the y axis represents the normalized er-
+ror value (Error ∗ mean(var(pi)2)/mean(norm(pi))),
+where Error = (cid:107)pi − ¯p(cid:107)2. In our experiments, we ran N
+iterations and wrote down the empirical error (cid:15).
+
+Comparison to sketch algorithms: Since the algorithms
+in (Charikar et al., 2004; Cormode & Muthukrishnan,
+2005a) focused on selecting the entries at scalar level (i.e.,
+individual entries from a vector), in this experiment, we
+generated a small scale synthetic data (standard Gaussian
+distribution) and compared the error made by our core-
+set implementation to four other sketch implementations.
+These sketch algorithms are: Count Sketch, Count Min,
+Count Median, BJKST and F2-Sketch (see Fig. 2). For the
+sketch algorithms, we used the code available at3. We plot
+the results in Fig. 2 where our Coresets algorithm showed
+better approximation than all other well known sketch tech-
+niques for all N values.
+
+Application on NYC data: Here we applied our algorithm
+on the NYC data. The data contains the location informa-
+tion of 13249 taxi cabs with 14776616 entries. The goal
+here is showing how the error on Coreset approximation
+would change on real data with respect to N (we expect
+that the error would reduce with respect to N as the theory
+suggests). This can be seen in Fig. 4, where x axis is the
+coreset size (N) and y axis is the normalized error.
+
+Application on Stanford Data Sets: Here we apply our al-
+gorithm on six different data sets from Stanford: Amazon,
+Youtube, DBLP, LiveJournal, Orkut and Wikitalk data sets.
+We run the Coreset algorithm to approximate the total num-
+ber of connectivities each node has. We computed the error
+
+(a) Amazon data
+
+(b) YouTube data
+
+(c) DBLP data
+
+(d) Wikitalk data
+
+(e) Orkut data
+
+(f) LiveJournal data
+
+Figure 5. The normalized error (y-axis) of the coreset for network
+structure approximation is shown for four different datasets using
+only N samples (N increases along x-axis).
+
+for each of the seven different N values from [100, 200,
+300, 400, 500, 600, 900] for each data set. We used the
+ﬁrst 50000 entries from the Orkut, Live Journal, Youtube
+and Wiki data sets and the ﬁrst 5000 entries from Amazon
+and DBLP data set. The results are shown in Figure 5.
+In the ﬁgures, y axis represents the normalized error. The
+results demonstrate the utility of our proposed method for
+summarization.
+
+6. Conclusion
+
+In this paper we proposed a new coreset algorithm for
+streaming data sets with applications to summarizing large
+networks to identify the ”heavy hitters”. The algorithm
+takes a stream of vectors as input and maintains their sum
+using small memory. Our presented algorithm shows better
+performance at even lower values of non-zero entries (i.e.,
+at higher sparsity rates) when compared to the other exist-
+ing sketch techniques. We demonstrated that our algorithm
+can catch the heavy hitters efﬁciently in social networks
+from the GPS-based location data and in several graph data
+sets from the Stanford data repository.
+
+Acknowledgements
+
+1https://publish.illinois.edu/dbwork/open-data/
+2https://snap.stanford.edu/data/
+3https://github.com/jiecchen/StreamLib/
+
+Support for this research has been provided in part by Ping
+An Insurance and NSFSaTC-BSF CNC 1526815. We are
+grateful for this support.
+
+Coresets for Vector Summarization with Applications to Network Graphs
+
+data. In Proceedings of the 21th ACM SIGKDD Inter-
+national Conference on Knowledge Discovery and Data
+Mining (KDD’15), pp. 249–258. ACM, 2015.
+
+Feldman, Dan, Volkov, Mikhail, and Rus, Daniela. Di-
+mensionality reduction of massive sparse datasets using
+coresets. In NIPS, 2016. URL http://arxiv.org/
+abs/1503.01663.
+
+Har-Peled, Sariel. Coresets for discrete integration and
+clustering. In FSTTCS 2006: Foundations of Software
+Technology and Theoretical Computer Science, pp. 33–
+44. Springer, 2006.
+
+Hogan, Bernie. Analyzing social networks. The Sage hand-
+
+book of online research methods, pp. 141, 2008.
+
+Lancichinetti, Andrea and Fortunato, Santo. Community
+detection algorithms: a comparative analysis. Physical
+review E, 80(5):056117, 2009.
+
+Liao, Lin. Location-based activity recognition. PhD thesis,
+
+University of Washington, 2006.
+
+Nguyen, Nam P, Dinh, Thang N, Xuan, Ying, and Thai,
+My T. Adaptive algorithms for detecting community
+In INFOCOM,
+structure in dynamic social networks.
+2011 Proceedings IEEE, pp. 2282–2290. IEEE, 2011.
+
+Wasserman, Stanley. Analyzing social networks as stochas-
+tic processes. Journal of the American statistical associ-
+ation, 75(370):280–294, 1980.
+
+Zheng, Yu.
+
+Location-based social networks: Users.
+In Computing with spatial trajectories, pp. 243–276.
+Springer, 2011.
+
+References
+
+Alon, Noga, Matias, Yossi, and Szegedy, Mario. The space
+complexity of approximating the frequency moments. In
+Proceedings of the twenty-eighth annual ACM sympo-
+sium on Theory of computing, pp. 20–29. ACM, 1996a.
+
+Alon, Noga, Matias, Yossi, and Szegedy, Mario. The space
+complexity of approximating the frequency moments. In
+Proceedings of the twenty-eighth annual ACM sympo-
+sium on Theory of computing, pp. 20–29. ACM, 1996b.
+
+Bar-Yossef, Ziv, Jayram, TS, Kumar, Ravi, Sivakumar, D,
+and Trevisan, Luca. Counting distinct elements in a data
+In International Workshop on Randomization
+stream.
+and Approximation Techniques in Computer Science, pp.
+1–10. Springer, 2002.
+
+Barger, Artem and Feldman, Dan. k-means for stream-
+ing and distributed big sparse data. SDM’16 and arXiv
+preprint arXiv:1511.08990, 2015.
+
+Bentley, Jon Louis and Saxe, James B. Decomposable
+searching problems i. static-to-dynamic transformation.
+Journal of Algorithms, 1(4):301–358, 1980.
+
+Carrington, Peter J, Scott, John, and Wasserman, Stanley.
+Models and methods in social network analysis, vol-
+ume 28. Cambridge university press, 2005.
+
+Charikar, Moses, Chen, Kevin, and Farach-Colton, Mar-
+tin. Finding frequent items in data streams. Theoretical
+Computer Science, 312(1):3–15, 2004.
+
+Clarkson, K. L. Subgradient and sampling algorithms for
+l1-regression. In Proc. 16th Annu. ACM-SIAM Symp. on
+Discrete algorithms (SODA), pp. 257–266, 2005. ISBN
+0-89871-585-7.
+
+Cormode, Graham and Muthukrishnan, S. An improved
+data stream summary: the count-min sketch and its ap-
+plications. Journal of Algorithms, 55(1):58–75, 2005a.
+
+Cormode, Graham and Muthukrishnan, S. An improved
+data stream summary: the count-min sketch and its ap-
+plications. Journal of Algorithms, 55(1):58–75, 2005b.
+
+Dinh, Thang N, Xuan, Ying, Thai, My T, Park, EK, and
+Znati, Taieb. On approximation of new optimization
+methods for assessing network vulnerability. In INFO-
+COM, 2010 Proceedings IEEE, pp. 1–9. IEEE, 2010.
+
+Dinh, Thang N, Nguyen, Nam P, and Thai, My T. An adap-
+tive approximation algorithm for community detection
+In INFOCOM, 2013
+in dynamic scale-free networks.
+Proceedings IEEE, pp. 55–59. IEEE, 2013.
+
+Feldman, Dan and Tassa, Tamir. More constraints, smaller
+coresets: constrained matrix approximation of sparse big
+
+

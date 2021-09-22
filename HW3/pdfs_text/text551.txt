@@ -1,0 +1,1445 @@
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+Si Si 1 Huan Zhang 2 S. Sathiya Keerthi 3 Dhruv Mahajan 4 Inderjit S. Dhillon 5 Cho-Jui Hsieh 2
+
+Abstract
+
+In this paper, we study the gradient boosted
+decision trees (GBDT) when the output space
+is high dimensional and sparse. For example,
+in multilabel classiﬁcation, the output space is
+a L-dimensional 0/1 vector, where L is num-
+ber of labels that can grow to millions and be-
+yond in many modern applications. We show
+that vanilla GBDT can easily run out of mem-
+ory or encounter near-forever running time in
+this regime, and propose a new GBDT variant,
+GBDT-SPARSE, to resolve this problem by em-
+ploying L0 regularization. We then discuss in de-
+tail how to utilize this sparsity to conduct GBDT
+training, including splitting the nodes, comput-
+ing the sparse residual, and predicting in sub-
+linear time. Finally, we apply our algorithm to
+extreme multilabel classiﬁcation problems, and
+show that the proposed GBDT-SPARSE achieves
+an order of magnitude improvements in model
+size and prediction time over existing methods,
+while yielding similar performance.
+
+1. Introduction
+
+Gradient boosted decision tree (GBDT) is a powerful
+machine-learning technique that has a wide range of com-
+mercial and academic applications and produces state-of-
+the-art results for many challenging data mining problems.
+The algorithm builds one decision tree at a time to ﬁt the
+residual of the trees that precede it. GBDT has been widely
+used recently mainly due to its high accuracy, fast training
+and prediction time, and small memory footprint.
+
+In this paper, we study the GBDT algorithm for problems
+with high-dimension and sparse output space. Extreme
+
+1Google Research, Mountain View, USA 2University of
+California at Davis, Davis, USA 3Microsoft, Mountain View,
+USA 4Facebook, Menlo Park, USA 5University of Texas at
+Austin, Austin, USA. Correspondence to: Cho-Jui Hsieh
+<chohsieh@ucdavis.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+multi-label learning and multi-class classiﬁcation belong
+to this problem, where the goal is to automatically assign
+one or a subset of relevant labels from a very large label
+set. Dealing with problems with high dimensional output
+leads to multiple computational challenges. In this paper
+we mainly focus on two important issues that limit the ap-
+plication of the existing methods to real world applications:
+prediction time and model size. As the output space size
+increases, these dimensions become the bottleneck, both
+during training and testing. As an example, if a one-versus-
+all model is used on a classiﬁcation problem with 1 million
+labels, then we need to evaluate 1 million models for any
+testing sample. If these models cannot be kept in memory,
+reading them from disks will further increase the predic-
+tion time substantially. The linear dependency on number
+of labels makes most of the existing approaches very slow
+during testing, especially when we do not want to access
+the cloud for every test point.
+
+The computation of GBDT is also prohibitively expensive
+for applications with high dimensional sparse output. At
+each iteration, GBDT builds a regression tree that ﬁts the
+residuals from the previous trees. The density of the resid-
+ual grows dramatically even after just one single iteration,
+and it will soon become an L by N dense matrix where N
+is number of samples and L is the number of labels (size
+of output space). As a consequence, at least O(N L) time
+and memory are required to build GBDT trees. This makes
+GBDT infeasible for large scale applications where N and
+L can be both large, e.g., several millions.
+
+Our goal is to develop a new approach for problems with
+high-dimensional and sparse output spaces that achieves
+faster prediction time and smaller model size than exist-
+ing algorithms, but has similar prediction accuracy and
+training time. To this end, we develop the ﬁrst Gradient
+Boosted Decision Tree (GBDT) algorithm for high dimen-
+sional and sparse output, with applications in extreme mul-
+tilabel learning problems. We make the crucial observation
+that each data point has very few labels; based on that we
+solve a L0 regularized optimization problem to enforce the
+prediction of each leaf node in each tree to have only a
+small number (k) of nonzero elements or labels. Hence, af-
+ter T trees have been added during GBDT iterations, there
+will be at most T k nonzero gradients for any data point.
+Another important challenge discussed in this paper is pre-
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+diction time. Given the sparsiﬁed output, we discuss efﬁ-
+cient algorithms to conduct prediction for both top-K rec-
+ommendation or the whole sparse output vector. Finally,
+we discuss how to handle sparse data, where each feature
+is active only on a small fraction of training examples. To
+handle this, we use several unsupervised and supervised
+dimensional reduction algorithms as pre-processing steps.
+This also has the positive effect of reducing the search
+space of each node.
+
+For extreme multi-label applications, our algorithm has
+competitive accuracy compared with existing state-of-the-
+art algorithms, while achieving substantial reductions in
+prediction time and model size. For example, on the
+Wiki10-31K dataset with 30938 labels, our method takes
+only 1.3 secs. for prediction and achieves 84.34% accuracy
+with a model size of 85.8MB, while the state-of-the-art fast
+multi-label method FASTXML takes more than 10 secs. to
+achieve 82.71% accuracy and uses 853.5MB memory to
+store the model. Our method can be efﬁciently parallelized
+and achieve almost linear speed up in multi-core settings.
+
+The rest of the paper is outlined as follows. We present
+related work in Section 2. Traditional GBDT is explained
+in Section 3. Our main algorithm GBDT-SPARSE is pro-
+posed and analyzed in Section 4. Experimental results are
+given in Section 5. We present conclusions in Section 6.
+
+2. Related Work
+Ensemble methods have shown excellent performance in
+various machine learning applications and analytics com-
+petitions, e.g., Kaggle challenges. Common ensemble
+methods include random forests (Liaw & Wiener, 2002),
+bagging (Breiman, 1996), and boosting (Schapire, 1999;
+Friedman, 2001; 2002). Out of these, boosting is very ef-
+fective in reducing model size and prediction time since it
+uses the output of previous models to train the next one.
+
+Many classical boosting methods have shown their efﬁ-
+ciency in practice. Among them, gradient boosted decision
+trees (GBDT) (Friedman, 2001; 2002) has received much
+attention because of its high accuracy, small model size
+and fast training and prediction. It been widely used for
+binary classiﬁcation, regression, and ranking.
+In GBDT,
+each new tree is trained on the per-point residual deﬁned as
+the negative of gradient of loss function wrt. output of pre-
+vious trees. GBDT is well studied in the literature: some
+research has been done to speed up the computation of
+GBDT under different parallel settings (multi-core or dis-
+tributed), e.g., XGBoost (Chen & Guestrin, 2016), Light-
+GBM,1 PLANET (Panda et al., 2009), PV-Tree (Meng
+et al., 2016), and YGGDRASIL(Abuzaid et al., 2016) or
+exploit its beneﬁt for different machine learning applica-
+tions, e.g., using GBDT for CRFs (Chen et al., 2015). How-
+
+1https://github.com/Microsoft/LightGBM
+
+ever, to the best of our knowledge none of them can be efﬁ-
+ciently applied to problems with high dimensional output.
+
+Recently, machine learning problems with high dimen-
+sional output have drawn considerable attention. Two
+popular and representative problems are extreme multi-
+class classiﬁcation and extreme multi-label learning prob-
+lem (Prabhu & Varma, 2014; Bhatia et al., 2015; Yu et al.,
+2014; Agrawal et al., 2013; Jasinska et al., 2016; Si et al.,
+2016) and both deal with very large number of labels.
+LOMtree proposed in (Choromanska & Langford, 2015)
+constructs trees for extreme multi-class problem, and ob-
+tains training and test time complexity logarithmic in the
+number of classes, but its extension to multi-label case is
+not straightforward. Many algorithms have been devel-
+oped to solve extreme multi-label learning problem. For in-
+stances, embedding based methods LEML (Yu et al., 2014)
+and SLEEC (Bhatia et al., 2015) project the labels and
+features to some low-dimensional space while preserving
+distances either with the neighboring label vectors or the
+full training set; PLT(Jasinska et al., 2016) considers using
+sparse probability estimates restricted to the most probable
+labels to speed up the F-measure maximization for extreme
+multi-label learning; PD-Sparse (Yen et al., 2016) formu-
+lates multilabel learning problem as a primal-dual sparse
+problem given by margin-maximizing loss with L1 and L2
+penalties. Tree based methods (Prabhu & Varma, 2014;
+Agrawal et al., 2013) generalize the impurity measures de-
+ﬁned for binary classiﬁcation and ranking tasks to multi-
+label scenario for splitting the nodes, but require hundreds
+of trees to achieve good accuracy. FASTXML (Prabhu &
+Varma, 2014) uses NDCG based ranking loss function and
+solves a non-convex optimization problem to ﬁnd a sparse
+linear separator for splitting each node. All the approaches
+discussed above either do not give good accuracy (Yu et al.,
+2014), or, require large sized models with high prediction
+times to do so (Prabhu & Varma, 2014).
+
+In contrast, to solve extreme multi-label learning problem,
+our method is based on GBDT and hence requires only
+a few trees to build a good model. During training, we
+also enforce sparsity in the label vector at each leaf node
+to reduce the model size and prediction time. Our ap-
+proach is different from FASTXML in three aspects:(1) we
+do not need to solve a non-convex optimization at each
+node, but, rather do a much simpler and faster feature se-
+lection; (2) we follow the idea of GBDT to build trees,
+while FASTXML is a random forest based method; (3) we
+can achieve similar accuracy as FASTXML, but with much
+faster prediction time and smaller model size.
+
+3. Background
+
+We ﬁrst discuss the original GBDT algorithm, and present
+the difﬁculty when applying GBDT to solve problems with
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+high dimensional output space.
+
+4. Proposed Algorithm (GBDT-SPARSE)
+
+GBDT for binary classiﬁcation Let us explain the main
+idea behind GBDT using binary classiﬁcation, in which
+a scalar score function is formed to distinguish the two
+i=1 with xi ∈ RD
+classes. Given training data X = {xi}N
+and their labels Y = {yi}N
+i=1 with yi ∈ {0, 1}, the goal
+is to choose a classiﬁcation function F (x) to minimize the
+aggregation of some speciﬁed loss function L(yi, F (xi)):
+
+N
+(cid:88)
+
+F
+
+F ∗ = argmin
+
+L(yi, F (xi)).
+
+(1)
+
+i=1
+Gradient boosting considers the function estimation F in
+an additive form:
+
+T
+(cid:88)
+
+F (x) =
+
+fm(x),
+
+(2)
+
+m=1
+where T is the number of iterations. The {fm(x)} are de-
+signed in an incremental fashion; at the m-th stage, the
+newly added function, fm is chosen to optimize the aggre-
+gated loss while keeping {fj}m−1
+
+j=1 ﬁxed.
+
+Each function fm belongs to a set of parametrized ‘base-
+learners’; let θ denote the vector of parameters of the the
+base-learner. GBDT uses decision trees to be the base
+learners. For this choice, θ consists of parameters that rep-
+resent the tree structure, such as the feature to split in each
+internal node, the threshold for splitting each node, etc.
+
+At stage m, we form an approximate function of the loss:
+
+L(yi, Fm−1(xi) + fm(xi)) ≈
+
+Now we discuss the problem with sparse high dimensional
+i=1 with xi ∈ RD, we as-
+output. For input data X = {xi}N
+i=1 with yi ∈ RL
+sume the corresponding output Y = {yi}N
+are high-dimensional and sparse—L is very large but each
+yi only contains a few nonzero elements. We denote the
+average number of nonzero elements S = (cid:80)
+i (cid:107)yi(cid:107)0/N ,
+and S (cid:28) L. Multilabel learning is an example, where each
+xi is the input features for a training sample, yi ∈ {0, 1}L
+where L is the number of labels, and (yi)q = 1 if sample i
+has label q.
+
+Now we discuss the proposed GBDT-SPARSE algorithm.
+For a general loss function with high dimensional output
+yi, we consider
+
+F ∗ = argmin
+
+F
+
+n
+(cid:88)
+
+i=1
+
+L(yi, F (xi)) + R(F ),
+
+(5)
+
+where R(F ) is the regularization term. For simplicity we
+assume an L2 regularization, so
+
+R(F ) = λ
+
+T
+(cid:88)
+
+Mm(cid:88)
+
+m=1
+
+j=1
+
+(cid:107)wm
+
+j (cid:107)2,
+
+where fm(x) = wm
+J(x) with J(x) : RD → Mm represent-
+ing the tree structure which maps a data point x into one
+j ∈ RL is the
+of the Mm leaves of the m-th tree, and wm
+prediction vector of the j-th leaf node in the m-th tree.
+
+We assume L is differentiable and satisﬁes the following
+properties:
+
+L(yi, Fm−1(xi)) + gifm(xi) +
+
+fm(xi)2,
+
+(3)
+
+1. L(y, z) is decomposable:
+
+1
+2
+
+where Fm−1(xi) = (cid:80)m−1
+
+j=1 fj(xi) and
+
+gi =
+
+∂L(yi, F (xi))
+∂F (xi)
+
+|F (xi)=Fm−1(xi) .
+
+Note that throughout the paper we will only take differen-
+tiation with the second parameter of L(·, ·), so we deﬁne
+L(cid:48)(yi, Fm−1(xi)) to be the above differentiation.
+
+We want to choose fm to minimize the right hand side
+of (3), which can be written as the following minimization
+problem:
+
+arg min
+fm
+
+N
+(cid:88)
+
+i=1
+
+1
+2
+
+(fm(xi) − gi)2.
+
+(4)
+
+Since only the direction is ﬁtted, a suitable step size
+(shrinkage parameter) is usually applied to fm before it is
+added to Fm−1. The advantage of this gradient boosting
+approach is that only the expression of the gradient varies
+for different loss functions, while the rest of the procedure,
+and in particular the decision tree induction step, remains
+the same for different loss functions.
+
+L(y, z) =
+
+(cid:96)(yq, zq).
+
+L
+(cid:88)
+
+q=1
+
+2. Each (cid:96)(·, ·) satisﬁes that
+
+(cid:96)(cid:48)(yq, zq) = 0 if yq = zq.
+
+Examples include but not
+limited to the square loss:
+(cid:96)(yq, zq) = (yq − zq)2 and the square hinge loss (note that
+this is the square-hinge loss with center shifted to 0.5 and
+width scaled to 0.5):
+
+(cid:40)
+
+(cid:96)(yq, zq) =
+
+max(1 − zq, 0)2
+max(zq, 0)2
+
+if yq = 1
+if yq = 0
+
+(9)
+
+Using the same Taylor expansion, at each iteration we want
+to construct fm by solving
+
+L(yi, Fm−1(xi) + fm(xi)) ≈
+
+L(yi, Fm−1(xi)) + (cid:104)gi, fm(xi)(cid:105) +
+
+(cid:107)fm(xi)(cid:107)2,
+
+(10)
+
+1
+2
+
+(6)
+
+(7)
+
+(8)
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+where gi is the L-dimensional gradient for the i-th sample
+with (gi)q = (cid:96)(cid:48)((yi)q, (Fm−1(xi))q). Following the same
+steps as the previous section, for each tree we want to ﬁnd
+the cut value to minimize the following objective function:
+
+min
+fm
+
+1
+N
+
+N
+(cid:88)
+
+i=1
+
+(cid:107)gi − fm(xi)(cid:107)2
+
+2 + λ
+
+(cid:107)wm
+
+j (cid:107)2
+2.
+
+(11)
+
+Mm(cid:88)
+
+j=1
+
+Vanilla extension of GBDT to high-dimensional out-
+put space. As in most decision tree induction methods,
+we follow a greedy approach, that is, starting from a sin-
+gle node and iteratively adding branches to the tree un-
+til some stopping conditions are met. At a general step,
+we want to split an existing leaf node e in the m-th tree.
+Let Ve = {i|J(xi) = e} denote the set of examples
+that pass through the leaf e. Suppose we ﬁx a split, t =
+[f eature id, threshold], consisting of the variable to split
+and at what threshold it has to be split. This partitions Ve
+into two disjoint sets: a set Vr associated with the right
+node and a set Vl associated with the left node. Then we
+can compute the prediction vectors (hr and hl) associated
+with the right and left nodes based on the loss function re-
+stricted to the corresponding sets of examples:
+
+hr = argmin
+
+(cid:107)gi − hr(cid:107)2
+
+2 + λ(cid:107)hr(cid:107)2
+2
+
+hl = argmin
+
+(cid:107)gi − hl(cid:107)2
+
+2 + λ(cid:107)hl(cid:107)2
+2.
+
+(12)
+
+1
+N
+
+1
+N
+
+(cid:88)
+
+i∈Vr
+(cid:88)
+
+i∈Vl
+
+hr
+
+hl
+
+Since the objectives follow a simple quadratic form, these
+problems can be solved in closed form as
+
+hr =
+
+1
+λN + |Vr|
+
+(cid:88)
+
+i∈Vr
+
+gi, hl =
+
+1
+λN + |Vl|
+
+(cid:88)
+
+i∈Vl
+
+gi
+
+(13)
+
+Now we can use hr and hl to form prediction: the predic-
+tion for example i is he,i = hr if i ∈ Vr and is hl if i ∈ Vl.
+This leads to the objective, obj(t) for the split t:
+
+obj(t) =
+
+(cid:107)gi − he,i(cid:107)2 + λ((cid:107)hr(cid:107)2 + (cid:107)hl(cid:107)2) (14)
+
+1
+N
+
+(cid:88)
+
+i∈Ve
+
+The best split is chosen to optimize obj(t):
+
+t∗ = min
+
+obj(t)
+
+t
+
+(15)
+
+This completes a general step of the vanilla extension of
+GBDT for high dimensional sparse output.
+
+Why vanilla GBDT fails on high dimensional sparse
+output?
+The vanilla GBDT extension described above
+faces several difﬁculties when it is applied on high dimen-
+sional sparse output:
+
+1. The ﬁrst issue is the size of gradient gi in (11). Each
+gi is an L-dimensional vector. Although in the ﬁrst step
+gi is sparse, after one step, hl (hr) in (12) will be the
+average of |Vr|(|Vl|) sparse vectors, which will be dense.
+A dense prediction Fm will then lead to dense gradients in
+all the trees after the ﬁrst step, and this N L space and time
+complexity is prohibitive in large scale applications where
+N and L can be both several millions.
+2. The second issue is the model size. The prediction
+vector in each leaf of each tree is a dense vector of length
+L. This will result in a total model size of O(T M L),
+where T is the number of trees and M is the average
+number of leaves in each tree. Given that L is large in
+the model size will also
+extreme multi-label learning,
+become very large.
+3. The third issue is also related to the dense prediction
+vector in the tree leaves, and concerns the prediction time.
+The prediction time for a test point is O(T ¯l + T L),2 where
+¯l is the average depth of the trees. Thus, when L is large,
+the prediction is very expensive.
+4. The fourth issue relates to the sparsity and large
+dimension of the input vector x. For many real-world
+problems, the input x is sparse.
+Induction on such data
+leads to very unbalanced decision trees with a large
+number of leaves; this in turn increases the model size and
+prediction time. It is worth noting that decision trees are
+generally found to be unsuitable for data with such sparsity.
+
+4.1. Our proposed algorithm: GBDT-SPARSE
+
+We now propose a sparsiﬁed approach for resolving the
+above mentioned issues, which leads to the ﬁrst effec-
+tive GBDT algorithm for high dimensional sparse output.
+These modiﬁcations lead to models with high accuracy,
+small model size and fast prediction time.
+
+We ﬁrst discuss the case when the input features are dense.
+To handle the ﬁrst three issues (dense residual vectors,
+model size, and prediction time), we use the fact that the
+labels yi are high dimensional but very sparse. For the
+loss function satisﬁes our assumptions (Assumption (7)
+and (8)), and if both yi and zi are sparse, then the gra-
+dient vector gi in (11) will also be a sparse vector, and the
+sparsity is at most (cid:107)yi(cid:107)0 + (cid:107)zi(cid:107)0.
+
+Thus, we enforce a sparsity constraint on the prediction
+vector in each leaf of each tree and maintain non-zero pre-
+diction values only for a small number (k (cid:28) L) of labels.
+Typically, after each tree induction, each leaf contains a
+coherent set of examples related to a small set of labels
+and thus the above sparsity constraint makes a lot of sense.
+Additionally, the constraint offers a nice form of regular-
+ization. Note that by deﬁnition of gi, it can have at most
+
+2The ﬁrst term is the cost of tree traversal while second is the
+
+cost of getting predictions from the leaf nodes.
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+T k +(cid:107)yi(cid:107)0 non-zeros after T iterations (the label vector yi
+is also sparse). This strategy makes the computation very
+efﬁcient and also reduces memory footprint substantially.
+
+To enforce the sparsity, we add L0 constraint into the ob-
+jective function (11), and we have
+
+Algorithm 1: GBDT-SPARSE tree node splitting algo-
+rithm
+Input: {xi, yi}N
+
+i=1, sorted list according to each feature
+
+j=1, λ (the regularization parameter), k
+
+{σj}D
+(sparsity constraint)
+
+Output: Best split t = [f eature id, threshold]
+
+(cid:107)gi − fm(xi)(cid:107)2
+
+2 + λ
+
+(cid:107)wm
+
+j (cid:107)2
+2
+
+1 Initial: f best = 0 ;
+2 for j = 1, · · · , D do
+
+N
+(cid:88)
+
+min
+fm,wm
+j
+
+i=1
+s.t. (cid:107)wm
+
+min
+(cid:107)hl(cid:107)0=k
+
+(cid:26) (cid:88)
+
+i∈Vl
+
+j (cid:107)0 ≤ k, ∀j.
+
+(16)
+
+For each cut t, the objective of the left partition becomes:
+
+(cid:107)gi − hl(cid:107)2
+
+2 + λ(cid:107)hl(cid:107)2
+2
+
+:= fl(hl),
+
+(17)
+
+Mm(cid:88)
+
+j=1
+
+(cid:27)
+
+where, like before, Vl denotes the set of examples that fall
+in leaf l.
+Interestingly, (17) has a closed form solution,
+and there is no additional time cost by enforcing the sparse
+q = (cid:80)
+constraints. Let pl
+(gi)q be sorted by the absolute
+values with the order to be π, such that
+
+i∈Vl
+
+|pl
+
+π(1)| ≥ |pl
+
+π(2)| ≥ . . . ≥ |pl
+
+π(|Vl|)|,
+
+(18)
+
+then the optimal solution of (17) is
+
+(cid:40)
+
+(hl)∗
+
+q =
+
+pl
+q/(|Vl| + λ)
+0
+
+if π(q) ≤ k
+otherwise ,
+
+and the objective function is
+
+fl(h∗
+
+l ) = fl(0) −
+
+(cid:88)
+
+q:π(q)≤k
+
+q)2
+(pl
+|Vl| + λ
+
+.
+
+(19)
+
+(20)
+
+Similarly we can get the same h∗
+child, and compute the objective function gain.
+
+r and fr(h∗
+
+r) for the right
+
+l ) + fr(h∗
+
+Using this closed form solution of the objective function,
+we want to ﬁnd the best split t = [f eature id, threshold]
+for the current node by minimizing the objective function
+fl(h∗
+r). For simplicity, we assume all the data
+are in the current node (e.g. the root) in order to simplify
+the notation, while the same algorithm can be applied to a
+node with partial samples. Also, we assume a sorted list
+σj(·) according to each feature j’s value is given, where
+
+(xσj (1))j ≤ (xσj (2))j ≤ · · · ≤ (xσj (N ))j.
+
+This can be typically done as a pre-processing step before
+building GBDT because the ordering will not be changed.
+We then test the decrease of objective function for each
+threashold according to this order, and select the best one.
+See Algorithm 1 for detail.
+
+For each feature, although selecting the best threshold from
+all potential values can optimize objective function, we
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+(pl)s = 0, ∀s = 1, · · · , L ;
+(pr)s = (cid:80)
+for i = 1, . . . , N do
+
+i(gi)s, ∀s = 1, · · · , L ;
+
+for s with (gσj (i))s (cid:54)= 0 do
+
+(pl)s ← (pl)s + (gσj (i))s ;
+(pr)s ← (pr)s − (gσj (i))s ;
+s)2
+
+(pl
+
+(cid:80)
+
+s∈Ql
+
+Compute the f = −
+,
+where Ql and Qr are the index set of top-k |pl
+s|
+and |pr
+If f < f best, set f best = f , tbest = [j, (xσj (i))j] ;
+
+s| values respectively;
+
+i+λ
+
+−
+
+(cid:80)
+
+(pr
+s∈Qr
+N −i+λ
+
+s)2
+
+found this also leads to over-ﬁtting. Therefore, in our im-
+plementation we consider the “inexact” version where we
+only test the threshold for every ¯S values in the sorted list:
+{(xσj (i))j}i=1,1+ ¯S,1+2 ¯S,...,n.
+
+Algorithm 1 can be implemented in O(D(cid:107)G(cid:107)0 log(k))
+time, where (cid:107)G(cid:107)0 = (cid:80)N
+i=1 (cid:107)gi(cid:107)0 is the number of nonzero
+elements in the current gradient. The main trick is to use
+two priority queues to maintain two lists of k features with
+top-k ps values (correspond to sum of gradient) for left
+tree and right tree. When scanning through one sample in
+the inner step, only one term of ps will change, which has
+O(log k) complexity using a priority queue. However, in
+practice we set ¯S to be very large (5% of samples), so a
+sorting algorithm for ﬁnding the top-k list is fast enough,
+since it only needs to be executed 20 times.
+
+4.2. GBDT-SPARSE: Dealing with Sparse Features
+
+Decision trees usually have difﬁculty handling sparse fea-
+tures. When feature vectors are sparse, e.g., only 100 out of
+10,000 training samples have nonzero values on a feature,
+the tree will be always imbalanced and extremely deep.
+
+To handle sparse input features, we consider several projec-
+tion methods that transform sparse features to dense ones.
+The most simple yet useful one is to use random projection,
+that is, projecting the data point to ¯xi = ¯Gxi using a ﬁxed
+random Gaussian matrix ¯G ∈ Rd×D as projection matrix.
+To reduce reconstruction error, another approach is to use
+Principal Component Analysis (PCA) (Halko et al., 2011)
+via SVD (Si et al., 2014).
+
+Both random projection and PCA are un-supervised learn-
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+Table 1: Comparison between traditional GBDT, our proposed GBDT-SPARSE, and FASTXML in terms of training time,
+prediction time, model size and accuracy. Prediction time includes feature projection time. All time in seconds.
+
+Metrics
+Dimension reduction time
+Training Time
+Prediction Time
+Accuracy P@1(%)
+Accuracy P@3(%)
+Model size
+
+FASTXML
+N/A
+1275.9
+9.1175
+82.71
+67.87
+813MB
+
+vanilla GBDT (LEML) GBDT-SPARSE (Random Projection) GBDT-SPARSE (PCA) GBDT-SPARSE (LEML)
+100.74
+1054.12
+1.087
+84.36
+69.49
+79.26MB
+
+99.86
+1025.03
+1.0796
+83.51
+67.04
+79.23MB
+
+4.97
+931.57
+1.0766
+80.79
+50.68
+79.01MB
+
+100.74
+41078.76
+52.139
+84.11
+68.94
+809.39M
+
+Dataset
+Mediamill
+Delicious
+NUS-WIDE
+Wiki10-31K
+Delicious-200K
+
+Table 2: Data set statistics for multi-label learning problems.
+# Features
+120
+500
+1,134
+101,938
+782,585
+
+# Labels Avg. points per label Avg. labels per point
+4.36
+1338.8
+19.02
+250.06
+5.78
+935.22
+18.64
+8.52
+75.54
+72.34
+
+# Testing samples
+12,914
+3,185
+107,859
+6,616
+100,095
+
+# Training samples
+30,993
+12,920
+161,789
+14,146
+196,606
+
+101
+983
+1,000
+30,938
+205,312
+
+ing approaches—in the sense that they do not use any la-
+bel information; however, in our problem setting there is
+rich information in the high dimensional output space Y .
+Therefore, we can use a supervised algorithm LEML (Yu
+et al., 2014) to construct dense features, which solves the
+following optimization problem:
+
+min
+W ∈RD× ¯d,H∈RL× ¯d
+
+(cid:107)Y − XW H T (cid:107)2
+
+F + γ((cid:107)W (cid:107)2
+
+F + (cid:107)H(cid:107)2
+F )
+
+where γ is a regularization term to control the over-ﬁtting
+and ¯d is the projected dimension. This has been discussed
+in (Yu et al., 2014) for solving the multi-label classiﬁcation
+problems, and the resulting algorithm uses an alternating
+minimization algorithm to compute the solutions W and
+H. After we get W from LEML, we use the new features
+¯X as ¯X = XW to construct the decision trees. Using this
+projection has two beneﬁts:(1) the projection incorporates
+the label information; and, (2) the new data after projection,
+¯X is dense, and thus results in shallow and balanced trees.
+
+We compare GBDT-SPARSE with different projection
+methods as well as vanilla GBDT for extreme multilabel
+learning problem in Table 1. We used the Wiki10-31K
+dataset with training parameters the same as the ones in
+section 5, except we terminate all methods (except vanilla
+GBDT) in about 1000 seconds. Three dimension reduc-
+tion techniques, LEML, PCA and random projections are
+used to reduce the feature size to 100. We also include
+FASTXML as a comparison for training time. From Ta-
+ble 1 we can see that using LEML is more accurate than
+using PCA and random projections, but takes longer time
+to train the model. Different from vanilla GDBT, GBDT-
+SPARSE enforces the sparsity in the leaf nodes, which
+brings signiﬁcant speedup (about 40x) for training. This
+table shows the beneﬁts of using feature projection and
+enforcing sparsity in leaf nodes when applying GDBT on
+problems with high-dimensional sparse output.
+
+4.3. GBDT-SPARSE: Fast Prediction
+
+m=1 hm(xi).
+
+the data points will go
+When performing prediction,
+through each tree and then the prediction is f (xi) =
+(cid:80)T
+In vanilla GBDT, this requires O(LT )
+time since we have to sum over the prediction for T trees,
+each one is an L-dimensional dense vector. Note that the
+tree traversal time can be omitted because each node only
+takes 1 comparison to look at whether a feature is larger or
+smaller than the threshold.
+
+In GBDT-SPARSE, when making prediction for a new data
+point, we can utilize the sparsity structure of each predic-
+tion vector to achieve fast prediction time: adding up T of
+the k-sparse vectors together. The naive approach is to cre-
+ate an array of size T k, copy all the index-value pairs to
+the array, and sort them by index. This has O(T k log(T k))
+time complexity. A more efﬁcient approach is to use a min-
+heap data structure to merge these k lists which can reduce
+time complexity: ﬁrst, sort each list according to the index
+orders, and then create a min heap of size k and insert the
+ﬁrst element in all lists to the heap. Then repeatedly con-
+duct the following process: (1) get the minimum element
+from heap, store to the output array, and (2) update the heap
+root value by the next index from the list that the element is
+fetched. The overall algorithm will take O(T k log k) time.
+
+In some real world applications, only top-B labels are
+needed with very small B (typically 1,3,5). In those cases,
+we can further reduce the prediction time to O(T k log B)
+(see details in appendix B). Since we test on small k for all
+our experiments, we do not use this technique in practice.
+
+4.4. Summary of GBDT-SPARSE
+In summary,
+the training time of GBDT-SPARSE is
+O(D(cid:107)G(cid:107)0 log(k)) for each node, where (cid:107)G(cid:107)0 is total num-
+ber of nonzeros of the samples belonging to the node. So
+each level of the tree requires O(D(cid:107)X(cid:107)0 log(k)) time. If
+we build T trees and each with h levels, the total training
+time is O(DT h(cid:107)X(cid:107)0 log(k)).
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+As discussed in the previous section, the prediction time is
+O(T k log k) for prediction. k (sparsity constraint) is usu-
+ally set to be less than 50; T (number of tress) is usually
+less than 100. Therefore GBDT-SPARSE has a sub-linear
+(constant) prediction time.
+
+Now we discuss model size. Each intermediate node only
+stores the [f eature id, threshold] pair, which is one inte-
+ger and one ﬂoating point. Each leaf node only stores the k
+index-value pairs. Therefore, the model size is O(kT 2h).
+As long as tree depth h is not too large (usually less than
+12), the model size is very small.
+
+5. Experiments
+
+We compare GBDT-SPARSE against other key methods
+for extreme multi-label classiﬁcation problems and demon-
+strate its value with respect to model size, prediction time
+and performance.
+
+Data: We conducted experiments on 5 standard and pub-
+licly available multi-label learning datasets.3 Table 2 shows
+the associated details. Note the diversity in the number
+of training samples, label size and feature dimensionality.
+Delicious-200K has more than 200, 000 labels.
+
+Baselines: We compare our method to four state-of-the-art
+extreme multi-label learning baselines.
+
+1. LEML (Yu et al., 2014) is an embedding technique
+based on low-rank empirical risk minimization.
+2. FASTXML (Prabhu & Varma, 2014) is a random forest
+based approach where each tree is constructed by jointly
+optimizing both nDCG ranking loss and tree structure. A
+sparse linear separator is used as the splitting criteria at
+each node.
+3. SLEEC (Bhatia et al., 2015) learns an ensemble of lo-
+cal distance preserving embeddings. Pairwise distances are
+preserved between only the nearest label vectors.
+4. PD-SPARSE (Yen et al., 2016) proposes to solve L1
+regularized multi-class loss using Frank-Wolfe based algo-
+rithm. However, it needs to store weight vectors in size
+O(DL), which is hard to scale to large datasets.
+
+For the baselines, we use their highly optimized C++ im-
+plementation published along with the original papers. We
+also compare with DisMEC (Babbar & Sch¨olkopf, 2017)
+in the Appendix.
+
+Parameter Setting: For FASTXML and LEML, we use
+the default parameter settings in the code. SLEEC’s code
+also has optimal parameter settings for all the datasets ex-
+It has 7 parameters and their settings
+cept NUS-WIDE.
+vary widely for different datasets. For PD-SPARSE, we use
+
+3NUS-WIDE is available at http://lms.comp.nus.edu.sg/
+research/NUS-WIDE.htm. All other datasets are available at
+http://manikvarma.org/downloads/XC/XMLRepository.html.
+
+a grid search to ﬁnd the best regularization parameter λ and
+cost C. For our method, we kept most of the parameters
+ﬁxed for all the datasets: hmax = 10, nleaf = 100, and,
+λ = 5, where hmax and nleaf are the maximum level of
+the tree and the minimal number of data points in each leaf.
+Leaf node sparsity k was set to 100 for Delicious-200K and
+20 for all others. This parameter can be very intuitively
+set as an increasing function of label set size. We hand
+tuned the projection dimensionality d and set it to 100 for
+Delicious and Wiki10-31K, and 50 for others.
+
+Results:
+Table 3 shows the performance of different
+methods along the dimensions of prediction time, model
+size and prediction accuracy (Precision@1 (P@1) and
+Precision@3(P@3)). Note that the strength of our method
+is to achieve similar accuracy with smaller memory foot-
+print and prediction time. Also note that LEML has infe-
+rior performance to all other methods. However, its pre-
+diction times are similar to our method on many datasets.
+FASTXML, SLEEC and GBDT-SPARSE achieve simi-
+lar accuracy on almost all the datasets. For PD-SPARSE,
+we observe that its accuracy can ﬂuctuate badly across it-
+erations in dataset Delicious and Delicious-200K despite
+of trying different set of parameters, even though the re-
+ported dual objective is monotonically decreasing. Also,
+due to its linear nature, its model size is small, but ac-
+In
+curacy is also limited by the capacity of the learner.
+terms of accuracy P@1 and P@3, there is no clear trend of
+GBDT-SPARSE being better or worse than others. How-
+ever, GBDT-SPARSE gives an order of magnitude speed-
+up in prediction times for almost all the datasets. For exam-
+ple, for Delicious-200K, our method is 10.58x and 14.72x
+faster than FASTXML and SLEEC respectively. Similar
+gains can be observed for the model size. It is worth noting
+that we do not ﬁne-tune most hyper parameters for deci-
+sion tree building process, and the set of parameters can
+get good accuracy on all of our datasets.
+
+Figure 1(a)-(c) shows the P@1 as a function of time for
+three datasets. For GBDT-SPARSE and FASTXML, we
+vary the number of trees to get different prediction times.
+For LEML and SLEEC, experiments are ran for differ-
+ent embedding sizes to generate the curve. The more the
+curve is towards top left, better is the performance. For
+GBDT-SPARSE, the curves sharply rise in performance;
+though not shown, they become stable at the highest perfor-
+mance values shown. Though GBDT-SPARSE does not al-
+ways beat all methods on performance, we can observe that
+for any ﬁxed prediction time our approach impressively
+outperforms all others. Figure 1(d)-(f) shows the corre-
+sponding curves as a function of model size. Again similar
+observations can be made, except for Wiki10-31K where
+In summary, we can
+SLEEC has a similar model size.
+see from Figure 1 that to achieve similar accuracy, GBDT-
+SPARSE takes much less prediction time and the model size
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+Table 3: Comparison on ﬁve large-scale multi-label datasets. Time refers to prediction times in seconds. Size is the model
+size in megabytes. All experiments are conducted on a machine with an Intel Xeon X5440 2.83GHz CPU and 32GB RAM.
+For PD-Sparse we use a similar machine with 192GB memory due to its large memory footprint. Please zoom.
+
+LEML
+
+Time
+0.28
+0.16
+22.77
+11.67 13.28 80.26 65.73
+
+Size P@1 P@3
+Time
+0.17 82.83 66.29
+65.16
+1.52
+1.18 63.23 58.51
+1.70 20.26 15.58 211.88 1.57G 20.93 16.24 384.11
+30.19
+
+Time
+3.44
+0.24
+
+FASTXML
+Size P@1 P@3
+7.25 83.13 66.39
+39.66 70.14 64.51
+
+Mediamill
+Delicious
+NUS-WIDE
+Wiki10-31K
+
+1.04
+Delicious-200K 12.85 790.4 40.47 37.69 146.55 11.3G 42.99 38.50 203.86 7.98G 45.63 40.77 67.51
+
+853.5 82.71 67.87
+
+10.21
+
+SLEEC
+Size P@1 P@3 Time
+
+92.04 85.02 68.40 0.034 0.005 82.99 62.32
+0.25 52.02 45.91
+
+4.19 66.78 60.32 0.036
+
+PD-SPARSE
+GBDT-SPARSE (proposed)
+Size P@1 P@3 Time
+Size P@1 P@3
+0.60
+3.54 84.23 67.85
+4.76 69.29 63.62
+0.13
+8.86 14.46 21.65 16.73
+0.60 82.03 67.44
+1.30 85.81 84.34 70.82
+3.80 35.47 32.07 13.85 338.0 42.11 39.06
+
+program crashed
+
+212.2 15.32 12.36
+570.2 85.99 73.65
+
+(a) Delicious
+
+(b) Wiki10-31K
+
+(c) NUS-WIDE
+
+(d) Delicious
+
+(e) Wiki10-31K
+(f) NUS-WIDE
+Figure 1: Top: P@1 as a function of time. Bottom: P@1 as a function of model size.
+
+is much smaller than other methods.
+
+Multicore Implementation: Unlike random-forest based
+methods, paralllelizing GBDT is not straightforward.
+In
+our problem, because L is large, existing frameworks like
+XGBoost (Chen & Guestrin, 2016) do not scale well as it
+needs O(L) storage per leaf, and histogram based methods
+need O(L) space per bin to accumulate gradients. We im-
+plement our algorithm by ﬁnding best splits for different
+features on a single leaf in parallel. Although this requires
+extra time to sort feature values on each leaf, we ﬁnd that
+for datasets with a big L the sorting time is insigniﬁcant.
+We run our algorithm with Delicious-200K on a 28-core
+dual socket E5-2683v3 machine to build a GBDT with 5
+trees, and record the average time for building one tree in
+Table 4. The good scaling shows that our algorithm is ca-
+pable for handling big data. Also, the huge speedup from
+parallelization is a big advantage to use our algorithm in
+practice, comparing to algorithms that cannot be easily par-
+allelized, like PD-SPARSE.
+
+6. Conclusion
+
+We apply GBDT to solve problems with high dimensional
+sparse output. Applying GBDT to this setting has sev-
+
+Table 4: Average time (in seconds) for building one tree
+using GBDT-SPARSE on dataset Delicious-200K.
+
+1
+
+Threads
+4
+Time (s) 1092.60 353.07 191.22 153.53 117.49
+9.30x
+Speedup baseline
+
+14 28 (2 sockets)
+85.36
+12.80x
+
+5.71x
+
+3.09x
+
+7.12x
+
+10
+
+8
+
+eral challenges: large dense gradient/residual matrix, im-
+balanced trees due to data sparsity, and large memory foot-
+print for leaf nodes. We made non-trivial modiﬁcations to
+GBDT (use embeddings to make features dense, introduce
+label vector sparsity at leaf nodes) to make it suitable for
+handling high dimensional output. These improvements
+can signiﬁcantly reduce the prediction time and model size.
+As an application, we use our proposed method to solve ex-
+treme multi-label learning problem. Compared to the state-
+of-the-art baselines, our method shows an order of magni-
+tude speed-up (reduction) in prediction time (model size)
+on datasets with label set size 1000 − 200000.
+
+Acknowledgments This research was supported by NSF
+grants CCF-1320746,
+IIS-1546452 and CCF-1564000.
+Cho-Jui Hsieh also acknowledges support from XSEDE.
+
+Gradient Boosted Decision Trees for High Dimensional Sparse Output
+
+References
+
+Abuzaid, Firas, Bradley, Joseph K., Liang, Feynman T.,
+Feng, Andrew, Yang, Lee, Zaharia, Matei, and Tal-
+walkar, Ameet S. Yggdrasil: An optimized system for
+training deep decision trees at scale. In NIPS, 2016.
+
+Agrawal, Rahul, Gupta, Archit, Prabhu, Yashoteja, and
+Varma, Manik. Multi-label learning with millions of
+labels: Recommending advertiser bid phrases for web
+pages. In WWW, 2013.
+
+Panda, Biswanath, Herbach, Joshua S., Basu, Sugato, and
+Bayardo, Roberto J. PLANET: massively parallel learn-
+ing of tree ensembles with mapreduce. Proceedings of
+VLDB, 2(2):1426–1437, 2009.
+
+Prabhu, Yashoteja and Varma, Manik. Fastxml: A fast,
+accurate and stable tree-classiﬁer for extreme multi-label
+learning. In KDD, 2014.
+
+Schapire, Robert E. A brief introduction to boosting. In
+
+IJCAI, 1999.
+
+Babbar, Rohit and Sch¨olkopf, Bernhard. Dismec: Dis-
+tributed sparse machines for extreme multi-label classi-
+ﬁcation. In WSDM, pp. 721–729, 2017.
+
+Si, Si, Shin, Donghyuk, Dhillon, Inderjit S., and Parlett,
+Beresford N. Multi-scale spectral decomposition of mas-
+sive graphs. In NIPS, pp. 2798–2806, 2014.
+
+Bhatia, Kush, Jain, Himanshu, Kar, Purushottam, Varma,
+Manik, and Jain, Prateek. Sparse local embeddings for
+extreme multi-label classiﬁcation. In NIPS, 2015.
+
+Si, Si, Chiang, Kai-Yang, Hsieh, Cho-Jui, Rao, Nikhil, and
+Dhillon, Inderjit S. Goal-directed inductive matrix com-
+pletion. In ACM SIGKDD, 2016.
+
+Yen, Ian En-Hsu, Huang, Xiangru, Ravikumar, Pradeep,
+Zhong, Kai, and Dhillon, Inderjit S. Pd-sparse : A pri-
+mal and dual sparse approach to extreme multiclass and
+multilabel classiﬁcation. In ICML, pp. 3069–3077, 2016.
+
+Yu, Hsiang-Fu, Jain, Prateek, Kar, Purushottam, and
+Dhillon, Inderjit S. Large-scale multi-label learning with
+missing labels. In ICML, 2014.
+
+Breiman, Leo. Bagging predictors. Machine Learning, 24
+
+(2):123–140, 1996.
+
+Chen, Tianqi and Guestrin, Carlos. Xgboost: A scalable
+
+tree boosting system. In KDD, 2016.
+
+Chen, Tianqi, Singh, Sameer, Taskar, Ben, and Guestrin,
+Carlos. Efﬁcient second-order gradient boosting for con-
+ditional random ﬁelds. In AISTATS, 2015.
+
+Choromanska, Anna and Langford, John. Logarithmic time
+online multiclass prediction. In NIPS, pp. 55–63, 2015.
+
+Friedman, Jerome H. Greedy function approximation: A
+gradient boosting machine. The Annals of Statistics, 29
+(5):1189–1232, 2001.
+
+Friedman, Jerome H. Stochastic gradient boosting. Com-
+putational Statistics and Data Analysis, 38(4):367–378,
+2002.
+
+Halko, Nathan, Martinsson, Per-Gunnar, and Tropp,
+Joel A. Finding structure with randomness: Probabilistic
+algorithms for constructing approximate matrix decom-
+positions. SIAM review, 53(2):217–288, 2011.
+
+Jasinska, Kalina, Dembczynski, Krzysztof, Busa-Fekete,
+R´obert, Pfannschmidt, Karlson, Klerx, Timo, and
+H¨ullermeier, Eyke. Extreme f-measure maximization
+using sparse probability estimates. In ICML, pp. 1435–
+1444, 2016.
+
+Liaw, Andy and Wiener, Matthew. Classiﬁcation and re-
+gression by random forest. R News, 2(3):18–22, 2002.
+
+Meng, Qi, Ke, Guolin, Wang, Taifeng, Chen, Wei,
+Ye, Qiwei, Ma, Zhi-Ming, and Liu, Tie-Yan.
+A
+communication-efﬁcient parallel algorithm for decision
+tree. In NIPS, 2016.
+
+

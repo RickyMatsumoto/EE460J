@@ -1,0 +1,1616 @@
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+Serban Stan 1 Morteza Zadimoghaddam 2 Andreas Krause 3 Amin Karbasi 1
+
+Abstract
+In this paper, we consider optimizing submodu-
+lar functions that are drawn from some unknown
+distribution. This setting arises, e.g., in recom-
+mender systems, where the utility of a subset of
+items may depend on a user-speciﬁc submodu-
+lar utility function. In modern applications, the
+ground set of items is often so large that even
+the widely used (lazy) greedy algorithm is not
+efﬁcient enough. As a remedy, we introduce the
+problem of sublinear time probabilistic submod-
+ular maximization: Given training examples of
+functions (e.g., via user feature vectors), we seek
+to reduce the ground set so that optimizing new
+functions drawn from the same distribution will
+provide almost as much value when restricted to
+the reduced ground set as when using the full set.
+
+We cast this problem as a two-stage submodular
+maximization and develop a novel efﬁcient al-
+gorithm for this problem which offers a 1
+2 (1 −
+1
+e2 ) approximation ratio for general monotone
+submodular functions and general matroid con-
+straints. We demonstrate the effectiveness of
+our approach on several real-world problem in-
+stances where running the maximization prob-
+lem on the reduced ground set leads to two folds
+speed-up while incurring almost no loss.
+
+1. Introduction
+
+Motivated by applications in data summarization (Lin &
+Bilmes, 2011; Wei et al., 2013; Mirzasoleiman et al.,
+2016d) and recommender systems (El-Arini et al., 2009;
+Yue & Guestrin, 2011; Mirzasoleiman et al., 2016a), we
+tackle the challenge of efﬁciently solving many statistically
+related submodular maximization problems. In these appli-
+cations, submodularity arises in the form of user-speciﬁc
+
+1Yale University, New Haven, Connecticut, USA 2Google
+Research, New York, NY 10011, USA 3ETH Zurich,
+Zurich, Switzerland.
+Correspondence to: Amin Karbasi
+<amin.karbasi@yale.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+utility functions for valuating sets of items, and a proto-
+typical problem is to ﬁnd sets of say k items with near-
+maximal value (Krause & Golovin, 2012; Mirzasoleiman
+et al., 2016b). Even though efﬁcient greedy algorithms ex-
+ist for submodular maximization, those become infeasible
+when serving many users and optimizing over large item
+collections. To this end, given training examples of (users
+and their utility) functions drawn from some unknown dis-
+tribution, we seek to reduce the ground set to a small (ide-
+ally sublinear) size. The hope is that optimizing new func-
+tions drawn from the same distribution will incur little loss
+when optimized on the reduced set compared to optimizing
+over the full set.
+
+Optimizing the empirical objective is an instance of two-
+stage submodular maximization, a problem recently con-
+sidered by Balkanski et al. (2016) who provide a 0.316
+approximation guarantee for the case of coverage func-
+tions (more about it in the related work). One of our
+key technical contributions is a computationally efﬁcient
+novel local-search based algorithm, called Replacement-
+Greedy, for two-stage submodular maximization, that pro-
+vides a constant-factor 0.432 approximation guarantee for
+the general case of monotone submodular functions. Our
+approach also generalizes to arbitrary matroid constraints,
+and empirically compares favorably to prior work. We fur-
+ther analyze conditions under which our approach prov-
+ably enables approximate submodular optimization based
+on substantially reduced ground sets, resulting the ﬁrst vi-
+able approach towards sublinear-time submodular maxi-
+mization.
+
+Lastly, we demonstrate the effectiveness of our approach
+on recommender systems for which we compare the utility
+value and running time of maximizing a submodular func-
+tion over the full data set and its reduced version returned
+by our algorithm. We consistently observe that the loss we
+incur is negligible (around 1%) while the speed up is enor-
+mous (about two orders of magnitude).
+
+Related work Submodular maximization has found
+many applications in machine learning, ranging from fea-
+ture/variable selection (Krause & Guestrin, 2005) to dic-
+tionary learning (Das & Kempe, 2011) to data summariza-
+tion (Wei et al., 2014b; Lin & Bilmes, 2011; Tschiatschek
+et al., 2014) to recommender systems (Yue & Guestrin,
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+2011; El-Arini et al., 2009). A seminal result of Nemhauser
+et al. (1978) proves that a simple greedy algorithm pro-
+vides an optimal constant factor (1 − 1/e) approxima-
+tion guarantee. Given the size of modern data sets, much
+work has focused on solving submodular maximization at
+scale. This work ranges from accelerating the greedy al-
+gorithm itself (Minoux, 1978; Mirzasoleiman et al., 2015;
+2016a; Badanidiyuru & Jan, 2014; Buchbinder et al., 2014)
+to distributed (Kumar et al., 2013; Mirzasoleiman et al.,
+2013) and streaming (Krause & Gomes, 2010; Badani-
+diyuru et al., 2014) approaches, as well as algorithms based
+on ﬁltering the ground set in multiple stages (Wei et al.,
+2014a; Feldman et al., 2017). All of these approaches aim
+to solve a single ﬁxed problem instance, and have computa-
+tional cost at least linear in the ground set size. In contrast,
+we seek to solve multiple related problems with sublinear
+effort.
+
+Solving multiple submodular problems arises in online
+submodular optimization (Streeter & Golovin, 2008; Hazan
+& Kale, 2009; Jegelka & Bilmes, 2011). In this setting the
+goal is to design algorithms that perform well in hindsight
+(minimize some form of regret). The computational com-
+plexity of these algorithms is typically (super)-linear in the
+ground set size. Studying online variants of our problem is
+an interesting direction for future work.
+
+Closest to our work is the approach of Balkanski et al.
+(2016) that we build on and compare within this paper.
+For general submodular objectives, they propose two al-
+gorithms: one based on continuous optimization (with pro-
+hibitive computational complexity in terms of the size of
+the ground set n), which provides constant factor approx-
+imation guarantees only for large values of k (i.e., cardi-
+nality constraint), as well as one that has exponential com-
+plexity in terms of k. To circumvent the large computa-
+tional complexity of the above algorithms, they also pro-
+2 (1 − 1
+posed a heuristic local search method that offers a 1
+e )
+approximation for the special case of coverage functions.
+The query complexity of this algorithm is O(km(cid:96)n2 log n)
+where (cid:96) is the size of the summary and m is the number
+of considered submodular functions in the two-stage op-
+timization. One of our key contributions is a novel and
+computationally efﬁcient algorithm for the two-stage prob-
+lem. More speciﬁcally, our method ReplacementGreedy
+provides a 1
+2 (1 − e−2) approximation guarantee for gen-
+eral monotone submodular functions subject to a general
+matroid constraint with only O(rm(cid:96)n) query complexity
+(here r denotes the rank of the matroid). As argued by
+Balkanski et al. (2016), two-stage submodular maximiza-
+tion can be seen as a discrete analogue of representation
+learning problems like dictionary learning. It is important
+to note that the two-stage submodular maximization prob-
+lem is fractionally subadditive (XOS) (Feige, 2009). Al-
+though it is tempting to use the XOS property of our two-
+
+stage function especially given the positive results for so-
+cial welfare XOS maximization, there are several obstacles
+preventing us from doing so. First, evaluating the two stage
+function is NP-hard, so we cannot have access to oracle
+value queries. Second, as shown by Singer (2010); Sha-
+har Dobzinski & Schapira (2005); Ashwinkumar Badani-
+diyuru (2012), any n1/2−(cid:15) approximation of a XOS re-
+quires exponentially many oracle value queries. Therefore
+the XOS property itself is not sufﬁcient to get any positive
+algorithmic result for our problem. Nevertheless, we can
+still provide constant factor approximation with computa-
+tionally efﬁcient algorithms.
+
+Repeatedly optimizing related classes of submodular func-
+tions is a key subroutine in many applications, such
+as structured prediction (Lin & Bilmes, 2012) or lin-
+ear submodular bandits (Yue & Guestrin, 2011).
+In
+both of these problems, one needs to repeatedly maxi-
+mize weighted combinations of submodular functions, for
+changing weights. Our work can be viewed as providing an
+approach towards accelerating this central subroutine.
+
+2. Problem Setup
+
+In this paper, we consider the problem of frequently op-
+timizing monotone submodular functions f : 2Ω → R+
+that are drawn from some unknown probability distribution
+D. Hereby, Ω denotes the ground set of size n over which
+the submodular functions are deﬁned. W.l.o.g. we assume
+that the maximum value of any function f drawn from D
+does not exceed 1. This setting arises in many applications,
+such as recommender systems, where the random function
+f = fu refers to the (predicted) valuation over sets of items
+for a particular user u, which may vary depending on their
+features (c.f., Yue & Guestrin (2011)). These applications
+typically dictate some constraints, i.e., one seeks to solve
+
+T ∗ = arg max f (T ) s.t. T ∈ I,
+
+where I ⊆ 2Ω is a collection of feasible sets.
+In this
+paper we primarily consider cardinality constraints, i.e.,
+I = {T ⊆ Ω : |T | ≤ k}. Our results will hold also in
+the more general setting where I is the collection of in-
+dependent sets in some matroid (Calinescu et al., 2011).
+Throughout the paper r denotes the rank of the matroid. In
+the special case of cardinality constraint, the rank is r = k.
+
+While NP-hard, good approximation algorithms are known
+for submodular maximization. For example, the classical
+greedy algorithm of Nemhauser et al. (1978) or its accel-
+erated variants (Minoux, 1978; Mirzasoleiman et al., 2015;
+2016a; Badanidiyuru & Jan, 2014; Buchbinder et al., 2014)
+provide an optimal constant factor (1−1/e) approximation
+for maximization under cardinality constraints. In modern
+applications, however, the system may face a large num-
+ber of users, and large collections of items Ω. Hence the
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+naive strategy of even greedily optimizing fu for each user
+separately may be too costly.
+
+To remedy this situation, in this paper we consider the fol-
+lowing approach: Given training data (i.e., a sample collec-
+tion of functions f1, . . . , fm), we invest computation once
+to obtain a reduced ground set S of size (cid:96) (cid:28) n = |Ω|.
+The hope is that optimizing new functions arising at test
+time will provide almost as much value when restricting
+the choice to items in S, than when considering arbitrary
+items in Ω, while being substantially more computationally
+efﬁcient.
+
+More formally, the expected performance when using the
+candidate reduced ground set S is
+
+can sample functions from D and construct the empirical
+average, similar to Problem (2), and try to optimize it by
+ﬁnding Sm,(cid:96). Hence, the total generalization error we incur
+in this process is bounded by
+
+error = |G(Ω) − G(Sm,(cid:96))|
+
+≤ |G(Ω) − G(S∗
+compression error
+
+(cid:96) )|
+
++ |G(S∗
+
+(cid:96) ) − G(Sm,(cid:96))|
+
+.(5)
+
+approximation error
+
+Note that once we have error ≤ (cid:15) for some small (cid:15) > 0 then
+maximizing over Sm,(cid:96) is almost as good as maximizing
+over Ω (but possibly much faster). To that end we need
+to bound both compression error and approximation error.
+In fact we can prove the following result for the required
+number of samples to ensure small approximation error.
+
+G(S) = Ef ∼D max
+T ∈I(S)
+
+f (T ),
+
+(1)
+
+Theorem 1. For any (cid:15), δ > 0, and any set S of size at most
+(cid:96) we can ensure that
+
+where we use I(S) ≡ {T ∈ I and T ⊆ S} to refer to
+the collection of feasible sets restricted to those containing
+only elements from S. The optimum achievable perfor-
+mance would be G(Ω). Our goal will be to pick a set S
+of small size (cid:96) to maximize G(S), or equivalently make
+|G(Ω) − G(S)| small.
+
+Special cases. Some observations are in order. If D is de-
+terministic, i.e., puts all mass on a single function f , then
+we simply recover classical constrained submodular max-
+imization, since G(S) = f (S) for sets up to size k. If D
+is known to be the uniform distribution over m functions,
+G(S) becomes
+
+Gm(S) =
+
+max
+T ∈I(S)
+
+fi(T ).
+
+(2)
+
+1
+m
+
+m
+(cid:88)
+
+i=1
+
+Gm(S) is not generally submodular, but Balkanski et al.
+(2016) have developed approximation algorithms for max-
+imizing Gm under the constraint that |S| ≤ (cid:96),1 i.e., for the
+problem:
+
+
+
+Pr
+
+max
+S⊂Ω
+|S|≤(cid:96)
+
+
+
+|G(S) − Gm(S)| > (cid:15)
+
+ < δ
+
+as long as m = O(((cid:96) log(n) + log(1/δ))/(cid:15)2).
+
+In contrast, the compression error cannot be made arbitrar-
+ily small in general as the following example shows.
+
+Bad Example. Suppose Ω = [n], m = n and D is the
+uniform distribution over the functions f1, . . . , fn, where
+fi(S) is 1 if i ∈ S, 0 otherwise. Each fi is in fact modular.
+Let k = 1. It is easy to see that G(S) = |S|/n. Hence to
+achieve compression error less than (cid:15), |S| must be greater
+than (1 − (cid:15))n. In particular for (cid:15) < 1/n, S must be equal
+to the full set.
+
+Sufﬁcient conditions for sublinear (cid:96). The above exam-
+ple shows that one needs additional structural assumptions.
+One simple special case arises when the union of the op-
+timal sets for all functions in the support of D is of size
+(cid:96) < n, i.e.,
+
+Sm,(cid:96) = arg max
+S⊂Ω,|S|≤(cid:96)
+
+max
+T ∈I(S)
+
+fi(T ).
+
+1
+m
+
+m
+(cid:88)
+
+i=1
+
+(3)
+
+(cid:12)
+(cid:12){T ∗ : T ∗ = arg max
+
+f (T ) for some f ∈ supp(D)}(cid:12)
+
+(cid:12) = (cid:96).
+
+T ∈I
+
+The general case.
+In this paper, we consider the problem
+of maximizing G(S) for general distributions D. I.e., we
+seek to solve:
+
+S∗
+
+(cid:96) = arg max
+S⊂Ω,|S|≤(cid:96)
+
+G(S).
+
+(4)
+
+3. Probabilistic Submodular Maximization
+
+Since the distribution D is unknown, we cannot ﬁnd S∗
+(cid:96)
+or its corresponding optimum value, G(S∗
+(cid:96) ). Instead, we
+
+1Balkanski et al. (2016) only consider cardinality constraints.
+
+I.e., if D is any distribution over at most m functions,
+clearly (cid:96) ≥ km sufﬁces.
+
+This assumption might be too strong in practice, however.
+Instead, we will consider another set of assumptions that al-
+low bounding the compression error in the case of cardinal-
+ity constraints. We assume Ω is endowed with a metric d.
+This metric is extended to sets of equal size so that for any
+sets T, T (cid:48) of equal size, d(T, T (cid:48)) is the weight of a minimal
+matching of elements in T to elements in T (cid:48), where the
+weight of (v, v(cid:48)) for v ∈ T and v(cid:48) ∈ T (cid:48) is d(v, v(cid:48)). We will
+assume that any function f ∼ D is L-Lipschitz continuous
+w.r.t. d, i.e., |f (T )−f (T (cid:48))| ≤ Ld(T, T (cid:48)) for some constant
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+L for all sets T and T (cid:48) of size k. Many natural submodular
+functions arising in data summarization tasks satisfy this
+condition, such as exemplar-based clustering and certain
+log-determinants, see, e.g., (Mirzasoleiman et al., 2016c).
+Theorem 2. Suppose each function f ∼ D is L-Lipschitz
+continuous in (Ω, d). Then, for any (cid:15) > 0, the compression
+error is bounded by (cid:15) as long as (cid:96) ≥ kn(cid:15)/2kL, where nδ is
+the δ-covering number of (Ω, d).
+
+The proofs of Theorems 1 and 2 are given in the appendix.
+
+4. Algorithm
+
+From the discussions in the previous section, we concluded
+that under appropriate statistical conditions, we can ensure
+that the error in Eq. 5 can be made small if we have enough
+samples dictated by Theorem 1. However, our conclusion
+heavily relied on the fact that we can ﬁnd the set Sm,(cid:96) in
+Problem 3. As we noted earlier, the objective function in
+Problem 3 is not submodular in general (Balkanski et al.,
+2016), thus the classical greedy algorithm may not provide
+any approximation guarantees.
+
+Our proposed algorithm ReplacementGreedy works in (cid:96)
+rounds where in each round it tries to augment the solu-
+tion in a particular greedy fashion.
+It starts out with an
+empty set S = ∅, and checks (in each round) whether a
+new element can be added without violating the matroid
+constraint (i.e., stay an independent set) or otherwise it can
+be replaced with an element in the current solution while
+increasing the value of the objective function. To describe
+how these decisions are made we need a few deﬁnitions.
+Let
+
+∆i(x, A) = fi({x} ∪ A) − fi(A)
+
+denote the marginal gain of adding x to the set A if
+we consider function fi. Similarly, we can deﬁne the
+gain of removing an element y and replacing it with x
+as ∇i(x, y, A) = fi({x} ∪ A \ {y}) − fi(A). Since
+fi is monotone we know that ∆i(x, A) ≥ 0. However,
+∇i(x, y, A) may or may not be positive. Let us consider
+I(x, A) = {y ∈ A : A ∪ {x} \ {y} ∈ I}. This is the set
+of all elements in A such that if we replace them with x we
+will not violate the matroid constraint. Then, we deﬁne the
+replacement gain of x w.r.t. a set A as follows:
+
+(cid:40)
+
+∇i(x, A) =
+
+∆i(x, A)
+max{0, maxy∈I(x,A) ∇i(x, y, A)}
+
+if A ∪ {x} ∈ I,
+o.w.
+
+In words, ∇i(x, A) denotes how much we can increase the
+value of fi(A) by either inserting x into A or replacing x
+with one element of A while keeping A an independent
+set. Finally, let Repi(x, A) be the element that should be
+replaced by x to maximize the gain and stay independent.
+
+Formally,
+
+(cid:40)
+
+Repi(x, A) =
+
+∅
+arg maxy∈I(x,A) ∇i(x, y, A)
+
+if A ∪ {x} ∈ I,
+o.w.
+
+With the above deﬁnitions it is easy to explain how Re-
+placementGreedy works. At all times, it maintains a so-
+lution S and a collection of feasible solutions Ti ⊆ S for
+each function fi (all initialized to the empty set in the be-
+ginning). In each iteration, it picks the top element x∗ from
+the ground set Ω, based on its total contribution to fi’s,
+i.e, (cid:80)m
+i=1 ∇i(x, Ti), and updates S. Then Replacement-
+Greedy checks whether any of Ti’s can be augmented.
+This is done either by simply adding x∗ (without violat-
+ing the matroid constraint) or replacing it with an element
+from Ti. The condition ∇i(x∗, Ti) > 0 ensures that such
+replacement is executed only if the gain is positive.
+
+Why does ReplacementGreedy work? Note that
+solving maxT ∈I(S) fi(T ) is an N P-hard problem. How-
+ever, ReplacementGreedy ﬁnds and maintains indepen-
+dent sets Ti ⊆ S throughout the course of the algorithm. In
+fact, the collection {S, T1, . . . , Tm} lower bounds Gm(S)
+by 1
+i=1 fi(Ti). Moreover, each iteration increases the
+m
+aggregate value (cid:80)m
+i=1 fi(Ti) by (cid:80)m
+i=1 ∇i(x∗, Ti). What
+we show in the following theorem is that after (cid:96) iterations,
+the accumulation of those gains reaches a constant factor
+approximation to the optimum value.
+
+(cid:80)m
+
+Theorem 3. In only O((cid:96)mnr) function evaluations Re-
+placementGreedy returns a set S of size at most (cid:96) along
+with independent sets Ti ∈ I(S) such that
+
+Gm(S) ≥
+
+1 −
+
+Gm(Sm,(cid:96)).
+
+(cid:18)
+
+1
+2
+
+(cid:19)
+
+1
+e2
+
+A few comments are in order. Balkanski et al. (2016) pro-
+posed an algorithm with (1 − 1/e)/2-approximation guar-
+antee for the case where fi’s are coverage functions and the
+constraint is a uniform matroid. This is achieved by solv-
+ing (potentially large) linear programs while maintaining
+O(k(cid:96)mn2 log n) function evaluations. In contrast, our re-
+sult holds for any collection of monotone submodular func-
+tions and any matroid constraint. Our approximation guar-
+antee (1 − e−2)/2 is better than (1 − 1/e)/2. Finally, our
+algorithm is arguably faster in terms of both running time
+(as it simply runs a modiﬁed greedy method) and query
+complexity (as it is linear in all the parameters).
+
+5. Experiments
+
+In this section, we describe our experimental setting. We
+offer details on the datasets we used and the baselines
+we ran ReplacementGreedy against. We ﬁrst show that
+ReplacementGreedy is highly efﬁcient (i.e., high utility,
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+Algorithm 1 ReplacementGreedy
+S ← ∅, Ti ← ∅ (∀1 ≤ i ≤ m)
+for 1 ≤ j ≤ (cid:96) do
+
+x∗ ← arg maxx∈Ω
+S ← S ∪ {x∗}
+for all 1 ≤ i ≤ m do
+
+(cid:80)m
+
+i=1 ∇i(x, Ti)
+
+if ∇i(x∗, Ti) > 0 then
+
+Ti ← Ti ∪ {x∗}\Repi(x∗, Ti)
+
+end if
+end for
+
+end for
+Return sets S and T1, T2, · · · , Tm
+
+low running time) when solving the two-stage submodu-
+lar maximization problem on two concrete summarization
+applications: article summarization and image summariza-
+tion. We then demonstrate sublinear submodular maxi-
+mization by showing that ReplacementGreedy can efﬁ-
+ciently reduce the dataset while incurring minimum loss.
+We test the performance of ReplacementGreedy on a
+movie dataset where movies should be recommended to
+users with user-speciﬁc utility functions.
+
+5.1. Baselines
+
+LocalSearch. This is the main algorithm described in
+Balkanski et al. (2016)2. In our experiments, we use (cid:15) =
+0.2. We initialize S by incrementally picking (cid:96) elements
+such that at each step we maximize the sum of marginal
+gains for the m functions fi.
+
+GreedySum. It greedily selects (cid:96) elements while maxi-
+mizing the submodular function ˆF (S) = (cid:80)m
+i=1 fi(S). To
+ﬁnd k elements for each fi it runs another greedy algo-
+rithm.
+
+GreedyMerge. It ideally serves as an upper bound for the
+objective value, by greedily selecting k elements for each
+function fi and returning their union. GreedyMerge can
+easily violate the cardinality constraint (cid:96) as its solution can
+have as many as mk elements.
+
+5.2. Metrics
+
+Objective value. We compare algorithms’ solutions S ac-
+cording to the scores Gm(S) for the two-stage (empirical)
+problem, and G(S) for the sublinear maximization prob-
+lem.
+
+Loss. For the sublinear maximization problem, we measure
+the relative loss in performance when using the summary,
+compared to the full ground set, i.e., report 1−G(S)/G(Ω).
+
+2We thank the authors for providing us with their implemen-
+
+tation.
+
+Running time. We also compare the algorithms based on
+their wall-clock running time. The experiments were ran
+in a Python 2.7 environment on a OSX 10.12.13 machine.
+The processor was a 2.5 GHz Intel Core i7 with 16 GB
+1600 MHz DDR3 memory.
+
+5.3. Two-Stage Submodular Maximization
+
+Article summarization on Wikipedia. The aim is to se-
+lect a small, highly relevant subset of wikipedia articles
+from a larger corpus. For this task, we reproduce the ex-
+periment from Balkanski et al. (2016) on Wikipedia articles
+for Machine Learning. The dataset contains n = 407 arti-
+cles divided into m = 22 categories, where each category
+represents a subtopic from Machine Learning. The rele-
+vance of a set S with respect to a category i is measured
+by the submodular function fi that counts the number of
+pages that belong to category i with a link to at least one
+page in S. These submodular functions are L-Lipschitz
+with L = 1 by considering the distance between two arti-
+cles as the fraction of all pages that have a link to exactly
+one of these two articles. Fig. 1a and 1b show the objective
+values for a ﬁx k = 5 (and varying (cid:96)) and a ﬁxed (cid:96) = 20
+(and varying k). We ﬁnd that ReplacementGreedy and
+LocalSearch perform the same while GreedySum falls
+off somewhat for larger values of (cid:96). However, if we look at
+the running times (log scale) in Fig. 1e and 1f we observe
+that ReplacementGreedy is considerably faster than Lo-
+calSearch and close to GreedySum.
+
+(cid:80)
+
+Image summarization on VOC2012. For this application
+we use a subset of the VOC2012 dataset (Everingham et al.,
+2014) where we consider n = 150 with m = 20 categories.
+Each category indicates a certain visual queue appearing in
+the image such as chair, bird, hand, etc. We wish to obtain
+a subset of these images that are relevant to all the cate-
+gories. To that end we use Exemplar Based Clustering (c.f.,
+Mirzasoleiman et al. (2013)). Let Ωi be the portion of the
+ground set associated to category i. For any set S we also
+let Si = Ωi ∩ S denote its subset that is part of category
+i. We deﬁne fi(S) = Li({e0}) − Li(S ∪ {e0}) where
+Li(S) = 1
+miny∈Si d(x, y). Here, d measures
+|Ωi|
+the distance between images (e.g., (cid:96)2 norm), and e0 is an
+auxiliary element. With respect to distance d, our submod-
+ular functions are L-Lipschitz with L = 1. Also, images
+are represented by feature vectors obtained from categories.
+For example, if there were two categories a and b, and
+an image had features [a, a, b], its feature vector would be
+(2, 1). Again if we look at Fig. 1c (for ﬁxed k = 5 and
+varying (cid:96)) and Fig. 1d (for (cid:96) = 20 and varying k) we see
+that ReplacementGreedy and LocalSearch achieve the
+same objective value. However, Fig. 1g and 1h show that
+LocalSearch is signiﬁcantly slower than Replacement-
+Greedy.
+
+x∈Ωi
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+(a) Wikipedia (k = 5)
+
+(b) Wikipedia ((cid:96) = 20)
+
+(c) VOC (k = 5)
+
+(d) VOC ((cid:96) = 20)
+
+(e) Wikipedia (k = 5)
+
+(f) Wikipedia ((cid:96) = 20)
+
+(g) VOC (k = 5)
+
+(h) VOC ((cid:96) = 20)
+
+Figure 1. Objective values and runtimes for our experiments. The two columns on the left correspond to the Wikipedia dataset and the
+two columns on the right correspond to the VOC2012 dataset. Note that the runtimes are all in log-scale. We let k = 5 and vary (cid:96) or ﬁx
+(cid:96) = 20 and vary k.
+
+Figure 2. Images chosen by our algorithm on the VOC2012 dataset, for the case when (cid:96) = 7 and k = 5
+
+5.4. Sublinear Summarization
+
+In this part, we experimentally show how Replacement-
+Greedy can reduce the size of the dataset to (cid:96) (cid:28) n without
+incurring too much loss in the process. To do so, we con-
+sider a movie recommendation application.
+
+Movie recommendation with missing ratings.
+The
+dataset consists of user ratings on a scale of 1 to 5, along
+with some movie information. There are 20 genres (An-
+imation, Comedy, Thriller, etc) and each movie can have
+one or more of these genres assigned to it. The goal is to
+ﬁnd a small set S of movies with the property that each user
+will be able to ﬁnd k enjoyable movies from S.
+
+In our setting we consider the top 2000 highest rated
+movies (that were rated by at least 20 users) alongside the
+top 200 users ordered by number of movies they rated from
+this set. We assign a user-speciﬁc utility function fi to each
+user i as follows. Let Ai be the subset of A which user i
+rated. Let g be the number of movie genres. Furthermore,
+we let R(i, A, j) represent the highest rating given by user i
+to a movie from the set A with genre j. We also deﬁne wi,j
+to be the proportion of movies in genre j that user i rated
+out of all the movie-genre ratings she provided. So wi,j will
+be higher for the genres that the user provided more feed-
+
+back on, indicating that she might like these genres better.
+Then, the valuation function by user i is as follows:
+
+fi(A) =
+
+wi,jR(i, A, j).
+
+g
+(cid:88)
+
+j=1
+
+In words, the way a user evaluates a set A is by picking the
+highest rated movie from each genre (contained in A) and
+then take a weighted average. If we deﬁne the distance be-
+tween two movies to be the maximum difference of ratings
+they received from the same user, the submodular functions
+fi will be L-Lipschitz with L = 1.
+
+For the experiment, we split the users in half. We use the
+ﬁrst 100 of them as a training set for the algorithms to built
+up their reduced ground set S of size (cid:96). We then com-
+pare submodular maximization with cardinality constraint
+k = 3 on the reduced sets S (returned by the baselines)
+and that of the whole ground set Ω. To this end, we sam-
+ple 20 users from the test group and compute their average
+values. Given the size of this experiment, we were unable
+to run LocalSearch alongside ReplacementGreedy and
+GreedySum. In its place, we introduce the random base-
+line that simply returns a set of size (cid:96) at random. Fig 3a
+shows what fraction of the utility is preserved if we reduce
+the ground set by ReplacementGreedy, GreedySum,
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+(a) Movielens
+
+(b) (cid:96) = 10
+
+(c) (cid:96) = 30
+
+(d) (cid:96) = 60
+
+(e) Movielens Completed
+
+(f) (cid:96) = 10
+
+(g) (cid:96) = 30
+
+(h) (cid:96) = 60
+
+Figure 3. Experimental results in the sublinear regime. The ﬁrst row corresponds to the sublinear experiment where the data set has
+missing entries, and the second row refers to the experiment where we used a completed user-ratings matrix. The ﬁrst column portrays
+the ratio between the mean objective obtained on the summary set versus the ground set for 20 random users from the test set. Columns
+2 through 4 showcase the loss versus runtime for (cid:96) = 10, (cid:96) = 30 and (cid:96) = 60 respectively. In these experiments k = 3.
+
+and RandomSelection. Clearly, RandomSelection per-
+forms poorly. ReplacementGreedy has the highest util-
+ity, starting from 80% and practically closing the gap by re-
+ducing the ground set to only 60 movies. GreedySum also
+closely follows ReplacementGreedy. Fig. 3b, 3c, 3d
+show the loss versus the running time for (cid:96) = 10, (cid:96) = 30,
+and (cid:96) = 60. Of course, if we use use the whole ground set
+Ω, the loss will be zero. This is shown by GreedyMerge.
+However, this comes at the cost of maximizing the utility
+of each user on 2000 movies. Instead, by using Replace-
+mentGreedy, we see that the loss is negligible (even for
+(cid:96) = 30) while the running time suddenly improves by two
+orders of magnitude.
+
+Complete matrix movie recommendation. The previ-
+ous experiment suffers from the potential issue that val-
+ues are estimated conservatively: i.e., a user derives value
+only if we happen to select movies that she actually rated
+in the data. To explore this potential bias, we repeat the
+same experiment, this time by ﬁrst completing the matrix
+of (movie, rating) using standard techniques (Cand´es &
+Recht, 2008). We again consider 200 users and divide them
+into training and test sets. The results are shown in Fig. 3e,
+3f, 3g, 3h. We observe exactly the same trends. Basically,
+a dataset with size 60 is approximately as good as a data set
+of size 2000 if the reduced ground set is carefully selected
+by ReplacementGreedy.
+
+6. Analysis
+
+In this section, we prove that Algorithm Replacement-
+Greedy returns a valid solution S of at most (cid:96) elements
+along with independent sets Ti for all different categories
+
+(cid:80)m
+
+such that the aggregate value 1
+i=1 fi(Ti) is at least
+m
+2 (1 − 1
+1
+e2 ) > 0.43 fraction of the optimum solution’s ob-
+jective value, namely Gm(Sm,(cid:96)). We note that the objec-
+tive value of ReplacementGreedy’s solution, Gm(S), is
+at least 1
+i=1 fi(Ti), and therefore Algorithm Replace-
+m
+2 (1 − 1
+mentGreedy is a 1
+e2 )-approximation algorithm for
+our two stage submodular maximization problem.
+
+(cid:80)m
+
+Proof of Theorem 3. Since Algorithm Replacement-
+Greedy runs in (cid:96) iterations, and adds an element to S
+in each iteration, the ﬁnal output size, |S|, will not be
+more than (cid:96). Each set Ti is initialized with ∅ at the
+beginning which is an independent set. Also whenever
+ReplacementGreedy adds an element x∗ to Ti, it re-
+moves Repi(x∗, Ti). By deﬁnition, either Repi(x∗, Ti) is
+equal to some element y ∈ Ti such that set {x∗} ∪ Ti \ {y}
+is an independent set or Repi(x∗, Ti) is the empty set and
+{x} ∪ Ti is an independent set. In either case, set Ti after
+the update will remain an independent set. Therefore the
+output of ReplacementGreedy consists of independent
+sets Ti ∈ I(S) for every category i. It remains to lower
+bound the aggregate values of these m sets.
+
+(cid:80)m
+
+We lower bound the aggregate increments of values in-
+curred by adding each element we add to S in terms of
+the gap between the current objective value 1
+i=1 fi(Ti)
+m
+and the optimum objective value Gm(Sm,(cid:96)). This way, we
+can show that for each of the (cid:96) elements added to S, the cur-
+rent objective value is incremented enough that in total we
+reach at least 1
+e2 ) fraction of the optimum value. By
+deﬁnition of ∇ and the update operations of Algorithm Re-
+placementGreedy, addition of element x to S, increases
+i=1 fi(Ti) by (cid:80)m
+the summation (cid:80)m
+i=1 ∇i(x, Ti). We also
+
+2 (1 − 1
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+note that the selected element x∗ maximizes this aggregate
+increment. We prove a lower bound benchmark according
+to the potential increments of values by elements in Sm,(cid:96) if
+we add them instead of x∗. In particular, we know that:
+
+m
+(cid:88)
+
+i=1
+
+∇i(x∗, Ti) ≥
+
+1
+|Sm,(cid:96)|
+
+(cid:88)
+
+m
+(cid:88)
+
+x∈Sm,(cid:96)
+
+i=1
+
+∇i(x, Ti)
+
+This equation holds because the rightmost side is the aver-
+age increments of values of optimum elements if we add
+them instead of x∗, and we know that x∗ is the maxi-
+mizer of the total value increments. Let Sm,(cid:96)
+be the in-
+dependent subset of Sm,(cid:96) with maximum fi value, i.e.
+Sm,(cid:96)
+i = arg maxA∈I(Sm,(cid:96)) fi(A). Since the ∇ values are
+all non-negative, we can narrow down the rightmost side of
+above equation, and imply that:
+
+i
+
+m
+(cid:88)
+
+i=1
+
+∇i(x∗, Ti) ≥
+
+1
+|Sm,(cid:96)|
+
+m
+(cid:88)
+
+(cid:88)
+
+i=1
+
+x∈Sm,(cid:96)
+i
+
+∇i(x, Ti)
+
+(6)
+
+We can apply exchange properties of matroids to lower
+bound the total ∇ values (the rightmost side) for each cat-
+egory. By Corollary 39.12a of (Schrijver, 2003), we know
+that there exists a mapping π that maps every element of
+Sm,(cid:96)
+\ Ti to either the empty set or an element of Ti \ Sm,(cid:96)
+i
+such that:
+
+i
+
+\ Ti, the set {x} ∪ Ti \ {π(x)} is
+
+• for every x ∈ Sm,(cid:96)
+
+i
+
+an independent set, and
+• for every x1, x2 ∈ Sm,(cid:96)
+
+\ Ti, we either have π(x1) (cid:54)=
+π(x2) or both of π(x1) and π(x2) are equal to the
+empty set.
+
+i
+
+i
+
+We note that Corollary 39.12a of (Schrijver, 2003) is stated
+for equal size sets (e.g. |Ti| = |Sm,(cid:96)
+|) which can be eas-
+ily adapted to non-equal size sets and achieve the above
+mapping by applying the exchange property of matroids it-
+eratively, and making these two sets equal size. Given the
+mapping π, the next step is to lower bound each ∇i(x, Ti)
+by how much we can increase the value of Ti by replac-
+ing π(x) with x in set Ti. Since {x} ∪ Ti \ {π(x)} is an
+independent set, we have
+
+∇i(x, Ti) ≥ fi({x} ∪ Ti \ {π(x)}) − fi(Ti)
+
+= ∆i(x, Ti) − ∆i(π(x), Ti ∪ {x} \ {π(x)})
+≥ ∆i(x, Ti) − ∆i(π(x), Ti \ {π(x)})
+
+where the equality holds by deﬁnition of ∆i values, and the
+last inequality holds by submodularity of fi. Combining
+this lower bound on ∇ with Equation 6 implies that in each
+step, adding element x∗ to set S increases the total value of
+the current solution by at least:
+
+m
+(cid:88)
+
+(cid:88)
+
+1
+|Sm,(cid:96)|
+
+i=1
+
+x∈Sm,(cid:96)
+i
+
+\Ti
+
+∆i(x, Ti) − ∆i(π(x), Ti \ {π(x)})
+
+\Ti
+
+\Ti
+
+y∈Ti
+
+y∈Ti
+
+x∈Sm,(cid:96)
+i
+
+It is well-known (see Lemma 5 of (Bateni et al., 2010))
+that submodularity of fi implies (cid:80)
+∆i(x, Ti) ≥
+)−fi(Ti). We also have (cid:80)
+fi(Sm,(cid:96)
+∆i(π(x), Ti\
+x∈Sm,(cid:96)
+i
+i
+{π(x)}) ≤ (cid:80)
+∆i(y, Ti \ {y}) because range of map-
+ping π is a subset of Ti, and no two elements are mapped
+to the same y ∈ Ti. By submodularity of fi, the latter term
+(cid:80)
+∆i(y, Ti \ {y}) is upper bounded by fi(Ti). We
+conclude that in each step the total value is increased by at
+least 1
+) − 2f (Ti) (we assume |Sm,(cid:96)| = (cid:96)
+(cid:96)m
+since objective function Gm is monotone increasing). In
+other words, in each iteration 1 ≤ t ≤ (cid:96), the increment
+Xt − Xt−1 is at least 1
+(cid:96) Xt−1 where Xt is
+deﬁned to be the total value 1
+i=1 fi(Ti) at the end of
+m
+iteration t. Solving this recurrence equation inductively
+yields Xt ≥ 1
+(cid:96) )2t)Gm(Sm,(cid:96)). We note that
+X0 = 0 denotes the total value before the algorithm starts.
+The induction step is proved as follows:
+
+(cid:96) Gm(Sm,(cid:96)) − 2
+
+2 (1 − (1 − 1
+
+i=1 fi(Sm,(cid:96)
+
+(cid:80)m
+
+(cid:80)m
+
+i
+
+Xt+1 − Xt ≥
+
+Gm(Sm,(cid:96))
+(cid:96)
+
+−
+
+2Xt
+(cid:96)
+
+=⇒ Xt+1 ≥
+
++ (1 −
+
+)Xt
+
+Gm(Sm,(cid:96))
+(cid:96)
+
+2
+(cid:96)
+
+≥
+
+≥
+
+Gm(Sm,(cid:96))
+(cid:96)
+
+(1 − (1 −
+
+1
+2
+
+(1 − (1 −
+
++ (1 −
+
+)
+
+2
+(cid:96)
+
+1
+2
+)2t+2)Gm(Sm,(cid:96))
+
+1
+(cid:96)
+
+1
+(cid:96)
+
+)2t)Gm(Sm,(cid:96))
+
+At the end of Algorithm ReplacementGreedy, the total
+value X(cid:96) is at least 1
+2 (1 −
+1
+e2 )Gm(Sm,(cid:96)) which completes the proof.
+
+(cid:96) )2(cid:96))Gm(Sm,(cid:96)) ≥ 1
+
+2 (1 − (1 − 1
+
+7. Conclusions
+
+In this paper, we have studied the novel problem of sub-
+linear time probabilistic submodular maximization: By in-
+vesting computational effort once to reduce the ground set
+based on training instances, faster optimization is achieved
+on test instances. Our key technical contribution is Re-
+placementGreedy, a novel algorithm for two-stage sub-
+modular maximization (the empirical variant of our prob-
+lem). Compared to prior approaches, Replacement-
+Greedy provides constant factor approximation guarantees
+while applying to general submodular objectives, handling
+arbitrary matroid constraints and scaling linearly in all rel-
+evant parameters.
+
+Acknowledgments. This work was supported by DARPA
+Young Faculty Award (D16AP00046), Simons-Berkeley
+fellowship, and ERC StG 307036. This work was done in
+part while Amin Karbasi and Andreas Krause were visiting
+Simons Institute for the Theory of Computing.
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+References
+
+Ashwinkumar Badanidiyuru, Shahar Dobzinski, Si-
+gal Oren. Optimization with demand oracles. EC, 2012.
+
+Badanidiyuru, Ashwinkumar and Jan, Vondr´ak. Fast algo-
+rithms for maximizing submodular functions. In SODA,
+2014.
+
+Badanidiyuru, Ashwinkumar, Mirzasoleiman, Baharan,
+Karbasi, Amin, and Krause, Andreas. Streaming sub-
+modular maximization: Massive data summarization on
+the ﬂy. In ACM KDD, 2014.
+
+Balkanski, Erik, Krause, Andreas, Mirzasoleiman, Baha-
+ran, and Singer, Yaron. Learning sparse combinatorial
+representations via two-stage submodular maximization.
+In Proc. International Conference on Machine Learning
+(ICML), June 2016.
+
+Bateni, MohammadHossein, Hajiaghayi, Mohammad-
+Submodular
+Taghi, and Zadimoghaddam, Morteza.
+In Approximation,
+secretary problem and extensions.
+Randomization, and Combinatorial Optimization. Algo-
+rithms and Techniques, pp. 39–52. Springer, 2010.
+
+Buchbinder, Niv, Feldman, Moran, Naor, Joesph (Sefﬁ),
+and Schwartz, Roy. Submodular maximization with car-
+dinality constrains. In SODA, 2014.
+
+Calinescu, Gruia, Chekuri, Chandra, P´al, Martin, and
+Vondr´ak, Jan. Maximizing a monotone submodular
+function subject to a matroid constraint. SIAM Journal
+on Computing, 40(6):1740–1766, 2011.
+
+Cand´es, E. and Recht, B. Exact matrix completion via
+convex optimization. In Foundations of Computational
+Mathematics, 2008.
+
+Das, Abhimanyu and Kempe, David.
+
+Submodular
+meets spectral: Greedy algorithms for subset selec-
+tion, sparse approximation and dictionary selection.
+arXiv:1102.3975, 2011.
+
+El-Arini, Khalid, Veda, Gaurav, Shahaf, Dafna, and
+Guestrin, Carlos. Turning down the noise in the blo-
+gosphere. In KDD, 2009.
+
+Everingham, M., Van Gool, L., Williams, C. K. I., Winn, J.,
+and Zisserman, A. The PASCAL Visual Object Classes
+Challenge 2012 (VOC2012) Results, 2014.
+
+Feige, Uriel. On maximizing welfare when utility functions
+are subadditive. SIAM Journal on Computing, 2009.
+
+Goemans, Michel.
+
+Chernoff bounds, and some ap-
+plications, 2015. URL http://math.mit.edu/
+˜goemans/18310S15/chernoff-notes.pdf.
+
+Hazan, Elad and Kale, Satyen. Online submodular mini-
+
+mization. In NIPS, 2009.
+
+Jegelka, Stefanie and Bilmes, Jeff A. Online submodular
+In Interna-
+minimization for combinatorial structures.
+tional Conference on Machine Learning (ICML), Belle-
+vue, Washington, 2011.
+
+Krause, A. and Guestrin, C. Near-optimal nonmyopic value
+
+of information in graphical models. In UAI, 2005.
+
+Krause, Andreas and Golovin, Daniel.
+
+Submodular
+In Tractability: Practical
+function maximization.
+Approaches to Hard Problems. Cambridge University
+Press, 2012.
+
+Krause, Andreas and Gomes, Ryan G. Budgeted nonpara-
+
+metric learning from data streams. In ICML, 2010.
+
+Kumar, Ravi, Moseley, Benjamin, Vassilvitskii, Sergei, and
+
+Vattani, Andrea. In SPAA, 2013.
+
+Lin, Hui and Bilmes, Jeff. A class of submodular functions
+
+for document summarization. In ACL, 2011.
+
+Lin, Hui and Bilmes, Jeff. Learning mixtures of submod-
+ular shells with application to document summarization.
+In Uncertainty in Artiﬁcial Intelligence (UAI), Catalina
+Island, USA, July 2012. AUAI.
+
+Minoux, Michel. Accelerated greedy algorithms for max-
+In Proc. of the 8th
+imizing submodular set functions.
+IFIP Conference on Optimization Techniques. Springer,
+1978.
+
+Mirzasoleiman, Baharan, Karbasi, Amin, Sarkar, Rik, and
+Krause, Andreas. Distributed submodular maximization:
+Identifying representative elements in massive data. In
+NIPS, 2013.
+
+Mirzasoleiman, Baharan, Badanidiyuru, Ashwinkumar,
+Karbasi, Amin, Vondrak, Jan, and Krause, Andreas.
+Lazier than lazy greedy. In AAAI, 2015.
+
+Mirzasoleiman, Baharan, Badanidiyuru, Ashwinkumar,
+and Karbasi, Amin. Fast constrained submodular max-
+imization: Personalized data summarization. In ICML,
+2016a.
+
+Mirzasoleiman, Baharan, Karbasi, Amin, Sarkar, Rik, and
+Krause, Andreas. Distributed submodular maximization.
+Journal of Machine Learning Research, 17:1–44, 2016b.
+
+Feldman, Moran, Harshaw, Christopher, and Karbasi,
+Amin. Greed is good: Near-optimal submodular max-
+imization via greedy optimization. In COLT, 2017.
+
+Mirzasoleiman, Baharan, Karbasi, Amin, Sarkar, Rik, and
+Krause, Andreas. Distributed submodular maximization.
+Journal of Machine Learning Research (JMLR), 2016c.
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+Mirzasoleiman, Baharan, Zadimoghaddam, Morteza, and
+Fast distributed submodular cover:
+
+Karbasi, Amin.
+Public-private data summarization. In NIPS, 2016d.
+
+Nemhauser, George L., Wolsey, Laurence A., and Fisher,
+Marshall L. An analysis of approximations for maxi-
+mizing submodular set functions - I. Mathematical Pro-
+gramming, 1978.
+
+Schrijver, Lex. Combinatorial optimization-polyhedra and
+efﬁciency. Algorithms and Combinatorics, 24:1–1881,
+2003.
+
+Shahar Dobzinski, Noam Nisan and Schapira, Michael.
+Approximation algorithms for combinatorial auctions
+with complement-free bidders. STOC, 2005.
+
+Singer, Yaron. Budget feasible mechanisms. FOCS, 2010.
+
+Streeter, Matthew and Golovin, Daniel. An online algo-
+In NIPS,
+
+rithm for maximizing submodular functions.
+2008.
+
+Tschiatschek, Sebastian, Iyer, Rishabh, Wei, Haochen, and
+Bilmes, Jeff. Learning Mixtures of Submodular Func-
+In Neural
+tions for Image Collection Summarization.
+Information Processing Systems (NIPS), 2014.
+
+Wei, Kai, Liu, Yuzong, Kirchhoff, Katrin, and Bilmes, Jeff.
+Using document summarization techniques for speech
+data subset selection. In Proceedings of Annual Meeting
+of the Association for Computational Linguistics: Hu-
+man Language Technologies, 2013.
+
+Wei, Kai, Iyer, Rishabh, and Bilmes, Jeff. Fast multi-stage
+
+submodular maximization. ICML, 2014a.
+
+Wei, Kai, Liu, Yuzong, Kirchhoff, Katrin, Bartels, Chris,
+and Bilmes, Jeff. Submodular subset selection for large-
+scale speech training data. In ICASSP, 2014b.
+
+Yue, Yisong and Guestrin, Carlos. Linear submodular ban-
+dits and their application to diversiﬁed retrieval. In NIPS.
+2011.
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+A. Omitted Proofs
+
+Proof of Theorem 1. For any set S ⊆ Ω, we upper bound
+the deviation probability, PrD (|G(S) − gm(S)| > (cid:15)) in
+terms of the number of sampled functions m. We then use
+the union bound to prove that the maximum deviation is
+small over all sets with size at most (cid:96) with high probability
+if we choose a large enough m.
+
+(cid:80)m
+
+fi(T ).
+
+For any 1 ≤ i ≤ m, deﬁne Xi to be maxT :T ⊂S
+|T |≤k
+i=1 Xi
+So gm(S) is simply the average
+m . Since each func-
+tion fi is drawn independently from distribution D. Each
+Xi is a random variable whose mean is equal to G(S) by
+deﬁnition of function G. We use concentration bounds
+(upper and lower tails) on the aggregate random variable
+Y = (cid:80)m
+i=1 Xi. Variable Y has mean µ = mG(S) as each
+of the variables Xi has mean G(S). By applying Theorem
+6 of (Goemans, 2015), we have:
+
+Pr
+D
+
+Pr
+D
+
+Pr
+D
+
+(|G(S) − gm(S)| > (cid:15)) =
+(cid:19)
+(cid:18)
+
+(cid:18)
+
+(cid:19)
+
+Y >
+
+1 +
+
+µ
+
++
+
+(cid:15)
+G(S)
+(cid:15)
+G(S)
+(cid:17)2
+
+(cid:19)
+
+(cid:19)
+
+µ
+
+
+
+µ2
+
+(cid:18)
+
+(cid:18)
+
+Y <
+
+1 −
+
+
+
+(cid:16) (cid:15)
+
+2
+
+≤ exp
+
+
+−
+
+G(S)
+m
+
+
+ + exp
+
+
+−
+
+G(S)
+m
+
+
+
+(cid:16) (cid:15)
+
+(cid:17)2
+
+µ2
+
+
+
+
+
+
+= exp (cid:0)−2(cid:15)2m(cid:1) + exp (cid:0)−(cid:15)2m(cid:1) < 2 exp (cid:0)−(cid:15)2m(cid:1)
+
+where exp(x) is deﬁned to be ex for any real number x.
+The only inequality in above equations hold by applying
+the upper and lower tails Chernoff bounds as in Theorem
+6 of (Goemans, 2015). The rest of the equations hold by
+deﬁnition of Y and µ, and also the assumption that every
+function f in the support of distribution D is normalized
+such that 0 ≤ f (A) ≤ 1 for every subset A ⊆ Ω.
+(cid:15)2 ln( 2n(cid:96)
+
+By choosing m > 1
+δ ), we can ensure that the de-
+viation probability for any ﬁxed set S is upper bounded
+by δ
+n(cid:96) where n = |Ω|.
+In other words, we have
+PrD (|G(S) − gm(S)| > (cid:15)) < δ
+n(cid:96) . The number of subsets
+of Ω with size (cid:96) is (cid:0)n
+(cid:1) ≤ n(cid:96). Therefore by applying the
+union bound, the probability that there exists a set S of size
+(cid:96) with deviation more than (cid:15) is not more than the number
+of them (at most n(cid:96)) times the probability of deviation for
+each of them (at most δ
+n(cid:96) ). We conclude that with proba-
+bility at least 1 − δ, we have |G(S) − gm(S)| ≤ (cid:15) for every
+S ⊂ Ω with size (cid:96).
+
+(cid:96)
+
+We showed that a large enough number of samples m suf-
+ﬁce to achieve a small approximation error. One might ask
+
+whether the dependence of m on (cid:96) is necessary or not. Fol-
+lowing we show that the number of samples should depend
+on (cid:96) linearly otherwise we might have a large approxima-
+tion error. This shows the optimality of our sample com-
+plexity in terms of (cid:96).
+Remark 1. There exists distribution D for which choosing
+at most (cid:96) samples will result in an approximation error of
+1/e. We note that this happens when the set S∗
+(cid:96) that maxi-
+mizes function G achieves a value of G(S∗
+(cid:96) ) = 1−1/e, and
+therefore this approximation error is signiﬁcant compared
+to the optimum value we are aiming for.
+
+Proof. Consider a ground set Ω of n elements. For any set
+T ⊂ Ω with n/(cid:96) elements, deﬁne function f T as follows.
+For any set A ⊆ Ω, deﬁne f T (A) = min{1, |A ∩ T |}.
+This means the value of A is 1 if only if it has some non-
+empty intersection with T , and it is 0 otherwise. Suppose
+we choose m < (cid:96) sample functions that are associated with
+sets T1, T2, · · · , Tm. Construct set S by adding an arbitrar-
+ily element from each Ti, and also add some other arbitrary
+elements from Ω to make its size equal to (cid:96). This is possible
+since m ≤ (cid:96). Since set S has non-empty intersection with
+every Ti, its value f Ti(S) is always equal to 1. Therefore
+gm(S) is equal to 1. On the other hand, any set S(cid:48) ⊂ Ω with
+size (cid:96) has value G(S(cid:48)) = 1 − 1/e. This is evident by not-
+ing that a random function f drawn from D, is associated
+with a random set T of n/(cid:96) elements, and the probability
+that T and S(cid:48) have non-empty intersection is approximately
+1 − (1 − n/(cid:96)
+e for large enough n.
+(cid:96) ) is 1 − 1
+Therefore for m ≤ (cid:96), the maximum value G(S∗
+e
+while there exists a set S with gm(S) = 1 which eliminates
+the possibility of having a low approximation error.
+
+n )(cid:96) = 1 − (1 − 1
+
+(cid:96) )(cid:96) ≈ 1 − 1
+
+Proof of Theorem 2. Fix any (cid:15) > 0, and let Ω(cid:15) denote an
+(cid:15)/2kL-cover of (Ω, d) of minimal size. For each element
+x ∈ Ω(cid:15), deﬁne N k(x) to be the set of k closest points to
+x in Ω with respect to distance metric d. Since distance of
+each element to itself is 0, we always have x ∈ N k(x).
+Deﬁne Ω(cid:48)
+
+N k(x).
+
+(cid:15) = (cid:83)
+
+x∈Ω(cid:15)
+
+Consider the function [·](cid:15) : 2Ω → 2Ω, deﬁned by
+
+[T ](cid:15) = arg min{d(T, T (cid:48)) : T (cid:48) ⊆ Ω(cid:48)
+
+(cid:15)}.
+
+For any set T of size at most k, we claim that d(T, [T ](cid:15)) ≤
+(cid:15)/L by constructing a set T (cid:48) ⊆ Ω(cid:48)
+(cid:15) and a matching of T and
+T (cid:48) establishing an upper bound of d(T, T (cid:48)) ≤ (cid:15)/L. In par-
+ticular, let A = T \ Ω(cid:48)
+(cid:15). All elements in T \ A are matched
+with themselves, with distance 0. Let A = {v1, . . . , vr}.
+Starting from v1, we iteratively ﬁnd a unique matching el-
+ement v(cid:48)
+i) ≤
+(cid:15)/kL. Let x be the closest point in Ω(cid:15) to vi. Since there
+are at most k elements in set T , and there are k elements in
+N k(x). There exists y ∈ N k(x) that has not been matched
+
+(cid:15) for each 1 ≤ i ≤ r such that d(vi, v(cid:48)
+
+i ∈ Ω(cid:48)
+
+Probabilistic Submodular Maximization in Sub-Linear Time
+
+to any previous element, and we can set v(cid:48)
+i = y. Since
+Ω(cid:15) is an (cid:15)/2kL-cover, distance d(vi, x) is at most (cid:15)/2kL.
+On the other hand, vi is not in set Ω(cid:48)
+(cid:15) which means it is
+not one of the k closest points to x. Therefore d(y, x)
+is at most d(vi, x) ≤ (cid:15)/2kL. Triangle inequality implies
+d(y, vi) ≤ d(y, x) + d(x, vi) ≤ (cid:15)/kL. Therefore there ex-
+ists a unique matching element v(cid:48)
+i for each vi with distance
+d(vi, v(cid:48)
+i) ≤ (cid:15)/kL. Hence d(T, T (cid:48)) ≤ r(cid:15)/kL ≤ (cid:15)/L. Now
+suppose that (cid:96) ≥ |Ω(cid:48)
+
+(cid:15)|. Then it holds that
+
+|G(Ω) − G(S∗
+
+(cid:96) )| ≤ |G(Ω) − G(Ω(cid:48)
+≤ Ef ∼D|f (T ∗
+
+(cid:15))|
+f ) − f ([T ∗
+
+f ](cid:15))| ≤ (cid:15),
+
+where T ∗
+that |Ω(cid:48)
+
+f = arg maxT ⊆Ω,|T |≤k f (T ). We should also note
+(cid:15)| is at most (cid:80)
+
+|N k(x)| = kn(cid:15)/2kL.
+
+x∈Ω(cid:15)
+
+

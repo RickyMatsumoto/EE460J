@@ -1,0 +1,2157 @@
+Improving Gibbs Sampler Scan Quality with DoGS
+
+Ioannis Mitliagkas 1 Lester Mackey 2
+
+Abstract
+
+The pairwise inﬂuence matrix of Dobrushin has
+long been used as an analytical tool to bound the
+rate of convergence of Gibbs sampling. In this
+work, we use Dobrushin inﬂuence as the basis
+of a practical tool to certify and efﬁciently im-
+prove the quality of a discrete Gibbs sampler. Our
+Dobrushin-optimized Gibbs samplers (DoGS) of-
+fer customized variable selection orders for a
+given sampling budget and variable subset of in-
+terest, explicit bounds on total variation distance
+to stationarity, and certiﬁable improvements over
+the standard systematic and uniform random scan
+Gibbs samplers. In our experiments with joint im-
+age segmentation and object recognition, Markov
+chain Monte Carlo maximum likelihood estima-
+tion, and Ising model inference, DoGS consis-
+tently deliver higher-quality inferences with sig-
+niﬁcantly smaller sampling budgets than standard
+Gibbs samplers.
+
+1. Introduction
+
+The Gibbs sampler of Geman & Geman (1984), also known
+as the Glauber dynamics or the heat-bath algorithm, is a
+leading Markov chain Monte Carlo (MCMC) method for ap-
+proximating expectations unavailable in closed form. First
+detailed as a technique for restoring degraded images (Ge-
+man & Geman, 1984), Gibbs sampling has since found
+diverse applications in statistical physics (Janke, 2008),
+stochastic optimization and parameter estimation (Geyer,
+1991), and Bayesian inference (Lunn et al., 2000).
+
+The hallmark of any Gibbs sampler is conditional simula-
+tion: individual variables are successively simulated from
+the univariate conditionals of a multivariate target distribu-
+
+1Department of Computer Science, Stanford University, Stan-
+ford, CA 94305 USA 2Microsoft Research New England, One
+Memorial Drive, Cambridge, MA 02142 USA. Correspondence
+to:
+Ioannis Mitliagkas <imit@stanford.edu>, Lester Mackey
+<lmackey@microsoft.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+tion. The principal degree of freedom is the scan, the order
+in which variables are sampled (He et al., 2016). While it
+is common to employ a systematic scan, sweeping through
+each variable in turn, or a uniform random scan, sampling
+each variable with equal frequency, it is known that non-
+uniform scans can lead to more accurate inferences both in
+theory and in practice (Liu et al., 1995; Levine & Casella,
+2006). This effect is particularly pronounced when certain
+variables are of greater inferential interest. Past approaches
+to optimizing Gibbs sampler scans were based on asymp-
+totic quality measures approximated with the output of a
+Markov chain (Levine et al., 2005; Levine & Casella, 2006).
+
+In this work, we propose a computable non-asymptotic scan
+quality measure for discrete target distributions based on Do-
+brushin’s notion of variable inﬂuence (Dobrushin & Shlos-
+man, 1985). We show that for a given subset of variables,
+this Dobrushin variation (DV) bounds the marginal total
+variation between a target distribution and T steps of Gibbs
+sampling with a speciﬁed scan. More generally, Dobrushin
+variation bounds a weighted total variation based on user-
+inputted importance weights for each variable. We couple
+this quality measure with an efﬁcient procedure for opti-
+mizing scan quality by minimizing Dobrushin variation.
+Our Dobrushin-optimized Gibbs samplers (DoGS) come
+equipped with a guaranteed bound on scan quality, are never
+worse than the standard uniform random and systematic
+scans, and can be tailored to a target number of sampling
+steps and a subset of target variables. Moreover, Dobrushin
+variation can be used to evaluate and compare the qual-
+ity of any user-speciﬁed set of scans prior to running any
+expensive simulations.
+
+The improvements achieved by DoGS are driven by an in-
+putted matrix, ¯C, of pairwise variable inﬂuence bounds
+discussed in more detail in Section 3. While DoGS can
+be used with any discrete distribution, it was designed for
+¯C
+targets with total inﬂuence
+< 1, measured in any ma-
+(cid:107)
+trix norm. This criterion is known to hold for a variety of
+distributions, including Ising models with sufﬁciently high
+temperatures, hard-core lattice gas models, random graph
+colorings (Hayes, 2006), and classes of weighted constraint
+satisfaction problems (Feng et al., 2017). Moreover, as we
+will see in Section 4.1, suitable variable inﬂuence bounds
+are readily available for pairwise and binary Markov ran-
+dom ﬁelds. These user-friendly bounds give rise to total
+
+(cid:107)
+
+Improving Gibbs Sampler Scan Quality with DoGS
+
+¯C
+(cid:107)
+
+inﬂuence
+< 1 in all of our experiments and thereby
+enable improvements in both inferential speed and accuracy
+over standard scans.
+
+(cid:107)
+
+The remainder of the paper is organized as follows. Sec-
+tion 2 reviews Gibbs sampling and standard but compu-
+tationally intractable measures of Gibbs sampler quality.
+In Section 3, we introduce our scan quality measure and
+its relationship to (weighted) total variation. We describe
+our procedures for selecting high-quality Gibbs sampler
+scans in Section 4. In Section 5, we apply our techniques
+to three popular applications of the Gibbs sampler: joint
+image segmentation and object recognition, MCMC maxi-
+mum likelihood estimation with intractable gradients, and
+In each case, we observe
+inference in the Ising model.
+substantial improvements in full or marginal total variation
+over standard scans. Section 6 presents our conclusions and
+discussion of future work.
+
+Notation For any vector v and index i, we let v
+i represent
+the subvector of v with entry vi removed. We use diag(v)
+for a square diagonal matrix with v on the diagonal and
+for element-wise multiplication. The i-th standard basis
+(cid:12)
+vector is denoted by ei, I represents an identity matrix, 1
+signiﬁes a vector of ones, and
+is the spectral norm of
+matrix C. We use the shorthand [p] (cid:44)
+
+C
+(cid:107)
+
+(cid:107)
+
+−
+
+.
+
+1, . . . , p
+{
+
+}
+
+2. Gibbs sampling and total variation
+
+X
+
+Consider a target distribution π on a ﬁnite p-dimensional
+p. Our inferential goal is to approximate ex-
+state space,
+pectations – means, moments, marginals, and more complex
+function averages, Eπ[f (X)] = (cid:80)
+p π(x)f (x) – under
+π, but we assume that both exact computation and direct
+sampling from π are prohibitive due to the large number
+p. Markov chain Monte Carlo (MCMC) al-
+of states,
+gorithms attempt to skirt this intractability by simulating a
+sequence of random vectors X 0, X 1, . . . , X T
+p from
+tractable distributions such that expectations over X T are
+close to expectations under π.
+
+∈ X
+
+|X |
+
+∈X
+
+x
+
+2.1. Gibbs sampling
+
+Algorithm 1 summarizes the speciﬁc recipe employed by
+the Gibbs sampler (Geman & Geman, 1984), a leading
+MCMC algorithm which successively simulates single vari-
+ables from their tractable conditional distributions. The prin-
+cipal degree of freedom in a Gibbs sampler is the scan, the
+sequence of p-dimensional probability vectors q1, . . . , qT
+determining the probability of resampling each variable on
+each round of Gibbs sampling. Typically one selects be-
+tween the uniform random scan, qt = (1/p, . . . , 1/p) for all
+t, where variable indices are selected uniformly at random
+on each round and the systematic scan, qt = e(t mod p)+1
+for each t, which repeatedly cycles through each variable
+
+Algorithm 1 Gibbs sampling (Geman & Geman, 1984)
+input Scan (qt)T
+
+t=1; starting distribution µ; single-variable
+
+conditionals of target distribution, π(
+
+Sample from starting distribution: X 0
+for t in 1, 2, . . . , T do
+
+i)
+
+−
+
+X
+µ
+
+·|
+∼
+
+Sample variable index to update using scan: it ∼
+Sample X t
+π(
+Copy remaining variables: X t
+−
+
+1
+it ) from its conditional
+−
+it = X t
+
+X t
+·|
+−
+
+it ∼
+
+1
+−
+it
+
+−
+
+qt
+
+end for
+
+output Sample sequence (X t)T
+
+t=0
+
+in turn. However, non-uniform scans are known to lead to
+better approximations (Liu et al., 1995; Levine & Casella,
+2006), motivating the need for practical procedures for eval-
+uating and improving Gibbs sampler scans.
+
+2.2. Total variation
+
+Let πt represent the distribution of the t-th step, X t, of a
+Gibbs sampler. The quality of a T -step Gibbs sampler and
+its scan is typically measured in terms of total variation (TV)
+distance between πT and the target distribution π:
+Deﬁnition 1. The total variation distance between probabil-
+ity measures µ and ν is the maximum difference in expecta-
+tions over all [0, 1]-valued functions,
+
+µ
+(cid:107)
+
+−
+
+ν
+
+(cid:107)T V (cid:44)
+
+sup
+p
+
+X
+
+→
+
+f :
+
+[0,1] |
+
+Eµ[f (X)]
+
+.
+Eν[f (Y )]
+|
+
+−
+
+We view TV as providing a bound on the bias of a large
+class of Gibbs sampler expectations; note, however, that TV
+does not control the variance of these expectations.
+
+2.3. Marginal and weighted total variation
+
+While we typically sample all p variables in the process of
+Gibbs sampling, it is common for some variables to be of
+greater interest than others. For example, when modeling
+a large particle system, we may be interested principally in
+the behavior in local region of the system; likewise, when
+segmenting an image into its component parts, a particular
+region, like the area surrounding a face, is often of primary
+interest. In these cases, it is more natural to consider a
+marginal total variation that measures the discrepancy in
+expectation over only those variables of interest.
+
+Deﬁnition 2 (Marginal total variation). The marginal total
+variation between probability measures µ and ν on a subset
+[p] is the maximum difference in expecta-
+of variables S
+tions over all [0, 1]-valued functions of X
+, the restriction
+of X to the coordinates in S:
+
+(cid:12)
+(cid:12)S
+
+∈
+
+µ
+
+(cid:107)
+
+−
+
+ν
+
+(cid:107)S,T V (cid:44)
+
+sup
+
+|S|
+
+→
+
+f :
+
+X
+
+[0,1]
+
+(cid:12)
+(cid:12)
+(cid:12)Eµ
+
+(cid:2)f (cid:0)X
+
+(cid:1)(cid:3)
+
+(cid:12)
+(cid:12)S
+
+(cid:2)f (cid:0)Y
+
+(cid:12)
+(cid:12)S
+
+(cid:1)(cid:3)(cid:12)
+(cid:12)
+(cid:12).
+
+Eν
+
+−
+
+Improving Gibbs Sampler Scan Quality with DoGS
+
+More generally, we will seek to control an arbitrary user-
+deﬁned weighted total variation that assigns an independent
+non-negative weight to each variable and hence controls the
+approximation error for functions with varying sensitivities
+in each variable.
+Deﬁnition 3 (d-bounded differences). We say f :
+has d-bounded differences for d
+
+X
+Rd if, for all X, Y
+
+R
+p,
+
+p
+
+→
+∈ X
+
+f (X)
+
+f (Y )
+
+−
+
+| ≤
+
+|
+
+diI[Xi (cid:54)
+
+= Yi].
+
+∈
+p
+(cid:88)
+
+i=1
+
+(cid:55)→
+
+For example, every function with range [0, 1] is a 1-
+Lipschitz feature, and the value of the ﬁrst variable, x
+x1,
+is an e1-Lipschitz feature. This deﬁnition leads to a measure
+of sample quality tailored to d-bounded difference functions.
+Deﬁnition 4 (d-weighted total variation). The d-weighted
+total variation between probability measures µ and ν is
+the maximum difference in expectations across d-bounded
+difference functions:
+(cid:107)d,TV (cid:44)
+
+Eν[f (Y )]
+|
+
+bounded diﬀerencef |
+
+Eµ[f (X)]
+
+ν
+−
+
+sup
+
+−
+
+µ
+
+(cid:107)
+
+d
+
+−
+
+3. Measuring scan quality with Dobrushin
+
+variation
+
+Since the direct computation of total variation measures
+is typically prohibitive, we will deﬁne an efﬁciently com-
+putable upper bound on the weighted total variation of Deﬁ-
+nition 4. Our construction is inspired by the Gibbs sampler
+convergence analysis of Dobrushin & Shlosman (1985).
+
+The ﬁrst step in Dobrushin’s approach is to control total
+variation in terms of coupled random vectors, (Xt, Yt)T
+t=0,
+where X t has the distribution, πt, of the t-th step of the
+Gibbs sampler and Y t follows the target distribution π. For
+any such coupling, we can deﬁne the marginal coupling
+probability pt,i (cid:44) P(X t
+= Y t
+i ). The following lemma, a
+i (cid:54)
+generalization of results in (Dobrushin & Shlosman, 1985;
+Hayes, 2006), shows that weighted total variation is con-
+trolled by these marginal coupling probabilities. The proof
+is given in Appendix A.1, and similar arguments can be
+found in Rebeschini & van Handel (2014).
+Lemma 5 (Marginal coupling controls weighted TV). For
+µ and Y
+any joint distribution (X, Y ) such that X
+ν
+p and any nonnega-
+for probability measures µ and ν on
+tive weight vector d
+
+∼
+
+∼
+
+X
+
+Rp,
+
+∈
+
+µ
+
+(cid:107)
+
+−
+
+ν
+
+(cid:107)d,TV ≤
+
+diP(Xi (cid:54)
+
+= Yi).
+
+(cid:88)
+
+i
+
+Deﬁnition 6 (Dobrushin inﬂuence matrix). The Dobrushin
+inﬂuence of variable j on variable i is given by
+
+Cij (cid:44) max
+(X,Y )
+∈
+
+π(
+
+X
+
+i)
+
+Nj (cid:107)
+
+·|
+
+−
+
+π(
+
+Y
+
+·|
+
+−
+
+i)
+
+(cid:107)T V
+
+−
+
+(1)
+
+where (X, Y )
+
+Nj signiﬁes Xl = Yl for all l
+
+= j.
+
+∈
+
+This inﬂuence matrix is at the heart of our efﬁciently com-
+putable measure of scan quality, Dobrushin variation.
+
+Deﬁnition 7 (Dobrushin variation). For any nonnegative
+Rp and entrywise upper bound ¯C on the
+weight vector d
+Dobrushin inﬂuence (1), we deﬁne the Dobrushin variation
+of a scan (qt)T
+
+t=1 as
+
+∈
+
+(q1, . . . , qT ; d, ¯C) (cid:44) d(cid:62)B(qT )
+
+B(q1)1
+
+· · ·
+
+V
+for B(q) (cid:44) (I
+
+diag(q)(I
+
+¯C)).
+
+−
+
+−
+Theorem 8 shows that Dobrushin variation dominates
+weighted TV and thereby provides target- and scan-speciﬁc
+guarantees on the weighted TV quality of a Gibbs sampler.
+The proof in Appendix A.2 rests on the fact that, for each
+t, bt (cid:44) B(qt)
+B(q1)1 provides an elementwise upper
+bound on the vector of marginal coupling probabilities, pt.
+Theorem 8 (Dobrushin variation controls weighted TV).
+Suppose that πT is the distribution of the T -th step of a
+Gibbs sampler with scan (qt)T
+t=1. Then, for any nonnegative
+Rp and entrywise upper bound ¯C on the
+weight vector d
+Dobrushin inﬂuence (1),
+
+· · ·
+
+∈
+
+πT −
+(cid:107)
+
+π
+
+(cid:107)d,TV ≤ V
+
+(cid:0)(qt)T
+
+t=1; d, ¯C(cid:1).
+
+4. Improving scan quality with DoGS
+
+We next present an efﬁcient algorithm for improving the
+quality of any Gibbs sampler scan by minimizing Dobrushin
+variation. We will refer to the resulting customized Gibbs
+samplers as Dobrushin-optimized Gibbs samplers or DoGS
+for short. Algorithm 2 optimizes Dobrushin variation using
+coordinate descent, with the selection distribution qt for
+each time step serving as a coordinate. Since Dobrushin
+variation is linear in each qt, each coordinate optimization
+(in the absence of ties) selects a degenerate distribution, a
+single coordinate, yielding a fully deterministic scan. If
+p is a bound on the size of the Markov blanket of
+m
+each variable, then our forward-backward algorithm runs
+(cid:107)0 + min(m log p + m2, p)T ) with O(p + T )
+in time O(
+storage for deterministic input scans. The T (m log p + m2)
+term arises from maintaining the derivative vector, w, in an
+efﬁcient sorting structure, like a max-heap.
+
+d
+(cid:107)
+
+≤
+
+Dobrushin’s second step is to control the marginal coupling
+probabilities pt in terms of inﬂuence, a measure of how
+much a change in variable j affects the conditional distribu-
+tion of variable i.
+
+A user can initialize DoGS with any baseline scan, including
+a systematic or uniform random scan, and the resulting
+customized scan is guaranteed to have the same or better
+Dobrushin variation. Moreover, DoGS scans will always
+
+(cid:54)
+Improving Gibbs Sampler Scan Quality with DoGS
+
+Algorithm 2 DoGS: Scan selection via coordinate descent
+input Scan (qτ )T
+τ =1; variable weights d; inﬂuence entry-
+
+wise upper bound ¯C; (optional) target accuracy (cid:15).
+
+· · ·
+
+// Forward: Precompute coupling bounds of Section 3,
+1 with b0 = 1.
+B(q1)1 = B(qt)bt
+// bt = B(qt)
+t)T
+// Only store b = bT and sequence of changes (∆b
+// Also precompute Dobrushin variation
+= d(cid:62)bT
+// and derivatives w = ∂
+d(cid:62)b, w
+b
+V ←
+for t in 1, 2, . . . T do
+
+/∂qT =
+d
+
+d
+−
+(cid:12)
+¯C)b
+
+V
+← −
+
+¯C)bT .
+
+V
+(I
+
+1
+t=0 .
+−
+
+1,
+
+(I
+
+−
+
+−
+
+−
+
+←
+∆b
+t
+−
+b
+←
+
+1 ←
+b
+−
+
+diag (qt)(I
+∆b
+t
+1
+−
+d(cid:62)∆b
+t
+−
+(I
+
+1
+
+(cid:12)
+¯C)b
+
+−
+
+V ← V −
+w
+←
+end for
+
+w + d
+
+(cid:12)
+
+¯C)∆b
+t
+−
+
+−
+
+1 // w =
+
+// bt = bt
+1 −
+−
+//
+V
+(I
+
+∆b
+t
+1
+−
+= d(cid:62)bt
+¯C)bt
+
+d
+
+−
+
+(cid:12)
+
+−
+
+1
+
+1
+
+−
+
+V
+
+−
+−
+
+// Backward: Optimize scan one step, q∗t , at a time.
+for t in T, T
+
+1, . . . , 1 do
+
+/∂qt =
+
+dt (cid:12)
+
+qt; break
+
+V ≤
+←
+
+(cid:15), then q∗t ←
+
+// early stopping
+1 = bt + ∆b
+t
+¯C)bt
+−
+1
+−
+(cid:44) d(cid:62)
+
+(cid:44) d(cid:62)B(q∗T )
+(I
+d
+−
+−
+
+−
+If
+b + ∆b
+// bt
+b
+t
+// Update w = ∂
+(I
+−
+B(q∗t+1) and d(cid:62)T
+// for d(cid:62)t
+· · ·
+¯C)∆b
+w
+w
+t
+←
+−
+// Pick probability vector q∗t minimizing d(cid:62)t B(qt)bt
+q∗t ←
+V ← V
+∆d(cid:62)
+d(cid:62)
+←
+w
+←
+end for
+
+eargmini wi
++ d(cid:62) diag(q∗t −
+d(cid:62) diag(q∗t )(I
+−
+∆d(cid:62)
+(I
+
+1 = d(cid:62)t B(q∗t )
+(I
+1
+
+←
+d(cid:62)
+−
+w + ∆d
+
+// d(cid:62)t
+−
+dt
+1 (cid:12)
+−
+
+¯C)b // w =
+
+qt)b
+¯C)
+
+= d(cid:62)t
+−
+
+¯C)bt
+
+1bt
+
+(cid:12)
+
+−
+
+−
+
+(cid:12)
+
+V
+
+//
+
+−
+
+−
+
+−
+
+1
+
+1
+
+1
+
+−
+τ =1, (q∗τ )T
+−
+
+1
+
+τ =t
+
+output Optimized scan (qτ )t
+
+π
+
+→ ∞
+
+0 as T
+
+(cid:107)d,TV →
+
+πT −
+(cid:107)
+
+be d-ergodic (i.e.,
+) when
+initialized with a systematic or uniform random scan and
+(cid:13) ¯C(cid:13)
+(cid:13)
+(cid:13) < 1. This follows from the following proposition,
+which shows that Dobrushin variation—and hence the d-
+weighted total variation by Theorem 8—goes to 0 under
+these conditions and standard scans. The proof relies on
+arguments in (Hayes, 2006) and is outlined in Appendix A.3.
+Proposition 9. Suppose that ¯C is an entrywise upper bound
+on the Dobrushin inﬂuence matrix (1) and that (qt)T
+t=1 is a
+systematic or uniform random scan. If (cid:13)
+(cid:13) < 1, then, for
+any nonnegative weight vector d, the Dobrushin variation
+vanishes as the chain length T increases. That is,
+
+(cid:13) ¯C(cid:13)
+
+(q1, . . . , qT ; d, ¯C) = 0.
+
+lim
+T
+→∞
+
+V
+
+4.1. Bounding inﬂuence
+
+An essential input to our algorithms is the entrywise upper
+bound ¯C on the inﬂuence matrix (1). Fortunately, Liu &
+
+Domke (2014) showed that useful inﬂuence bounds are
+particularly straightforward to compute for any pairwise
+Markov random ﬁeld (MRF) target,
+
+π(X)
+
+∝
+
+exp((cid:80)
+
+(cid:80)
+
+i,j
+
+a,b
+
+θij
+ab I[Xi = a, Xj = b]).
+
+(2)
+
+∈X
+
+Theorem 10 (Pairwise MRF inﬂuence (Liu & Domke, 2014,
+Lems. 10, 11)). Using the shorthand σ(s) (cid:44) 1
+1+e−s , the
+inﬂuence (1) of the target π in (2) satisﬁes
+
+Cij ≤
+
+max
+xj ,yj |
+
+2σ( 1
+
+2 max
+a,b
+
+(θij
+
+axj −
+
+θij
+ayj )
+
+(θij
+
+−
+
+bxj −
+
+θij
+byj ))
+
+.
+
+1
+|
+
+−
+
+are es-
+Pairwise MRFs with binary variables Xi ∈ {−
+pecially common in statistical physics and computer vision.
+A general parameterization for binary pairwise MRFs is
+given by
+
+1, 1
+}
+
+π(X)
+
+∝
+
+exp((cid:80)
+
+=j θijXiXj + (cid:80)
+
+i
+
+i θiXi),
+
+(3)
+
+and our next theorem, proved in Appendix A.4, leverages
+the strength of the singleton parameters θi to provide a
+tighter bound on the inﬂuence of these targets.
+Theorem 11 (Binary pairwise inﬂuence). The inﬂuence (1)
+of the target π in (3) satisﬁes
+
+Cij ≤
+
+|
+
+exp(
+
+exp(2θij)
+
+2θij)
+|
+(1 + b∗ exp(2θij))(1 + b∗ exp(
+−
+2θi, min[e2 (cid:80)
+k(cid:54)=j |
+
+k(cid:54)=j |
+
+2 (cid:80)
+
+b∗
+
+−
+
+−
+
+θik
+
+|−
+
+2θij))
+
+θik
+
+2θi, 1]).
+
+|−
+
+for b∗ = max(e−
+
+Theorem 11 in fact provides an exact computation of the
+Dobrushin inﬂuence Cij whenever b∗
+= 1. The only approx-
+imation comes from the fact that the value b∗ = 1 may not
+belong to the set
+.
+}
+An exact computation of Cij would replace the cutoff of 1
+with its closest approximation in
+
+1, 1
+}
+
+k(cid:54)=j θikXk
+
+e2 (cid:80)
+
+∈ {−
+
+X
+
+=
+
+2θi
+
+B
+
+{
+
+−
+
+p
+
+|
+
+.
+
+B
+
+So far, we have focused on bounding inﬂuence in pairwise
+MRFs, as these bounds are most relevant to our experiments;
+indeed, in Section 5, we will use DoGS in conjunction with
+the bounds of Theorems 10 and 11 to improve scan quality
+for a variety of inferential tasks. However, user-friendly
+bounds are also available for non-pairwise MRFs (note that
+any discrete distribution can be represented as an MRF with
+parameters in the extended reals), and we include a simple
+extension of Theorem 11 that applies to binary MRFs with
+higher-order interactions. Its proof is in Appendix A.5
+Theorem 12 (Binary higher-order inﬂuence). The target
+
+π(X)
+
+exp((cid:80)
+
+S
+
+θS
+
+(cid:81)
+k
+
+S Xk + (cid:80)
+
+i θiXi),
+
+∝
+d and
+for X
+1, 1
+}
+[p], has inﬂuence (1) satisfying
+
+∈ {−
+
+∈S
+
+S
+
+∈
+
+a set of non-singleton subsets of
+
+exp(2 (cid:80)
+
+|
+
+Cij ≤
+for
+b∗
+2θi), min(exp(2 (cid:80)
+
+=
+
+S∈S:i,j∈S |
+
+θS
+
+exp(−
+|)−
+(1+b∗)2
+2 (cid:80)
+−
+θS| −
+S |
+
+S
+
+max(exp(
+
+S
+
+:i
+
+S,j /
+∈
+
+∈
+
+∈S
+
+2 (cid:80)
+
+S∈S:i,j∈S |
+
+θS
+
+b∗
+
+|)|
+
+:i
+S,j /
+∈S
+∈
+∈
+2θi), 1)).
+
+θS| −
+
+S |
+
+(cid:54)
+(cid:54)
+Improving Gibbs Sampler Scan Quality with DoGS
+
+4.2. Related Work
+
+In related work, Latuszynski et al. (2013) recently analyzed
+an abstract class of adaptive Gibbs samplers parameterized
+by an arbitrary scan selection rule. However, as noted in
+their Rem. 5.13, no explicit scan selection rules were pro-
+vided in that paper. The only prior concrete scan selection
+rules of which we are aware are the Minimax Adaptive
+Scans with asymptotic variance or convergence rate ob-
+jective functions (Levine & Casella, 2006). Unless some
+substantial approximation is made, it is unclear how to im-
+plement these procedures when the target distribution of
+interest is not Gaussian.
+
+Levine & Casella (2006) approximate these Minimax Adap-
+tive Scans for speciﬁc mixture models by considering single
+ad hoc features of interest; the approach has many hyper-
+parameters to tune including the order of the Taylor expan-
+sion approximation, which sample points are used to ap-
+proximate asymptotic quantities online, and the frequency
+of adaptive updating. Our proposed quality measure, Do-
+brushin variation, requires no approximation or tuning and
+can be viewed as a practical non-asymptotic objective func-
+tion for the abstract scan selection framework of Levine and
+Casella. In the spirit of (Lacoste-Julien et al., 2011), DoGS
+can also be viewed as an approximate inference scheme
+calibrated for downstream inferential tasks depending only
+on subsets of variables.
+
+Levine et al. (2005) employ the Minimax Adaptive Scans of
+Levine and Casella by ﬁnding the mode of their target distri-
+bution using EM and then approximating the distribution by
+a Gaussian. They report that this approach to scan selection
+introduces substantial computational overhead (10 minutes
+of computation for an Ising model with 64 variables). As we
+will see in Section 5, the overhead of DoGS scan selection is
+manageable (15 seconds of computation for an Ising model
+with 1 million variables) and outweighed by the increase in
+scan quality and sampling speed.
+
+5. Experiments
+
+In this section, we demonstrate how our proposed scan qual-
+ity measure and efﬁcient optimization schemes can be used
+to both evaluate and improve Gibbs sampler scans when
+either the full distribution or a marginal distribution is of
+principal interest. For all experiments with binary MRFs, we
+adopt the model parameterization of (3) (with no additional
+temperature parameter) and use Theorem 11 to produce the
+Dobrushin inﬂuence bound ¯C. On all ensuing plots, the
+numbers in the legend state the best guarantee achieved for
+each algorithm plotted. Due to space constraints, we display
+only one representative plot per experiment; the analogous
+plots from independent replicates of each experiment can
+be found in Appendix B.
+
+Figure 1. TV guarantees provided Dobrushin variation for various
+Gibbs sampler scans on a 10 × 10 non-toroidal Ising model with
+random parameters (see Section 5.1). DoGS is initialized with the
+systematic scan.
+
+5.1. Evaluating and optimizing Gibbs sampler scans
+
+×
+
+In our ﬁrst experiment, we illustrate how Dobrushin varia-
+tion can be used to select between standard scans and how
+DoGS can be used to efﬁciently improve upon standard scan
+quality when total variation quality is of interest. We remind
+the reader that both scan evaluation and scan selection are
+performed ofﬂine prior to any expensive simulation from
+10 Ising model
+the Gibbs sampler. Our target is a 10
+arranged in a two-dimensional lattice, a standard model of
+ferromagnetism in statistical physics. In the notation of (3),
+we draw the unary parameters θi uniformly at random from
+, and the interaction parameters uniformly at random:
+0, 1
+{
+}
+Uniform([0, 0.25]).
+θij ∼
+Figure 1 compares, as a function of the number of steps T ,
+the total variation guarantee provided by Dobrushin varia-
+tion (see Theorem 8) for the standard systematic and uni-
+form random scans. We see that the systematic scan, which
+traverses variables in row major order, obtains a signiﬁcantly
+better TV guarantee than its uniform random counterpart for
+all sampling budgets T . Hence, the systematic scan would
+be our standard scan of choice for this target. DoGS (Algo-
+rithm 2) initialized with d = 1 and the systematic scan fur-
+ther improves the systematic scan guarantee by two orders
+of magnitude. Iterating Algorithm 2 on its own scan output
+until convergence (“Iterated DoGS” in Figure 1) provides
+additional improvement. However, since we consistently
+ﬁnd that the bulk of the improvement is obtained with a
+single run of Algorithm 2, non-iterated DoGS remains our
+recommended recipe for quickly improving scan quality.
+
+Note that since our TV guarantee is an upper bound provided
+by the exact computation of Dobrushin variation, the actual
+gains in TV may differ from the gains in Dobrushin variation.
+In practice and as evidenced in Section 5.4, we ﬁnd that
+the actual gains in (marginal) TV over standard scans are
+typically larger than the Dobrushin variation gains.
+
+02004006008001000LengthofMarkovchain,T10−510−410−310−210−1100101102TVguaranteeUniform(9.19E-01)Systematic(9.59E-03)DoGS(1.45E-04)IteratedDoGS(3.84E-05)Improving Gibbs Sampler Scan Quality with DoGS
+
+Figure 2. (top) Estimate of target, Eπ[X1], versus wall-clock time
+for a standard row-major-order systematic scan and a DoGS opti-
+mized sequence on an Ising model with 1 million variables (see
+Section 5.2). By symmetry Eπ[X1] = 0. (bottom) The end-to-end
+speedup of DoGS over systematic scan, including setup and opti-
+mization time, as a function of the number of sample points we
+draw.
+
+5.2. End-to-end wall clock time performance
+
+In this experiment, we demonstrate that using DoGS to
+optimize a scan can result in dramatic inferential speed-ups.
+This effect is particularly pronounced for targets with a large
+number of variables and in settings that require repeated
+sampling from a low-bias Gibbs sampler. The setting is
+the exactly same as in the previous experiment, with the
+exception of model size: here we simulate a 103
+103 Ising
+model, with 1 million variables in total. We target a single
+marginal X1 with d = e1 and take a systematic scan of
+106 as our input scan. After measuring
+length T = 2
+the Dobrushin variation (cid:15) of the systematic scan, we use
+an efﬁcient length-doubling scheme to select a DoGS scan:
+(0) initialize ˜T = 2; (1) run Algorithm 2 with the ﬁrst ˜T
+steps of the systematic scan as input; (2) if the resulting
+DoGS scan has Dobrushin variation less than (cid:15), we keep it;
+otherwise we double ˜T and return to step (1). The resulting
+DoGS scan has length ˜T = 16.
+
+×
+
+×
+
+Figure 3. Comparison of parameter estimation error in MCMC
+maximum likelihood estimation of the 3 × 3 (top) and a 4 × 4
+(bottom) Ising models of Domke (2015). Each MCMC gradient
+estimate is obtained either from the uniform random scan suggested
+by Domke or from DoGS initialized with the uniform random scan,
+using Algorithm 2 to achieve a target total variation of 0.01 (see
+Section 5.3). Five runs are shown in each case.
+
+We repeatedly draw independent sample points from either
+the length T systematic scan Gibbs sampler or the length ˜T
+DoGS scan Gibbs sampler. Figure 2 evaluates the bias of
+the resulting Monte Carlo estimates of Eπ[X1] as a function
+of time, including the 15s of setup time for DoGS on this 1
+million variable model. In comparison, Levine et al. (2005)
+report 10 minutes of setup time for their adaptive Gibbs
+scans when processing a 64 variable Ising model. The bot-
+tom plot of Figure 2 uses the average measured time for a
+single step1, the measured setup time for DoGS and the size
+of the two scan sequences to give an estimate of the speedup
+as a function of the number of sample points drawn. Addi-
+tional timing experiments are deferred to Appendix B.2.
+
+5.3. Accelerated MCMC maximum likelihood
+
+estimation
+
+We next illustrate how DoGS can be used to accelerate
+MCMC maximum likelihood estimation, while providing
+guarantees on parameter estimation quality. We replicate
+
+1Each Gibbs step took 12.65µs on a 2015 Macbook Pro.
+
+01020304050607080Timeinseconds−1.0−0.50.00.51.0EstimateforEπ[X1]SystematicscanDoGSDoGSsetupphase100101102103104105106Numberofsamplepointsdrawn100101102103104105106Speed-upoversystematicscan0500100015002000Totalnumberofsamplingsteps10−310−210−1100kˆθ−θ∗k2UniformrandomscanDoGS050001000015000200002500030000Totalnumberofsamplingsteps10−310−210−1100kˆθ−θ∗k2UniformrandomscanDoGSImproving Gibbs Sampler Scan Quality with DoGS
+
+the Ising model maximum likelihood estimation experiment
+of (Domke, 2015, Sec. 6) and show how we can provide
+the same level of accuracy faster. Our aim is to learn the
+parameters of binary MRFs based on training samples with
+independent Rademacher entries. On each step of MCMC-
+MLE, Domke uses Gibbs sampling with a uniform random
+scan to produce an estimate of the gradient of the log likeli-
+hood. Our DoGS variant employs Algorithm 2 with d = 1,
+early stopping parameter (cid:15) = 0.01, and a Dobrushin inﬂu-
+ence bound constructed from the latest parameter estimate
+ˆθ using Theorem 11. We set the number of gradient steps,
+MC steps per gradient, and independent runs of Gibbs sam-
+pling to the suggested values in (Domke, 2015). After each
+gradient update, we record the distance between the optimal
+and estimated parameters. Figure 3 displays the estimation
+error of ﬁve independent replicates of this experiment using
+each of two scans (uniform or DoGS) for two models (a
+4 Ising model). The results show that DoGS
+3
+consistently achieves the desired parameter accuracy much
+more quickly than standard Gibbs.
+
+3 and a 4
+
+×
+
+×
+
+5.4. Customized scans for fast marginal mixing
+
+×
+
+In this section we demonstrate how DoGS can be used to
+dramatically speed up marginal inference while providing
+target-dependent guarantees. We use a 40
+40 non-toroidal
+Ising model and set our feature to be the top left variable
+with d = e1. Figure 4 compares guarantees for a uniform
+random scan and a systematic scan; we also see how we can
+further improve the total variation guarantees by feeding a
+systematic scan into Algorithm 2. Again we see that a single
+run of Algorithm 2 yields the bulk of the improvement, and
+iterated applications only provide small further beneﬁts. For
+the DoGS sequence, the ﬁgure also shows a histogram of
+the distance of sampled variables from the target variable,
+X1, at the top left corner of the grid.
+
+Figure 5 shows that optimizing our objective actually im-
+proves performance by reducing the marginal bias much
+more quickly than systematic scan. For completeness, we
+include additional experiments on a toroidal Ising model in
+Appendix B.3.
+
+5.5. Targeted image segmentation and object
+
+recognition
+
+The Markov ﬁeld aspect model (MFAM) of Verbeek &
+Triggs (2007) is a generative model for images designed
+to automatically divide an image into its constituent parts
+(image segmentation) and label each part with its semantic
+object class (object recognition). For each test image k,
+the MFAM extracts a discrete feature descriptor from each
+to
+image patch i, assigns a latent object class label Xi ∈ X
+
+Figure 4. (top) Marginal TV guarantees provided by Dobrushin
+variation for various Gibbs sampler scans when targeting the top
+left corner variable on a 40 × 40 non-toroidal Ising model with
+θij ≈ 1/3.915 (see Section 5.4). DoGS is initialized with the
+systematic scan. (bottom) Frequency with which each variable
+is sampled in the DoGS sequence of length 16000, sorted by
+Manhattan distance to target variable.
+
+each patch, and induces the posterior distribution
+
+π(X
+
+y; k)
+|
+
+∝
+
+exp( (cid:80)
++ (cid:80)
+
+(i,j) spatial neighbors σI
+i log((cid:80)
+
+Xi = Xj}
+{
+θk,aβa,yiI
+Xi = a
+{
+
+∈X
+
+a
+
+(4)
+
+)),
+}
+
+over the conﬁguration of patch levels X. When the Potts
+parameter σ = 0, this model reduces to probabilistic la-
+tent semantic analysis (PLSA) (Hofmann, 2001), while a
+positive value of σ encourages nearby patches to belong to
+similar classes. Using the Microsoft Research Cambridge
+(MSRC) pixel-wise labeled image database v12, we follow
+the weakly supervised setup of Verbeek & Triggs (2007)
+to ﬁt the PLSA parameters θ and β to a training set of im-
+ages and then, for each test image k, use Gibbs sampling to
+generate patch label conﬁgurations X targeting the MFAM
+posterior (4) with σ = 0.48. We generate a segmentation by
+assigning each patch the most frequent label encountered
+during Gibbs sampling and evaluate the accuracy of this
+labeling using the Hamming error described in (Verbeek &
+Triggs, 2007). This experiment is repeated over 20 indepen-
+
+2http://research.microsoft.com/vision/cambridge/recognition/
+
+050001000015000LengthofMarkovchain,T10−310−210−1100MarginalTVguaranteeUniform(1.208E-01)Systematicscan(6.401E-02)DoGS(9.626E-03)IteratedDoGS(7.405E-03)050010001500Variablesortedbydistancetotopleftcorner0.0000.0010.0020.0030.0040.0050.0060.007FrequencyImproving Gibbs Sampler Scan Quality with DoGS
+
+Figure 6. (left) Example test image from MSRC dataset. (right)
+Segmentation produced by DoGS Markov ﬁeld aspect model tar-
+geting the center region outlined in white (see Section 5.5).
+
+Figure 5. (top) Marginal TV guarantees provided by Dobrushin
+variation for systematic scan and DoGS initialized with systematic
+scan when targeting the top left corner variable on a 40 × 40
+toroidal Ising model with θij = 0.25 (see Section 5.4). (bottom)
+Measured bias and standard errors from 300 independent samples
+of X T
+1 .
+
+dently generated 90% training / 10% test partitions of the
+240 image dataset.
+
+×
+
+We select our DoGS scan to target a 12
+8 marginal patch
+rectangle at the center of each image (the {0,1} entries of d
+indicate whether a patch is in the marginal rectangle high-
+lighted in Figure 6) and compare its segmentation accuracy
+and efﬁciency with that of a standard systematic scan of
+length T = 620. We initialize DoGS with the systematic
+scan, the inﬂuence bound ¯C of Theorem 10, and a target
+accuracy (cid:15) equal to the marginal Dobrushin variation guaran-
+tee of the systematic scan. In 11.5ms, the doubling scheme
+described in Section 5.2 produced a DoGS sequence of
+length 110 achieving the Dobrushin variation guarantee (cid:15) on
+marginal TV. Figure 7 shows that DoGS achieves a slightly
+better average Hamming error than systematic scan using a
+shorter sequence. Systematic scan takes 1.2s to resam-
+5.5
+ple each variable of interest, while DoGS consumes 0.37s.
+Moreover, the 11.5ms DoGS scan selection was performed
+only once and then used to segment all test images. For
+
+×
+
+Figure 7. Average test image segmentation error under the Markov
+ﬁeld aspect model of Section 5.5. PLSA represents the maximum a
+posteriori patch labeling under the MFAM (4) with σ = 0. Errors
+are averaged over 20 MSRC test sets of 24 images.
+
+each chain, X 0 was initialized to the maximum a posteriori
+patch labeling under the PLSA model (obtained by setting
+σ = 0 in the MFAM).
+
+6. Discussion
+
+We introduced a practical quality measure – Dobrushin varia-
+tion – for evaluating and comparing existing Gibbs sampler
+scans and efﬁcient procedures – DoGS – for developing
+customized fast-mixing scans tailored to marginals or distri-
+butional features of interest. We deployed DoGS for three
+common Gibbs sampler applications – joint image segmen-
+tation and object recognition, MCMC maximum likelihood
+estimation, and Ising model inference – and in each case
+achieved higher quality inferences with signiﬁcantly smaller
+sampling budgets than standard Gibbs samplers. In the fu-
+ture, we aim to enlist DoGS for additional applications in
+computer vision and natural language processing, extend the
+reach of DoGS to models containing continuous variables,
+and integrate DoGS into large inference engines built atop
+Gibbs sampling.
+
+050010001500200025003000LengthofMarkovchain,T0.40.50.60.70.80.91.01.11.21.3MarginalTVguaranteeSystematic(9.159E-01)DoGS(4.186E-01)050010001500200025003000LengthofMarkovchain,T−0.20.00.20.40.60.81.01.2Measuredbias,|ˆE[XT1]−Eπ[X1]|Systematic(4.053E-01)DoGS(1.329E-02)020040060080010001200Numberofsamplingsteps131415161718HammingerrorPLSASystematicscanDoGSImproving Gibbs Sampler Scan Quality with DoGS
+
+References
+
+De Sa, Christopher, Olukotun, Kunle, and Ré, Christopher. Ensur-
+ing rapid mixing and low bias for asynchronous Gibbs sampling.
+arXiv preprint arXiv:1602.07415, 2016.
+
+Dobrushin, Roland Lvovich and Shlosman, Senya B. Constructive
+criterion for the uniqueness of Gibbs ﬁeld. In Statistical physics
+and dynamical systems, pp. 347–370. Springer, 1985.
+
+Domke, Justin. Maximum likelihood learning with arbitrary
+treewidth via fast-mixing parameter sets. In Advances in Neural
+Information Processing Systems, pp. 874–882, 2015.
+
+Feng, Weiming, Sun, Yuxin, and Yin, Yitong. What can be sampled
+
+locally? arXiv preprint arXiv:1702.00142, 2017.
+
+Geman, Stuart and Geman, Donald. Stochastic relaxation, Gibbs
+distributions, and the bayesian restoration of images. Pattern
+Analysis and Machine Intelligence, IEEE Transactions on, (6):
+721–741, 1984.
+
+Geyer, C. J. Markov chain Monte Carlo maximum likelihood.
+Computer Science and Statistics: Proc. 23rd Symp. Interface,
+pp. 156–163, 1991.
+
+Hayes, Thomas P. A simple condition implying rapid mixing of
+single-site dynamics on spin systems. In Foundations of Com-
+puter Science, 2006. FOCS’06. 47th Annual IEEE Symposium
+on, pp. 39–46. IEEE, 2006.
+
+He, Bryan D, De Sa, Christopher M, Mitliagkas, Ioannis, and Ré,
+Christopher. Scan order in gibbs sampling: Models in which
+it matters and bounds on how much. In Advances in Neural
+Information Processing Systems, pp. 1–9, 2016.
+
+Hofmann, Thomas. Unsupervised learning by probabilistic latent
+semantic analysis. Machine learning, 42(1-2):177–196, 2001.
+Janke, Wolfhard. Monte Carlo methods in classical statistical
+physics. In Computational Many-Particle Physics, pp. 79–140.
+Springer, 2008.
+
+Lacoste-Julien, Simon, Huszár, Ferenc, and Ghahramani, Zoubin.
+Approximate inference for the loss-calibrated bayesian.
+In
+AISTATS, pp. 416–424, 2011.
+
+Latuszynski, Krzysztof, Roberts, Gareth O., and Rosenthal,
+Jeffrey S. Adaptive Gibbs samplers and related MCMC
+methods. Ann. Appl. Probab., 23(1):66–98, 02 2013. doi:
+10.1214/11-AAP806. URL http://dx.doi.org/10.
+1214/11-AAP806.
+
+Levine, R. A. and Casella, G. Optimizing random scan Gibbs
+samplers. Journal of Multivariate Analysis, 97(10):2071–2100,
+2006.
+
+Levine, Richard A, Yu, Zhaoxia, Hanley, William G, and Nitao,
+John J. Implementing random scan Gibbs samplers. Computa-
+tional Statistics, 20(1):177–196, 2005.
+
+Liu, Jun S, Wong, Wing H, and Kong, Augustine. Covariance
+structure and convergence rate of the Gibbs sampler with var-
+ious scans. Journal of the Royal Statistical Society. Series B
+(Methodological), pp. 157–169, 1995.
+
+Liu, Xianghang and Domke, Justin. Projecting markov random
+ﬁeld parameters for fast mixing. In Advances in Neural Infor-
+mation Processing Systems, pp. 1377–1385, 2014.
+
+Lunn, David J, Thomas, Andrew, Best, Nicky, and Spiegelhalter,
+David. WinBUGS-a bayesian modelling framework: concepts,
+structure, and extensibility. Statistics and computing, 10(4):
+325–337, 2000.
+
+Rebeschini, Patrick and van Handel, Ramon. Comparison theorems
+for gibbs measures. Journal of Statistical Physics, 157(2):234–
+281, 2014.
+
+Verbeek, Jakob and Triggs, Bill. Region classiﬁcation with markov
+ﬁeld aspect models. In Computer Vision and Pattern Recog-
+nition, 2007. CVPR’07. IEEE Conference on, pp. 1–8. IEEE,
+2007.
+
+A. Proofs
+
+Improving Gibbs Sampler Scan Quality with DoGS
+
+A.1. Proof of Lemma 5
+Let X ∼ µ and Y ∼ ν. Now deﬁne the sequence (Zi)p
+Deﬁnition 4 and the compactness of the space of d-Lipschitz features, there exists d-Lipschitz f such that
+
+i=0, such that Z0 (cid:44) X, Zp (cid:44) Y and Zi−1, Zi can only differ on element i. By
+
+Then using triangle inequality,
+
+(cid:107)µ − ν(cid:107)d,TV = |E[f (X) − f (Y )]|.
+
+|E[f (X) − f (Y )]| ≤
+
+E[
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+p
+(cid:88)
+
+i=1
+
+(cid:12)
+(cid:12)
+(cid:12)
+f (Zi−1) − f (Zi)]
+(cid:12)
+(cid:12)
+
+|E[f (Zi−1) − f (Zi)]|
+
+P(Xi (cid:54)= Yi)di
+
+p
+(cid:88)
+
+i=1
+p
+(cid:88)
+
+≤
+
+≤
+
+i=1
+=d(cid:62)pt
+
+A.2. Proof of Theorem 8
+
+First we state a useful result due to Dobrushin & Shlosman (1985).
+Lemma 13 ((Dobrushin & Shlosman, 1985), similar arguments can be found in Theorem 6 of (Hayes, 2006) and in (De Sa et al., 2016)).
+Consider the marginal coupling probability pt,i (cid:44) P(X t
+i ) and inﬂuence matrix, C, we deﬁned in Section 3 and an arbitrary scan
+sequence (it)t=T
+t=1 . Then, an application of the law of total probability yields the following bound on the marginal coupling probabilities.
+
+i (cid:54)= Y t
+
+pt,i ≤
+
+
+
+
+
+
+(cid:80)
+
+j(cid:54)=i Cijpt,j,
+
+it = i
+
+pt−1,i,
+
+o.w.
+
+and p0,i ≤ 1 for all i.
+
+Proof of Theorem 8
+Zii(t) = zi(t) so that EZ(t) = diag(qt). Now, from Lemma 5, and using Lemma 13,
+
+At each time step, it = i with probability qt,i. Let zi(t) (cid:44) I{it = i} and Z(t) denote the diagonal matrix with
+
+|Ef (X T ) − Ef (Y T )|
+(cid:88)
+
+≤d(cid:62)pT =
+
+dipT,i
+
+i
+
+
+
+(cid:88)
+
+≤
+
+i
+
+(cid:88)
+
+j(cid:54)=i
+
+=d(cid:62)(I − ZT (I − C))pT −1.
+
+di
+
+zi(T )
+
+CijpT −1,j + (1 − zi(T ))pT −1,i
+
+
+
+
+
+Now, taking an expectation over the randomness of sampling (random variables it), we get
+E|Ef (X T ) − Ef (Y T )| ≤ d(cid:62)(I − diag(qT )(I − C))EpT −1 ≤ d(cid:62)B(qT ) · · · B(q1)1 = V(q1, . . . , qT ; d, C) ≤ V(q1, . . . , qT ; d, ¯C),
+where we used the fact that p0 is a vector of probabilities, so all of its elements are at most 1.
+
+A.3. Proof of Proposition 9
+Let (cid:15) = (cid:13)
+
+Proof
+
+(cid:13) ¯C(cid:13)
+
+(cid:13). From Deﬁnition 7, we have that
+
+V(q1, . . . , qT ; d, ¯C) (cid:44) d(cid:62)B(qT ) · · · B(q1)1 = d(cid:62)pT
+
+Theorem 6 in (Hayes, 2006) implies that the entries of the marginal coupling probability, pT decay with rate (1 − (cid:15)/n)T for uniform
+random scans. Similarly, Theorem 8 of (Hayes, 2006) implies that the entries of the marginal coupling decay with rate (1 − (cid:15)/2)T /n for
+systematic scans. In both cases, the statement holds by taking T to inﬁnity.
+
+Improving Gibbs Sampler Scan Quality with DoGS
+
+A.4. Proof of Theorem 11: Inﬂuence bound for binary pairwise MRFs
+
+Our proof relies on the following technical lemma.
+
+Lemma 14. Consider the function g(w, z) = 1/(1 + zw) for w ≥ 0 and z ∈ [r, s] for some s, r ≥ 0. We have
+
+|g(w, z) − g(w(cid:48), z)| =
+
+|w − w(cid:48)|z
+(1 + zw)(1 + zw(cid:48))
+
+≤
+
+|w − w(cid:48)|z∗
+(1 + z∗w)(1 + z∗w(cid:48))
+
+(5)
+
+for z∗ = max(r, min(s, (cid:112)1/(ww(cid:48)))).
+
+Proof
+((cid:112)1/(ww(cid:48)), ∞).
+
+The inequality follows from the fact that the expression (5) is increasing in z on [0, (cid:112)1/(ww(cid:48))) and decreasing on
+
+Proof of Theorem 11
+
+In the notation of Lemma 14, we see that, for each i and j (cid:54)= i, the full conditional of Xi is given by
+
+π(Xi = 1|X−i) =
+
+1
+1 + exp(−2 (cid:80)
+k θikXk − 2θi)
+1
+
+=
+
+1 + exp(−2 (cid:80)
+= g(exp(−2θijXj), b)
+
+k(cid:54)=j θikXk − 2θi) exp(−2θijXj)
+
+for b = exp(−2 (cid:80)
+
+k(cid:54)=j θikXk − 2θi) ∈
+
+exp(−2 (cid:80)
+
+k(cid:54)=j |θik| − 2θi), exp(2 (cid:80)
+
+(cid:104)
+
+(cid:105)
+k(cid:54)=j |θik| − 2θi)
+
+.
+
+Therefore, by Lemma 14, the inﬂuence of Xj on Xi admits the bound
+
+Cij (cid:44) max
+X,Y ∈Bj
+
+(cid:12)
+(cid:12)
+(cid:12)π(Xi = 1|X−i) − π(Yi = 1|Y−i)
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+= max
+
+|g(exp(−2θijXj), b) − g(exp(−2θijYj), b)|
+
+X,Y ∈Bj
+
+= max
+
+X,Y ∈Bj
+
+|exp(−2θijXj) − exp(−2θijYj)|b
+(1 + b exp(−2θijXj))(1 + b exp(−2θijYj))
+
+= max
+
+X,Y ∈Bj
+
+|exp(2θij) − exp(−2θij)|b
+(1 + b exp(2θij))(1 + b exp(−2θij))
+
+≤
+
+|exp(2θij) − exp(−2θij)|b∗
+(1 + b∗ exp(2θij))(1 + b∗ exp(−2θij))
+
+for b∗ = max(exp(−2 (cid:80)
+
+k(cid:54)=j |θik| − 2θi), min(exp(2 (cid:80)
+
+k(cid:54)=j |θik| − 2θi), 1)).
+
+A.5. Proof of Theorem 12: Inﬂuence bound for binary higher-order MRFs
+
+Mirroring the proof of Theorem 11 and adopting the notation of Lemma 14, we see that, for each i and j (cid:54)= i, the full conditional of Xi is
+given by
+
+π(Xi = 1|X−i) =
+
+1 + exp(−2 (cid:80)
+
+= g(exp(−2 (cid:80)
+
+S∈S:i∈S,j /∈S θS
+(cid:81)
+
+S∈S:i,j∈S θSXj
+
+(cid:81)
+
+1
+k∈S:k(cid:54)=i Xk − 2θi) exp(−2 (cid:80)
+k∈S:k /∈{i,j} Xk), b)
+
+S∈S:i,j∈S θSXj
+
+k∈S:k /∈{i,j} Xk)
+
+(cid:81)
+
+for b = exp(−2 (cid:80)
+
+S∈S:i∈S,j /∈S θS
+
+k∈S:k(cid:54)=i Xk − 2θi) ∈
+
+(cid:81)
+
+exp(−2 (cid:80)
+
+S∈S:i∈S,j /∈S |θS| − 2θi), exp(2 (cid:80)
+
+S∈S:i∈S,j /∈S |θS| − 2θi)
+
+(cid:104)
+
+(cid:105)
+.
+
+Improving Gibbs Sampler Scan Quality with DoGS
+
+Therefore, by Lemma 14, as in the argument of Theorem 11, the inﬂuence of Xj on Xi admits the bound
+
+Cij (cid:44) max
+X,Y ∈Bj
+
+= max
+
+X,Y ∈Bj
+
+= max
+
+X,Y ∈Bj
+
+= max
+
+X,Y ∈Bj
+(cid:12)
+(cid:12)exp(2 (cid:80)
+(cid:12)
+
+≤
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:81)
+
+S∈S:i,j∈S θSXj
+
+(cid:12)
+(cid:12)
+(cid:12)π(Xi = 1|X−i) − π(Yi = 1|Y−i)
+(cid:12)
+(cid:12)g(exp(−2 (cid:80)
+(cid:12)
+(cid:12)
+(cid:12)exp(2 (cid:80)
+(cid:12)
+(1 + b exp(2 (cid:80)
+(cid:12)
+(cid:12)exp(2 (cid:80)
+(cid:12)
+(1 + b∗ exp(2 (cid:80)
+S∈S:i,j∈S θS
+S∈S:i,j∈S |θS|) − exp(−2 (cid:80)
+
+S∈S:i,j∈S θS
+S∈S:i,j∈S θS
+
+S∈S:i,j∈S θS
+
+(cid:81)
+
+(cid:81)
+
+(1 + b∗)2
+
+k∈S:k /∈{i,j} Xk), b) − g(exp(−2 (cid:80)
+
+S∈S:i,j∈S θSYj
+
+k∈S:k /∈{i,j} Xk), b)
+
+(cid:81)
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+k∈S:k /∈{i,j} Xk) − exp(−2 (cid:80)
+k∈S:k /∈{i,j} Xk))(1 + b exp(−2 (cid:80)
+(cid:81)
+k∈S:k /∈{i,j} Xk) − exp(−2 (cid:80)
+k∈S:k /∈{i,j} Xk))(1 + b∗ exp(−2 (cid:80)
+(cid:81)
+
+S∈S:i,j∈S θS
+
+k∈S:k /∈{i,j} Xk)
+
+(cid:81)
+
+(cid:12)
+(cid:12)
+(cid:12)b
+
+S∈S:i,j∈S θS
+
+k∈S:k /∈{i,j} Xk))
+
+(cid:81)
+
+S∈S:i,j∈S θS
+
+k∈S:k /∈{i,j} Xk)
+
+(cid:81)
+
+(cid:12)
+(cid:12)b∗
+(cid:12)
+k∈S:k /∈{i,j} Xk))
+
+(cid:81)
+
+S∈S:i,j∈S θS
+
+S∈S:i,j∈S |θS|)
+
+(cid:12)
+(cid:12)b∗
+(cid:12)
+
+for b∗ = max(exp(−2 (cid:80)
+
+S∈S:i∈S,j /∈S |θS| − 2θi), min(exp(2 (cid:80)
+
+S∈S:i∈S,j /∈S |θS| − 2θi), 1)).
+
+B. Additional experiments
+
+We provide a few experimental results that were excluded from the main body of the paper due to space limitations.
+
+B.1. Independent replicates of evaluating and optimizing Gibbs sampler scans experiment
+
+Figure 8 displays the results of nine independent replicates of the “Evaluating and optimizing Gibbs sampler scans” experiment of
+Section 5, with independently drawn unary and binary potentials.
+
+Figure 8. Independent replicates of the experiment of Section 5.1.
+
+02004006008001000LengthofMarkovchain,T10−410−310−210−1100101102TVguaranteeUniform(8.94E-01)Systematic(3.42E-03)DoGS(2.10E-04)IteratedDoGS(1.12E-04)02004006008001000LengthofMarkovchain,T10−510−410−310−210−1100101102TVguaranteeUniform(9.19E-01)Systematic(7.65E-03)DoGS(1.89E-04)IteratedDoGS(4.19E-05)02004006008001000LengthofMarkovchain,T10−410−310−210−1100101102TVguaranteeUniform(8.54E-01)Systematic(3.45E-03)DoGS(2.45E-04)IteratedDoGS(1.41E-04)02004006008001000LengthofMarkovchain,T10−510−410−310−210−1100101102TVguaranteeUniform(6.96E-01)Systematic(1.48E-03)DoGS(1.37E-04)IteratedDoGS(5.89E-05)02004006008001000LengthofMarkovchain,T10−410−310−210−1100101102TVguaranteeUniform(1.76E+00)Systematic(4.04E-02)DoGS(1.58E-03)IteratedDoGS(6.22E-04)02004006008001000LengthofMarkovchain,T10−410−310−210−1100101102TVguaranteeUniform(8.91E-01)Systematic(3.17E-03)DoGS(4.18E-04)IteratedDoGS(2.13E-04)02004006008001000LengthofMarkovchain,T10−410−310−210−1100101102TVguaranteeUniform(1.56E+00)Systematic(2.35E-02)DoGS(1.13E-03)IteratedDoGS(4.90E-04)02004006008001000LengthofMarkovchain,T10−610−510−410−310−210−1100101102TVguaranteeUniform(5.43E-01)Systematic(1.21E-03)DoGS(3.07E-05)IteratedDoGS(7.28E-06)02004006008001000LengthofMarkovchain,T10−410−310−210−1100101102TVguaranteeUniform(1.28E+00)Systematic(1.01E-02)DoGS(9.39E-04)IteratedDoGS(4.67E-04)Improving Gibbs Sampler Scan Quality with DoGS
+
+B.2. Independent replicates of end-to-end wall clock time performance experiment
+
+Figure 9 repeats the timing experiment of Figure 2 providing three extra independent trials. Note that when the user speciﬁes the “early
+stopping” parameter (cid:15), Algorithm 2 terminates once its scan is within (cid:15) Dobrushin variation of the target. The long-term bias observed in
+the DoGS estimate of Eπ[X1] is a result of this user-controlled early stopping and can be reduced arbitrarily by choosing a smaller (cid:15).
+
+Figure 9. Independent replicates of the experiment of Section 5.2.
+
+Figure 10 reports the estimate of a marginal expectation versus time from a sampling experiment, including the setup time for DoGS. The
+setting is the same as in the experiment of Section 5.2 with the exception of model size: here we simulate a 300 × 300 Ising model, with
+90K variables in total. The right plot uses the average measured time for a single step the measured setup time for DoGS and the size of
+the two scan sequences (190K for systematic, 16 for DoGS) to give an estimate of the speedup as a function of the number of samples we
+draw.
+
+Figure 10. (top) Estimate of E[x1] versus wall-clock time for a standard row-major-order systematic scan and a DoGS optimized sequence
+on a 300 × 300 Ising model. By symmetry E[x1] = 0. (bottom) The end-to-end speedup of DoGS over systematic scan, including setup
+and optimization time, as a function of the number of samples we draw.
+
+B.3. Addendum to customized scans for fast marginal mixing experiment
+
+In this section we provide alternative conﬁgurations and independent runs of the marginal experiments presented in Section 5.4.
+
+Figure 11 gives a spatial histogram of samples at different segments of the DoGS sequence produced in Section 5.4. We note that the
+sequence starts by sampling in the target (top-left) site’s extended neighborhood and slowly zeroes in on the target near the end.
+
+Here we repeat the marginal Ising model experiments from Section 5. The set up is exactly the same, with the exception of the Ising
+model boundary conditions. Results are shown in Figure 14 and Figure 13.
+
+Finally, in Figure 12, we repeat the sampling experiment of Figure 5 three times.
+
+B.4. Independent replicates of targeted image segmentation and object recognition experiment
+
+Figure 15 displays the results of two independent runs of the image segmentation experiment from Section 5.5.
+
+01020304050607080Timeinseconds−1.0−0.50.00.51.0EstimateforEπ[X1]SystematicscanDoGSDoGSsetupphase010203040506070Timeinseconds−1.0−0.50.00.51.0EstimateforEπ[X1]SystematicscanDoGSDoGSsetupphase01020304050607080Timeinseconds−1.0−0.50.00.51.0EstimateforEπ[X1]SystematicscanDoGSDoGSsetupphase0123456Timeinseconds−1.0−0.50.00.51.0EstimateforEπ[X1]SystematicscanDoGSDoGSsetupphase100101102103104105Number of samples drawn100101102103104105Speed-up over systematic scanImproving Gibbs Sampler Scan Quality with DoGS
+
+Figure 11. Sampling frequencies of variables in subsequences of the scan produced by DoGS (Algorithm 2) in the Section 5.4 experiment.
+
+Figure 12. Independent repetitions of the fast marginal mixing experiment of Section 5.4.
+
+Figure 13. Deterministic scan bias comparison when targetting the top left corner variable on a 40 × 40 toroidal Ising model. The middle
+plot shows the histogram of the sequence achieved via Algorithm 2. The right plot shows the sequence’s distance-time proﬁle.
+
+Figure 14. Sampling histogram of sequence from Algorithm 2 at different times. The left plot shows a map of the frequency at which each
+site on a 2D toric Ising model is sampled for the ﬁrst half of a DoGS sequence, when we target the top-left variable. When we look at later
+stages of the DoGS scan sequence (later plots), DoGS samples in an ever decreasing neighborhood, zeroing in on the target site.
+
+0510152025303505101520253035Firsthalfofsequence0510152025303505101520253035Latterhalfofsequence0510152025303505101520253035Lattersixteenthofsequence0510152025303505101520253035Latter512thofsequence050010001500200025003000LengthofMarkovchain,T−0.20.00.20.40.60.81.01.2Measuredbias,|ˆE[XT1]−Eπ[X1]|Systematic(3.920E-01)DoGS(0.000E+00)050010001500200025003000LengthofMarkovchain,T−0.20.00.20.40.60.81.01.2Measuredbias,|ˆE[XT1]−Eπ[X1]|Systematic(4.252E-01)DoGS(1.196E-01)050010001500200025003000LengthofMarkovchain,T−0.20.00.20.40.60.81.01.2Measuredbias,|ˆE[XT1]−Eπ[X1]|Systematic(3.854E-01)DoGS(9.302E-02)050001000015000LengthofMarkovchain,T10−1100MarginalTVguaranteeUniform(8.161E-01)Systematicscan(6.631E-01)DoGS(1.573E-01)IteratedDoGS(1.544E-01)050010001500Variablesortedbydistancetotopleftcorner0.0000.0010.0020.0030.0040.005Frequency050001000015000Time05101520Distanceofsampledsitetotarget0510152025303505101520253035Firsthalfofsequence0510152025303505101520253035Latterhalfofsequence0510152025303505101520253035Lattersixteenthofsequence0510152025303505101520253035Latter512thofsequenceImproving Gibbs Sampler Scan Quality with DoGS
+
+Figure 15. Independent repetitions of the targeted image segmentation and object recognition experiment of Section 5.5.
+
+020040060080010001200Numberofsamplingsteps131415161718HammingerrorPLSAGibbsDoGS020040060080010001200Numberofsamplingsteps131415161718HammingerrorPLSAGibbsDoGS

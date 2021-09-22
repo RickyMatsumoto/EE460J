@@ -1,0 +1,979 @@
+Real-Time Adaptive Image Compression
+
+Oren Rippel * 1 Lubomir Bourdev * 1
+
+Abstract
+We present a machine learning-based approach
+to lossy image compression which outperforms
+all existing codecs, while running in real-time.
+Our algorithm typically produces ﬁles 2.5 times
+smaller than JPEG and JPEG 2000, 2 times
+smaller than WebP, and 1.7 times smaller than
+BPG on datasets of generic images across all
+quality levels. At the same time, our codec is de-
+signed to be lightweight and deployable: for ex-
+ample, it can encode or decode the Kodak dataset
+in around 10ms per image on GPU. Our architec-
+ture is an autoencoder featuring pyramidal anal-
+ysis, an adaptive coding module, and regulariza-
+tion of the expected codelength. We also sup-
+plement our approach with adversarial training
+specialized towards use in a compression setting:
+this enables us to produce visually pleasing re-
+constructions for very low bitrates.
+
+1. Introduction
+
+Streaming of digital media makes 70% of internet trafﬁc,
+and is projected to reach 80% by 2020 (CIS, 2015). How-
+ever, it has been challenging for existing commercial com-
+pression algorithms to adapt to the growing demand and
+the changing landscape of requirements and applications.
+While digital media are transmitted in a wide variety of
+settings, the available codecs are “one-size-ﬁts-all”: they
+are hard-coded, and cannot be customized to particular use
+cases beyond high-level hyperparameter tuning.
+
+In the last few years, deep learning has revolutionized many
+tasks such as machine translation, speech recognition, face
+recognition, and photo-realistic image generation. Even
+though the world of compression seems a natural domain
+for machine learning approaches, it has not yet beneﬁted
+from these advancements, for two main reasons. First,
+our deep learning primitives, in their raw forms, are not
+
+*Equal contribution 1WaveOne Inc., Mountain View, CA,
+USA. Correspondence to: Oren Rippel <oren@wave.one>,
+Lubomir Bourdev <lubomir@wave.one>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+well-suited to construct representations sufﬁciently com-
+pact. Recently, there have been a number of important ef-
+forts by Toderici et al. (2015; 2016), Theis et al. (2016),
+Ball´e et al. (2016), and Johnston et al. (2017) towards al-
+leviating this: see Section 2.2. Second, it is difﬁcult to
+develop a deep learning compression approach sufﬁciently
+efﬁcient for deployment in environments constrained by
+computation power, memory footprint and battery life.
+
+In this work, we present progress on both performance and
+computational feasibility of ML-based image compression.
+
+Our algorithm outperforms all existing image compression
+approaches, both traditional and ML-based:
+it typically
+produces ﬁles 2.5 times smaller than JPEG and JPEG 2000
+(JP2), 2 times smaller than WebP, and 1.7 times smaller
+than BPG on the Kodak PhotoCD and RAISE-1k 512×768
+datasets across all of quality levels. At the same time, we
+designed our approach to be lightweight and efﬁciently de-
+ployable. On a GTX 980 Ti GPU, it takes around 9ms to
+encode and 10ms to decode an image from these datasets:
+for JPEG, encode/decode times are 18ms/12ms, for JP2
+350ms/80ms and for WebP 70ms/80ms. Results for a rep-
+resentative quality level are presented in Table 1.
+
+To our knowledge, this is the ﬁrst ML-based approach to
+surpass all commercial image compression techniques, and
+moreover run in real-time.
+
+We additionally supplement our algorithm with adversarial
+training specialized towards use in a compression setting.
+This enables us to produce convincing reconstructions for
+very low bitrates.
+
+Codec
+
+Ours
+
+JPEG
+JP2
+WebP
+
+RGB ﬁle
+size (kb)
+
+YCbCr ﬁle
+size (kb)
+
+21.4 (100%)
+
+17.4 (100%)
+
+65.3 (304%)
+54.4 (254%)
+49.7 (232%)
+
+43.6 (250%)
+43.8 (252%)
+37.6 (216%)
+
+Encode
+time (ms)
+8.6∗
+
+Decode
+time (ms)
+9.9∗
+
+18.6
+367.4
+67.0
+
+13.0
+80.4
+83.7
+
+Table 1. Performance of different codecs on the RAISE-1k 512 ×
+768 dataset for a representative MS-SSIM value of 0.98 in both
+RGB and YCbCr color spaces. Comprehensive results can be
+found in Section 5. ∗We emphasize our codec was run on GPU.
+
+Real-Time Adaptive Image Compression
+
+JPEG
+0.0826 BPP (7.5% bigger)
+
+JPEG 2000
+0.0778 BPP
+
+WebP
+0.0945 BPP (23% bigger)
+
+Ours
+0.0768 BPP
+
+JPEG
+0.111 BPP (10% bigger)
+
+JPEG 2000
+0.102 BPP
+
+WebP
+0.168 BPP (66% bigger)
+
+Ours
+0.101 BPP
+
+Figure 1. Examples of reconstructions by different codecs for very low bits per pixel (BPP) values. The uncompressed size is 24 BPP,
+so the examples represent compression by around 250 times. We reduce the bitrates of other codecs by their header lengths for fair
+comparison. For each codec, we search over bitrates and present the reconstruction for the smallest BPP above ours. WebP and JPEG
+were not able to produce reconstructions for such low BPP: the reconstructions presented are for the smallest bitrate they offer. More
+examples can be found in the appendix.
+
+2. Background & Related Work
+2.1. Traditional compression techniques
+
+Compression, in general, is very closely related to pattern
+recognition. If we are able to discover structure in our in-
+put, we can eliminate this redundancy to represent it more
+succinctly.
+In traditional codecs such as JPEG and JP2,
+this is achieved via a pipeline which roughly breaks down
+into 3 modules: transformation, quantization, and encoding
+(Wallace (1992) and Rabbani & Joshi (2002) provide great
+overviews of the JPEG standards).
+
+In traditional codecs, since all components are hard-coded,
+they are heavily engineered to ﬁt together. For example,
+the coding scheme is custom-tailored to match the distribu-
+tion of the outputs of the preceding transformation. JPEG,
+for instance, employs 8 × 8 block DCT transforms, fol-
+lowed by run-length encoding which exploits the sparsity
+pattern of the resultant frequency coefﬁcients. JP2 employs
+an adaptive arithmetic coder to capture the distribution of
+coefﬁcient magnitudes produced by the preceding multi-
+resolution wavelet transform.
+
+However, despite the careful construction and assembly of
+
+these pipelines, there still remains signiﬁcant room for im-
+provement of compression efﬁciency. For example, the
+transformation is ﬁxed in place irrespective of the distri-
+bution of the inputs, and is not adapted to their statistics in
+any way. In addition, hard-coded approaches often com-
+partmentalize the loss of information within the quantiza-
+tion step. As such, the transformation module is chosen
+to be bijective: however, this limits the ability to reduce
+redundancy prior to coding. Moreover, the encode-decode
+pipeline cannot be optimized for a particular metric beyond
+manual tweaking: even if we had the perfect metric for im-
+age quality assessment, traditional approaches cannot di-
+rectly optimize their reconstructions for it.
+
+2.2. ML-based lossy image compression
+
+In approaches based on machine learning, structure is au-
+tomatically discovered, rather than manually engineered.
+
+One of the ﬁrst such efforts by Bottou et al. (1998), for
+example, introduced the DjVu format for document image
+compression, which employs techniques such as segmen-
+tation and K-means clustering separate foreground from
+background, and analyze the document’s contents.
+
+Real-Time Adaptive Image Compression
+
+Figure 2. Our overall model architecture. The feature extractor, described in Section 3.1, discovers structure and reduces redundancy
+via the pyramidal decomposition and interscale alignment modules. The lossless coding scheme, described in Section 3.2, further
+compresses the quantized tensor via bitplane decomposition and adaptive arithmetic coding. The adaptive codelength regularization
+then modulates the expected code length to a prescribed target bitrate. Distortions between the target and its reconstruction are penalized
+by the reconstruction loss. The discriminator loss, described in Section 4, encourages visually pleasing reconstructions by penalizing
+discrepancies between their distributions and the targets’.
+
+At a high level, one natural approach to implement the
+encoder-decoder image compression pipeline is to use an
+autoencoder to map the target through a bitrate bottleneck,
+and train the model to minimize a loss function penalizing
+it from its reconstruction. This requires carefully construct-
+ing a feature extractor and synthesizer for the encoder and
+decoder, selecting an appropriate objective, and possibly
+introducing a coding scheme to further compress the ﬁxed-
+size representation to attain variable-length codes.
+
+Many of the existing ML-based image compression ap-
+proaches (including ours) follow this general strategy.
+Toderici et al. (2015; 2016) explored various transforma-
+tions for binary feature extraction based on different types
+of recurrent neural networks; the binary representations
+were then entropy-coded. Johnston et al. (2017) enabled
+another considerable leap in performance by introducing a
+loss weighted with SSIM (Wang et al., 2004), and spatially-
+adaptive bit allocation. Theis et al. (2016) and Ball´e et al.
+(2016) quantize rather than binarize, and propose strategies
+to approximate the entropy of the quantized representation:
+this provides them with a proxy to penalize it. Finally, Pied
+Piper has recently claimed to employ ML techniques in its
+Middle-Out algorithm (Judge et al., 2016), although their
+nature is shrouded in mystery.
+
+2.3. Generative Adversarial Networks
+
+One of the most exciting innovations in machine learning
+in the last few years is the idea of Generative Adversarial
+Networks (GANs) (Goodfellow et al., 2014). The idea is
+to construct a generator network GΦ(·) whose goal is to
+synthesize outputs according to a target distribution ptrue,
+and a discriminator network DΘ(·) whose goal is to dis-
+tinguish between examples sampled from the ground truth
+distribution, and ones produced by the generator. This can
+be expressed concretely in terms of the minimax problem:
+
+min
+Φ
+
+max
+Θ
+
+Ex∼ptrue log DΘ(x) + Ez∼pz log [1 − DΘ(GΦ(z))] .
+
+(Ledig et al., 2016), image-to-image conditional translation
+(Isola et al., 2016), and various other important problems.
+
+The adversarial training framework is particularly relevant
+to the compression world. In traditional codecs, distortions
+often take the form of blurriness, pixelation, and so on.
+These artifacts are unappealing, but are increasingly no-
+ticeable as the bitrate is lowered. We propose a multiscale
+adversarial training model to encourage reconstructions to
+match the statistics of their ground truth counterparts, re-
+sulting in sharp and visually pleasing results even for very
+low bitrates. As far as we know, we are the ﬁrst to propose
+using GANs for image compression.
+
+3. Model
+Our model architecture is shown in Figure 2, and com-
+prises a number of components which we brieﬂy outline
+below. In this section, we limit our focus to operations per-
+formed by the encoder: since the decoder simply performs
+the counterpart inverse operations, we only address excep-
+tions which require particular attention.
+
+Feature extraction.
+Images feature a number of different
+types of structure: across input channels, within individual
+scales, and across scales. We design our feature extraction
+architecture to recognize these. It consists of a pyramidal
+decomposition which analyzes individual scales, followed
+by an interscale alignment procedure which exploits struc-
+ture shared across scales.
+
+Code computation and regularization. This module is
+responsible for further compressing the extracted features.
+It quantizes the features, and encodes them via an adaptive
+arithmetic coding scheme applied on their binary expan-
+sions. An adaptive codelength regularization is introduced
+to penalize the entropy of the features, which the coding
+scheme exploits to achieve better compression.
+
+This idea has enabled signiﬁcant progress in photo-realistic
+image generation (Denton et al., 2015; Radford et al.,
+2015; Salimans et al., 2016), single-image super-resolution
+
+Discriminator loss. We employ adversarial training to
+pursue realistic reconstructions. We dedicate Section 4 to
+describing our GAN formulation.
+
+TargetReconstructionBitstreamQuantizationCodingReconstructionlossDiscriminatorlossAdaptivecodelengthregularizationDecodingSynthesisfrom featuresFeatureextractionReal-Time Adaptive Image Compression
+
+3.1. Feature extraction
+
+3.1.1. PYRAMIDAL DECOMPOSITION
+
+Our pyramidal decomposition encoder is loosely inspired
+by the use of wavelets for multiresolution analysis,
+in
+which an input is analyzed recursively via feature extrac-
+tion and downsampling operators (Mallat, 1989). The
+JPEG 2000 standard,
+for example, employs discrete
+wavelet transforms with the Daubechies 9/7 kernels (An-
+tonini et al., 1992; Rabbani & Joshi, 2002). This transform
+is in fact a linear operator, which can be entirely expressed
+via compositions of convolutions with only two hard-coded
+and separable 9×9 ﬁlters applied irrespective of scale, and
+independently for each channel.
+
+The idea of a pyramidal decomposition has been employed
+in machine learning: for instance, Mathieu et al. (2015)
+uses a pyramidal composition for next frame prediction,
+and Denton et al. (2015) uses it for image generation. The
+spectral representations of CNN activations have also been
+investigated by Rippel et al. (2015) to enable processing
+across a spectrum of scales, but this approach does not en-
+able FIR processing as does wavelet analysis.
+
+We generalize the wavelet decomposition idea to learn op-
+timal, nonlinear extractors individually for each scale. Let
+us assume an input x to the model, and a total of M
+scales. We perform recursive analysis: let us denote xm
+as the input to scale m; we set the input to the ﬁrst scale
+x1 = x as the input to the model. For each scale m,
+we perform two operations: ﬁrst, we extract coefﬁcients
+cm = f m(xm) ∈ RCm×Hm×Wm via some parametrized
+function f m(·) for output channels Cm, height Hm and
+width Wm. Second, we compute the input to the next scale
+as xm+1 = Dm(xm) where Dm(·) is some downsampling
+operator (either ﬁxed or learned).
+
+Our pyramidal decomposition architecture is illustrated in
+In practice, we extract across a total of M =
+Figure 3.
+
+illustrated for 3
+Figure 3. The coefﬁcient extraction pipeline,
+scales. The pyramidal decomposition module discovers structure
+within individual scales. The extracted coefﬁcient maps are then
+aligned to discover joint structure across the different scales.
+
+6 scales. The feature extractors for the individual scales
+are composed of a sequence of convolutions with kernels
+3 × 3 or 1 × 1 and ReLUs with a leak of 0.2. We learn all
+downsamplers as 4 × 4 convolutions with a stride of 2.
+
+3.1.2. INTERSCALE ALIGNMENT
+
+Interscale alignment is designed to leverage information
+shared across different scales — a beneﬁt not offered by
+the classic wavelet analysis. It takes in as input the set of
+coefﬁcients extracted from the different scales {cm}M
+m=1 ⊂
+RCm×Hm×Wm , and produces a single tensor of a target out-
+put dimensionality C × H × W .
+
+To do this, we ﬁrst map each input tensor cm to the tar-
+get dimensionality via some parametrized function gm(·).
+This involves ensuring that this function spatially resam-
+ples cm to the appropriate output map size H ×W , and out-
+puts the appropriate number of channels C. We then sum
+gm(cm), m = 1, . . . , M , and apply another parametrized
+non-linear transformation g(·) for joint processing.
+
+The interscale alignment module can be seen in Figure 3.
+We denote its output as y.
+In practice, we choose each
+gm(·) as a convolution or a deconvolution with an appro-
+priate stride to produce the target spatial map size H × W ;
+see Section 5.1 for a more detailed discussion. We choose
+g(·) simply as a sequence of 3 × 3 convolutions.
+
+3.2. Code computation and regularization
+
+Given the extracted tensor y ∈ RC×H×W , we proceed to
+quantize it and encode it. This pipeline involves a num-
+ber of components which we overview here and describe in
+detail throughout this section.
+
+Quantization. The tensor y is quantized to bit preci-
+sion B:
+
+ˆy := QUANTIZEB(y) .
+
+Bitplane decomposition. The quantized tensor ˆy is
+transformed into a binary tensor suitable for encoding via a
+lossless bitplane decomposition:
+
+b := BITPLANEDECOMPOSEB(ˆy) ∈ {0, 1}B×C×H×W .
+
+Adaptive arithmetic coding. The adaptive arithmetic
+coder (AAC) is trained to leverage the structure remaining
+in the data. It encodes b into its ﬁnal variable-length binary
+sequence s of length (cid:96)(s):
+
+s := AACENCODE(b) ∈ {0, 1}(cid:96)(s) .
+
+Adaptive
+codelength regularization. The
+adaptive
+codelength regularization (ACR) modulates the distribu-
+tion of the quantized representation ˆy to achieve a target
+
+Pyramidal decompositionInterscale alignmentReal-Time Adaptive Image Compression
+
+expected bit count across inputs:
+
+3.2.4. ADAPTIVE CODELENGTH REGULARIZATION
+
+Ex[(cid:96)(s)] −→ (cid:96)target .
+
+3.2.1. QUANTIZATION
+
+Given a desired precision of B bits, we quantize our feature
+tensor y into 2B equal-sized bins as
+
+ˆychw := QUANTIZEB(ychw) =
+
+1
+2B−1
+
+(cid:6)2B−1ychw
+
+(cid:7) .
+
+For the special case B = 1, this reduces exactly to a binary
+quantization scheme. While some ML-based approaches
+to compression employ such thresholding, we found better
+performance with the smoother quantization described. We
+quantize with B = 6 for all models in this paper.
+
+3.2.2. BITPLANE DECOMPOSITION
+
+We decompose ˆy into bitplanes. This transformation maps
+each value ˆychw into its binary expansion of B bits. Hence,
+each of the C spatial maps ˆyc ∈ RH×W of ˆy expands
+into B binary bitplanes. We illustrate this transformation in
+Figure 4, and denote its output as b ∈ {0, 1}B×C×H×W .
+This transformation is lossless.
+
+One problem with classic autoencoder architectures is that
+their bottleneck has ﬁxed capacity. The bottleneck may be
+too small to represent complex patterns well, which affects
+quality, and it may be too large for simple patterns, which
+results in inefﬁcient compression. What we need is a model
+capable of generating long representations for complex pat-
+terns and short for simple ones, while maintaining an ex-
+pected codelength target over large number of examples.
+To achieve this, the AAC is necessary, but not sufﬁcient.
+
+We extend the architecture by increasing the dimensional-
+ity of b — but at the same time controlling its informa-
+tion content, thereby resulting in shorter compressed code
+s = AACENCODE(b) ∈ {0, 1}. Speciﬁcally, we intro-
+duce the adaptive codelength regularization (ACR), which
+enables us to regulate the expected codelength Ex[(cid:96)(s)] to
+a target value (cid:96)target. This penalty is designed to encour-
+age structure exactly where the AAC is able to exploit it.
+Namely, we regularize our quantized tensor ˆy with
+
+P(ˆy) =
+
+αt
+CHW
+
+(cid:88)
+
+(cid:110)
+
+chw
+
+log2 |ˆychw|
+
+(cid:88)
+
++
+
+log2
+
+(cid:12)
+(cid:12)ˆychw − ˆyc(h−y)(w−x)
+
+(cid:12)
+(cid:12)
+
+(cid:111)
+
+,
+
+(x,y)∈S
+
+As described in Section 3.2.3, this decomposition will en-
+able our entropy coder to exploit structure in the distribu-
+tion of the activations in y to achieve a compact representa-
+tion. In Section 3.2.4, we introduce a strategy to encourage
+such exploitable structure to be featured.
+
+iteration t
+
+and difference
+
+=
+for
+{(0, 1), (1, 0), (1, 1), (−1, 1)}.
+term penal-
+izes the magnitude of each tensor element, and the second
+penalizes deviations between spatial neighbors. These
+enable better prediction by the AAC.
+
+index set S
+
+The ﬁrst
+
+3.2.3. ADAPTIVE ARITHMETIC CODING
+
+The output b of the bitplane decomposition is a binary
+tensor, which contains signiﬁcant structure: for example,
+higher bitplanes are sparser, and spatially neighboring bits
+often have the same value (in Section 3.2.4 we propose a
+technique to guarantee presence of these properties). We
+exploit this low entropy by lossless compression via adap-
+tive arithmetic coding.
+
+Namely, we associate each bit location in b with a context,
+which comprises a set of features indicative of the bit value.
+These are based on the position of the bit as well as the
+values of neighboring bits. We train a classiﬁer to predict
+the value of each bit from its context features, and then use
+these probabilities to compress b via arithmetic coding.
+
+During decoding, we decompress the code by performing
+the inverse operation. Namely, we interleave between com-
+puting the context of a particular bit using the values of
+previously decoded bits, and using this context to retrieve
+the activation probability of the bit and decode it. We note
+that this constrains the context of each bit to only include
+features composed of bits already decoded.
+
+As we train our model, we continuously modulate the
+scalar coefﬁcient αt to pursue our target codelength. We
+do this via a feedback loop. We use the AAC to monitor
+the mean number of effective bits. If it is too high, we in-
+crease αt; if too low, we decrease it. In practice, the model
+reaches an equilibrium in a few hundred iterations, and is
+able to maintain it throughout training.
+
+Hence, we get a knob to tune: the ratio of total bits, namely
+the BCHW bits available in b, to the target number of
+effective bits (cid:96)target. This allows exploring the trade-off of
+increasing the number of channels or spatial map size of
+
+Figure 4. Each of the C spatial maps ˆyc ∈ RH×W of ˆy is de-
+composed into B bitplanes as each element ˆychw is expressed in
+its binary expansion. Each set of bitplanes is then fed to the adap-
+tive arithmetic coder for variable-length encoding. The adaptive
+codelength regularization enables more compact codes for higher
+bitplanes by encouraging them to feature higher sparsity.
+
+Real-Time Adaptive Image Compression
+
+Figure 5. Compression results for the RAISE-1k 512 × 768 dataset, measured in the RGB domain (top row) and YCbCr domain (bottom
+row). We compare against commercial codecs JPEG, JPEG 2000, WebP and BPG5 (4:2:0 for YCbCr and 4:4:4 for RGB). The plots on
+the left present average reconstruction quality, as function of the number of bits per pixel ﬁxed for each image. The plots on the right
+show average compressed ﬁle sizes relative to ours for different target MS-SSIM values for each image. In Section 5.2 we discuss the
+curve generation procedures in detail.
+
+b at the cost of increasing sparsity. We ﬁnd that a total-
+to-target ratio of BCHW/(cid:96)target = 4 works well across all
+architectures we have explored.
+
+4. Realistic Reconstructions via Multiscale
+
+Adversarial Training
+
+4.1. Discriminator design
+
+In our compression approach, we take the generator as the
+encoder-decoder pipeline, to which we append a discrim-
+inator — albeit with a few key differences from existing
+GAN formulations.
+
+In many GAN approaches featuring both a reconstruction
+and a discrimination loss, the target and the reconstruction
+are treated independently: each is separately assigned a la-
+bel indicating whether it is real or fake. In our formulation,
+we consider the target and its reconstruction jointly as a
+single example: we compare the two by asking which of
+the two images is the real one.
+
+To do this, we ﬁrst swap between the target and recon-
+struction in each input pair to the discriminator with uni-
+form probability. Following the random swap, we prop-
+agate each set of examples through the network. How-
+ever, instead of producing an output for classiﬁcation at the
+
+very last layer of the pipeline, we accumulate scalar outputs
+along branches constructed along it at different depths. We
+average these to attain the ﬁnal value provided to the termi-
+nal sigmoid function. This multiscale architecture allows
+aggregating information across different scales, and is mo-
+tivated by the observation that undesirable artifacts vary as
+function of the scale in which they are exhibited. For exam-
+ple, high-frequency artifacts such as noise and blurriness
+are discovered by earlier scales, whereas more abstract dis-
+crepancies are found in deeper scales.
+We apply our discriminator DΘ on the aggregate sum
+across scales, and proceed to formulate our objectives as
+described in Section 2.3. The complete discriminator ar-
+chitecture is illustrated in the appendix.
+
+4.2. Adversarial training
+
+Training a GAN system can be tricky due to optimization
+instability. In our case, we were able to address this by de-
+signing a training scheme adaptive in two ways. First, the
+reconstructor is trained by both the confusion signal gradi-
+ent as well as the reconstruction loss gradient: we balance
+the two as function of their gradient magnitudes. Second,
+at any point during training, we either train the discrimina-
+tor or propagate confusion signal through the reconstructor,
+as function of the prediction accuracy of the discriminator.
+
+WaveOne                 JPEG                JPEG 2000                 WebP                BPG  RGB0.00.51.01.52.0Bits per pixel0.900.920.940.960.981.00MS-SSIM0.950.960.970.980.99MS-SSIM100%150%200%250%300%Relative compressed sizesYCbCr0.00.51.01.52.0Bits per pixel0.900.920.940.960.981.00MS-SSIM0.9600.9650.9700.9750.9800.9850.9900.995MS-SSIM100%150%200%250%Relative compressed sizesReal-Time Adaptive Image Compression
+
+Figure 6. Performance on the Kodak PhotoCD dataset measured in the RGB domain (top row) and YCbCr domain (bottom row). We
+compare against commercial codecs JPEG, JPEG 2000, WebP and BPG5 (4:2:0 for YCbCr and 4:4:4 for RGB), as well as recent ML-
+based compression work by Toderici et al. (2016)2, Theis et al. (2016)3, Ball´e et al. (2016)4, and Johnston et al. (2017)3 in all settings
+where results exist. The plots on the left present average reconstruction quality, as function of the number of bits per pixel ﬁxed for each
+image. The plots on the right show average compressed ﬁle sizes relative to ours for different target MS-SSIM values for each image.
+
+More concretely, given lower and upper accuracy bounds
+L, U ∈ [0, 1] and discriminator accuracy a(DΘ), we apply
+the following procedure:
+
+• If a < L:
+
+freeze propagation of confusion signal
+through the reconstructor, and train the discriminator.
+
+• If L ≤ a < U : alternate between propagating confu-
+
+sion signal and training the disciminator.
+
+• If U ≤ a: propagate confusion signal through the re-
+
+constructor, and freeze the discriminator.
+
+In practice we used L = 0.8, U = 0.95. We compute the
+accuracy a as a running average over mini-batches with a
+momentum of 0.8.
+
+5. Results
+
+5.1. Experimental setup
+
+Similarity metric. We trained and tested all models on
+the Multi-Scale Structural Similarity Index Metric (MS-
+SSIM) (Wang et al., 2003). This metric has been specif-
+ically designed to match the human visual system, and
+has been established to be signiﬁcantly more representative
+than losses in the (cid:96)p family and variants such as PSNR.
+
+then,
+
+Color space. Since the human visual system is much
+more sensitive to variations in brightness than color, most
+codecs represent colors in the YCbCr color space to de-
+vote more bandwidth towards encoding luma rather than
+chroma.
+is
+In quantifying image similarity,
+common to assign the Y, Cb, Cr components weights
+6/8, 1/8, 1/8. While many ML-based compression pa-
+pers evaluate similarity in the RGB space with equal color
+weights, this does not allow fair comparison with standard
+codecs such as JPEG, JPEG 2000 and WebP, since they
+have not been designed to perform optimally in this do-
+main. In this work, we provide comparisons with both tra-
+ditional and ML-based codecs, and present results in both
+the RGB domain with equal color weights, as well as in
+YCbCr with weights as above.
+
+it
+
+Reported performance metrics. We present both com-
+pression performance of our algorithm, but also its runtime.
+While the requirement of running the approach in real-time
+severely constrains the capacity of the model, it must be
+met to enable feasible deployment in real-life applications.
+
+Training and deployment procedure. We trained and
+tested all models on a GeForce GTX 980 Ti GPU and a cus-
+tom codebase. We trained all models on 128 × 128 patches
+sampled at random from the Yahoo Flickr Creative Com-
+
+WaveOne                 JPEG                JPEG 2000                 WebP                BPG                Ballé et al.                 Toderici et al.                Theis et al.                 Johnston et al.RGB0.00.51.01.52.0Bits per pixel0.900.920.940.960.981.00MS-SSIM0.940.950.960.970.980.99MS-SSIM100%150%200%250%300%Relative compressed sizesYCbCr0.00.51.01.52.0Bits per pixel0.900.920.940.960.981.00MS-SSIM0.950.960.970.980.99MS-SSIM100%150%200%250%Relative compressed sizesReal-Time Adaptive Image Compression
+
+mons 100 Million dataset (Thomee et al., 2016).
+
+We optimized all models with Adam (Kingma & Ba, 2014).
+We used an initial learning rate of 3 × 10−4, and reduced
+it twice by a factor of 5 during training. We chose a batch
+size of 16 and trained each model for a total of 400,000
+iterations. We initialized the ACR coefﬁcient as α0 = 1.
+During runtime we deployed the model on arbitrarily-sized
+images in a fully-convolutional way. To attain the rate-
+distortion (RD)curves presented in Section 5.2, we trained
+models for a range of target bitrates (cid:96)target.
+
+5.2. Performance
+
+We present several types of results:
+
+1. Average MS-SSIM as function of the BPP ﬁxed for
+each image, found in Figures 5 and 6, and Table 1.
+
+2. Average compressed ﬁle sizes relative to ours as func-
+tion of the MS-SSIM ﬁxed for each image, found in
+Figures 5 and 6, and Table 1.
+
+3. Encode and decode timings as function of MS-SSIM,
+
+found in Figure 7, in the appendix, and Table 1.
+
+4. Visual examples of reconstructions of different com-
+pression approaches for the same BPP, found in Fig-
+ure 1 and in the appendix.
+
+Test sets. To enable comparison with other approaches,
+we ﬁrst present performance on the Kodak PhotoCD
+dataset1. While the Kodak dataset is very popular for
+testing compression performance, it contains only 24 im-
+ages, and hence is susceptible to overﬁtting and does not
+necessarily fully capture broader statistics of natural im-
+ages. As such, we additionally present performance on
+the RAISE-1k dataset (Dang-Nguyen et al., 2015) which
+contains 1,000 raw images. We resized each image to size
+512 × 768 (backwards if vertical): we intend to release our
+preparation code to enable reproduction of the dataset used.
+
+1The Kodak PhotoCD dataset can be found at http://
+r0k.us/graphics/kodak. We do not crop or process the
+images in any way.
+
+2The results of Toderici et al.
+
+(2016) on the Ko-
+dak RGB dataset are available at http://github.com/
+tensorflow/models/tree/master/compression.
+
+3We have no access to reconstructions by Theis et al. (2016)
+and Johnston et al. (2017), so we carefully transcribed their re-
+sults, only available in RGB, from the graphs in their paper.
+
+4Reconstructions by Ball´e et al. (2016) of images in the Ko-
+dak dataset can be found at http://www.cns.nyu.edu/
+˜lcv/iclr2017/ for both RGB and YCbCr and across a spec-
+trum of BPPs. We use these to compute RD curves by the proce-
+dure described in this section.
+
+5An implementation of the BPG codec is available at http:
+
+//bellard.org/bpg.
+
+Figure 7. Average times to encode and decode images from the
+RAISE-1k 512 × 768 dataset using our approach.
+
+We remark it is important to use a dataset of raw, rather
+than previously compressed, images for codec evaluation.
+Compressing an image introduces artifacts with a bias par-
+ticular to the codec used, which results in a more favorable
+RD curve if it compressed again with the same codec. See
+the appendix for a plot demonstrating this effect.
+
+Codecs. We compare against commercial compression
+techniques JPEG, JPEG 2000, WebP, as well as recent ML-
+based compression work by Toderici et al. (2016)2, Theis
+et al. (2016)3, Ball´e et al. (2016)4, and Johnston et al.
+(2017)3 in all settings in which results are available. We
+also compare to BPG5 (4:2:0 and 4:4:4) which, while not
+widely used, surpassed all other codecs in the past. We
+use the best-performing conﬁguration we can ﬁnd of JPEG,
+JPEG 2000, WebP, and BPG, and reduce their bitrates by
+their respective header lengths for fair comparison.
+
+Performance evaluation. For each image in each test
+set, each compression approach, each color space, and for
+the selection of available compression rates, we recorded
+(1) the BPP, (2) the MS-SSIM (with components weighted
+appropriately for the color space), and (3) the computation
+times for encoding and decoding.
+
+It is important to take great care in the design of the per-
+formance evaluation procedure. Each image has a separate
+RD curve computed from all available compression rates
+for a given codec: as Ball´e et al. (2016) discusses in detail,
+different summaries of these RD curves lead to disparate
+results. In our evaluations, to compute a given curve, we
+sweep across values of the independent variable (such as
+bitrate). We interpolate each individual RD curve at this in-
+dependent variable value, and average all the results. To en-
+sure accurate interpolation, we sample densely across rates
+for each codec.
+
+Acknowledgements We are grateful to Trevor Darrell,
+Sven Strohband, Michael Gelbart, Robert Nishihara, Al-
+bert Azout, and Vinod Khosla for meaningful discussions
+and input.
+
+Encode                          Decode0.960.970.980.99MS-SSIM6101418Time (ms)Real-Time Adaptive Image Compression
+
+References
+
+2020. 2015.
+
+White paper: Cisco vni forecast and methodology, 2015-
+
+Antonini, Marc, Barlaud, Michel, Mathieu, Pierre, and
+Daubechies, Ingrid. Image coding using wavelet trans-
+form. IEEE Trans. Image Processing, 1992.
+
+Ball´e, Johannes, Laparra, Valero, and Simoncelli, Eero P.
+preprint,
+
+End-to-end optimized image compression.
+2016.
+
+Bottou, L´eon, Haffner, Patrick, Howard, Paul G, Simard,
+Patrice, Bengio, Yoshua, and LeCun, Yann. High quality
+document image compression with djvu. 1998.
+
+Dang-Nguyen, Duc-Tien, Pasquini, Cecilia, Conotter,
+Valentina, and Boato, Giulia. Raise: a raw images
+dataset for digital image forensics. In Proceedings of the
+6th ACM Multimedia Systems Conference, pp. 219–224.
+ACM, 2015.
+
+Denton, Emily L, Chintala, Soumith, Fergus, Rob, et al.
+Deep generative image models using a laplacian pyramid
+of adversarial networks. In NIPS, pp. 1486–1494, 2015.
+
+Goodfellow, Ian, Pouget-Abadie, Jean, Mirza, Mehdi, Xu,
+Bing, Warde-Farley, David, Ozair, Sherjil, Courville,
+Aaron, and Bengio, Yoshua. Generative adversarial nets.
+In NIPS, pp. 2672–2680, 2014.
+
+Isola, Phillip, Zhu, Jun-Yan, Zhou, Tinghui, and Efros,
+Alexei A. Image-to-image translation with conditional
+adversarial networks. arXiv preprint arXiv:1611.07004,
+2016.
+
+Johnston, Nick, Vincent, Damien, Minnen, David, Cov-
+ell, Michele, Singh, Saurabh, Chinen, Troy, Hwang,
+Sung Jin, Shor, Joel, and Toderici, George.
+Improved
+lossy image compression with priming and spatially
+adaptive bit rates for recurrent networks. arXiv preprint
+arXiv:1703.10114, 2017.
+
+Judge, Mike, Altschuler, John, and Krinsky, Dave. Silicon
+
+valley (tv series). 2016.
+
+Kingma, Diederik and Ba,
+
+Jimmy.
+method for stochastic optimization.
+arXiv:1412.6980, 2014.
+
+Adam:
+
+A
+arXiv preprint
+
+Ledig, Christian, Theis, Lucas, Husz´ar, Ferenc, Caballero,
+Jose, Cunningham, Andrew, Acosta, Alejandro, Aitken,
+Andrew, Tejani, Alykhan, Totz, Johannes, Wang, Ze-
+han, et al. Photo-realistic single image super-resolution
+using a generative adversarial network. arXiv preprint
+arXiv:1609.04802, 2016.
+
+Mallat, S. G. A theory for multiresolution signal decompo-
+sition: The wavelet representation. IEEE Trans. Pattern
+Anal. Mach. Intell., 11(7):674–693, July 1989.
+
+Mathieu, Michael, Couprie, Camille, and LeCun, Yann.
+Deep multi-scale video prediction beyond mean square
+error. arXiv preprint arXiv:1511.05440, 2015.
+
+Rabbani, Majid and Joshi, Rajan. An overview of the jpeg
+2000 still image compression standard. Signal process-
+ing: Image communication, 17(1):3–48, 2002.
+
+Radford, Alec, Metz, Luke, and Chintala, Soumith. Un-
+supervised representation learning with deep convolu-
+tional generative adversarial networks. arXiv preprint
+arXiv:1511.06434, 2015.
+
+Rippel, Oren, Snoek, Jasper, and Adams, Ryan P. Spec-
+tral representations for convolutional neural networks. In
+Advances in Neural Information Processing Systems, pp.
+2449–2457, 2015.
+
+Salimans, Tim, Goodfellow, Ian, Zaremba, Wojciech, Che-
+ung, Vicki, Radford, Alec, and Chen, Xi. Improved tech-
+niques for training gans. In NIPS, pp. 2226–2234, 2016.
+
+Theis, Lucas, Shi, Wenzhe, Cunningham, Andrew, and
+Huszar, Ferenc. Lossy image compression with com-
+pressive autoencoders. preprint, 2016.
+
+Thomee, Bart, Shamma, David A, Friedland, Gerald,
+Elizalde, Benjamin, Ni, Karl, Poland, Douglas, Borth,
+Damian, and Li, Li-Jia. Yfcc100m: The new data in mul-
+timedia research. Communications of the ACM, 2016.
+
+Toderici, George, O’Malley, Sean M, Hwang, Sung Jin,
+Vincent, Damien, Minnen, David, Baluja, Shumeet,
+Covell, Michele, and Sukthankar, Rahul. Variable
+rate image compression with recurrent neural networks.
+arXiv preprint arXiv:1511.06085, 2015.
+
+Toderici, George, Vincent, Damien,
+
+Johnston, Nick,
+Hwang, Sung Jin, Minnen, David, Shor, Joel, and
+Full resolution image compres-
+Covell, Michele.
+arXiv preprint
+sion with recurrent neural networks.
+arXiv:1608.05148, 2016.
+
+Wallace, Gregory K. The jpeg still picture compression
+IEEE transactions on consumer electronics,
+
+standard.
+38(1):xviii–xxxiv, 1992.
+
+Wang, Zhou, Simoncelli, Eero P, and Bovik, Alan C. Mul-
+tiscale structural similarity for image quality assessment.
+In Signals, Systems and Computers, 2004., volume 2, pp.
+1398–1402. Ieee, 2003.
+
+Wang, Zhou, Bovik, Alan C, Sheikh, Hamid R, and Si-
+moncelli, Eero P. Image quality assessment: from error
+visibility to structural similarity. IEEE transactions on
+image processing, 13(4):600–612, 2004.
+
+

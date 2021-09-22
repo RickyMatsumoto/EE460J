@@ -1,0 +1,2615 @@
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+Ke Li 1 Jitendra Malik 1
+
+Abstract
+
+Most exact methods for k-nearest neighbour
+search suffer from the curse of dimensionality;
+that is, their query times exhibit exponential de-
+pendence on either the ambient or the intrinsic
+dimensionality. Dynamic Continuous Indexing
+(DCI) (Li & Malik, 2016) offers a promising way
+of circumventing the curse and successfully re-
+duces the dependence of query time on intrinsic
+dimensionality from exponential to sublinear. In
+this paper, we propose a variant of DCI, which
+we call Prioritized DCI, and show a remarkable
+improvement in the dependence of query time on
+In particular, a linear
+intrinsic dimensionality.
+increase in intrinsic dimensionality, or equiva-
+lently, an exponential increase in the number of
+points near a query, can be mostly counteracted
+with just a linear increase in space. We also
+demonstrate empirically that Prioritized DCI sig-
+niﬁcantly outperforms prior methods. In particu-
+lar, relative to Locality-Sensitive Hashing (LSH),
+Prioritized DCI reduces the number of distance
+evaluations by a factor of 14 to 116 and the mem-
+ory consumption by a factor of 21.
+
+1. Introduction
+
+The method of k-nearest neighbours is a fundamental
+building block of many machine learning algorithms and
+also has broad applications beyond artiﬁcial intelligence,
+including in statistics, bioinformatics and database sys-
+tems, e.g.
+(Biau et al., 2011; Behnam et al., 2013; El-
+dawy & Mokbel, 2015). Consequently, since the problem
+of nearest neighbour search was ﬁrst posed by Minsky &
+Papert (1969), it has for decades intrigued the artiﬁcial in-
+telligence and theoretical computer science communities
+alike. Unfortunately, the myriad efforts at devising efﬁ-
+cient algorithms have encountered a recurring obstacle: the
+
+1University of California, Berkeley, CA 94720, United States.
+
+Correspondence to: Ke Li <ke.li@eecs.berkeley.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+curse of dimensionality, which describes the phenomenon
+of query time complexity depending exponentially on di-
+mensionality. As a result, even on datasets with moderately
+high dimensionality, practitioners often have resort to na¨ıve
+exhaustive search.
+
+Two notions of dimensionality are commonly considered.
+The more familiar notion, ambient dimensionality, refers to
+the dimensionality of the space data points are embedded
+in. On the other hand, intrinsic dimensionality1 character-
+izes the intrinsic properties of the data and measures the
+rate at which the number of points inside a ball grows as
+a function of its radius. More precisely, for a dataset with
+intrinsic dimension d0, any ball of radius r contains at most
+O(rd0 ) points. Intuitively, if the data points are uniformly
+distributed on a manifold, then the intrinsic dimensionality
+is roughly the dimensionality of the manifold.
+
+Most existing methods suffer from some form of curse
+of dimensionality. Early methods like k-d trees (Bentley,
+1975) and R-trees (Guttman, 1984) have query times that
+grow exponentially in ambient dimensionality. Later meth-
+ods (Krauthgamer & Lee, 2004; Beygelzimer et al., 2006;
+Dasgupta & Freund, 2008) overcame the exponential de-
+pendence on ambient dimensionality, but have not been
+able to escape from an exponential dependence on intrin-
+sic dimensionality. Indeed, since a linear increase in the
+intrinsic dimensionality results in an exponential increase
+in the number of points near a query, the problem seems
+fundamentally hard when intrinsic dimensionality is high.
+
+Recently, Li & Malik (2016) proposed an approach known
+as Dynamic Continuous Indexing (DCI) that successfully
+reduces the dependence on intrinsic dimensionality from
+exponential to sublinear, thereby making high-dimensional
+nearest neighbour search more practical. The key obser-
+vation is that the difﬁculties encountered by many existing
+methods, including k-d trees and Locality-Sensitive Hash-
+ing (LSH) (Indyk & Motwani, 1998), may arise from their
+reliance on space partitioning, which is a popular divide-
+and-conquer strategy. It works by partitioning the vector
+space into discrete cells and maintaining a data structure
+
+1The measure of intrinsic dimensionality used throughout
+this paper is the expansion dimension, also known as the KR-
+dimension, which is deﬁned as log2 c, where c is the expansion
+rate introduced in (Karger & Ruhl, 2002).
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+that keeps track of the points lying in each cell. At query
+time, these methods simply look up of the contents of the
+cell containing the query and possibly adjacent cells and
+perform brute-force search over points lying in these cells.
+While this works well in low-dimensional settings, would
+it work in high dimensions?
+
+Several limitations of this approach in high-dimensional
+space are identiﬁed in (Li & Malik, 2016). First, because
+the volume of space grows exponentially in dimensionality,
+either the number or the volumes of cells must grow expo-
+nentially. Second, the discretization of the space essentially
+limits the “ﬁeld of view” of the algorithm, as it is unaware
+of points that lie in adjacent cells. This is especially prob-
+lematic when the query lies near a cell boundary, as there
+could be points in adjacent cells that are much closer to
+the query. Third, as dimensionality increases, surface area
+grows faster than volume; as a result, points are increas-
+ingly likely to lie near cell boundaries. Fourth, when the
+dataset exhibits varying density across space, choosing a
+good partitioning is non-trivial. Furthermore, once chosen,
+the partitioning is ﬁxed and cannot adapt to changes in den-
+sity arising from updates to the dataset.
+
+In light of these observations, DCI is built on the idea
+of avoiding partitioning the vector space. Instead, it con-
+structs a number of indices, each of which imposes an or-
+dering of all data points. Each index is constructed so that
+two points with similar ranks in the associated ordering are
+nearby along a certain random direction. These indices are
+then combined to allow for retrieval of points that are close
+to the query along multiple random directions.
+
+In this paper, we propose a variant of DCI, which assigns a
+priority to each index that is used to determine which index
+to process in the upcoming iteration. For this reason, we
+will refer to this algorithm as Prioritized DCI. This simple
+change results in a signiﬁcant improvement in the depen-
+dence of query time on intrinsic dimensionality. Specif-
+ically, we show a remarkable result: a linear increase in
+intrinsic dimensionality, which could mean an exponential
+increase in the number of points near a query, can be mostly
+counteracted with a corresponding linear increase in the
+number of indices.
+In other words, Prioritized DCI can
+make a dataset with high intrinsic dimensionality seem al-
+most as easy as a dataset with low intrinsic dimensionality,
+with just a linear increase in space. To our knowledge, there
+had been no exact method that can cope with high intrinsic
+dimensionality; Prioritized DCI represents the ﬁrst method
+that can do so.
+
+We also demonstrate empirically that Prioritized DCI sig-
+niﬁcantly outperforms prior methods. In particular, com-
+pared to LSH, it achieves a 14- to 116-fold reduction in the
+number of distance evaluations and a 21-fold reduction in
+the memory usage.
+
+2. Related Work
+
+There is a vast literature on algorithms for nearest neigh-
+bour search. They can be divided into two categories:
+exact algorithms and approximate algorithms. Early ex-
+act algorithms are deterministic and store points in tree-
+based data structures. Examples include k-d trees (Bent-
+ley, 1975), R-trees (Guttman, 1984) and X-trees (Berchtold
+et al., 1996; 1998), which divide the vector space into a
+hierarchy of half-spaces, hyper-rectangles or Voronoi poly-
+gons and keep track of the points that lie in each cell. While
+their query times are logarithmic in the size of the dataset,
+they exhibit exponential dependence on the ambient dimen-
+sionality. A different method (Meiser, 1993) partitions the
+space by intersecting multiple hyperplanes. It effectively
+trades off space for time and achieves polynomial query
+time in ambient dimensionality at the cost of exponential
+space complexity in ambient dimensionality.
+
+Spill Tree 
+RP Tree 
+
+Karger & Ruhl 
+Navigating Net 
+Cover Tree 
+Rank Cover Tree 
+
+DCI 
+
+Prioritized DCI 
+(Proposed Method) 
+
+Figure 1. Visualization of the query time complexities of various
+exact algorithms as a function of the intrinsic dimensionality d0.
+Each curve represents an example from a class of similar query
+time complexities. Algorithms that fall into each particular class
+are shown next to the corresponding curve.
+
+To avoid poor performance on worst-case conﬁgurations of
+the data, exact randomized algorithms have been proposed.
+Spill trees (Liu et al., 2004), RP trees (Dasgupta & Fre-
+und, 2008) and virtual spill trees (Dasgupta & Sinha, 2015)
+extend the ideas behind k-d trees by randomizing the ori-
+entations of hyperplanes that partition the space into half-
+spaces at each node of the tree. While randomization en-
+ables them to avoid exponential dependence on the ambient
+dimensionality, their query times still scale exponentially in
+the intrinsic dimensionality. Whereas these methods rely
+on space partitioning, other algorithms (Orchard, 1991;
+Clarkson, 1999; Karger & Ruhl, 2002) have been proposed
+that utilize local search strategies. These methods start with
+a random point and look in the neighbourhood of the cur-
+rent point to ﬁnd a new point that is closer to the query
+than the original in each iteration. Like space partitioning-
+based approaches, the query time of (Karger & Ruhl, 2002)
+scales exponentially in the intrinsic dimensionality. While
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+Method
+
+Query Time Complexity
+
+d0 + log n)
+
+O((d0 log d0)d0 + log n)
+O(d0
+
+Exact Algorithms:
+RP Tree
+Spill Tree
+Karger & Ruhl (2002) O(23d0 log n)
+Navigating Net
+Cover Tree
+Rank Cover Tree
+DCI
+Prioritized DCI
+(Proposed Method)
+
+2O(d0) log n
+O(212d0 log n)
+O(2O(d0 log h)n2/h) for h
+O(d max(log n, n1
+O(d max(log n, n1
+
+ 
+
+ 
+
+3
+
+ 
+1/d0 ))
+m/d0 )
+
++(m log m) max(log n, n1
+for m
+
+1
+
+1/d0 ))
+
+ 
+
+ 
+
+Approximate Algorithms:
+k-d Tree
+BBD Tree
+LSH
+
+O((1/✏)d log n)
+O((6/✏)d log n)
+O(dn1/(1+✏)2
+
+)
+
+⇡
+
+Table 1. Query time complexities of various algorithms for 1-NN
+search. Ambient dimensionality, intrinsic dimensionality, dataset
+size and approximation ratio are denoted as d, d0, n and 1 + ✏.
+A visualization of the growth of various time complexities as a
+function of the intrinsic dimensionality is shown in Figure 1.
+
+the query times of (Orchard, 1991; Clarkson, 1999) do not
+exhibit such undesirable dependence, their space complexi-
+ties are quadratic in the size of the dataset, making them im-
+practical for large datasets. A different class of algorithms
+performs search in a coarse-to-ﬁne manner. Examples in-
+clude navigating nets (Krauthgamer & Lee, 2004), cover
+trees (Beygelzimer et al., 2006) and rank cover trees (Houle
+& Nett, 2015), which maintain sets of subsampled data
+points at different levels of granularity and descend through
+the hierarchy of neighbourhoods of decreasing radii around
+the query. Unfortunately, the query times of these methods
+again scale exponentially in the intrinsic dimensionality.
+
+Due to the difﬁculties of devising efﬁcient algorithms for
+the exact version of the problem, there has been extensive
+work on approximate algorithms. Under the approximate
+setting, returning any point whose distance to the query
+is within a factor of 1 + ✏ of the distance between the
+query and the true nearest neighbour is acceptable. Many
+of the same strategies are employed by approximate al-
+gorithms. Methods based on tree-based space partition-
+ing (Arya et al., 1998) and local search (Arya & Mount,
+1993) have been developed; like many exact algorithms,
+their query times also scale exponentially in the ambient
+dimensionality. Locality-Sensitive Hashing (LSH) (Indyk
+& Motwani, 1998; Datar et al., 2004; Andoni & Indyk,
+2006) partitions the space into regular cells, whose shapes
+are implicitly deﬁned by the choice of the hash function. It
+achieves a query time of O(dn⇢) using O(dn1+⇢) space,
+where d is the ambient dimensionality, n is the dataset
+1/(1 + ✏)2 for large n in Euclidean space,
+size and ⇢
+
+⇡
+
+though the dependence on intrinsic dimensionality is not
+In practice, the performance of LSH de-
+made explicit.
+grades on datasets with large variations in density, due
+to the uneven distribution of points across cells. Con-
+sequently, various data-dependent hashing schemes have
+been proposed (Paulev´e et al., 2010; Weiss et al., 2009; An-
+doni & Razenshteyn, 2015); unlike data-independent hash-
+ing schemes, however, they do not allow dynamic updates
+to the dataset. A related approach (J´egou et al., 2011) de-
+composes the space into mutually orthogonal axis-aligned
+subspaces and independently partitions each subspace. It
+has a query time linear in the dataset size and no known
+guarantee on the probability of correctness under the ex-
+act or approximate setting. A different approach (Anag-
+nostopoulos et al., 2015) projects the data to a lower di-
+mensional space that approximately preserves approximate
+nearest neighbour relationships and applies other approxi-
+mate algorithms like BBD trees (Arya et al., 1998) to the
+projected data. Its query time is also linear in ambient di-
+mensionality and sublinear in the dataset size. Unlike LSH,
+it uses space linear in the dataset size, at the cost of longer
+query time than LSH. Unfortunately, its query time is ex-
+ponential in intrinsic dimensionality.
+
+Our work is most closely related to Dynamic Continuous
+Indexing (DCI) (Li & Malik, 2016), which is an exact ran-
+domized algorithm for Euclidean space whose query time
+is linear in ambient dimensionality, sublinear in dataset size
+and sublinear in intrinsic dimensionality and uses space lin-
+ear in the dataset size. Rather than partitioning the vec-
+tor space, it uses multiple global one-dimensional indices,
+each of which orders data points along a certain random
+direction and combines these indices to ﬁnd points that are
+near the query along multiple random directions. The pro-
+posed algorithm builds on the ideas introduced by DCI and
+achieves a signiﬁcant improvement in the dependence on
+intrinsic dimensionality.
+
+A summary of the query times of various prior algorithms
+and the proposed algorithm is presented in Table 1 and their
+growth as a function of intrinsic dimensionality is illus-
+trated in Figure 1.
+
+3. Prioritized DCI
+
+DCI constructs a data structure consisting of multiple com-
+posite indices of data points, each of which in turn consists
+of a number of simple indices. Each simple index orders
+data points according to their projections along a particu-
+lar random direction. Given a query, for every composite
+index, the algorithm ﬁnds points that are near the query in
+every constituent simple index, which are known as candi-
+date points, and adds them to a set known as the candidate
+set. The true distances from the query to every candidate
+point are evaluated and the ones that are among the k clos-
+
+est to the query are returned.
+
+made for each individual query.
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+More concretely, each simple index is associated with a
+random direction and stores the projections of every data
+point along the direction. They are implemented using
+standard data structures that maintain one-dimensional or-
+dered sequences of elements, like self-balancing binary
+search trees (Bayer, 1972; Guibas & Sedgewick, 1978)
+or skip lists (Pugh, 1990). At query time, the algorithm
+projects the query along the projection directions associ-
+ated with each simple index and ﬁnds the position where
+the query would have been inserted in each simple index,
+which takes logarithmic time. It then iterates over, or vis-
+its, data points in each simple index in the order of their
+distances to the query under projection, which takes con-
+stant time for each iteration. As it iterates, it keeps track of
+how many times each data point has been visited across all
+simple indices of each composite index. If a data point has
+been visited in every constituent simple index, it is added
+to the candidate set and is said to have been retrieved from
+the composite index.
+
+Algorithm 1 Data structure construction procedure
+Require: A dataset D of n points p1, . . . , pn, the number of sim-
+ple indices m that constitute a composite index and the number
+of composite indices L
+function CONSTRUCT(D, m, L)
+
+mL random unit vectors in R
+mL empty binary search trees or skip
+lists
+
+d
+
+ujl
+Tjl
+
+2
+
+2
+
+[m],l
+
+[m],l
+
+}j
+}j
+
+[L]  
+{
+[L]  
+{
+2
+for j = 1 to m do
+
+2
+
+for l = 1 to L do
+
+for i = 1 to n do
+pi, ujl
+pi
+jl   h
+jl, i) into Tjl with pi
+Insert (pi
+i being the value
+
+i
+
+jl being the key and
+
+end for
+
+end for
+
+end for
+return
+{
+end function
+
+(Tjl, ujl)
+
+}j
+
+2
+
+[m],l
+
+[L]
+
+2
+
+DCI has a number of appealing properties compared to
+methods based on space partitioning. Because points are
+visited by rank rather than location in space, DCI performs
+It
+well on datasets with large variations in data density.
+naturally skips over sparse regions of the space and concen-
+trates more on dense regions of the space. Since construc-
+tion of the data structure does not depend on the dataset, the
+algorithm supports dynamic updates to the dataset, while
+being able to automatically adapt to changes in data den-
+sity. Furthermore, because data points are represented in
+the indices as continuous values without being discretized,
+the granularity of discretization does not need to be chosen
+at construction time. Consequently, the same data structure
+can support queries at varying desired levels of accuracy,
+which allows a different speed-vs-accuracy trade-off to be
+
+Prioritized DCI differs from standard DCI in the order in
+which points from different simple indices are visited. In
+standard DCI, the algorithm cycles through all constituent
+simple indices of a composite index at regular intervals and
+visits exactly one point from each simple index in each
+pass. In Prioritized DCI, the algorithm assigns a priority
+to each constituent simple index; in each iteration, it visits
+the upcoming point from the simple index with the highest
+priority and updates the priority at the end of the iteration.
+The priority of a simple index is set to the negative absolute
+difference between the query projection and the next data
+point projection in the index.
+
+Algorithm 2 k-nearest neighbour querying procedure
+
+Require: Query point q in R
+
+d, binary search trees/skip lists and
+their associated projection vectors
+[L], the
+number of points to retrieve k0 and the number of points to visit
+k1 in each composite index
+function QUERY(q,
+
+j,l, k0, k1)
+
+(Tjl, ujl)
+
+(Tjl, ujl)
+
+[m],l
+
+}j
+
+{
+
+2
+
+2
+
+}
+array of size n with entries initialized to 0
+
+{
+
+l
+
+8
+
+2
+
+[L]
+
+[m], l
+
+[L]
+
+2
+
+2
+
+j
+i 8
+[L]
+
+q, ujl
+l
+
+Cl
+ 
+qjl   h
+Sl
+  ; 8
+Pl
+ 
+for l = 1 to L do
+for j = 1 to m do
+jl , h(1)
+jl )
+
+(p(1)
+
+2
+
+empty priority queue
+
+l
+
+8
+
+2
+
+[L]
+
+ 
+jl , h(1)
+
+the node in Tjl whose key is the
+closest to qjl
+jl ) with priority
+
+p(1)
+jl  
+
+qjl|
+
+ |
+
+Insert (p(1)
+into Pl
+
+end for
+
+end for
+for i0 = 1 to k1
+
+1 do
+
+ 
+
+for l = 1 to L do
+Sl
+|
+(p(i)
+
+< k0 then
+jl , h(i)
+jl )
+
+if
+
+|
+
+the node with the highest priority
+ 
+in Pl
+jl , h(i)
+Remove (p(i)
+jl ) from Pl and insert the node
+
+jl
+
+, h(i+1)
+jl
+into Pl
+
+in Tjl whose key is the next closest to qjl,
+which is denoted as (p(i+1)
+), with
+p(i+1)
+priority
+jl
+ |
+Cl[h(i)
+Cl[h(i)
+jl ]
+if Cl[h(i)
+jl ] = m then
+h(i)
+Sl
+jl }
+end if
+
+qjl|
+ 
+jl ] + 1
+
+[{
+
+ 
+
+ 
+
+Sl
+
+end if
+
+end for
+
+end for
+return k points in
+
+[L] Sl that are the closest in
+
+l
+
+2
+
+Euclidean distance in R
+S
+
+d to q
+
+end function
+
+Intuitively, this ensures data points are visited in the order
+of their distances to the query under projection. Because
+data points are only retrieved from a composite index when
+they have been visited in all constituent simple indices, data
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+Property
+
+Complexity
+
+Construction O(m(dn + n log n))
+Query
+
+dk max(log(n/k), (n/k)1
+
+O
+
+m/d0 )+
+
+ 
+
+Insertion
+Deletion
+Space
+
+⇣
+
+mk log m
+O(m(d + log n))
+⇣
+O(m log n)
+O(mn)
+
+max(log(n/k), (n/k)1
+
+ 
+
+1/d0 )
+
+⌘⌘
+
+Table 2. Time and space complexities of Prioritized DCI.
+
+points are retrieved in the order of the maximum of their
+distances to the query along multiple projection directions.
+Since distance under projection forms a lower bound on the
+true distance, the maximum projected distance approaches
+the true distance as the number of projection directions in-
+creases. Hence, in the limit as the number of simple indices
+approaches inﬁnity, data points are retrieved in the ideal or-
+der, that is, the order of their true distances to the query.
+
+The construction and querying procedures of Priori-
+tized DCI are presented formally in Algorithms 1 and
+To ensure the algorithm retrieves the exact k-
+2.
+nearest neighbours with high probability,
+the analy-
+sis in the next section shows that one should choose
+m/d0 )) and k1 2
+k0 2
+⌦(mk max(log(n/k), (n/k)1
+1/d0 )), where d0 denotes the
+intrinsic dimensionality. Though because this assumes
+worst-case conﬁguration of data points, it may be overly
+conservative in practice; so, these parameters may be cho-
+sen by cross-validation.
+
+⌦(k max(log(n/k), (n/k)1
+
+ 
+
+ 
+
+We summarize the time and space complexities of Priori-
+tized DCI in Table 2. Notably, the ﬁrst term of the query
+complexity, which dominates when the ambient dimension-
+ality d is large, has a more favourable dependence on the in-
+trinsic dimensionality d0 than the query complexity of stan-
+dard DCI. In particular, a linear increase in the intrinsic di-
+mensionality, which corresponds to an exponential increase
+in the expansion rate, can be mitigated by just a linear in-
+crease in the number of simple indices m. This suggests
+that Prioritized DCI can better handle datasets with high
+intrinsic dimensionality than standard DCI, which is con-
+ﬁrmed by empirical evidence later in this paper.
+
+4. Analysis
+
+We analyze the time and space complexities of Prioritized
+DCI below and derive the stopping condition of the algo-
+rithm. Because the algorithm uses standard data structures,
+analysis of the construction time, insertion time, deletion
+time and space complexity is straightforward. Hence, this
+section focuses mostly on analyzing the query time.
+
+In high-dimensional space, query time is dominated by the
+
+time spent on evaluating true distances between candidate
+points and the query. Therefore, we need to ﬁnd the num-
+ber of candidate points that must be retrieved to ensure the
+algorithm succeeds with high probability. To this end, we
+derive an upper bound on the failure probability for any
+given number of candidate points. The algorithm fails if
+sufﬁciently many distant points are retrieved from each
+composite index before some of the true k-nearest neigh-
+bours. We decompose this event into multiple (dependent)
+events, each of which is the event that a particular distant
+point is retrieved before some true k-nearest neighbours.
+Since points are retrieved in the order of their maximum
+projected distance, this event happens when the maximum
+projected distance of the distant point is less than that of
+a true k-nearest neighbour. We start by ﬁnding an upper
+bound on the probability of this event. To simplify nota-
+tion, we initially consider displacement vectors from the
+query to each data point, and so relationships between pro-
+jected distances of triplets of points translate relationships
+between projected lengths of pairs of displacement vectors.
+
+1
+
+2
+
+ 
+
+vl
+
+ 
+ 
+
+vs
+
+vs
+
+ 
+ 
+2
+
+2 >
+
+M
+j=1
+
+ 
+ 
+
+
+vl, u0ji
+
+maxj
+vl
+ 
+
+Then Pr
+2 /
+
+We start by examining the event that a vector under ran-
+dom one-dimensional projection satisﬁes some geometric
+constraint. We then ﬁnd an upper bound on the probabil-
+ity that some combinations of these events occur, which is
+related to the failure probability of the algorithm.
+Lemma 1. Let vl, vs
+u0j
+at random.
+ 
+ 
+2
+⇡ cos 
+1
+
+Rd be such that
+2,
+be i.i.d. unit vectors in Rd drawn uniformly
+ 
+ 
+=
+
+M
+  
+ 
+  
+ 
+  
+ 
+ 
+ 
+vl, u0ji
+Proof. The event
+is equiv-
+k2
+h
+vl, u0ji
+j
+, which is
+alent to the event that
+  
+ 
+h
+ 
+vs
+. Be-
+the intersection of the events
+k2
+ 
+cause u0j’s are drawn independently, these events are inde-
+pendent.
+Let ✓j be the angle between vl and u0j, so that
+vl
+distributed on [0, 2⇡]. Hence,
+ 
+ 
+vs
+
+=
+2 cos ✓j. Since u0j is drawn uniformly, ✓j is uniformly
+
+ k
+vs
+ 
+ 
+ k
+ 
+vl, u0ji
+
+k2 8
+ k
+
+vl, u0ji
+
+ 
+ 
+ 
+ 
+maxj
+
+ 
+h
+ 
+  
+ 
+
+ 
+ 
+Pr
+
+  
+ 
+
+vs
+
+vs
+
+ 
+ 
+
+ 
+ 
+
+h
+.
+
+ 
+
+ 
+
+ 
+
+ 
+ 
+
+ 
+ 
+
+ 
+
+h
+
+2
+
+max
+j
+
+vl, u0ji
+
+h
+
+ k
+
+k2
+
+◆
+
+✓
+
+M
+
+=
+
+Pr
+
+n 
+ 
+ 
+vl, u0ji
+
+h
+
+o
+
+ 
+ 
+ 
+ k
+
+vs
+
+k2
+
+=
+
+Pr
+
+cos ✓j
+
+j=1
+Y
+M
+
+j=1
+Y
+M
+
+⇣ 
+ 
+ 
+
+|
+
+✓
+
+ 
+ 
+ 
+
+|
+
+⌘
+
+vs
+vl
+
+k
+k
+
+k2
+k2 ◆
+
+=
+
+2Pr
+
+✓j
+
+1
+
+cos 
+
+✓
+
+2
+
+
+
+j=1 ✓
+Y
+
+2
+⇡
+
+ 
+
+=
+
+1
+
+✓
+
+1
+
+cos 
+
+vs
+vl
+
+k
+k
+
+k2
+k2 ◆◆
+
+✓
+
+,⇡
+
+k2
+k2 ◆
+
+ 
+
+1
+
+cos 
+
+vs
+vl
+
+k
+k
+
+✓
+
+k2
+k2 ◆ ◆◆
+
+vs
+vl
+
+k
+k
+M
+
+✓
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+Lemma 2. For any set of events
+that at least k0 of them happen is at most 1
+k0
+
+Ei}
+{
+
+N
+i=1, the probability
+N
+i=1 Pr (Ei).
+
+P
+
+i
+
+i
+
+2
+
+✓
+
+ 
+
+\
+
+[N ]
+
+i /
+2
+
+ T
+
+˜ET
+
+T Ei
+
+T Ei
+
+T
+n
+o
+I Ei =
+happen is
+T
+
+[N ], deﬁne ˜ET to be the intersec-
+Proof. For any set T
+✓
+tion of events indexed by T and complements of events not
+indexed by T , i.e. ˜ET =
+. Observe
+that
+
+are disjoint and that for any I
+[N ],
+ 
+ T
+˜ET . The event that at least k0 of Ei’s
+I Ei, which is equivalent to
+I
+˜ET . We will
+T
+[N ]:
+|
+T
+. Since
+henceforth use
+S
+S
+{
+is a ﬁnite set, we can impose an ordering on its elements
+T
+and denote the lth element as Tl. The event can therefore
+be rewritten as
+
+=k0
+i
+|
+|
+˜ET =
+T
+I
+◆
+to denote
+
+I
+S
+✓
+S
+=k0
+
+[N ]:
+T
+|
+[N ] :
+
+◆
+[N ]:
+
+| 
+|
+
+✓
+✓
+
+k0
+T
+
+S
+T
+
+| 
+
+k0
+
+✓
+
+}
+
+✓
+
+2
+
+2
+
+T
+
+T
+
+I
+
+I
+
+I
+
+|
+
+˜ETl .
+
+|T |
+l=1
+
+˜ETl
+⌘
+˜ETl
+
+S
+to be Ei \
+k0
+E0i,j
+
+Deﬁne E0i,j
+
+|T |
+l=j+1
+
+. We claim
+
+E0i,j
+
+1
+
+ 
+
+2
+
+that
+
+0, . . . ,
+P
+
+N
+i=1 Pr
+
+⇣S
+j
+l=1 Pr
+. We will show this by induction on j.
+
+ 
+
+⇣
+
+⌘
+
+for all j
+
+ 
+
+ 
+
+|T |}
+
+P
+{
+For j = 0, the claim is vacuously true because probabili-
+ties are non-negative. For j > 0, we observe that E0i,j =
+˜ETj
+E0i,j \
+E0i,j \
+⇣
+⌘
+for all i. Since E0i,j \
+= Pr
+Pr
+
+E0i,j \
+1 [
+˜ETj are disjoint,
+⌘
+
+˜ETj
+
+[
+
+⇣
+
+⇣
+
+ 
+
+E0i,j
+
+.
+
+⌘
+
+˜ETj
+
+˜ETj
+= E0i,j
+˜ETj and E0i,j \
+E0i,j \
++ Pr
+Pr
+˜ETj
+by the above
+ 
+ 
+Tj, ˜ETj ✓
+⌘⌘
+˜ETl
+
+Ei, and so
+= E0i,j. Be-
+
+⌘
+, which
+
+E0i,j
+
+|T |
+l=j+1
+
+is
+
+⇣
+
+Tj
+
+2
+
+i
+
+Pr
+
+E0i,j
+
+i
+
+2
+
+⇣
+
+|T |
+l=j+1
+
+Tj
+observation.
+ 
+P
+˜ETj \
+⇣S
+˜ETl
+cause
+n
+o
+Hence, ˜ETj ✓
+E0i,j
+Pr
+
+Tj
+
+i
+
+|T |
+
+l=j
+
+1
+
+ 
+
+✓
+
++ Pr
+
+E0i,j \
+P
+⇣
+For each i
+ 
+2
+˜ETl
+Ei \
+⇣S
+are disjoint, ˜ETj \
+⇣S
+E0i,j and so E0i,j \
++
+Pr
+=
+
+˜ETj
+
+⌘
+
+ 
+ 
+Consider
+
+the
+
+ 
+ 
+quantity
+
+⌘
+= ˜ETj .
+˜ETl
+|T |
+l=j+1
+˜ETj = ˜ETj . Thus,
+Pr
+.
+
+⌘
+
+E0i,j
+
+1
+
+i
+
+Tj
+
+2
+
+ 
+
+Pr
+
+ 
++
+
+ 
+˜ETj
+⌘
+Because
+
+Tj|
+⇣
+.
+˜ETj
+E0i,j \
+ 
+N
+⌘
+⇣
+i=1 Pr
+E0i,j
+ 
+By the inductive
+
+ 
+
+P
+
+=
+
+|
+E0i,j
+
+|
+
+Tj|
+N
+i=1 Pr
++
+
+2
+
+P
+It
+
+ 
+
+ 
+follows that
+E0i,j
+
+Pr
+
+i
+
+Tj
+2
+E0i,j
+E0i,j
+
+Pr
+P
+
+Pr
+
+ 
+k0Pr
+ 
+
+ 
+1
+ 
+˜ETj
+
+ 
+⇣
+⌘
+hypothesis,
+
+⌘
+
+⇣
+E0i,j
+
+ 
+i /
+2
+
+Tj
+
+Pr
+ 
++ Pr
+ 
+
+k0,
+
+.
+
+P
+
+1
+
+ 
+
+P
+1
+ 
+= Pr
+
+ 
+
+ 
+
+P
+ 
+
+1
+
+E0i,j
+Tj| 
+ 
+|
+N
+i=1 Pr
+
+ 
+E0i,j
+
+and
+
++
+
+N
+i=1 Pr
+P
+
+ 
+E0i,j
+
+1
+
+ 
+
+k0
+
+ 
+ 
+
+N
+k0
+i=1 Pr
+Therefore,
+P
+concludes the induction argument.
+
+ 
+ 
+
+ 
+E0i,j
+
+ 
+
+P
+
+ 
+The lemma is a special case of this claim when j =
+since E0i,
+
+= Ei and
+
+l=1 Pr
+|T |
+
+= Pr
+
+˜ETl
+
+|T |
+l=1
+
+P
+
+j
+l=1 Pr
+P
+
+⇣
+⌘
+, which
+
+|T |
+
+P
+
+⇣
+
+⌘
+
+⇣S
+
+ 
+˜ETl
+
+ 
+j
+1
+l=1 Pr
+ 
+˜ETl
+
+⇣
+
+⌘
+
+.
+
+,
+
+.
+
+|T |
+
+˜ETl
+
+⌘
+
+Combining the above yields the following theorem, the
+proof of which is found in the supplementary material.
+
+.
+
+2
+
+2
+
+1
+
+2
+
+2
+
+i
+
+2
+
+2
+
+2
+
+h
+
+N
+
+ 
+
+M
+
+M
+
+9
+
+ 
+
+N 0
+
+2
+
+ 
+
+[N ]
+
+ 
+ 
+
+ 
+ 
+
+ 
+ 
+
+i=1
+
+vs
+i0
+
+vs
+i0
+
+vs
+i0
+
+  
+vl
+i
+
+ 
+ 
+ 
+2 /
+
+vl
+i
+vl
+i
+ 
+
+ 
+ 
+vs
+max
+
+1
+  
+ 
+n 
+
+vs
+i0
+ 
+ 
+ 
+[N ],j
+ 
+
+s.t. maxj
+ability that at
+ 
+most 1
+k0
+vs
+max
+
+N
+i0=1 be sets of vec-
+Theorem 1. Let
+i=1 and
+[N ], i0
+2 >
+tors such that
+ 
+8
+2
+u0ij
+[N 0]. Furthermore, let
+be random uni-
+ 
+[M ]
+i
+ 
+formly distributed unit vectors such that u0i1, . . . , u0iM
+ 
+are independent for any given i. Consider the events
+The prob-
+.
+
+these events occur is at
+ 
+ 
+vs
+vl
+, where
+max
+i
+. Furthermore, if k0 = N , it is
+ 
+  
+2
+ 
+ 
+2
+2 /
+⇡ cos 
+ 
+ 
+ 
+
+vl
+i, u0iji
+least k0 of
+ 
+  
+ 
+N
+ 
+ 
+2
+1
+⇡ cos 
+1
+i=1
+ 
+vs
+2 = maxi0
+i0
+P
+
+at most mini
+ 
+ 
+ 
+ 
+o
+We now apply the results above to analyze speciﬁc proper-
+ties of the algorithm. For convenience, instead of working
+directly with intrinsic dimensionality, we will analyze the
+query time in terms of a related quantity, global relative
+sparsity, as deﬁned in (Li & Malik, 2016). We reproduce
+its deﬁnition below for completeness.
+Rd, let Bp(r) be the
+Deﬁnition 1. Given a dataset D
+set of points in D that are within a ball of radius r around
+a point p. A dataset D has global relative sparsity of (⌧,   )
+if for all r and p
+2
+
+|
+Global
+relative sparsity is related to the expansion
+rate (Karger & Ruhl, 2002) and intrinsic dimensionality in
+the following way: a dataset with global relative sparsity
+of (⌧,   ) has (⌧, 2(1/ log2  ))-expansion and intrinsic dimen-
+sionality of 1/ log2  .
+
+Rd such that
+
+2
+, where  
+
+Bp( r)
+
+Bp(r)
+
+Bp(r)
+
+  
+ 
+
+| 
+
+|
+
+  
+
+ 
+ 
+
+ 
+ 
+
+ 
+ 
+
+⌧ ,
+
+✓
+
+ 
+
+1.
+
+|
+
+|
+
+|
+
+}
+
+pi
+
+p(i)
+{
+
+Below we derive two upper bounds on the probability that
+some of the true k-nearest neighbours are missing from the
+set of candidate points retrieved from a given composite
+index, which are in expressed in terms of k0 and k1 respec-
+tively. These results inform us how k0 and k1 should be
+chosen to ensure the querying procedure returns the correct
+results with high probability. In the results that follow, we
+n
+n
+use
+i=1 to denote a re-ordering of the points
+i=1
+}
+so that p(i) is the ith closest point to the query q. Proofs are
+found in the supplementary material.
+Lemma 3. Consider points in the order they are re-
+trieved from a composite index that consists of m
+simple indices.
+there are at
+least n0 points that are not the true k-nearest neigh-
+bours but are retrieved before some of them is at most
+1
+
+1
+n0 
+Lemma 4. Consider point projections in a composite
+  
+index that consists of m simple indices in the order they
+are visited. The probability that n0 point projections that
+are not of the true k-nearest neighbours are visited before
+all true k-nearest neighbours have been retrieved is at most
+
+The probability that
+
+n
+i=2k+1
+
+2
+⇡ cos 
+
+p(k)
+
+  
+ 
+
+p(i)
+
+2 /
+
+P
+
+ 
+ 
+
+ 
+ 
+
+ 
+ 
+
+ 
+
+ 
+
+ 
+
+{
+
+1
+
+ 
+
+q
+
+q
+
+k
+
+2
+
+m
+n0 
+
+mk
+
+n
+i=2k+1
+
+1
+
+2
+⇡ cos 
+
+1
+
+ 
+
+p(k)
+
+q
+
+2 /
+
+ 
+
+p(i)
+
+q
+
+2
+
+.
+
+ 
+
+P
+
+ 
+
+  
+ 
+
+ 
+ 
+
+ 
+ 
+
+  
+
+ 
+ 
+
+m
+
+.
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+2
+
+1
+
+a
+
+ 
+
+ 
+
+ 
+ 
+
+q
+.
+
+  
+ 
+
+with
+
+dataset
+
+global
+quantity
+m
+is
+
+On
+5.
+sparsity
+2
+⇡ cos 
+
+the
+p(i)
+2 /
+ 
+m log2  )
+ 
+
+(k,  ),
+p(k)
+1
+q
+k max(log(n/k), (n/k)1
+ 
+ 
+
+Lemma
+relative
+n
+i=2k+1
+at most O
+P
+Lemma 6. For a dataset with global relative spar-
+sity
+consist-
+ing of m simple indices,
+2
+⌦(k max(log(n/k), (n/k)1
+m log2  )) such that the proba-
+ 
+bility that the candidate points retrieved from the composite
+index do not include some of the true k-nearest neighbours
+is at most some constant ↵0 < 1.
+
+(k,  ) and a given composite
+there is
+
+ 
+index
+some k0
+
+  
+
+ 
+ 
+
+ 
+ 
+
+Lemma 7. For a dataset with global relative spar-
+(k,  ) and a given composite
+consist-
+sity
+ing of m simple indices,
+there is
+2
+⌦(mk max(log(n/k), (n/k)1
+log2  )) such that the proba-
+bility that the candidate points retrieved from the composite
+index do not include some of the true k-nearest neighbours
+is at most some constant ↵1 < 1.
+
+index
+some k1
+
+ 
+
+0,
+for any ✏>
+⌦(k max(log(n/k), (n/k)1
+
+Theorem 2. For a dataset with global relative spar-
+sity (k,  ),
+some L,
+there is
+m log2  )) and k1 2
+k0 2
+⌦(mk max(log(n/k), (n/k)1
+log2  )) such that the algo-
+rithm returns the correct set of k-nearest neighbours with
+probability of at least 1
+
+✏.
+
+ 
+
+ 
+
+ 
+
+Now that we have found a choice of k0 and k1 that sufﬁces
+to ensure correctness with high probability, we can derive
+a bound on the query time that guarantees correctness. We
+then analyze the time complexity for construction, inser-
+tion and deletion and the space complexity. Proofs of the
+following are found in the supplementary material.
+
+Theorem 3. For a given number of simple indices m, the
+m/d0 )+
+algorithm takes O
+
+dk max(log(n/k), (n/k)1
+
+ 
+
+⇣
+max(log(n/k), (n/k)1
+
+mk log m
+time to re-
+trieve the k-nearest neighbours at query time, where d0 de-
+notes the intrinsic dimensionality.
+
+1/d0 )
+
+⌘⌘
+
+⇣
+
+ 
+
+Theorem 4. For a given number of simple indices m, the
+algorithm takes O(m(dn + n log n)) time to preprocess the
+data points in D at construction time.
+
+Theorem 5. The algorithm requires O(m(d + log n)) time
+to insert a new data point and O(m log n) time to delete a
+data point.
+
+Theorem 6. The algorithm requires O(mn) space in ad-
+dition to the space used to store the data.
+
+5. Experiments
+
+We compare the performance of Prioritized DCI to that
+of standard DCI (Li & Malik, 2016), product quantiza-
+tion (J´egou et al., 2011) and LSH (Datar et al., 2004),
+which is perhaps the algorithm that is most widely used
+
+in high-dimensional settings. Because LSH operates un-
+der the approximate setting, in which the performance met-
+ric of interest is how close the returned points are to the
+query rather than whether they are the true k-nearest neigh-
+bours. All algorithms are evaluated in terms of the time
+they would need to achieve varying levels of approxima-
+tion quality.
+
+Evaluation is performed on two datasets, CIFAR-
+100 (Krizhevsky & Hinton, 2009) and MNIST (LeCun
+et al., 1998). CIFAR-100 consists of 60, 000 colour im-
+ages of 100 types of objects in natural scenes and MNIST
+consists of 70, 000 grayscale images of handwritten digits.
+The images in CIFAR-100 have a size of 32
+32 and three
+colour channels, and the images in MNIST have a size of
+28
+28 and a single colour channel. We reshape each im-
+age into a vector whose entries represent pixel intensities
+at different locations and colour channels in the image. So,
+3 = 3072 for
+each vector has a dimensionality of 32
+32
+⇥
+CIFAR-100 and 28
+28 = 784 for MNIST. Note that the
+dimensionalities under consideration are much higher than
+those typically used to evaluate prior methods.
+
+⇥
+
+⇥
+
+⇥
+
+⇥
+
+For the purposes of nearest neighbour search, MNIST is a
+more challenging dataset than CIFAR-100. This is because
+images in MNIST are concentrated around a few modes;
+consequently, data points form dense clusters, leading to
+higher intrinsic dimensionality. On the other hand, im-
+ages in CIFAR-100 are more diverse, and so data points
+are more dispersed in space. Intuitively, it is much harder
+to ﬁnd the closest digit to a query among 6999 other digits
+of the same category that are all plausible near neighbours
+than to ﬁnd the most similar natural image among a few
+other natural images with similar appearance. Later results
+show that all algorithms need fewer distance evaluations to
+achieve the same level of approximation quality on CIFAR-
+100 than on MNIST.
+
+We evaluate performance of all algorithms using cross-
+validation, where we randomly choose ten different splits
+of query vs. data points. Each split consists of 100 points
+from the dataset that serve as queries, with the remainder
+designated as data points. We use each algorithm to retrieve
+the 25 nearest neighbours at varying levels of approxima-
+tion quality and report mean performance and standard de-
+viation over all splits.
+
+Approximation quality is measured using the approxima-
+tion ratio, which is deﬁned to be the ratio of the radius of
+the ball containing the set of true k-nearest neighbours to
+the radius of the ball containing the set of approximate k-
+nearest neighbours returned by the algorithm. The closer
+the approximation ratio is to 1, the higher the approxima-
+tion quality. In high dimensions, the time taken to compute
+true distances between the query and the candidate points
+dominates query time, so the number of distance evalua-
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+(a)
+
+(b)
+
+(c)
+
+Figure 2. Comparison of the number of distance evaluations needed by different algorithms to achieve varying levels of approximation
+1 standard
+quality on (a) CIFAR-100 and (b,c) MNIST. Each curve represents the mean over ten folds and the shaded area represents
+deviation. Lower values are better. (c) Close-up view of the ﬁgure in (b).
+
+±
+
+tions can be used as an implementation-independent proxy
+for the query time.
+
+For LSH, we used 24 hashes per table and 100 tables, which
+we found to achieve the best approximation quality given
+the memory constraints. For product quantization, we used
+a data-independent codebook with 256 entries so that the
+algorithm supports dynamic updates. For standard DCI, we
+used the same hyparameter settings used in (Li & Malik,
+2016) (m = 25 and L = 2 on CIFAR-100 and m = 15 and
+L = 3 on MNIST). For Prioritized DCI, we used two differ-
+ent settings: one that matches the hyperparameter settings
+of standard DCI, and another that uses less space (m = 10
+and L = 2 on both CIFAR-100 and MNIST).
+
+We plot the number of distance evaluations that each algo-
+rithm requires to achieve each desired level of approxima-
+tion ratio in Figure 2. As shown, on CIFAR-100, under the
+same hyperparameter setting used by standard DCI, Prior-
+itized DCI requires 87.2% to 92.5% fewer distance evalu-
+ations than standard DCI, 91.7% to 92.8% fewer distance
+evaluations than product quantization, and 90.9% to 93.8%
+fewer distance evaluations than LSH to achieve same levels
+approximation quality, which represents a 14-fold reduc-
+tion in the number of distance evaluations relative to LSH
+on average. Under the more space-efﬁcient hyperparameter
+setting, Prioritized DCI achieves a 6-fold reduction com-
+pared to LSH. On MNIST, under the same hyperparame-
+ter setting used by standard DCI, Prioritized DCI requires
+96.4% to 97.0% fewer distance evaluations than standard
+DCI, 87.1% to 89.8% fewer distance evaluations than prod-
+uct quantization, and 98.8% to 99.3% fewer distance eval-
+uations than LSH, which represents a 116-fold reduction
+relative to LSH on average. Under the more space-efﬁcient
+hyperparameter setting, Prioritized DCI achieves a 32-fold
+reduction compared to LSH.
+
+We compare the space efﬁciency of Prioritized DCI to that
+
+of standard DCI and LSH. As shown in Figure 3 in the
+supplementary material, compared to LSH, Prioritized DCI
+uses 95.5% less space on CIFAR-100 and 95.3% less space
+on MNIST under the same hyperparameter settings used
+by standard DCI. This represents a 22-fold reduction in
+memory consumption on CIFAR-100 and a 21-fold reduc-
+tion on MNIST. Under the more space-efﬁcient hyperpa-
+rameter setting, Prioritized DCI uses 98.2% less space on
+CIFAR-100 and 97.9% less space on MNIST relative to
+LSH, which represents a 55-fold reduction on CIFAR-100
+and a 48-fold reduction on MNIST.
+
+In terms of wall-clock time, our implementation of Priori-
+tized DCI takes 1.18 seconds to construct the data structure
+and execute 100 queries on MNIST, compared to 104.71
+seconds taken by LSH.
+
+6. Conclusion
+
+In this paper, we presented a new exact randomized algo-
+rithm for k-nearest neighbour search, which we refer to as
+Prioritized DCI. We showed that Prioritized DCI achieves
+a signiﬁcant improvement in terms of the dependence of
+query time complexity on intrinsic dimensionality com-
+pared to standard DCI. Speciﬁcally, Prioritized DCI can to
+a large extent counteract a linear increase in the intrinsic
+dimensionality, or equivalently, an exponential increase in
+the number of points near a query, using just a linear in-
+crease in the number of simple indices. Empirical results
+validated the effectiveness of Prioritized DCI in practice,
+demonstrating the advantages of Prioritized DCI over prior
+methods in terms of speed and memory usage.
+
+supported by
+Acknowledgements. This work was
+DARPA W911NF-16-1-0552. Ke Li thanks the Natural
+Sciences and Engineering Research Council of Canada
+(NSERC) for fellowship support.
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+References
+
+Anagnostopoulos, Evangelos, Emiris, Ioannis Z, and Psar-
+ros, Ioannis.
+Low-quality dimension reduction and
+high-dimensional approximate nearest neighbor. In 31st
+International Symposium on Computational Geometry
+(SoCG 2015), pp. 436–450, 2015.
+
+Andoni, Alexandr and Indyk, Piotr. Near-optimal hashing
+algorithms for approximate nearest neighbor in high di-
+mensions. In Foundations of Computer Science, 2006.
+FOCS’06. 47th Annual IEEE Symposium on, pp. 459–
+468. IEEE, 2006.
+
+Andoni, Alexandr and Razenshteyn, Ilya. Optimal data-
+dependent hashing for approximate near neighbors. In
+Proceedings of the Forty-Seventh Annual ACM on Sym-
+posium on Theory of Computing, pp. 793–801. ACM,
+2015.
+
+Arya, Sunil and Mount, David M. Approximate nearest
+In SODA, vol-
+
+neighbor queries in ﬁxed dimensions.
+ume 93, pp. 271–280, 1993.
+
+Arya, Sunil, Mount, David M, Netanyahu, Nathan S, Sil-
+verman, Ruth, and Wu, Angela Y. An optimal algo-
+rithm for approximate nearest neighbor searching ﬁxed
+dimensions. Journal of the ACM (JACM), 45(6):891–
+923, 1998.
+
+Bayer, Rudolf. Symmetric binary b-trees: Data structure
+and maintenance algorithms. Acta informatica, 1(4):
+290–306, 1972.
+
+Behnam, Ehsan, Waterman, Michael S, and Smith, An-
+drew D. A geometric interpretation for local alignment-
+free sequence comparison. Journal of Computational Bi-
+ology, 20(7):471–485, 2013.
+
+Bentley, Jon Louis. Multidimensional binary search trees
+used for associative searching. Communications of the
+ACM, 18(9):509–517, 1975.
+
+Berchtold, Stefan, Keim, Daniel A., and peter Kriegel,
+Hans.
+The X-tree: An index structure for high-
+dimensional data. In Very Large Data Bases, pp. 28–39,
+1996.
+
+Berchtold, Stefan, Ertl, Bernhard, Keim, Daniel A, Kriegel,
+H-P, and Seidl, Thomas. Fast nearest neighbor search
+in high-dimensional space. In Data Engineering, 1998.
+Proceedings., 14th International Conference on, pp.
+209–218. IEEE, 1998.
+
+Biau, G´erard, Chazal, Fr´ed´eric, Cohen-Steiner, David, De-
+vroye, Luc, Rodriguez, Carlos, et al. A weighted k-
+nearest neighbor density estimate for geometric infer-
+ence. Electronic Journal of Statistics, 5:204–237, 2011.
+
+Clarkson, Kenneth L. Nearest neighbor queries in metric
+spaces. Discrete & Computational Geometry, 22(1):63–
+93, 1999.
+
+Dasgupta, Sanjoy and Freund, Yoav. Random projection
+In Proceedings
+trees and low dimensional manifolds.
+of the Fortieth Annual ACM Symposium on Theory of
+Computing, pp. 537–546. ACM, 2008.
+
+Dasgupta, Sanjoy and Sinha, Kaushik. Randomized parti-
+tion trees for nearest neighbor search. Algorithmica, 72
+(1):237–263, 2015.
+
+Datar, Mayur, Immorlica, Nicole, Indyk, Piotr, and Mir-
+rokni, Vahab S. Locality-sensitive hashing scheme based
+on p-stable distributions. In Proceedings of the twenti-
+eth annual symposium on Computational geometry, pp.
+253–262. ACM, 2004.
+
+Eldawy, Ahmed and Mokbel, Mohamed F. SpatialHadoop:
+A MapReduce framework for spatial data. In Data En-
+gineering (ICDE), 2015 IEEE 31st International Confer-
+ence on, pp. 1352–1363. IEEE, 2015.
+
+Guibas, Leo J and Sedgewick, Robert. A dichromatic
+framework for balanced trees. In Foundations of Com-
+puter Science, 1978., 19th Annual Symposium on, pp.
+8–21. IEEE, 1978.
+
+Guttman, Antonin. R-trees: a dynamic index structure
+for spatial searching. In Proceedings of the 1984 ACM
+SIGMOD International Conference on Management of
+Data, pp. 47–57, 1984.
+
+Houle, Michael E and Nett, Michael. Rank-based similarity
+search: Reducing the dimensional dependence. Pattern
+Analysis and Machine Intelligence, IEEE Transactions
+on, 37(1):136–150, 2015.
+
+Indyk, Piotr and Motwani, Rajeev. Approximate nearest
+neighbors: towards removing the curse of dimensional-
+ity. In Proceedings of the Thirtieth Annual ACM Sym-
+posium on Theory of Computing, pp. 604–613. ACM,
+1998.
+
+J´egou, Herv´e, Douze, Matthijs, and Schmid, Cordelia.
+Product quantization for nearest neighbor search. Pat-
+tern Analysis and Machine Intelligence, IEEE Transac-
+tions on, 33(1):117–128, 2011.
+
+Beygelzimer, Alina, Kakade, Sham, and Langford, John.
+In Proceedings of
+Cover trees for nearest neighbor.
+the 23rd International Conference on Machine Learn-
+ing, pp. 97–104. ACM, 2006.
+
+Karger, David R and Ruhl, Matthias. Finding nearest
+neighbors in growth-restricted metrics. In Proceedings
+of the Thiry-fourth Annual ACM Symposium on Theory
+of Computing, pp. 741–750. ACM, 2002.
+
+Fast k-Nearest Neighbour Search via Prioritized DCI
+
+Krauthgamer, Robert and Lee, James R. Navigating nets:
+simple algorithms for proximity search. In Proceedings
+of the Fifteenth Annual ACM-SIAM Symposium on Dis-
+crete Algorithms, pp. 798–807. Society for Industrial and
+Applied Mathematics, 2004.
+
+Krizhevsky, Alex and Hinton, Geoffrey. Learning multiple
+layers of features from tiny images. Technical report,
+University of Toronto, 2009.
+
+LeCun, Yann, Bottou, L´eon, Bengio, Yoshua, and Haffner,
+Patrick. Gradient-based learning applied to document
+recognition. Proceedings of the IEEE, 86(11):2278–
+2324, 1998.
+
+Li, Ke and Malik, Jitendra. Fast k-nearest neighbour search
+In International
+
+via Dynamic Continuous Indexing.
+Conference on Machine Learning, pp. 671–679, 2016.
+
+Liu, Ting, Moore, Andrew W, Yang, Ke, and Gray, Alexan-
+der G. An investigation of practical approximate nearest
+neighbor algorithms. In Advances in Neural Information
+Processing Systems, pp. 825–832, 2004.
+
+Meiser, Stefan. Point location in arrangements of hyper-
+planes. Information and Computation, 106(2):286–303,
+1993.
+
+Minsky, Marvin and Papert, Seymour. Perceptrons: an in-
+troduction to computational geometry. pp. 222, 1969.
+
+Orchard, Michael T. A fast nearest-neighbor search al-
+gorithm. In Acoustics, Speech, and Signal Processing,
+1991. ICASSP-91., 1991 International Conference on,
+pp. 2297–2300. IEEE, 1991.
+
+Paulev´e, Lo¨ıc, J´egou, Herv´e, and Amsaleg, Laurent. Lo-
+cality sensitive hashing: A comparison of hash function
+types and querying mechanisms. Pattern Recognition
+Letters, 31(11):1348–1358, 2010.
+
+Pugh, William. Skip lists: a probabilistic alternative to bal-
+anced trees. Communications of the ACM, 33(6):668–
+676, 1990.
+
+Weiss, Yair, Torralba, Antonio, and Fergus, Rob. Spectral
+hashing. In Advances in Neural Information Processing
+Systems, pp. 1753–1760, 2009.
+
+

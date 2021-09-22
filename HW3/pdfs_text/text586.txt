@@ -1,0 +1,1514 @@
+Gradient Projection Iterative Sketch for Large-Scale Constrained
+Least-Squares
+
+Junqi Tang 1 Mohammad Golbabaee 1 Mike E. Davies 1
+
+Abstract
+We propose a randomized ﬁrst order opti-
+mization algorithm Gradient Projection Iterative
+Sketch (GPIS) and an accelerated variant for ef-
+ﬁciently solving large scale constrained Least
+Squares (LS). We provide the ﬁrst theoretical
+convergence analysis for both algorithms. An
+efﬁcient implementation using a tailored line-
+search scheme is also proposed. We demonstrate
+our methods’ computational efﬁciency compared
+to the classical accelerated gradient method, and
+the variance-reduced stochastic gradient methods
+through numerical experiments in various large
+synthetic/real data sets.
+
+1. Introduction
+
+We are now in an era of boosting knowledge and large data.
+In our daily life we have various signal processing and ma-
+chine learning applications which involve the problem of
+tackling a huge amount of data. These applications vary
+from Empirical Risk Minimization (ERM) for statistical
+inference, to medical imaging such as the Computed To-
+mography (CT) and Magnetic Resonance Imaging (MRI),
+channel estimation and adaptive ﬁltering in communica-
+tions, and in machine learning problems where we need to
+train a neural network or a classiﬁer from a large amount of
+data samples or images. Many of these applications involve
+solving constrained optimization problems. In a large data
+setting a desirable algorithm should be able to simultane-
+ously address high accuracy of the solutions, small amount
+of computations and high speed data storage.
+
+Recent advances in the ﬁeld of randomized algorithms have
+provided us with powerful tools for reducing the compu-
+tation for large scale optimizations. From the latest lit-
+erature we can clearly see two streams of randomized al-
+
+1Institute for Digital Communications,
+Edinburgh, Edinburgh, UK. Correspondence to:
+<J.Tang@ed.ac.uk>.
+
+the University of
+Junqi Tang
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+gorithms, the ﬁrst stream is the stochastic gradient de-
+scent (SGD) and its variance-reduced variants (Johnson &
+Zhang, 2013)(Koneˇcn`y & Richt´arik, 2013)(Defazio et al.,
+2014)(Allen-Zhu, 2016). The stochastic gradient tech-
+niques are based on the computationally cheap unbiased
+estimate of the true gradients with progressively reduced
+estimation variance. Although there has been several works
+on SGD techniques for performing constrained optimiza-
+tion (Xiao & Zhang, 2014)(Koneˇcn`y et al., 2016), to the
+best of our knowledge, there are no results highlighting the
+computational speed up one could achieve by exploiting the
+data structure promoted by the constraint set.
+
+follows a second line of
+
+research and
+This paper
+uses sketching techniques,
+the crux of which is re-
+ducing the dimensionality of a large scale problem by
+random projections (e.g., sub-Gaussian matrices, Fast
+Johnson-Lindenstrauss Transforms (FJLT) (Ailon & Lib-
+erty, 2008)(Ailon & Chazelle, 2009), the Count Sketch
+(Clarkson & Woodruff, 2013), the Count-Gauss Sketch
+(Kapralov et al., 2016) or random sub-selection) so that
+the resulting sketched problem becomes computation-
+ally tractable.
+The meta-algorithms Classical Sketch
+(CS)(Mahoney, 2011)(Drineas et al., 2011)(Pilanci &
+Wainwright, 2015) and the Iterative Hessian Sketch (IHS)
+(Pilanci & Wainwright, 2016) have been recently intro-
+duced for solving efﬁciently large scale constrained LS
+problems which utilize the random sketching idea com-
+bined with the fact that solutions have low-dimensional
+structures such as sparsity in a properly-chosen dictionary,
+low-rank, etc.
+
+1.1. Main Contributions
+
+• Novel ﬁrst order solvers based on iterative sketches
+
+for constrained Least-squares
+
+We propose a basic ﬁrst order algorithm Gradient Pro-
+jection Iterative Sketch (GPIS) based on the com-
+bination of the Classical Sketch (Pilanci & Wain-
+wright, 2015) and Iterative Hessian Sketch (Pilanci
+& Wainwright, 2016) for efﬁciently solving the con-
+strained Least-squares, and also an accelerated vari-
+ant by applying Nesterov’s acceleration scheme (Nes-
+terov, 2007)(Nesterov, 2013a).
+
+Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+• Theoretical analysis for both GPIS and Acc-GPIS
+
+Although there exists established theories for the
+sketching programs
+in (Pilanci & Wainwright,
+2015)(Pilanci & Wainwright, 2016) which describes
+their estimation performance under the assumption
+that the sketched programs are solved exactly, there is
+no theoretical analysis of the use of ﬁrst order meth-
+ods within this framework, where each of the sketched
+programs are only approximately solved. The paper is
+the ﬁrst one to provide this convergence analysis.
+
+• Structure exploiting algorithms
+
+In related theoretical works in sketching (Pilanci &
+Wainwright, 2015)(Pilanci & Wainwright, 2016), con-
+vex relaxation (Chandrasekaran & Jordan, 2013), and
+the Projected Gradient Descent (PGD) analysis (Oy-
+mak et al., 2015) with greedy step sizes when the data
+matrix is a Gaussian map, researchers have discovered
+that the constraint set is able to be exploited to acceler-
+ate computation. In this paper’s convergence analysis
+of the proposed algorithms (which have an inner loop
+and an outer loop), we show explicitly how the outer
+loop’s convergence speed is positively inﬂuenced by
+the constrained set. 1
+
+The proposed GPIS algorithm draws a different line
+of research for ﬁrst order randomized algorithms from
+the SGD and its recently introduced variance-reduced
+variants such as SVRG (Johnson & Zhang, 2013) and
+SAGA (Defazio et al., 2014) by utilizing randomized
+sketching techniques and deterministic iterations in-
+stead of the stochastic iterations. This approach leads
+to convenience in optimally choosing the step size by
+implementing line search because it follows the clas-
+sical results and techniques in ﬁrst order optimiza-
+tion. Although such stochastic gradient algorithms
+have good performance in terms of epoch counts when
+a small minibatch size is used, this type of measure
+does not consider at least three important aspects: 1)
+the computational cost of projection / proximal oper-
+ator, 2) the modern computational devices are usually
+more suitable for vectorized / parallel computation, 3)
+the operational efforts to access new data batches each
+iteration (note that the large data should be stored in
+large memories, which are usually slow).
+
+It is well known that the small batch size in stochas-
+tic gradients usually leads to a greater demand on the
+
+number of iterations. In the cases where the projec-
+tion / proximal operator is costly to compute, for in-
+stance, if we wish to enforce sparsity in a transformed
+domain, or an analytical domain (total-variation), we
+would need to use a large batch size in order to con-
+trol computation which generally would not be favor-
+able for stochastic gradients techniques as they usu-
+ally achieves best performance when small batch size
+is used. In this paper we have designed experiments
+to show the time efﬁciency of the sketched gradi-
+ents with Count-sketch (Clarkson & Woodruff, 2013)
+and an aggressive line-search scheme for near-optimal
+choice of step size each iteration (Nesterov, 2007)
+compared to a mini-batched version of the SAGA al-
+gorithm (Defazio et al., 2014) and the accelerated full
+gradient method (Beck & Teboulle, 2009) in large
+scale constrained least-square problems.
+
+1.2. Background
+
+Consider a constrained Least-squares regression problem
+in the large data setting. We have the training data matrix
+A ∈ Rn×d with n > d and observation y ∈ Rn. Mean-
+while we restrict our regression parameter to a convex con-
+strained set K to enforce some desired structure such as
+sparsity and low-rank2:
+
+(1)
+
+(2)
+
+Then we deﬁne the error vector e as:
+
+e = y − Ax(cid:63)
+
+A standard ﬁrst order solver for (1) is the projected gradi-
+ent algorithm (we denote the orthogonal projection opera-
+tor onto the constrained set K as PK):
+
+xj+1 = PK(xj − ηAT (Axj − y)).
+
+(3)
+
+Throughout the past decade researchers proposed a ba-
+sic meta-algorithm for approximately solving the Least-
+squares problem that we call the Classical Sketch (CS),
+see e.g.
+(Mahoney, 2011) (Drineas et al., 2011) (Pi-
+lanci & Wainwright, 2015), which compresses the di-
+mension of the LS and makes it cheaper to solve. The
+Johnson-Lindenstrauss theory (Johnson & Lindenstrauss,
+1984) (Dasgupta & Gupta, 2003) and the related topic
+of Compressed Sensing (Donoho, 2006)(Candes et al.,
+2006)(Baraniuk et al., 2008) revealed that random projec-
+tions can achieve stable embeddings of high dimensional
+data into lower dimensions and that the number of mea-
+surements required is proportional to the intrinsic dimen-
+sionality of data (as opposed to the ambient dimension)
+
+• Sketched gradients versus stochastic gradients –
+
+quality versus quantity
+
+x(cid:63) = arg min
+x∈K
+
+(cid:8)f (x) := (cid:107)y − Ax(cid:107)2
+
+(cid:9) .
+
+2
+
+1Meanwhile we can show empirically that the inner loop is
+also being able to choose an aggressive step size with respect to
+the constraint. This extra step-size experiment can be found in the
+supplementary material.
+
+2In scenarios where we do not know the exact constraint K, we
+may wish to use regularized least-squares instead of strict con-
+straint. This paper focus on the constrained case and leave the
+extension for the proximal setting as future work.
+
+Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+which is manifested in the set of constraints K. This moti-
+vates replacing the original constrained LS problem with a
+sketched LS (Pilanci & Wainwright, 2015):
+
+Algorithm 1 Gradient Projection Iterative Sketch —
+G(m, [η], [k])
+
+ˆx = arg min
+x∈K
+
+(cid:8)f0(x) := (cid:107)Sy − SAx(cid:107)2
+
+(cid:9) ,
+
+2
+
+(4)
+
+where the sketching matrix S ∈ Rm×n, m (cid:28) n is a ran-
+dom projection operator which satisﬁes:
+
+E
+
+(cid:19)
+
+(cid:18) ST S
+m
+
+= I.
+
+(5)
+
+When the embedding dimension m is larger than a certain
+factor of the true solution’s intrinsic dimension (measured
+through a statistical tool called the Gaussian Width (Chan-
+drasekaran et al., 2012)), the Classical Sketch (4) ensures
+a robust estimation of x(cid:63) with a noise ampliﬁcation factor
+compared to the estimator given by solving the original LS
+problem (1), and it has been shown that the smaller the em-
+bedding dimension m is, the bigger the noise ampliﬁcation
+factor will be. To get a sketching scheme for the scenar-
+ios where a high accuracy estimation is demanded, a new
+type of meta-algorithm Iterative Hessian Sketch (IHS) was
+introduced by Pilanci and Wainwright (Pilanci & Wain-
+wright, 2016):
+
+xt+1 = arg min
+x∈K
+
+{ft(x) :=
+
+(cid:107)StA(x − xt)(cid:107)2
+2
+
+1
+2m
+−xT AT (y − Axt)}.
+
+(6)
+
+At the tth iteration of IHS a new sketch of the data matrix
+StA and a full gradient AT (y−Axt) at the current estimate
+xt is calculated to form a new sketched least-square prob-
+lem. By repeating this procedure the IHS will converge to
+the solution of the original problem (1) in typically a small
+number of iterations. The iterative sketch essentially cor-
+rects the noise ampliﬁcation and enables (1 + (cid:15)) LS accu-
+racy in the order of log 1
+
+(cid:15) outer loop iterations.
+
+2. Gradient Projection Iterative Sketch
+
+2.1. The Proposed Algorithms
+
+Here we consider the combination of CS with the ﬁrst order
+PGD algorithm, the Gradient Projection Classical Sketch
+(GPCS):
+
+xi+1 = PK(xi − η(S0A)T (S0Axi − S0y)).
+
+(7)
+
+Similarly we obtain the Gradient Projection Iterative Hes-
+sian Sketch (GPIHS) for solving IHS (6):
+
+xi+1 = PK(xi−η((StA)T (StA)(xi−xt)+mAT (Axt−y)).
+
+(8)
+Our proposed GPIS algorithm applies PGD to solve a se-
+quence of sketched LS, starting with a CS step for a fast
+
+Initialization: x0
+0 = 0
+Given A ∈ Rn×d, sketch size m (cid:28) n
+Prior knowledge: the true solution x belongs to set K
+Run GPCS iterates (Optional):
+Generate a random sketching matrix S0 ∈ Rm×n
+Calculate S0A, S0y
+for i = 1 to k0 do
+i+1 = PK(x0
+x0
+end for
+x1
+0 = x0
+k0
+Run GPIHS iterates
+for t = 1 to N do
+
+i − η0,i(S0A)T (S0Ax0
+
+i − S0y))
+
+s = StA
+
+Calculate g = AT (Axt
+0 − y)
+Generate a random sketching matrix St ∈ Rm×n
+Calculate At
+for i = 1 to kt do
+xt
+i+1 = PK(xt
+end for
+xt+1
+0 = xt
+kt
+end for
+
+i − ηt,i(AtT
+
+i − xt
+
+s At
+
+s(xt
+
+0) + mg))
+
+initialization, and then is followed by further iterations of
+IHS. We can observe from Algorithm 1 that sketches are
+constructed in the outer loop and within the inner loop we
+only need to access them. This property could be very use-
+ful when, for instance A is stored in a slow speed memory
+and it is too large to be loaded at once into the fast mem-
+ory, or in large scale image reconstruction problems such as
+CT where due to its prohibited size A is constructed on the
+ﬂy. Note that thanks to the sketching each inner iteration of
+GPIS is n
+m times cheaper than a full PGD iterate in terms of
+matrix-vector multiplication, so intuitively we can see that
+there is potential in Algorithm 1 to get computational gain
+over the standard ﬁrst order solver PGD.
+
+Since it is well-known that in convex optimization the stan-
+dard ﬁrst order method Projected/proximal gradient de-
+scent can be accelerated by Nesterov’s acceleration scheme
+(Nesterov, 2007) (Nesterov, 2013a) (Beck & Teboulle,
+2009), our Algorithm 1 has potential to be further improved
+by introducing Nesterov’s acceleration. Here we propose
+Algorithm 2 – Accelerated Gradient Projection Iterative
+Sketch (Acc-GPIS) which is based on the combination of
+the accelerated PGD and iterative sketching.
+
+One of the beneﬁts of deterministically minimising the
+sketched cost function can bring is that the implementation
+of the line-search scheme can be easy and provably reliable
+since the underlying sketched cost function each outer loop
+is ﬁxed. For example (Nesterov, 2007) provides a simple
+line-search scheme for gradient methods to make the step
+size of each iteration to be nearly optimal, with rigorous
+
+Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+0 = 0, τ0 = 1
+
+Algorithm 2 Accelerated Gradient Projection Iterative
+Sketch — A(m, [η], [k])
+Initialization: x0
+Given A ∈ Rn×d, sketch size m (cid:28) n
+Prior knowledge: the true solution x belongs to set K
+Run GPCS iterates (Optional):
+Generate a random sketching matrix S0 ∈ Rm×n
+Calculate S0A, S0y
+for i = 1 to k0 do
+i+1 = PK(z0
+x0
+τi = (1 +
+Extrapolate z0
+
+i − η0,i(S0A)T (S0Az0
+1 + 4τ 2
+i+1 = x0
+
+i+1 + τi−1−1
+
+i − S0y))
+
+i+1 − x0
+i )
+
+i−1)/2
+
+(x0
+
+(cid:113)
+
+τi
+
+end for
+x1
+0 = x0
+0 = z1
+k0
+Run GPIHS iterates
+for t = 1 to N do
+
+s = StA
+
+Calculate g = AT (Axt
+0 − y)
+Generate a random sketching matrix St ∈ Rm×n
+Calculate At
+τ0 = 1
+for i = 1 to kt do
+i+1 = PK(zt
+xt
+(cid:113)
+τi = (1 +
+Extrapolate zt
+
+i − ηt,i(AtT
+1 + 4τ 2
+i−1)/2
+i+1 = xt
+
+i+1 + τi−1−1
+
+i − xt
+
+0) + mg))
+
+s At
+
+s(zt
+
+i+1 − xt
+i)
+
+(xt
+
+τi
+
+end for
+xt+1
+0 = zt+1
+end for
+
+0 = xt
+kt
+
+convergence theory and also a explicit bound for the num-
+ber of additional gradient calls. The line-search scheme is
+described by Algorithm 3. On the other hand in the stochas-
+tic gradient literature there are no practical strategies for ef-
+ﬁcient line search in the case of constrained optimization.
+To the best of our knowledge, only the SAG paper (Schmidt
+et al., 2013) addresses the issue of line-search but their im-
+plementation is only for unconstrained optimization.
+
+3. Convergence Analysis
+
+3.1. General Theory
+
+We start our theoretical analysis by some deﬁnitions:
+
+Deﬁnition 1. The Lipschitz constant L and strong convex-
+ity µ for the LS (1) are deﬁned as the largest and smallest
+singular values of the Hessian matrix AT A:
+
+µ(cid:107)zd(cid:107)2
+
+2 ≤ (cid:107)Azd(cid:107)2
+
+2 ≤ L(cid:107)zd(cid:107)2
+2,
+
+(9)
+
+for all zd ∈ Rd, where 0 ≤ µ < L (µ = 0 means the LS
+(1) is non-strongly convex).
+
+Deﬁnition 2. Let C be the smallest closed cone at x(cid:63) con-
+
+Algorithm 3 line-search scheme for GPIS and Acc-GPIS
+— L(xi, ft(x), (cid:79)ft(xi), γu, γd) (Nesterov, 2007)
+
+Input: update xi, sketched objective function ft(x), gra-
+dient vector (cid:79)ft(xi), line search parameters γu and γd,
+step size of previous iteration ηi−1.
+Deﬁne composite gradient map mL:
+mL := ft(xi) + (x − xi)T (cid:79)ft(xi) + 1
+η = γdηi−1
+x = PK(xi − η(cid:79)ft(xi))
+while ft(x) ≥ mL do
+
+2η (cid:107)x − xi(cid:107)2
+
+2
+
+η = η/γu
+x = PK(xi − η(cid:79)ft(xi))
+
+end while
+Return xi+1 = x and ηi = η
+
+taining the set K − x(cid:63):
+
+C = (cid:8)p ∈ Rd| p = c(x − x(cid:63)), ∀c ≥ 0, x ∈ K(cid:9) ,
+
+(10)
+Sd−1 be the unit sphere in Rd, Bd be the unit ball in Rd,
+z be arbitrary ﬁxed unit-norm vectors in Rn. The factors
+α(η, StA), ρ(St, A) and σ(St, A) are deﬁned as:
+
+α(ηt, StA) = sup
+u,v∈Bd
+
+vT (I − ηtAT StT
+
+StA)u,
+
+(11)
+
+ρ(St, A) =
+
+σ(St, A) =
+
+m StT
+supv∈AC∩Sn−1 vT ( 1
+1
+m (cid:107)Stv(cid:107)2
+inf v∈AC∩Sn−1
+2
+supv∈range(A)∩Sn−1 (cid:107)Stv(cid:107)2
+2
+inf v∈range(A)∩Sn−1 (cid:107)Stv(cid:107)2
+2
+
+,
+
+St − I)z
+
+,
+
+(12)
+
+(13)
+
+For convenience, we denote each of this terms as: αt :=
+α(ηt, StA), ρt := ρ(St, A) and σt := σ(St, A). Our the-
+ory hangs on these three factors and we will show that they
+can be bounded with exponentially high probabilities for
+Gaussian projections.
+Deﬁnition 3. The optimal points xt
+ft(x) are deﬁned as:
+xt
+(cid:63) = arg min
+x∈K
+
+(cid:63) of the sketch programs
+
+ft(x).
+
+(14)
+
+We also deﬁne a constant R for the simplicity of the theo-
+rems:
+
+R = max
+
+(cid:107)xt
+
+(cid:63) − x(cid:63)(cid:107)2
+2.
+
+t
+
+(15)
+
+We use the notation (cid:107)v(cid:107)A = (cid:107)Av(cid:107)2 to describe the A-norm
+of a vector v in our theory. After deﬁning these proper-
+ties we can derive our ﬁrst theorem for GPIS when f (x) is
+strongly convex, e.g, µ > 0 :
+Theorem 1. (Linear convergence of GPIS when µ > 0)
+For ﬁxed step sizes ηt ≤
+, the following bounds
+hold: for t = 0 (the initialization loop by GPCS),
+(cid:115)
+
+1
+(cid:107)StA(cid:107)2
+2
+
+(cid:107)x1
+
+0 − x(cid:63)(cid:107)A ≤ (α0)k0
+
+(cid:107)x0
+
+0 − x0
+
+(cid:63)(cid:107)A + 2ρ0(cid:107)e(cid:107)2, (16)
+
+L
+µ
+
+Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+for N ≥ 1 and xt
+GPIHS),
+
+0 := xt−1
+kt−1
+
+(the consecutive loops by
+
+for N ≥ 1 and xt
+
+0 := xt−1
+
+(cid:107)xN +1
+0
+
+− x(cid:63)(cid:107)A ≤
+
+ρ(cid:63)
+t
+
+(cid:107)x1
+
+0 − x(cid:63)(cid:107)A;
+
+(17)
+
+where we denote:
+
+t = (αt)kt
+ρ(cid:63)
+
+(1 + ρt)
+
++ ρt
+
+(18)
+
+(cid:41)
+
+(cid:40) N
+(cid:89)
+
+t=1
+
+(cid:34)
+
+(cid:115)
+
+(cid:35)
+
+L
+µ
+
+From Theorem 1 we can see that when we have strong con-
+vexity, aka µ > 0, by choosing a appropriate step size the
+GPCS loop will linearly converge to a sub-optimal solution,
+the accuracy of which depends on the value of 2ρ0(cid:107)e(cid:107)2;
+and the following GPIHS iterations enjoys a linear conver-
+gence towards the optimal point.
+
+When the least-squares solution is relatively consistent
+((cid:107)e(cid:107)2 is small), the GPCS loop will provide excellent ini-
+tial convergence speed, otherwise it is not beneﬁcial – that’s
+why we say that the GPCS loop is optional for our GPIS /
+Acc-GPIS algorithm. For regression problems on data sets,
+we advise not to run the GPCS iterates, but for signal/image
+processing applications, we would recommend it.
+
+For the cases where the strong convexity is not guaranteed
+(µ ≥ 0) we show the O( 1
+k ) convergence rate for GPIS al-
+gorithm:
+Theorem 2. (Convergence guarantee for GPIS when µ ≥
+0) If we choose a ﬁxed number (k) of inner-loops for t =
+1, ..., N , the following bounds hold: for t = 0,
+
+(cid:107)x1
+
+0 − x(cid:63)(cid:107)A ≤
+
++ 2ρ0(cid:107)e(cid:107)2,
+
+(19)
+
+(cid:114) βLσ0R
+2k0
+
+for N ≥ 1 and xt
+
+0 := xt−1
+
+k
+
+(cid:107)xN +1
+0
+
+− x(cid:63)(cid:107)A ≤
+
+ρt
+
+(cid:107)x1
+
+0 − x(cid:63)(cid:107)A
+
+(cid:40) N
+(cid:89)
+
+(cid:41)
+
+√
+
+(cid:114)
+
+t=1
+σt
+maxt
+1 − maxt ρt
+where β = 1 for ﬁxed step sizes ηt = 1
+, β = γu for a
+line search scheme described by Algorithm 3 with parame-
+ter γu > 1 and γd = 1.
+
+βLR
+2k
+
+(cid:107)StA(cid:107)2
+2
+
+(20)
+
++
+
+,
+
+k2 ) convergence rate:
+
+For the Accelerated GPIS algorithm we also prove the de-
+sired O( 1
+(Convergence guarantee for Accelerated
+Theorem 3.
+GPIS when µ ≥ 0) If we choose a ﬁxed number (k) of
+inner-loops for t = 1, ..., N , the following bounds hold:
+for t = 0 ,
+
+(cid:115)
+
+(cid:107)x1
+
+0 − x(cid:63)(cid:107)A ≤
+
+2βLσ0R
+(k0 + 1)2 + 2ρ0(cid:107)e(cid:107)2,
+
+(21)
+
+(cid:107)xN +1
+0
+
+− x(cid:63)(cid:107)A ≤
+
+ρt
+
+(cid:107)x1
+
+0 − x(cid:63)(cid:107)A
+
+(cid:41)
+
+k
+(cid:40) N
+(cid:89)
+
+t=1
+
+√
+
+(cid:115)
+
++
+
+σt
+maxt
+1 − maxt ρt
+
+2βLR
+(k + 1)2 ,
+
+(22)
+
+where β = 1 for ﬁxed step sizes ηt = 1
+, β = γu for a
+line search scheme described by Algorithm 3 with parame-
+ter γu > 1 and γd = 1.
+
+(cid:107)StA(cid:107)2
+2
+
+We include the proofs in our supplementary material.
+It
+is well known that for the case µ > 0, the accelerated
+gradients can potentially enjoy the improved linear rate
+O((1 − (cid:112) µ
+L )) but it demands the exact knowledge of the
+value µ (which is often unavailable in practical setups). In
+our implementation for the Acc-GPIS method in the exper-
+iments, we use the adaptive gradient restart scheme pro-
+posed by (O’Donoghue & Candes, 2015).
+
+3.2. Explicit Bounds for Gaussian Sketches
+
+The theorems above provide us with a framework to de-
+scribe the convergence of GPIS and Acc-GPIS in terms of
+the constants α, ρ and σ. For Gaussian sketches, these con-
+stants ﬁnd explicit bounding expressions in terms of the
+sketch size m and the complexity of the constraint cone C.
+For this, we use the Gaussian Width argument (see, e.g.
+(Chandrasekaran et al., 2012)):
+Deﬁnition 4. The Gaussian width W(Ω) is a statistical
+measure of the size of a set Ω:
+
+W(Ω) = Eg
+
+(cid:18)
+
+sup
+v∈Ω
+
+(cid:19)
+
+vT g
+
+,
+
+(23)
+
+where g ∈ Rn is draw from i.i.d. normal distribution.
+
+2slog( d
+
+s ) + 5
+
+The value of W(C ∩Sd−1) is an useful measure of the tight-
+ness of the structure of x(cid:63). For example, if x(cid:63) is s-sparse
+and we model the sparsity constraint using an l1 ball, we
+(cid:113)
+will have W(C ∩ Sd−1) ≤
+4 s, which means
+the sparser x(cid:63) is, the smaller the W(C ∩ Sd−1) will be
+(Chandrasekaran et al., 2012). As an illustration we now
+quantify the bounds in our general theorems in terms of the
+sketch size m and the Gaussian width of the transformed
+cone W(AC ∩ Sn−1) ≤
+d, and the ambient dimension of
+the solution domain (d). Now we are ready to provide the
+explicit bounds for the factors αt, ρt and σt for the general
+theorems (we denotes bm :=
+m (Oymak
+et al., 2015) and W := W(AC ∩ Sn−1) for the following
+lemmas):
+Proposition 1. If the step-size ηt =
+
+2 Γ( m+1
+2
+Γ( m
+
+2 ) ≈
+
+1
+d+θ)2 , sketch
+√
+L(bm+
+d, and the entries of the sketching
+
+size m satisﬁes bm >
+
+√
+
+√
+
+√
+
+√
+
+)
+
+Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+matrix St are i.i.d drawn from Normal distribution, then:
+
+(cid:40)
+
+αt ≤
+
+1 −
+
+µ
+L
+
+(bm −
+(bm +
+
+√
+√
+
+d − θ)2
+d + θ)2
+
+(cid:41)
+
+,
+
+(24)
+
+with probability at least (1 − 2e− θ2
+Proposition 2. If the entries of the sketching matrix St are
+i.i.d drawn from Normal distribution, then:
+
+2 ).
+
+ρt ≤
+
+m
+(bm − W − θ)2
+
+(cid:32) √
+
+2bm(W + θ)
+m
+
+b2
+m
+m
+
++ |
+
+− 1|
+
+,
+
+(cid:33)
+
+With probability at least (1 − e− θ2
+Proposition 3. If the entries of the sketching matrix St are
+i.i.d drawn from Normal distribution, and the sketch size m
+satisﬁes bm >
+
+2 )(1 − 8e− θ2
+
+d, then:
+
+8 ).
+
+√
+
+σt ≤
+
+√
+√
+
+d + θ)2
+d − θ)2
+
+(bm +
+(bm −
+
+with probability at least (1 − 2e− θ2
+
+2 ).
+
+(25)
+
+(26)
+
+(We include the proofs in the supplementary material.) We
+would like to point out that our bound on factor ρt in propo-
+sition 2 has revealed that the outer-loop convergence of
+GPIS and Acc-GPIS relies on the Gaussian Width of the
+solution x(cid:63) and the choice of the sketch size m:
+
+O(nnz(A)) and O(nnz(A) + m1.5d3) respectively. These
+fast sketching methods provide signiﬁcant speed up in prac-
+tice compared to Gaussian sketch when n (cid:29) d.
+
+4. Implementation for GPIS and Acc-GPIS in
+
+Practice
+
+In this section we describe our implementation of GPIS and
+Acc-GPIS algorithm in the experiments:
+
+• Count sketch In this paper we choose the Count
+Sketch as our sketching method since it can be cal-
+culated in a streaming fashion and we observe that
+this sketching method provides the best computational
+speed in practice. A MATLAB implementation for ef-
+ﬁciently applying the Count Sketch can be found in
+(Wang, 2015).
+
+• Line search We implement the line-search scheme
+given by (Nesterov, 2007) and is described by Algo-
+rithm 3 for GPIS and Acc-GPIS in our experiments
+with parameters γu = 2, and γd = 2.
+
+• Gradient restart for Acc-GPIS We choose a efﬁ-
+cient restarting scheme gradient restart proposed by
+(O’Donoghue & Candes, 2015).
+
+ρt (cid:46)
+
+√
+
+2 W√
+m
+(1 − W√
+m )2
+
+.
+
+5. Numerical Experiments
+
+(27)
+
+5.1. Settings for Environments and Algorithms
+
+We can then observe that the larger the sketch size m is
+with respect to W, the faster the outer loop convergence
+of GPIS and Acc-GPIS can be, but on the other hand we
+should not choose m too large otherwise the inner-loop iter-
+ation become more costly – this trade-off means that there
+is always a sweet spot for the choice of m to optimize the
+computation.
+
+Our theory is conservative in a sense that it does not pro-
+vide guarantee for a sketch size which is below the ambient
+dimension d since the factors αt and σt which are related
+to the inner loop prohibit this.
+
+Although the Gaussian sketch provides us strong guaran-
+tees, due to computational cost of dense matrix multipli-
+cation, which is of O(mnd), it is not computationally at-
+tractive in practice.
+In the literature of randomized nu-
+merical linear algebra and matrix sketching, people usually
+use the random projections with fast computational struc-
+tures such as the Fast Johnson-Lindenstrauss Transform
+(Ailon & Liberty, 2008)(Ailon & Chazelle, 2009), Count
+sketch (Clarkson & Woodruff, 2013) and Count-Gauss
+sketch(Kapralov et al., 2016), which cost O(nd log(d)),
+
+We run all the numerical experiments on a DELL laptop
+with 2.60 GHz Intel Core i7-5600U CPU and 1.6 GB RAM,
+MATLAB version R2015b.
+
+We choose two recognized algorithms to represent the the
+full gradients methods and the (incremental) stochastic gra-
+dient method. For the full gradient, we choose the Accel-
+erated projected gradient descent (Beck & Teboulle, 2009)
+(Nesterov, 2013b) with line-search method described in Al-
+gorithm 3 and gradient restart to optimize its performance.
+For the stochastic gradients we choose a mini-batched ver-
+sion of SAGA (Defazio et al., 2014) with various batch
+sizes (b = 10, b = 50 and b = 100). We use the
+step size suggested by SAGA’s theory which is 1
+. The
+3 ˆL
+code for the minibatch SAGA implementation can be found
+in (https://github.com/mdeff/saga). We get the estimated
+value for ˆL by averaging the largest singular value of each
+batch (note that we do not count this into the elapsed time
+and epoch counts for SAGA). The sketch size of our pro-
+posed methods for each experiments are list in Table 1.
+We use the l1 projection operator provided by the SPGL1
+toolbox (Van Den Berg & Friedlander, 2007) in the experi-
+ments.
+
+Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+Table 1. Sketch sizes (m) for GPIS and Acc-GPIS for each exper-
+iments
+
+SYN1
+
+SYN2
+
+SYN3 MAGIC04 YEAR
+
+800
+
+800
+
+400
+
+475
+
+1000
+
+5.2. Synthetic Data Sets
+
+We start with some numerical experiments on synthetic
+problems (Table 2) to gain some insights into the algo-
+rithms. We begin by focusing on l1 norm constrained
+problems 3. We generate synthetic constrained least-square
+problems by ﬁrst generating a random matrix sized n by d,
+then perform SVD on such matrix and replace the singu-
+lar values with a logarithmically decaying sequence. (The
+details of the procedure can be found in supplementary ma-
+terials.) Similarly we generate a synthetic problem (Syn3)
+for low-rank recovery with nuclear-norm constraint. This
+is also called the multiple response regression with a gen-
+eralized form of the Least-squares:
+
+X (cid:63) = arg min
+
+(cid:107)|Y − AX|(cid:107)2
+F .
+
+(cid:107)X(cid:107)(cid:63)≤r
+
+(28)
+
+5.3. Real Data Sets
+
+We ﬁrst run an unconstrained least-squares regression on
+the Year-prediction (Million-song) data set from UCI Ma-
+chine Learning Repository (Lichman, 2013) after we nor-
+malize each column of the data matrix. We use this exam-
+ple to demonstrate our algorithms’ performance in uncon-
+strained problems.
+
+Then we choose Magic04 Gamma Telescope data set from
+(Lichman, 2013) to generate a constrained Least-square
+regression problem. The original number of features for
+Magic04 are 10 , and we normalize each columns of the
+original data matrix and additional irrelevant random fea-
+tures as the same way as the experiments in (Langford
+et al., 2009)(Shalev-Shwartz & Tewari, 2011) to the data
+sets so that the regressor x(cid:63) can be chosen to select the
+sparse set of relevant features by again solving (1). For
+this case we ﬁrst precalculate the l1-norm of the original
+program’s solution and then set it as the radius of our l1
+constraint. The details of the real data sets can be found in
+Table 3.
+
+5.4. Discussion
+
+We measure the performance of the algorithms by the wall-
+clock time (simply using the tic toc function in MATLAB)
+
+3In practice we would consider the l1 regularized least
+squares, but in this paper we focus on the constrained case to make
+simple illustrations.
+
+Figure 1. Experimental results on Million-song Year prediction
+data set (unconstrained LS regression experiment)
+
+and the epoch counts. The y-axis of each plot is the rel-
+ative error log( f (x)−f (x(cid:63))
+). The values below 10−10 are
+reported as exact recovery of the least-square solution.
+
+f (x(cid:63))
+
+In all the experiments, our methods achieve the best per-
+formance in terms of wall-clock time. We show that in
+many cases the sketched gradient methods can outperform
+leading stochastic gradient methods. Both sketched gradi-
+ents and stochastic gradients can achieve reduced complex-
+ity compared to the (accelerated) full gradient method, but
+since the sketched method has inner-loops with determinis-
+tic iterations, the line-search scheme of the classic gradient
+descent method can be directly used to make each itera-
+tion’s step size be near optimal, and unlike the stochastic
+gradient, our methods do not need to access new mini-
+batches from memory each iteration, which can save op-
+erational time in practice.
+
+SAGA performs competitively in terms of epoch counts
+(right hand ﬁgures) which is generally achieved using a
+small batch size of 10. Unfortunately the additional cost
+of the projection per iteration can severely impact on the
+wall clock time performance4. The experiment on Syn1
+and Syn2 are similar but in Syn2 we put the constraint on a
+dictionary U , hence in Syn2 the projection operator has an
+additional cost of performing such orthogonal transform.
+In Syn1’s wall-clock time plot we can see that SAGA with
+b = 10 has the fastest convergence among all the batch size
+choices, but in Syn2 it becomes the worst batch size choice
+for SAGA since it demands more iterations and hence more
+calls on the projection operator. In Syn3 we have a more
+expensive projection operator since our constraint is on the
+nuclear-norm of a matrix X ∈ R100×100, and we can ob-
+serve that the real convergence speed of SAGA with b = 10
+become much slower than any other methods in terms of
+
+4For the unconstrained case (Million-song data set, sized
+5 × 105 by 90), we also observe that, SAGA with b = 10 is
+unattractive in wall-clock time since it does not beneﬁt from the
+vectorized operation of MATLAB as larger choices of batch size
+and takes too many iterations.
+
+051015202530354045time(s)-16-14-12-10-8-6-4-20log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 10020406080100120140160180200epochs-16-14-12-10-8-6-4-20log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 10Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+Table 2. Synthetic data set settings. (*) U denotes the dense dic-
+tionary which is a orthogonal transform. (**) s denotes sparsity
+or rank of the ground truth
+
+DATA SET
+
+SIZE
+
+(**)s
+
+SYN1
+SYN2
+SYN3 (LOW RANK)
+
+(100000, 100)
+(100000, 100)
+(50000, 100)
+
+10
+10
+5
+
+L
+µ
+
+107
+107
+104
+
+Φ
+
+I
+(*)U
+-
+
+Table 3. Chosen data sets for Least-square regression, RFs: num-
+ber of relevant features
+
+DATA SET
+
+SIZE
+
+RFS Φ
+
+YEAR
+MAGIC04
+
+(500000, 90)
+(19000, 10 + 40)
+
+90
+10
+
+-
+I
+
+wall-clock time. In this scenario the full gradient method
+is much more competitive. However even here as the error
+reduces the sketched gradient methods exhibit a computa-
+tional advantage.
+
+6. Conclusions
+
+We propose two sketched gradient algorithms GPIS and
+Acc-GPIS for constrained Least-square regression tasks.
+We provide theoretical convergence analysis of the pro-
+posed algorithms for general sketching methods and
+high probability concentration bounds for the Gaussian
+sketches. The numerical experiments demonstrates that for
+dense large scale overdetermined data sets our sketched
+gradient methods performs very well compares to the
+stochastic gradient method (mini-batch) SAGA and the Ac-
+celerated full gradient method in terms of wall-clock time
+thanks to the beneﬁts of sketched deterministic iterations,
+the efﬁcient implementation of the Count-sketch and the
+use of aggressive line-search methods.
+
+Acknowledgements
+
+JT, MG and MD would like to acknowledge the support
+from H2020-MSCA-ITN Machine Sensing Training Net-
+work (MacSeNet), project 642685; EPSRC Compressed
+Quantitative MRI grant, number EP/M019802/1; and ERC
+Advanced grant, project 694888, C-SENSE, respectively.
+MD is also supported by a Royal Society Wolfson Research
+Merit Award. The authors also give thanks to the anony-
+mous reviewers for insightful comments.
+
+Figure 2. Experimental results on (from top to button) Syn1,
+Syn2, Syn3 and Magic04 data sets. The left column is for wall-
+clock time plots, while the right column is for epoch counts
+
+024681012141618time(s)-16-14-12-10-8-6-4-2024log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 10050100150200250epochs-16-14-12-10-8-6-4-2024log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 100510152025time(s)-16-14-12-10-8-6-4-2024log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 10050100150200250epochs-16-14-12-10-8-6-4-2024log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 100100200300400500600time(s)-14-12-10-8-6-4-202log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 100100200300400500600700epochs-14-12-10-8-6-4-202log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 1000.20.40.60.811.21.41.61.8time(s)-16-14-12-10-8-6-4-202log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 10050100150200250epochs-16-14-12-10-8-6-4-202log errorGPISAcc-PGDAcc-GPISminibatch SAGA  b = 100minibatch SAGA  b = 50minibatch SAGA  b = 10Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+References
+
+Ailon, N. and Chazelle, B. The fast johnsonlindenstrauss
+SIAM
+
+transform and approximate nearest neighbors.
+Journal on Computing, 39(1):302–322, 2009.
+
+Ailon, N. and Liberty, E. Fast dimension reduction using
+rademacher series ondual bch codes. Discrete & Com-
+putational Geometry, 42(4):615–630, 2008.
+
+Allen-Zhu, Z.
+
+Katyusha: The ﬁrst direct accelera-
+arXiv preprint
+
+tion of stochastic gradient methods.
+arXiv:1603.05953, 2016.
+
+Baraniuk, R., Davenport, M., DeVore, R., and Wakin, M.
+A simple proof of the restricted isometry property for
+random matrices. Constructive Approximation, 28(3):
+253–263, 2008.
+
+Beck, A. and Teboulle, M. A fast iterative shrinkage-
+thresholding algorithm for
+inverse problems.
+SIAM Journal on Imaging Sciences, 2(1):183–202, 2009.
+
+linear
+
+Candes, E., Romberg, J., and Tao, T. Stable signal recovery
+from incomplete and inaccurate measurements. Commu-
+nications on pure and applied mathematics, 59(8):1207–
+1223, 2006.
+
+Chandrasekaran, V. and Jordan, M. I. Computational and
+statistical tradeoffs via convex relaxation. Proceedings
+of the National Academy of Sciences, 110(13):E1181–
+E1190, 2013.
+
+Chandrasekaran, V., Recht, B., Parrilo, P. A., and Willsky,
+A. S. The convex geometry of linear inverse problems.
+Foundations of Computational mathematics, 12(6):805–
+849, 2012.
+
+Clarkson, K. L. and Woodruff, D. P. Low rank approxima-
+tion and regression in input sparsity time. In Proceed-
+ings of the forty-ﬁfth annual ACM symposium on Theory
+of computing, pp. 81–90. ACM, 2013.
+
+Johnson, R. and Zhang, T. Accelerating stochastic gradient
+descent using predictive variance reduction. In Advances
+in Neural Information Processing Systems 26, pp. 315–
+323. Curran Associates, Inc., 2013.
+
+Johnson, W. B. and Lindenstrauss, J. Extensions of lips-
+chitz mappings into a hilbert space. Contemporary math-
+ematics, 26(189-206):1, 1984.
+
+Kapralov, M., Potluru, V. K., and Woodruff, D. P. How
+to fake multiply by a gaussian matrix. arXiv preprint
+arXiv:1606.05732, 2016.
+
+Koneˇcn`y, J. and Richt´arik, P. Semi-stochastic gradient de-
+scent methods. arXiv preprint arXiv:1312.1666, 2013.
+
+Koneˇcn`y, J., Liu, J., Richt´arik, P., and Tak´aˇc, M. Mini-
+batch semi-stochastic gradient descent in the proximal
+setting. IEEE Journal of Selected Topics in Signal Pro-
+cessing, 10(2):242–255, 2016.
+
+Langford, J., Li, L., and Zhang, T. Sparse online learn-
+ing via truncated gradient. Journal of Machine Learning
+Research, 10(Mar):777–801, 2009.
+
+Lichman, M. UCI machine learning repository, 2013. URL
+
+http://archive.ics.uci.edu/ml.
+
+Mahoney, M. W. Randomized algorithms for matrices and
+data. Foundations and Trends R(cid:13) in Machine Learning, 3
+(2):123–224, 2011.
+
+Nesterov, Y. Gradient methods for minimizing composite
+
+objective function. Technical report, UCL, 2007.
+
+Nesterov, Y. Gradient methods for minimizing compos-
+ite functions. Mathematical Programming, 140(1):125–
+161, 2013a.
+
+Nesterov, Y. Introductory lectures on convex optimization:
+A basic course, volume 87. Springer Science & Business
+Media, 2013b.
+
+Dasgupta, S. and Gupta, A. An elementary proof of a theo-
+rem of johnson and lindenstrauss. Random Structures &
+Algorithms, 22(1):60–65, 2003.
+
+O’Donoghue, B. and Candes, E. Adaptive restart for accel-
+erated gradient schemes. Foundations of computational
+mathematics, 15(3):715–732, 2015.
+
+Defazio, A., Bach, F., and Lacoste-Julien, S. Saga: A
+fast incremental gradient method with support for non-
+In Advances in
+strongly convex composite objectives.
+Neural Information Processing Systems, pp. 1646–1654,
+2014.
+
+Donoho, D. L. Compressed sensing. Information Theory,
+
+IEEE Transactions on, 52(4):1289–1306, 2006.
+
+Drineas, P., Mahoney, M. W., Muthukrishnan, S., and
+Sarl´os, T. Faster least squares approximation. Nu-
+merische Mathematik, 117(2):219–249, 2011.
+
+Oymak, S., Recht, B., and Soltanolkotabi, M. Sharp time–
+data tradeoffs for linear inverse problems. arXiv preprint
+arXiv:1507.04793, 2015.
+
+Pilanci, M. and Wainwright, M. J. Randomized sketches
+of convex programs with sharp guarantees. Information
+Theory, IEEE Transactions on, 61(9):5096–5115, 2015.
+
+Pilanci, M. and Wainwright, M. J. Iterative hessian sketch:
+Fast and accurate solution approximation for constrained
+least-squares. Journal of Machine Learning Research,
+17(53):1–38, 2016.
+
+Gradient Projection Iterative Sketch for Large-Scale Constrained Least-Squares
+
+Schmidt, M., Le Roux, N., and Bach, F. Minimizing ﬁnite
+sums with the stochastic average gradient. Mathematical
+Programming, pp. 1–30, 2013.
+
+Shalev-Shwartz, S. and Tewari, A. Stochastic methods for
+l1-regularized loss minimization. Journal of Machine
+Learning Research, 12(Jun):1865–1892, 2011.
+
+Van Den Berg, E. and Friedlander, M. P. Spgl1: A solver
+
+for large-scale sparse reconstruction, 2007.
+
+Wang, S. A practical guide to randomized matrix com-
+putations with matlab implementations. arXiv preprint
+arXiv:1505.07570, 2015.
+
+Xiao, L. and Zhang, T. A proximal stochastic gradient
+method with progressive variance reduction. SIAM Jour-
+nal on Optimization, 24(4):2057–2075, 2014.
+
+

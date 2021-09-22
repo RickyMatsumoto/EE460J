@@ -1,0 +1,1756 @@
+Towards K-means-friendly Spaces: Simultaneous Deep
+Learning and Clustering
+
+Bo Yang 1 Xiao Fu 1 Nicholas D. Sidiropoulos 1 Mingyi Hong 2
+
+Abstract
+
+1. Introduction
+
+Most learning approaches treat dimensionality
+reduction (DR) and clustering separately (i.e., se-
+quentially), but recent research has shown that
+optimizing the two tasks jointly can substantially
+improve the performance of both. The premise
+behind the latter genre is that the data samples are
+obtained via linear transformation of latent repre-
+sentations that are easy to cluster; but in practice,
+the transformation from the latent space to the
+data can be more complicated. In this work, we
+assume that this transformation is an unknown
+and possibly nonlinear function. To recover the
+‘clustering-friendly’ latent representations and to
+better cluster the data, we propose a joint DR and
+K-means clustering approach in which DR is ac-
+complished via learning a deep neural network
+(DNN). The motivation is to keep the advantages
+of jointly optimizing the two tasks, while exploit-
+ing the deep neural network’s ability to approxi-
+mate any nonlinear function. This way, the pro-
+posed approach can work well for a broad class
+of generative models. Towards this end, we care-
+fully design the DNN structure and the associ-
+ated joint optimization criterion, and propose an
+effective and scalable algorithm to handle the for-
+mulated optimization problem. Experiments us-
+ing different real datasets are employed to show-
+case the effectiveness of the proposed approach.
+
+1Department of Electrical and Computer Engineering, Univer-
+sity of Minnesota, Minneapolis MN 55455, USA. 2Department
+Iowa
+of Industrial and Manufacturing Systems Engineering,
+State University, Ames, IA 50011, USA. Correspondence to:
+Bo Yang <yang4173@umn.edu>, Xiao Fu <xfu@umn.edu>,
+Nicholas D. Sidiropoulos <nikos@ece.um.edu>, Mingyi Hong
+<mingyi@iastate.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Clustering is one of the most fundamental tasks in data
+mining and machine learning, with an endless list of appli-
+cations. It is also a notoriously hard task, whose outcome
+is affected by a number of factors – including data acqui-
+sition and representation, use of preprocessing such as di-
+mensionality reduction (DR), the choice of clustering cri-
+terion and optimization algorithm, and initialization (Ertoz
+et al., 2003; Banerjee et al., 2005). Since its introduction
+in 1957 by Lloyd (published much later in 1982 (Lloyd,
+1982)), K-means has been extensively used either alone or
+together with suitable preprocessing, due to its simplicity
+and effectiveness. K-means is suitable for clustering data
+samples that are evenly spread around some centroids (cf.
+the ﬁrst subﬁgure in Fig. 1), but many real-life datasets do
+not exhibit this ‘K-means-friendly’ structure. Much effort
+has been spent on mapping high-dimensional data to a cer-
+tain space that is suitable for performing K-means. Various
+techniques, including principal component analysis (PCA),
+canonical correlation analysis (CCA), nonnegative matrix
+factorization (NMF) and sparse coding (dictionary learn-
+ing), were adopted for this purpose. In addition to these
+linear DR operators (e.g., a projection matrix), nonlinear
+DR techniques such as those used in spectral clustering (Ng
+et al., 2002) and sparse subspace clustering (Elhamifar &
+Vidal, 2013; You et al., 2016) have also been considered.
+
+In recent years, motivated by the success of deep neu-
+ral networks (DNNs) in supervised learning, unsupervised
+deep learning approaches are now widely used for DR prior
+to clustering. For example, the stacked autoencoder (SAE)
+(Vincent et al., 2010), deep CCA (DCCA) (Andrew et al.,
+2013), and sparse autoencoder (Ng, 2011) take insights
+from PCA, CCA, and sparse coding, respectively, and make
+use of DNNs to learn nonlinear mappings from the data do-
+main to low-dimensional latent spaces. These approaches
+treat their DNNs as a preprocessing stage that is separately
+designed from the subsequent clustering stage. The hope is
+that the latent representations of the data learned by these
+DNNs will be naturally suitable for clustering. However,
+since no clustering-promoting objective is explicitly incor-
+porated in the learning process, the learned DNNs do not
+necessarily output reduced-dimension data that are suitable
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+for clustering – as will be seen in our experiments.
+
+In (De Soete & Carroll, 1994; Patel et al., 2013; Yang et al.,
+2017), joint DR and clustering was considered. The ratio-
+nale behind this line of work is that if there exists some
+latent space where the entities nicely fall into clusters, then
+it is natural to seek a DR transformation that reveals such
+structure, i.e., which yields a low K-means clustering cost.
+This motivates using the K-means cost in latent space as
+a prior that helps choose the right DR, and pushes DR
+towards producing K-means-friendly representations. By
+performing joint DR and K-means clustering, impressive
+clustering results have been observed in (Yang et al., 2017).
+The limitation of these works is that the observable data is
+assumed to be generated from the latent clustering-friendly
+space via simple linear transformation. While simple linear
+transformation works well in many cases, there are other
+cases where the generative process is more complex, in-
+volving a nonlinear mapping.
+
+Contributions In this work, we propose a joint DR and K-
+means clustering framework, where the DR part is imple-
+mented through learning a DNN, rather than a linear model.
+Unlike previous attempts that utilize this joint DNN and
+clustering idea, we made customized design for this unsu-
+pervised task. Although implementing this idea is highly
+non-trivial (much more challenging than (De Soete & Car-
+roll, 1994; Patel et al., 2013; Yang et al., 2017) where the
+DR part only needs to learn a linear model), our objective is
+well-motivated: by better modeling the data transformation
+process with a more general model, a much more K-means-
+friendly latent space can be learned – as we will demon-
+strate. A sneak peek of the kind of performance that can be
+expected using our proposed method can be seen in Fig. 1,
+where we generate four clusters of 2-D data which are well
+separated in the 2-D Euclidean space and then transform
+them to a 100-D space using a complex non-linear map-
+ping [cf. (9)] which destroys the cluster structure. One can
+see that the proposed algorithm outputs reduced-dimension
+data that are most suitable for applying K-means. Our spe-
+ciﬁc contributions are as follows:
+
+Optimization Criterion Design: We propose an opti-
+•
+mization criterion for joint DNN-based DR and K-means
+clustering. The criterion is a combination of three parts,
+namely, dimensionality reduction, data reconstruction, and
+cluster structure-promoting regularization. We deliberately
+include the reconstruction part and implement it using a
+decoding network, which is crucial for avoiding trivial so-
+lutions. The criterion is also ﬂexible – it can be extended to
+incorporate different DNN structures (e.g. convolutional
+neural networks (LeCun et al., 1998; Krizhevsky et al.,
+2012)) and clustering criteria, e.g., subspace clustering.
+
+Effective and Scalable Optimization Procedure: The
+•
+formulated optimization problem is very challenging to
+
+Figure 1. The learned 2-D reduced-dimension data by different
+methods. The observable data is in the 100-D space and is gener-
+ated from 2-D data (cf. the ﬁrst subﬁgure) through the nonlinear
+transformation in (9). The true cluster labels are indicated using
+different colors.
+
+handle, since it involves layers of nonlinear activation func-
+tions and integer constraints that are induced by the K-
+means part. We propose a judiciously designed solution
+package, including empirically effective initialization and
+a novel alternating stochastic gradient algorithm. The algo-
+rithmic structure is simple, enables online implementation,
+and is very scalable.
+
+Comprehensive Experiments and Validation: We pro-
+•
+vide a set of synthetic-data experiments and validate the
+method on different real datasets including various docu-
+ment and image copora. Evidently visible improvement
+from the respective state-of-art is observed for all the
+datasets that we experimented with.
+
+Reproducibility: The code for the experiments is avail-
+
+•
+able at https://github.com/boyangumn/DCN.
+
+2. Background and Related Works
+
+RM ,
+xi}i=1,...,N where xi 2
+Given a set of data samples
+{
+the task of clustering is to group the N data samples into K
+categories. Arguably, K-means (Lloyd, 1982) is the most
+widely adopted algorithm. K-means approaches this task
+by optimizing the following cost function:
+
+M
+
+2RM
+
+min
+K ,
+⇥
+{
+
+si2RK
+
+N
+
+xi  
+k
+
+}
+
+i=1
+X
+s.t. sj,i 2{
+
+0, 1
+
+2
+2
+
+M sik
+, 1T si = 1
+}
+
+i, j,
+
+8
+
+(1)
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+where si is the assignment vector of data point i which has
+only one non-zero element, sj,i denotes the jth element of
+si, and the kth column of M , i.e., mk, denotes the centroid
+of the kth cluster.
+
+K-means works well when the data samples are evenly scat-
+tered around their centroids in the feature space; we con-
+sider datasets which have this structure as being ‘K-means-
+friendly’ (cf. top-left subﬁgure of Fig. 1). However, high-
+dimensional data are in general not very K-means-friendly.
+In practice, using a DR pre-processing, e.g., PCA or NMF
+(Xu et al., 2003; Cai et al., 2011), to reduce the dimension
+of xi to a much lower dimensional space and then apply K-
+means usually gives better results. In addition to the above
+classic DR methods that essentially learn a linear genera-
+tive model from the latent space to the data domain, nonlin-
+ear DR approaches such as those used in spectral clustering
+(Ng et al., 2002; Von Luxburg, 2007) and DNN-based DR
+(Hinton & Salakhutdinov, 2006; Schroff et al., 2015; Her-
+shey et al., 2016) are also widely used as pre-processing be-
+fore K-means or other clustering algorithms, see also (Vin-
+cent et al., 2010; Bruna & Mallat, 2013).
+
+Instead of using DR as a pre-processing, joint DR and clus-
+tering was also considered in the literature (De Soete &
+Carroll, 1994; Patel et al., 2013; Yang et al., 2017). This
+line of work can be summarized as follows. Consider
+the generative model where a data sample is generated by
+RR, where
+RM
+xi = W hi, where W
+⇥
+R
+M . Assume that the data clusters are well-separated
+in latent domain (i.e., where hi lives) but distorted by the
+transformation introduced by W . Reference (Yang et al.,
+2017) formulated the joint optimization problem as fol-
+lows:
+
+R and hi 2
+
+⌧
+
+2
+
+min
+si}
+
+{
+
+M ,
+
+X
+
+W H
+
+,W ,H k
+
+ 
+
+2
+F +  
+k
+
+hi  
+
+k
+
+M sik
+
+2
+2
+
++ r1(H) + r2(W )
+
+(2)
+
+N
+
+i=1
+X
+
+s.t. sj,i 2{
+
+, 1T si = 1
+0, 1
+}
+
+i, j,
+
+8
+
+where X = [x1, . . . , xN ], H = [h1, . . . , hN ], and  
+ 
+0 is a parameter for balancing data ﬁdelity and the latent
+cluster structure. In (2), the ﬁrst term performs DR and the
+second term performs latent clustering. The terms r1(
+) and
+·
+) are regularizations (e.g., nonnegativity or sparsity) to
+r2(
+N ; see details
+prevent trivial solutions, e.g., H
+in (Yang et al., 2017).
+
+RR
+
+!
+
+2
+
+0
+
+⇥
+
+·
+
+⇡
+
+The data model X
+W H in the above line of work
+may be oversimpliﬁed: The data generating process can be
+much more complex than this linear transform. Therefore,
+it is well justiﬁed to seek powerful non-linear transforms,
+e.g. DNNs, to model this data generating process, while
+at the same time make use of the joint DR and clustering
+idea. Two recent works, (Xie et al., 2016) and (Yang et al.,
+
+Input
+
+Clustering 
+module
+
+Latent 
+features
+
+Figure 2. A problematic joint deep clustering structure. To avoid
+clutter, some links are omitted.
+
+2016), made such attempts.
+
+The idea of (Xie et al., 2016) and (Yang et al., 2016) is to
+connect a clustering module to the output layer of a DNN,
+and jointly learn DNN parameters and clusters. Speciﬁ-
+cally, the approaches look into an optimization problem of
+the following form
+
+N
+
+i=1
+X
+
+min
+,⇥
+W
+
+b
+
+L =
+
+q(f (xi;
+
+); ⇥),
+
+(3)
+
+W
+
+·
+
+W
+
+W
+
+si}
+{
+
+) is the network output given data sample
+where f (xi;
+xi,
+collects the network parameters, and ⇥ denotes pa-
+rameters of some clustering model. For instance, ⇥ stands
+for the centroids M and assignments
+if the K-means
+) in (3) de-
+clustering formulation (1) is adopted. The q(
+notes some clustering loss, e.g., the Kullback-Leibler (KL)
+divergence loss in (Xie et al., 2016) and agglomerative
+clustering loss in (Yang et al., 2016). An illustration of
+this kind of approaches is shown in Fig. 2. This idea seems
+reasonable, but is problematic. A global optimal solution
+to Problem (3) is f (xi;
+) = 0 and the optimal objec-
+L = 0 can always be achieved. Another type
+tive value
+of trivial solutions are simply mapping arbitrary data sam-
+ples to tight clusters, which will lead to a small value of
+L – but this could be far from being desired since there is
+no provision for respecting the data samples xi’s; see the
+bottom-middle subﬁgure in Fig. 1 [Deep Clustering Net-
+b
+work (DCN) w/o reconstruction] and the bottom-left sub-
+ﬁgure in Fig. 1 [DEC]. This issue also exists in (Yang et al.,
+2016).
+
+W
+
+b
+
+3. Proposed Formulation
+
+We are motivated to model the relationship between the ob-
+servable data xi and its clustering-friendly latent represen-
+tation hi using a nonlinear mapping, i.e.,
+
+hi = f (xi;
+
+),
+
+f (
+
+;
+
+M
+
+) : R
+
+R,
+
+R
+
+;
+
+·
+
+·
+
+W
+
+!
+
+W
+) denotes the mapping function and
+
+where f (
+de-
+W
+In this work, we propose to
+note the set of parameters.
+employ a DNN as our mapping function, since DNNs have
+the ability of approximating any continuous mapping using
+a reasonable number of parameters (Hornik et al., 1989).
+
+W
+
+We want to learn the DNN and perform clustering simul-
+taneously. The critical question here is how to avoid triv-
+ial solutions in this unsupervised task. In fact, this can be
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+Input
+
+Reconstruction
+
+k
+
+X
+
+W H
+
+resolved by taking insights from (2). The key to prevent
+trivial solution in the linear DR case lies in the reconstruc-
+2
+tion part, i.e., the term
+F in (2). This term
+k
+ 
+ensures that the learned hi’s can (approximately) recon-
+struct the xi’s using the basis W . This motivates incor-
+porating a reconstruction term in the joint DNN-based DR
+and K-means.
+In the realm of unsupervised DNN, there
+are several well-developed approaches for reconstruction –
+e.g., the stacked autoencoder (SAE) is a popular choice for
+serving this purpose. To prevent trivial low-dimensional
+representations such as all-zero vectors, SAE uses a decod-
+) to map the hi’s back to the data do-
+ing network g(
+·
+main and requires that g(hi;
+) and xi match each other
+well under some metric, e.g., mutual information or least
+squares-based measures.
+
+Z
+
+Z
+
+;
+
+By the above reasoning, we come up with the following
+cost function:
+
+min
+,
+Z
+W
+si }
+M ,
+
+{
+
+,
+
+N
+
+i=1 ✓
+X
+
+` (g(f (xi)), xi) +
+
+f (xi)
+
+ 
+2 k
+
+M sik
+
+2
+2
+
+ 
+
+s.t. sj,i 2{
+
+0, 1
+}
+
+, 1T si = 1
+
+i, j,
+
+8
+
+·
+
+W
+
+!
+
+) : RM
+
+) and
+where we have simpliﬁed the notation f (xi;
+) to f (xi) and g(hi), respectively, for conciseness.
+g(hi;
+Z
+The function `(
+R is a certain loss function that
+measures the reconstruction error. In this work, we adopt
+2
+the least-squares loss `(x, y) =
+2; other choices
+k
+such as `1-norm based ﬁtting and the KL divergence can
+0 is a regularization parameter
+also be considered.  
+which balances the reconstruction error versus ﬁnding K-
+means-friendly latent representations.
+
+x
+k
+
+ 
+
+ 
+
+y
+
+Fig. 3 presents the network structure corresponding to the
+formulation in (4). Compare to the network in Fig. 2, our
+latent features are also responsible for reconstructing the
+input, preventing all the aforementioned trivial solutions.
+On the left-hand side of the ‘bottleneck’ layer are the so-
+called encoding or forward layers that transform raw data
+to a low-dimensional space. On the right-hand side are the
+‘decoding’ layers that try to reconstruct the data from the
+latent space. The K-means task is performed at the bottle-
+neck layer. The forward network, the decoding network,
+and the K-means cost are optimized simultaneously. In our
+experiments, the structure of the decoding networks is a
+‘mirrored version’ of the encoding network, and for both
+the encoding and decoding networks, we use the rectiﬁed
+linear unit (ReLU) activation-based neurons (Nair & Hin-
+ton, 2010). Since our objective is to perform DNN-driven
+K-means clustering, we will refer to the network in Fig. 3
+as the Deep Clustering Network (DCN) in the sequel.
+
+We should remark that the proposed optimization criterion
+in (4) and the network in Fig. 3 are very ﬂexible: Other
+types of networks, e.g., deep convolutional neural networks
+
+4. Optimization Procedure
+
+◆
+(4)
+
+Latent 
+features
+
+Clustering 
+module
+
+Figure 3. Proposed deep clustering network (DCN).
+
+(LeCun et al., 1998; Krizhevsky et al., 2012), can be used.
+For the clustering part, other clustering criteria, e.g., K-
+subspace and soft K-means (Law et al., 2005; Banerjee
+et al., 2005), are also viable options. Nevertheless, we will
+concentrate on the proposed DCN in the sequel, as our in-
+terest is to provide a proof-of-concept rather than exhaust-
+ing the possibilities of combinations.
+
+Optimizing (4) is highly non-trivial since both the cost
+function and the constraints are non-convex. In addition,
+there are scalability issues that need to be taken into ac-
+count. In this section, we propose a pragmatic optimization
+procedure including an empirically effective initialization
+method and an alternating optimization based algorithm for
+handling (4).
+
+4.1. Initialization via Layer-wise Pre-Training
+
+,
+
+Z
+
+W
+
+For dealing with hard non-convex optimization problems
+like that in (4), initialization is usually crucial. To initial-
+ize the parameters of the network, i.e., (
+), we use the
+layer-wise pre-training method as in (Bengio et al., 2007)
+for training autoencoders. This pre-training technique may
+be avoided in large-scale supervised learning tasks. For
+the proposed DCN which is completely unsupervised, how-
+ever, we ﬁnd that the layer-wise pre-training procedure is
+important no matter the size of the dataset. We refer the
+readers to (Bengio et al., 2007) for an introduction of layer-
+wise pre-training. After pre-training, we perform K-means
+to the outputs of the bottleneck layer to obtain initial values
+of M and
+
+.
+
+si}
+{
+
+4.2. Alternating Stochastic Optimization
+
+Even with a good initialization, handling Problem (4) is
+still very challenging. The commonly used stochastic gra-
+dient descent (SGD) algorithm cannot be directly applied
+, M and
+si}
+to jointly optimize
+because the block
+{
+si}
+variable
+is constrained on a discrete set. Our idea is to
+{
+combine the insights of alternating optimization and SGD.
+Speciﬁcally, we propose to optimize the subproblems with
+respect to (w.r.t.) one of M ,
+) while keep-
+and (
+ing the other two sets of variables ﬁxed.
+
+si}
+{
+
+W
+
+W
+
+Z
+
+Z
+
+,
+
+,
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+4.2.1. UPDATE NETWORK PARAMETERS
+
+,
+
+si}
+{
+
+), the subproblem w.r.t. (
+
+For ﬁxed (M ,
+) is simi-
+lar to training an SAE – but with an additional penalty term
+on the clustering performance. We can take advantage of
+the mature tools for training DNNs, e.g., back-propagation
+based SGD and its variants. To implement SGD for updat-
+ing the network parameters, we look at the problem w.r.t.
+the incoming data xi:
+
+W
+
+Z
+
+Li = ` (g(f (xi)), xi) +
+
+f (xi)
+
+ 
+2 k
+
+M sik
+
+ 
+
+2
+2 .
+
+(5)
+
+min
+,
+Z
+W
+
+@
+
+X
+
+ 
+
+(f (xi)
+
+Li = @`(g(f (xi)),xi)
+= (
+
+The gradient of the above function over the network param-
++
+eters is easily computable, i.e., O
+  @f (xi)
+) is a collec-
+M si), where
+@
+X
+tion of the network parameters and the gradients @`
+and
+@
+X
+@f (xi)
+can be calculated by back-propagation (Rumelhart
+@
+et al., 1988) (strictly speaking, what we calculate here is
+the subgradient w.r.t.
+since the ReLU function is non-
+differentible at zero). Then, the network parameters are
+updated by
+
+W
+
+Z
+
+X
+
+X
+
+X
+
+X
+
+,
+
+X X 
+
+Li,
+
+↵O
+
+X
+
+(6)
+
+where ↵> 0 is a diminishing learning rate.
+
+4.2.2. UPDATE CLUSTERING PARAMETERS
+
+For ﬁxed network parameters and M , the assignment vec-
+tor of the current sample, i.e., si, can be naturally updated
+in an online fashion. Speciﬁcally, we update si as follows:
+
+1,
+
+0,
+
+if j = arg min
+k=
+1,...,K
+{
+otherwise.
+
+}
+
+f (xi)
+k
+
+mkk2 ,
+
+ 
+
+(7)
+
+sj,i   8
+<
+
+:
+
+i
+
+i
+k
+
+)
+
+C
+
+2C
+
+X
+
+|C
+
+i
+k|
+
+and
+
+si}
+{
+
+f (xi), where
+
+, the update of M is simple and
+When ﬁxing
+may be done in a variety of ways. For example, one can
+i
+simply use mk = (1/
+k is the
+recorded index set of samples assigned to cluster k from the
+P
+ﬁrst sample to the current sample i. Although the above
+update is intuitive, it could be problematic for online al-
+gorithms, since the already appeared historical data (i.e.,
+x1, . . . , xi) might not be representative enough to model
+the global cluster structure and the initial si’s might be far
+away from being correct. Therefore, simply averaging the
+current assigned samples may cause numerical problems.
+Instead of doing the above, we employ the idea in (Scul-
+ley, 2010) to adaptively change the learning rate of updat-
+ing m1, . . . , mK. The intuition is simple: assume that the
+clusters are roughly balanced in terms of the number of
+data samples they contain. Then, after updating M for a
+number of samples, one should update the centroids of the
+clusters that already have many assigned members more
+
+gracefully while updating others more aggressively, to keep
+balance. To implement this, let ci
+k be the count of the num-
+ber of times the algorithm assigned a sample to cluster k
+before handling the incoming sample xi, and update mk
+by a simple gradient step:
+
+mk  
+
+mk  
+
+(1/ci
+
+k) (mk  
+
+f (xi)) sk,i,
+
+(8)
+
+where the gradient step size 1/ci
+k controls the learning rate.
+The above update of M can also be viewed as an SGD
+step, thereby resulting in an overall alternating block SGD
+procedure that is summarized in Algorithm 1. Note that an
+epoch corresponds to a pass of all data samples through the
+network.
+
+Perform T epochs over the data
+{
+
+}
+
+Algorithm 1 Alternating SGD
+1: Initialization
+2: for t = 1 : T do
+3:
+4:
+5:
+6: end for
+
+Update network parameters by (6)
+Update assignment by (7)
+Update centroids by (8)
+
+Algorithm 1 has many favorable properties. First, it can
+be implemented in a completely online fashion, and thus
+is very scalable. Second, many known tricks for enhanc-
+ing performance of DNN training can be directly used. In
+fact, we have used a mini-batch version of SGD and batch-
+normalization (Ioffe & Szegedy, 2015) in our experiments,
+which indeed help improve performance.
+
+5. Experiments
+
+In this section, we use synthetic and real-world data to
+showcase the effectiveness of DCN. We implement DCN
+using the deep learning toolbox Theano (Theano Develop-
+ment Team, 2016).
+
+5.1. Synthetic-Data Demonstration
+
+Our settings are as follows: Assume that the data points
+have K-means-friendly structure in a two-dimensional do-
+main (cf.
+This two-
+the ﬁrst subﬁgure of Fig. 1).
+dimensional domain is a latent domain which we do not
+observe and we denote the latent representations of the
+data points as hi’s in this domain. What we observe is
+R100 that is obtained via the following transforma-
+xi 2
+tion:
+
+xi =   (U  (W hi)) ,
+
+(9)
+
+⇥
+
+⇥
+
+2
+
+R10
+
+R100
+
+2 and U
+
+10 are matrices whose
+where W
+2
+entries follow the zero-mean unit-variance i.i.d. Gaussian
+) is a sigmod function to introduce nonlin-
+distribution,  (
+earity. Under the above generative model, recovering the
+K-means-friendly domain where hi’s live seems very chal-
+lenging.
+
+·
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+We generate four clusters, each of which has 2,500 samples
+and their geometric distribution on the 2-D plane is shown
+in the ﬁrst subﬁgure of Fig. 1 that we have seen before. The
+other subﬁgures show the recovered 2-D data from xi’s us-
+ing a number of DR methods, namely, NMF (Lee & Se-
+ung, 1999), local linear embedding (LLE) (Saul & Roweis,
+2003), Laplacian eigenmap (LapEig) (Ng et al., 2002) – the
+ﬁrst step of spectral clustering, and DEC (Xie et al., 2016).
+We also present the result of using the formulation in (3)
+(DCN w/o reconstruction) which is a similar idea as in (Xie
+et al., 2016). For the three DNN-based methods (DCN,
+DEC, and SAE + KM), we use a four-layer forward net-
+work for dimensionality reduction, where the layers have
+100, 50, 10 and 2 neurons, respectively; the reconstruction
+network used in DCN and SAE (and also in the per-training
+stage of DEC) is a mirrored version of the forward net-
+work. As one can see in Fig. 1, all the DR methods except
+the proposed DCN fail to map xi’s to a 2-D domain that
+is suitable for applying K-means. In particular, DEC and
+DCN w/o reconstruction indeed give trivial solutions: the
+reduced-dimension data are separated to four clusters, and
+thus ˆL is small. But this solution is meaningless since the
+data partitioning is arbitrary.
+
+In the supplementary materials, two additional simulations
+with different generative model than (9) are presented, and
+similar results are observed. This further illustrates the
+DCN’s ability of recovering clustering-friendly structure
+under different nonlinear generative models.
+
+5.2. Real-Data Validation
+In this section, we validate the proposed approach on sev-
+eral real-data sets which are all publicly available.
+
+5.2.1. BASELINE METHODS
+We compare the proposed DCN with a variety of baseline
+methods:
+1) K-means (KM): The classic K-means (Lloyd, 1982).
+2) Spectral Clustering (SC): The classic SC algorithm
+(Ng et al., 2002).
+3) Sparse Subspace Clustering with Orthogonal Match-
+ing Pursuit (SSC-OMP) (You et al., 2016): SSC is
+considered very competitive for clustering images; we use
+the newly proposed greedy version here for scalability.
+4) Locally Consistent Concept Factorization (LCCF)
+(Cai et al., 2011): LCCF is based on NMF with a graph
+Laplacian regularization and is considered state-of-the-art
+for document clustering.
+5) XRAY (Kumar et al., 2013): XRAY is an NMF-based
+document clustering algorithm that scales very well.
+6) NMF followed by K-means (NMF+KM): This ap-
+proach applies NMF for DR, and then applies K-means to
+the reduced-dimension data.
+7) Stacked Autoencoder
+followed by K-means
+(SAE+KM): This is also a two-stage approach. We
+use SAE for DR ﬁrst and then apply K-means.
+
+8) Joint NMF and K-means (JNKM) (Yang et al., 2017):
+JNKM performs joint DR and K-means clustering as the
+proposed DCN does – but the DR part is based on NMF.
+
+9) Deep Embedded Clustering (DEC) (Xie et al., 2016):
+DEC performs joint DNN and clustering, where the loss
+function contains only clustering loss, without penalty on
+reconstruction as in our method. We use the code1 pro-
+vided by the authors. For each experiment, we select the
+baselines that are considered most competitive and suitable
+for that application from the above pool.
+
+5.2.2. EVALUATION METRICS
+We adopt standard metrics for evaluating clustering perfor-
+mance. Speciﬁcally, we employ the following three met-
+rics: normalized mutual information (NMI) (Cai et al.,
+2011), adjusted Rand index (ARI) (Yeung & Ruzzo, 2001),
+and clustering accuracy (ACC) (Cai et al., 2011). In a nut-
+shell, all the above three measuring metrics are commonly
+used in the clustering literature, and all have pros and cons.
+But using them together sufﬁces to demonstrate the effec-
+tiveness of the clustering algorithms. Note that NMI and
+ACC lie in the range of zero to one with one being the per-
+fect clustering result and zero the worst. ARI is a value
+1 to 1, with one being the best clustering perfor-
+within
+mance and minus one the opposite.
+
+ 
+
+5.2.3. RCV1
+We ﬁrst test the algorithms on a large-scale text corpus,
+namely, the Reuters Corpus Volume 1 Version 2 (RCV1-
+v2). The RCV1-v2 corpus (Lewis et al., 2004) contains
+804,414 documents, which were manually categorized into
+103 different topics. We use a subset of the documents
+from the whole corpus. This subset contains 20 topics and
+365, 968 documents and each document has a single topic
+label. As in (Nitish et al., 2014), we pick the 2,000 most
+frequently used words (in the tf-idf form) as the features of
+the documents.
+
+We conduct experiments using different number of clus-
+ters. Towards this end, we ﬁrst sort the clusters according
+to the number of documents that they have in a descending
+order, and then apply the algorithms to the ﬁrst 4, 8, 12, 16,
+20 clusters, respectively. Note that the ﬁrst several clusters
+have many more documents compared to the other clusters
+(cf. Fig. 4). This way, we gradually increase the number of
+documents in our experiments and create cases with much
+more unbalanced cluster sizes for testing the algorithms –
+which means we gradually increase the difﬁculty of the ex-
+periments. To avoid unrealistic tuning, for all the experi-
+ments, we use a DCN whose forward network has ﬁve hid-
+den layers which have 2000, 1000, 1000, 1000, 50 neurons,
+respectively. The reconstruction network has a mirrored
+structure. We set   = 0.1 for balancing the reconstruction
+
+1https://github.com/piiswrong/dec
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+Table 2. Evaluation on the 20Newsgroup dataset.
+
+Methods DCN SAE+KM LCCF NMF+KM KM SC XARY JNKM
+0.40
+0.10
+0.24
+
+0.41 0.40
+0.15 0.17
+0.3 0.34
+
+NMI
+ARI
+ACC
+
+0.39
+0.17
+0.33
+
+0.46
+0.17
+0.32
+
+0.19
+0.02
+0.18
+
+0.47
+0.28
+0.42
+
+0.48
+0.34
+0.44
+
+imbalance clusters.
+
+×104
+
+l
+
+s
+r
+e
+t
+s
+u
+c
+ 
+f
+o
+ 
+e
+z
+s
+
+i
+
+8
+
+6
+
+4
+
+2
+
+0
+
+0
+
+5
+
+10
+
+15
+
+20
+
+index of clusters
+
+Figure 4. The sizes of 20 clusters in the experiment.
+
+Table 1. Evaluation on the RCV1-v2 dataset
+
+Methods
+
+4 Clust.
+
+8 Clust.
+
+12 Clust.
+
+16 Clust.
+
+20 Clust.
+
+DCN SAE+KM KM DEC XRAY
+0.12
+0.76
+-0.01
+0.67
+0.34
+0.80
+0.24
+0.63
+0.09
+0.46
+0.39
+0.63
+0.22
+0.67
+0.05
+0.52
+0.29
+0.60
+0.23
+0.62
+0.04
+0.36
+0.29
+0.51
+0.25
+0.61
+0.04
+0.33
+0.28
+0.47
+
+0.62
+0.50
+0.70
+0.57
+0.38
+0.59
+0.6
+0.37
+0.54
+0.56
+0.30
+0.48
+0.58
+0.29
+0.47
+
+0.73
+0.65
+0.79
+0.60
+0.42
+0.62
+0.65
+0.51
+0.56
+0.60
+0.35
+0.50
+0.59
+0.33
+0.46
+
+0.11
+0.07
+0.38
+0.10
+0.05
+0.24
+0.09
+0.02
+0.18
+0.09
+0.02
+0.17
+0.08
+0.01
+0.14
+
+NMI
+ARI
+ACC
+NMI
+ARI
+ACC
+NMI
+ARI
+ACC
+NMI
+ARI
+ACC
+NMI
+ARI
+ACC
+
+error and the clustering regularization.
+
+Table 1 shows the results given by the proposed DCN,
+SAE+KM, KM, and XRAY; other baselines are not scal-
+able enough to handle the RCV1-v2 dataset and thus are
+dropped. One can see that for each case that we have tried,
+the proposed method gives clear improvement relative to
+the other methods. Particularly, the DCN approach outper-
+forms the two-stage approach, i.e., SAE+KM, in almost all
+the cases and for all the evaluation metrics – this clearly
+demonstrates the advantage of using the joint optimization
+criterion. We notice that the performance of DEC in this ex-
+periment is unsatisfactory, possibly because 1) this dataset
+is highly unbalanced (cf. Fig. 4), while DEC is designed
+to produce balanced clusters; 2) DEC gets trapped in trivial
+solutions, as we discussed in Sec 2.
+
+Fig. 5a shows how NMI, ARI, and ACC change when the
+proposed algorithm runs from epoch to epoch. One can see
+a clear ascending trend of every evaluation metric. This
+result shows that both the network structure and the opti-
+mization algorithm work towards a desired direction.
+In
+the future, it would be intriguing to derive (sufﬁcient) con-
+ditions for guaranteeing such improvement using the pro-
+posed algorithm. Nevertheless, such empirical observation
+in Fig. 5a is already very interesting and encouraging.
+
+We visualize the 50-D learned embeddings of our net-
+work on the RCV1 4-clusters dataset, using t-SNE (Van der
+Maaten & Hinton, 2008), as shown in Fig. 5b. We can see
+that the proposed DCN method learns much improved re-
+sults compared to the initialization. Also, the DEC method
+does not get a desiable clustering result, possibly due to the
+
+(a) Clustering
+metrics v.s. training epochs.
+
+performance
+
+(b) Visualization using t-SNE.
+From top-left
+to bottom-right:
+Original data, DEC result, DCN
+initialization, DCN result
+
+Figure 5. Visualization on the 4-clusters subset of RCV1-v2
+5.2.4. 20NEWSGROUP
+The 20Newsgroup corpus is a collection of 18,846 text
+documents which are partitioned into 20 different news-
+groups. Using this corpus, we can observe how the pro-
+posed method works with a relatively small amount of
+samples. As the previous experiment, we use the tf-idf
+representation of the documents and pick the 2,000 most
+frequently used words as the features. Since this dataset
+is small, we include more baselines that are not scalable
+enough for RCV1-v2. Among them, both JNKM and
+LCCF are considered state-of-art for document clustering.
+In this experiment, we use a DNN with three forward lay-
+ers which have 250, 100, and 20 neurons, respectively. This
+is a relatively ‘small network’ since the 20Newsgroup cor-
+pus may not have sufﬁcient samples to ﬁt a large network.
+As before, the decoding network for reconstruction has a
+mirrored structure of the encoding part, and the baseline
+SAE+KM uses the same network for the autoencoder part.
+
+Table 2 summarizes the results of this experiment. As one
+can see, LCCF indeed gives the best performance among
+the algorithms that do not use DNNs. SAE+KM improves
+ARI and ACC quite substantially by involving DNN – this
+suggests that the generative model may indeed be non-
+linear. DCN performs even better by using the proposed
+joint DR and clustering criterion, which supports our mo-
+tivation that a K-means regularization can help discover a
+clustering-friendly space.
+
+5.2.5. RAW MNIST
+In this and next subsections, we present two experiments
+using two versions of the MNIST dataset. We ﬁrst employ
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+Table 3. Evaluation on the raw MNIST dataset.
+
+Table 4. Evaluation on pre-processed MNIST
+
+Methods DCN SAE+KM DEC KM SSC-OMP
+NMI
+ARI
+ACC
+
+0.80 0.50
+0.75 0.37
+0.84 0.53
+
+0.31
+0.13
+0.30
+
+0.73
+0.67
+0.80
+
+0.81
+0.75
+0.83
+
+Methods DCN SAE+KM KM (SSC-OMP)
+0.86
+NMI
+0.86
+ARI
+0.93
+ACC
+
+0.85
+0.82
+0.86
+
+0.88
+0.89
+0.95
+
+⇥
+
+0, 1, . . . , 9
+{
+
+the raw MNIST dataset that has 70,000 data samples. Each
+28 gray-scale image containing a hand-
+sample is a 28
+written digit, i.e., one of
+. Same as (Xie et al.,
+}
+2016), we use a 4-layers forward network and set the num-
+ber of neurons to be 500, 500, 2000, and 10, respectively.
+The reconstruction network is still a ‘mirrored’ version of
+the forward network. The hyperparameter   is set to 1. We
+use SSC-OMP, which is a scalable version of SSC, and KM
+as a baseline for this experiment.
+
+Table 3 shows results of applying DCN, SAE+KM, DEC,
+KM and SSC-OMP to the raw MNIST data – the other
+baselines are not efﬁcient enough to handle 70,000 sam-
+ples and thus are left out. One can see that our result is on
+par with the result of DEC reported in (Xie et al., 2016),
+and both methods outperform other methods by a large
+margin. The DEC method performs very competitively on
+this dataset, possibly because it is designed to favor bal-
+anced clusters, which is the case for MNIST dataset. On
+the dataset RCV1-v2 with unbalanced clusters, the result
+of DEC is not as satisfactory, see Fig. 5b. It is also inter-
+esting to note that our method yields approximately same
+results as DEC in this balanced case, but DCN also works
+well in unbalanced cases, as we have seen.
+
+5.2.6. PRE-PROCESSED MNIST
+Besides the above experiment using the raw MNIST data,
+we also provide another interesting experiment using pre-
+processed MNIST data. The pre-processing is done by a
+recently introduced technique, namely, the scattering net-
+work (ScatNet) (Bruna & Mallat, 2013). ScatNet is a
+cascade of multiple layers of wavelet transform, which is
+able to learn a good feature space for clustering / classi-
+ﬁcation of images. Utilizing ScatNet, the work in (You
+et al., 2016) reported very promising clustering results on
+MNIST using SSC-OMP. Our objective here is to see if
+the proposed DCN can further improve the performance
+from SSC-OMP. Our idea is simple: SSC-OMP is essen-
+tially a procedure of constructing a similarity matrix of the
+data; after obtaining this matrix, it performs K-means on
+the rows of a matrix comprising several selected eigenvec-
+tors of the similarity matrix (Ng et al., 2002). Therefore, it
+makes sense to treat the whole ScatNet + SSC-OMP pro-
+cedure as pre-processing for performing K-means, and one
+can replace K-means by DCN to improve performance.
+
+The results are shown in Table 4. One can see that the
+proposed method exhibits the best performance among the
+algorithms. We note that the result of using KM on the data
+processed by ScatNet and SSC-OMP is worse than that was
+
+Figure 6. Clustering performance on MNIST with different  .
+
+reported in (You et al., 2016). This is possibly because we
+use all the 70,000 samples, while only a subset was selected
+for conducting the experiments in (You et al., 2016).
+
+This experiment is particularly interesting since it suggests
+that for any clustering algorithm that employs K-means as
+a key component, e.g., spectral clustering and sparse sub-
+space clustering, one can use the proposed DCN to re-
+place K-means and a better result can be expected. This
+is meaningful since many datasets are originally not suit-
+able for K-means due to the nature of the data – but af-
+ter pre-processing (e.g., kernelization and eigendecompo-
+sition), the pre-processed data is already more K-means-
+friendly, and using the proposed DCN at this point can fur-
+ther strengthen the result.
+
+5.2.7. PARAMETER SELECTION
+The parameter   is important, since it trades off between
+the reconstruction objective and the clustering objective.
+As we see from the experiments, the proposed DCN works
+well with an appropriately chosen  . Moreover, our ex-
+perience suggests that the performance of our approach is
+insensitive to the exact value of  . Fig. 6 shows how the
+proposed method performs with different   on the MNIST
+dataset. As we can see, although there is degradation of
+performance as   gets inappropriately large, the degrada-
+tion is mild. The proposed method gives satisfactory result
+for a range of  .
+
+6. Conclusion
+In this work, we proposed a joint DR and K-means clus-
+tering approach where the DR part is accomplished via
+learning a deep neural network. Our goal is to automat-
+ically map high-dimensional data to a latent space where
+K-means is a suitable tool for clustering. We carefully de-
+signed the network structure to avoid trivial and meaning-
+less solutions and proposed an effective and scalable op-
+timization procedure to handle the formulated challenging
+problem. Synthetic and real data experiments showed that
+the algorithm is very effective on a variety of datasets.
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+Acknowledgements
+
+This work is supported by National Science Foundation un-
+der Projects NSF IIS-1447788, NSF ECCS-1608961, and
+NSF CCF-1526078. The GPU used in this work was kindly
+donated by NVIDIA.
+
+References
+
+Hornik, K., Stinchcombe, M., and White, H. Multilayer
+feedforward networks are universal approximators. Neu-
+ral Networks, 2(5):359–366, 1989.
+
+Ioffe, S. and Szegedy, C. Batch normalization: Accelerat-
+ing deep network training by reducing internal covariate
+shift. In Proceedings of the 32nd International Confer-
+ence on Machine Learning, pp. 448–456, 2015.
+
+Andrew, G., Arora, R., Bilmes, J., and Livescu, K. Deep
+In Proceedings of the
+canonical correlation analysis.
+30th International Conference on International Confer-
+ence on Machine Learning, pp. 1247–1255, 2013.
+
+Krizhevsky, A., Sutskever, I., and Hinton, G. E. Imagenet
+classiﬁcation with deep convolutional neural networks.
+In Advances in Neural Infomation Processing Systems
+25 (NIPS 2012), pp. 1097–1105, 2012.
+
+Banerjee, A., Merugu, S., Dhillon, I. S., and Ghosh, J.
+Clustering with bregman divergences. Journal of Ma-
+chine Learning Research, 6:1705–1749, Oct 2005.
+
+Bengio, Y., Lamblin, P., Popovici, D., and Larochelle,
+H. Greedy layer-wise training of deep networks.
+In
+Advances in Neural Information Processing Systems 19
+(NIPS 2006), volume 19, pp. 153–160, 2007.
+
+Bruna, J. and Mallat, S.
+
+Invariant scattering convolution
+IEEE Transaction on Pattern Analysis Ma-
+
+networks.
+chine Intelligence, 35(8):1872–1886, 2013.
+
+Cai, D., He, X., and Han, J. Locally consistent concept
+IEEE Transac-
+factorization for document clustering.
+tion on Knowledge and Data Engineering, 23(6):902–
+913, 2011.
+
+De Soete, G. and Carroll, J. D. K-means clustering in a
+low-dimensional euclidean space. In New Approaches in
+Classiﬁcation and Data Analysis, pp. 212–219. Springer,
+1994.
+
+Elhamifar, E. and Vidal, R. Sparse subspace clustering:
+Algorithm, theory, and applications. IEEE Transactions
+on Pattern Analysis and Machine Intelligence, 35(11):
+2765–2781, 2013.
+
+Ertoz, L., Steinbach, M., and Kumar, V. Finding clusters
+of different sizes, shapes, and densities in noisy, high
+dimensional data. In Proceedings of Second SIAM Inter-
+national Conference on Data Mining, pp. 47–58, 2003.
+
+Hershey, J. R., Chen, Z., Le Roux, J., and Watanabe, S.
+Deep clustering: Discriminative embeddings for seg-
+mentation and separation. In Proceedings of 2016 IEEE
+International Conference on Acoustics, Speech and Sig-
+nal Processing, pp. 31–35. IEEE, 2016.
+
+Hinton, G. E. and Salakhutdinov, R. Reducing the dimen-
+sionality of data with neural networks. Science, 313
+(5786):504–507, 2006.
+
+Kumar, A., Sindhwani, V., and Kambadur, P. Fast conical
+hull algorithms for near-separable non-negative matrix
+factorization. In Proceedings of 30th International Con-
+ference on Machine Learning, pp. 231–239, 2013.
+
+Law, M. H. C., Topchy, A., and Jain, A. K. Model-based
+In Proceed-
+clustering with probabilistic constraints.
+ings of the 2005 SIAM International Conference on Data
+Mining, pp. 641–645. SIAM, 2005.
+
+LeCun, Y., Bottou, L., Bengio, Y., and Haffner, P. Gradient-
+based learning applied to document recognition. Pro-
+ceedings of the IEEE, 86(11):2278–2324, 1998.
+
+Lee, D. D. and Seung, S. H. Learning the parts of objects by
+non-negative matrix factorization. Nature, 401(6755):
+788–791, 1999.
+
+Lewis, D. D., Yang, Y., Rose, T. G., and Li, F. RCV1:
+A new benchmark collection for text categorization re-
+search. Journal of Machine Learning Research, 5:361–
+397, Apr 2004.
+
+Lloyd, S. Least squares quantization in PCM. IEEE Trans-
+action on Information Theory, 28(2):129–137, 1982.
+
+Nair, V. and Hinton, G. E. Rectiﬁed linear units improve
+In Proceedings of the
+restricted boltzmann machines.
+27th International Conference on Machine Learning, pp.
+807–814, 2010.
+
+Ng, A. Y. Sparse autoencoder. CS294A Lecture notes, 72:
+
+1–19, 2011.
+
+Ng, A. Y., Jordan, M., and Weiss, Y. On spectral cluster-
+In Advances in Neu-
+ing: Analysis and an algorithm.
+ral Information Processing Systems 15 (NIPS 2002), pp.
+849–856, 2002.
+
+Nitish, S., Hinton, G. E., Krizhevsky, A., Sutskever, I., and
+Salakhutdinov, R. Dropout: a simple way to prevent
+neural networks from overﬁtting. Journal of Machine
+Learning Research, 15(1):1929–1958, 2014.
+
+Towards K-means-friendly Spaces: Simultaneous Deep Learning and Clustering
+
+Yeung, K. Y. and Ruzzo, W. L. Details of the adjusted rand
+index and clustering algorithms, supplement to the paper
+an empirical study on principal component analysis for
+clustering gene expression data. Bioinformatics, 17(9):
+763–774, 2001.
+
+You, C., Robinson, D., and Vidal, R. Scalable sparse sub-
+space clustering by orthogonal matching pursuit. In Pro-
+ceedings of Conference on Computer Vision and Pattern
+Recognition (CVPR), volume 1, 2016.
+
+Patel, V. M., Van Nguyen, H., and Vidal, R. Latent space
+sparse subspace clustering. In Proceedings of the IEEE
+Conference on Computer Vision and Pattern Recogni-
+tion, pp. 225–232, 2013.
+
+Rumelhart, D. E., Hinton, G. E., and Williams, R. J. Learn-
+ing representations by back-propagating errors. Neuro-
+computing: foundations of research, pp. 696–699, 1988.
+
+Saul, L. K. and Roweis, S. T. Think globally, ﬁt locally: un-
+supervised learning of low dimensional manifolds. Jour-
+nal of Machine Learning Research, 4:119–155, 2003.
+
+Schroff, F., Kalenichenko, D., and Philbin, J. Facenet: A
+uniﬁed embedding for face recognition and clustering.
+In Proceedings of the IEEE Conference on Computer Vi-
+sion and Pattern Recognition, pp. 815–823, 2015.
+
+Sculley, D. Web-scale k-means clustering. In Proceedings
+of the 19th International Conference on World Wide Web
+(WWW), pp. 1177–1178. ACM, 2010.
+
+Theano Development Team. Theano: A Python framework
+for fast computation of mathematical expressions. arXiv
+e-prints, abs/1605.02688, May 2016. URL http://
+arxiv.org/abs/1605.02688.
+
+Van der Maaten, L. and Hinton, G. E. Visualizing data
+using t-sne. Journal of Machine Learning Research, 9:
+2579–2605, Nov 2008.
+
+Vincent, P., Larochelle, H., Lajoie, I., Bengio, Y., and Man-
+zagol, P. A. Stacked denoising autoencoders: Learning
+useful representations in a deep network with a local
+denoising criterion. Journal of Machine Learning Re-
+search, 11:3371–3408, Dec 2010.
+
+Von Luxburg, U. A tutorial on spectral clustering. Statistics
+
+and Computing, 17(4):395–416, 2007.
+
+Xie, J., Girshick, R., and Farhadi, A. Unsupervised deep
+In Proceedings of
+embedding for clustering analysis.
+the 33rd International Conference on Machine Learn-
+ing, 2016.
+
+Xu, W., Liu, X., and Gong, Y. Document clustering based
+on non-negative matrix factorization. In Proceedings of
+the 26th annual international ACM SIGIR conference on
+Research and development in informaion retrieval, pp.
+267–273. ACM, 2003.
+
+Yang, B., Fu, X., and Sidiropoulos, N. D. Learning from
+hidden traits: Joint factor analysis and latent clustering.
+IEEE Transaction on Signal Processing, pp. 256–269,
+Jan. 2017.
+
+Yang, J., Parikh, D., and Batra, D. Joint unsupervised learn-
+ing of deep representations and image clusters. In Pro-
+ceedings of the IEEE Conference on Computer Vision
+and Pattern Recognition, pp. 5147–5156, 2016.
+
+

@@ -1,0 +1,1531 @@
+Scaling Up Sparse Support Vector Machines
+by Simultaneous Feature and Sample Reduction
+
+Weizhong Zhang * 1 2 Bin Hong * 1 3 Wei Liu 2 Jieping Ye 3 Deng Cai 1 Xiaofei He 1 Jie Wang 3
+
+Abstract
+
+Sparse support vector machine (SVM) is a pop-
+ular classiﬁcation technique that can simultane-
+ously learn a small set of the most interpretable
+features and identify the support vectors. It has
+achieved great successes in many real-world ap-
+plications. However, for large-scale problems in-
+volving a huge number of samples and extremely
+high-dimensional features, solving sparse SVM-
+s remains challenging. By noting that sparse
+SVMs induce sparsities in both feature and sam-
+ple spaces, we propose a novel approach, which
+is based on accurate estimations of the primal and
+dual optima of sparse SVMs, to simultaneously
+identify the features and samples that are guaran-
+teed to be irrelevant to the outputs. Thus, we can
+remove the identiﬁed inactive samples and fea-
+tures from the training phase, leading to substan-
+tial savings in both the memory usage and com-
+putational cost without sacriﬁcing accuracy. To
+the best of our knowledge, the proposed method
+is the ﬁrst static feature and sample reduction
+method for sparse SVM. Experiments on both
+synthetic and real datasets (e.g., the kddb dataset
+with about 20 million samples and 30 million
+features) demonstrate that our approach signiﬁ-
+cantly outperforms state-of-the-art methods and
+the speedup gained by our approach can be or-
+ders of magnitude.
+
+1. Introduction
+
+Sparse support vector machine (SVM) (Bi et al., 2003;
+Wang et al., 2006) is a powerful technique that can si-
+multaneously perform classiﬁcation by margin maximiza-
+
+*Equal contribution 1State Key Lab of CAD&CG, Zhejiang
+University, China 2Tencent AI Lab, Shenzhen, China 3University
+Jie Wang <jiewan-
+of Michigan, USA. Correspondence to:
+gustc@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+tion and variable selection by (cid:96)1-norm penalty. The last
+few years have witnessed many successful application-
+s of sparse SVMs, such as text mining (Joachims, 1998;
+Yoshikawa et al., 2014), bioinformatics (Narasimhan & A-
+garwal, 2013) and image processing (Mohr & Obermay-
+er, 2004; Kotsia & Pitas, 2007). Many algorithms (Hastie
+et al., 2004; Fan et al., 2008; Catanzaro et al., 2008; Hsieh
+et al., 2008; Shalev-Shwartz et al., 2011) have been pro-
+posed to efﬁciently solve sparse SVM problems. Howev-
+er, the applications of sparse SVMs to large-scale learning
+problems, which involve a huge number of samples and ex-
+tremely high-dimensional features, remain challenging.
+
+An emerging technique, called screening (El Ghaoui et al.,
+2012), has been shown to be promising in accelerating
+large-scale sparse learning. The essential idea of screening
+is to quickly identify the zero coefﬁcients in the sparse solu-
+tions without solving any optimization problems such that
+the corresponding features or samples—that are called in-
+active features or samples—can be removed from the train-
+ing phase. Then, we only need to perform optimization on
+the reduced datasets instead of the full datasets, leading to
+substantial savings in the computational cost and memory
+usage. Here, we need to emphasize that screening differs
+greatly from feature selection methods, although they look
+similar at the ﬁrst glance. To be precise, screening is de-
+voted to accelerating the training of many sparse models
+including Lasso, Sparse SVM, etc., while feature selection
+is the goal of these models. In the past few years, many
+screening methods are proposed for a large set of sparse
+learning techniques, such as Lasso (Tibshirani et al., 2012;
+Xiang & Ramadge, 2012; Wang et al., 2013), group Las-
+so (Ndiaye et al., 2016), (cid:96)1-regularized logistic regression
+(Wang et al., 2014), and SVM (Ogawa et al., 2013). Em-
+pirical studies indicate that screening methods can lead to
+orders of magnitude of speedup in computation time.
+
+However, most existing screening methods study either fea-
+ture screening or sample screening individually (Shibagaki
+et al., 2016) and their applications have very different s-
+cenarios. Speciﬁcally, to achieve better performance (say,
+in terms of speedup), we favor feature screening method-
+s when the number of features p is much larger than the
+number of samples n, while sample screening methods are
+
+Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+preferable when n (cid:29) p. Note that there is another class
+of sparse learning techniques, like sparse SVMs, which in-
+duce sparsities in both feature and sample spaces. All these
+screening methods are helpless in accelerating the training
+of these models with large n and p. We also cannot address
+this problem by simply combining the existing feature and
+sample screening methods. The reason is that they could
+mistakenly discard relevant data as they are speciﬁcally de-
+signed for different sparse models. Recently, Shibagaki et
+al. (Shibagaki et al., 2016) consider this problem and pro-
+pose a method to simultaneously identify the inactive fea-
+tures and samples in a dynamic manner (Bonnefoy et al.,
+2014); that is, during the optimization process, they trigger
+their testing rule when there is a sufﬁcient decrease in the d-
+uality gap. Thus, the method in (Shibagaki et al., 2016) can
+discard more inactive features and samples as the optimiza-
+tion proceeds and one has small-scale problems to solve in
+the late stage of the optimization. Nevertheless, the overall
+speedup can be limited as the problems’ size can be large
+in the early stage of the optimization. To be speciﬁc, the
+method in (Shibagaki et al., 2016) depends heavily on the
+duality gap during the optimization process. The duality
+gap in the early stage can always be large, which makes the
+dual and primal estimations inaccurate and ﬁnally results in
+ineffective screening rules. Hence, it is essentially solving
+a large problem in the early stage.
+
+In this paper, to address the limitations in the dynamic
+screening method, we propose a novel screening method
+that can Simultaneously identify Inactive Features and
+Samples (SIFS) for sparse SVMs in a static manner, that
+is, we only need to perform SIFS once before (instead of
+during) optimization. Thus, we only need to run the op-
+timization algorithm on small-scale problems. The major
+technical challenge in developing SIFS is that we need to
+accurately estimate the primal and dual optima. The more
+accurate the estimations are, the more effective SIFS is in
+detecting inactive features and samples. Thus, our major
+technical contribution is a novel framework, which is based
+on the strong convexity of the primal and dual problems of
+sparse SVMs [see problems (P∗) and (D∗) in Section 2] for
+deriving accurate estimations of the primal and dual optima
+(see Section 3). Another appealing feature of SIFS is the
+so-called synergy effect (Shibagaki et al., 2016). Speciﬁ-
+cally, the proposed SIFS consists of two parts, i.e., Inactive
+Feature Screening (IFS) and Inactive Samples Screening
+(ISS). We show that discarding inactive features (samples)
+identiﬁed by IFS (ISS) leads to a more accurate estimation
+of the primal (dual) optimum, which in turn dramatically
+enhances the capability of ISS (IFS) in detecting inactive
+samples (features). Thus, SIFS applies IFS and ISS in an
+alternating manner until no more inactive features and sam-
+ples can be identiﬁed, leading to much better performance
+in scaling up large-scale problems than the application of
+
+ISS or IFS individually. Moreover, SIFS (see Section 4) is
+safe in the sense that the detected features and samples are
+guaranteed to be absent from the sparse representations. To
+the best of our knowledge, SIFS is the ﬁrst static screening
+rule for sparse SVM that is able to simultaneously detect
+inactive features and samples. Experiments (see Section 5)
+on both synthetic and real datasets demonstrate that SIF-
+S signiﬁcantly outperforms the state-of-the-art (Shibagaki
+et al., 2016) in improving the efﬁciency of sparse SVM-
+s and the speedup can be orders of magnitude. Detailed
+proofs of theoretical results in the main text are in the sup-
+plementary supplements.
+
+Notations: Let (cid:107) · (cid:107)1, (cid:107) · (cid:107), and (cid:107) · (cid:107)∞ be the (cid:96)1, (cid:96)2, and
+(cid:96)∞ norms, respectively. We denote the inner product of
+vectors x and y by (cid:104)x, y(cid:105), and the i-th component of x by
+[x]i. Let [p] = {1, 2..., p} for a positive integer p. Given
+a subset J := {j1, ..., jk} of [p], let |J | be the cardinal-
+ity of J . For a vector x, let [x]J = ([x]j1, ..., [x]jk )T .
+For a matrix X, let [X]J = (xj1, ..., xjk ) and J [X] =
+((xj1 )T , ..., (xjk )T )T , where xi and xj are the ith row and
+jth column of X, respectively. For a scalar t, we denote
+max{0, t} by [t]+.
+
+2. Basics and Motivations
+
+In this section, we brieﬂy review some basics of sparse
+SVMs and then motivate SIFS via the KKT conditions.
+Speciﬁcally, we focus on the (cid:96)1-regularized SVM with a s-
+moothed hinged loss that has strong theoretical guarantees
+(Shalev-Shwartz & Zhang, 2016), which takes the form of
+
+min
+w∈Rp
+
+P (w; α, β) =
+
+(cid:96)(1 − (cid:104)¯xi, w(cid:105)) +
+
+(cid:107)w(cid:107)2
+
+α
+2
+
+1
+n
+
+n
+(cid:88)
+
+i=1
+
++ β||w||1,
+
+(P∗)
+
+where w is the parameter vector
+to be estimated,
+i=1 is the training set, xi ∈ Rp, yi ∈ {−1, +1},
+{xi, yi}n
+¯xi = yixi, α and β are positive parameters, and the loss
+function (cid:96)(·) : R → R is
+
+(cid:96)(t) =
+
+
+
+
+
+
+0,
+t2
+2γ ,
+t − γ
+2 ,
+
+if t < 0,
+if 0 ≤ t ≤ γ,
+if t > γ,
+
+where γ ∈ (0, 1). We present the Lagrangian dual problem
+of problem (P∗) and the KKT conditions in the following
+theorem, which plays a fundamentally important role in de-
+veloping our screening rule.
+Theorem 1. Let ¯X = (¯x1, ¯x2, ..., ¯xn) and Sβ(·) be
+the soft-thresholding operator (Hastie et al., 2015), i.e.,
+[Sβ(u)]i = sign([u]i)(|[u]i| − β)+. Then, for problem
+(P∗), the followings hold:
+
+Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+(i) : The dual problem of (P∗) is
+
+(iii) : Suppose that θ∗(α, β) is known. Then,
+
+min
+θ∈[0,1]n
+
+D(θ; α, β) =
+
+1
+2α
+
+Sβ
+
+(cid:18) 1
+n
+
+¯Xθ
+
+(cid:19)(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+
++
+
+γ
+2n
+
+(cid:107)θ(cid:107)2
+
+−
+
+(cid:104)1, θ(cid:105),
+
+(D∗)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+1
+n
+
+where 1 ∈ Rn is a vector with all components equal to 1.
+(ii) : Denote the optima of (P∗) and (D∗) by w∗(α, β) and
+θ∗(α, β), respectively. Then,
+
+w∗(α, β) =
+
+(cid:19)
+
+¯Xθ∗(α, β)
+
+,
+
+(cid:18) 1
+n
+
+Sβ
+
+1
+α
+
+
+
+[θ∗(α, β)]i =
+
+0,
+1,
+1
+γ (1 − (cid:104)¯xi, w∗(α, β)(cid:105)),
+
+if 1 − (cid:104)¯xi, w∗(α, β)(cid:105) < 0;
+if 1 − (cid:104)¯xi, w∗(α, β)(cid:105) > γ;
+otherwise .
+
+
+
+(KKT-1)
+
+(KKT-2)
+
+According to KKT-1 and KKT-2, we deﬁne 4 index sets:
+
+(cid:26)
+
+F =
+
+j ∈ [p] :
+
+|[ ¯Xθ∗(α, β)]j| ≤ β
+
+(cid:27)
+
+,
+
+1
+n
+
+R = {i ∈ [n] : 1 − (cid:104)w∗(α, β), ¯xi(cid:105) < 0},
+E = {i ∈ [n] : 1 − (cid:104)w∗(α, β), ¯xi(cid:105) ∈ [0, γ]},
+L = {i ∈ [n] : 1 − (cid:104)w∗(α, β), ¯xi(cid:105) > γ},
+
+which imply that
+
+(i): i ∈ F ⇒ [w∗(α, β)]i = 0,
+
+(ii):
+
+(cid:26) i ∈ R ⇒ [θ∗(α, β)]i = 0,
+i ∈ L ⇒ [θ∗(α, β)]i = 1.
+
+(R)
+
+Thus, we call the jth feature inactive if j ∈ F. The sam-
+ples in E are the so-called support vectors and we call the
+samples in R and L inactive samples.
+
+Suppose that we are given subsets of F, R, and L, then
+by (R), we can see that many coefﬁcients of w∗(α, β) and
+θ∗(α, β) are known. Thus, we may have much less un-
+knowns to solve and the problem size can be dramatically
+reduced. We formalize this idea in Lemma 1.
+Lemma 1. Given index sets ˆF ⊆ F, ˆR ⊆ R, and ˆL ⊆ L,
+the followings hold
+(i) : [w∗(α, β)] ˆF = 0, [θ∗(α, β)] ˆR = 0, [θ∗(α, β)] ˆL = 1.
+(ii) : Let ˆD = ˆR ∪ ˆL, ˆG1 = ˆF c[ ¯X] ˆDc, and ˆG2 = ˆF c[ ¯X] ˆL,
+where ˆF c = [p] \ ˆF, ˆDc = [n] \ ˆD, and ˆLc = [n] \ ˆL. Then,
+[θ∗(α, β)] ˆDc solves the following scaled dual problem:
+
+min
+ˆθ∈[0,1]| ˆDc |
+
+(cid:110) 1
+2α
+
+Sβ
+
+ˆG1
+
+ˆθ +
+
+ˆG21
+
+1
+n
+
+(cid:19)(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+
++
+
+γ
+2n
+
+(cid:107)ˆθ(cid:107)2
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+1
+n
+
+(cid:18) 1
+n
+(cid:111)
+.
+
+−
+
+(cid:104)1, ˆθ(cid:105)
+
+[w∗(α, β)] ˆF c =
+
+1
+α
+
+Sβ
+
+(cid:19)
+(cid:18) 1
+n ˆF c[ ¯X]θ∗(α, β)
+
+.
+
+Lemma 1 indicates that, if we can identify index sets ˆF and
+ˆD and the cardinalities of ˆF c and ˆDc are much smaller than
+the feature dimension p and the dataset size n, we only need
+to solve a problem (scaled-D∗) that may be much smaller
+than problem (D∗) to exactly recover the optima w∗(α, β)
+and θ∗(α, β) without sacriﬁcing any accuracy.
+
+However, we cannot directly apply the rules in (R) to i-
+dentify subsets of F, R, and L, as they require the knowl-
+edge of w∗(α, β) and θ∗(α, β) that are usually unavailable.
+Inspired by the idea in (El Ghaoui et al., 2012), we can
+ﬁrst estimate regions W and Θ that contain w∗(α, β) and
+θ∗(α, β), respectively. Then, by denoting
+
+(cid:26)
+
+(cid:26)
+
+(cid:26)
+
+ˆF :=
+
+ˆR :=
+
+ˆL :=
+
+j ∈ [p] : max
+θ∈Θ
+
+(cid:26)(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+1
+n
+
+[ ¯Xθ]j
+
+(cid:27)
+
+≤ β
+
+,
+
+(cid:27)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+i ∈ [n] : max
+w∈W
+
+{1 − (cid:104)w, ¯xi(cid:105)} < 0
+
+i ∈ [n] : min
+w∈W
+
+{1 − (cid:104)w, ¯xi(cid:105)} > γ
+
+(cid:27)
+
+(cid:27)
+
+,
+
+,
+
+since it is easy to know that ˆF ⊂ F, ˆR ⊂ R and ˆL ⊂ L,
+the rules in (R) can be relaxed as follows:
+
+(i): j ∈ ˆF ⇒ [w∗(α, β)]j = 0,
+
+(ii):
+
+(cid:26) i ∈ ˆR ⇒ [θ∗(α, β)]i = 0,
+i ∈ ˆL ⇒ [θ∗(α, β)]i = 1.
+
+In view of R1 and R2, we sketch the development of SIFS
+as follows.
+
+Step 1: Derive estimations W and Θ such that w∗(α, β) ∈ W
+
+and θ∗(α, β) ∈ Θ, respectively.
+
+Step 2: Develop SIFS by deriving the relaxed screening rules
+R1 and R2, i.e., by solving the optimization problems
+in Eq. (1), Eq. (2) and Eq. (3).
+
+3. Estimate the Primal and Dual Optima
+
+In this section, we ﬁrst show that the primal and dual op-
+tima admit closed form solutions for speciﬁc values of α
+and β (see Section 3.1). Then, in Sections 3.2 and 3.3, we
+present accurate estimations of the primal and dual optima,
+respectively.
+
+(1)
+
+(2)
+
+(3)
+
+(R1)
+
+(R2)
+
+3.1. Effective Intervals of the Parameters α and β
+
+(scaled-D∗)
+
+We ﬁrst show that, if the value of β is sufﬁciently large, no
+matter what α is, the primal solution is 0.
+
+Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+Theorem 2. Let βmax = (cid:107) 1
+n
+β ≥ βmax, we have
+
+¯X1(cid:107)∞. Then, for α > 0 and
+
+3.3. Dual Optimum Estimation
+
+w∗(α, β) = 0,
+
+θ∗(α, β) = 1.
+
+For any β, the next result shows that, if α is large enough,
+the primal and dual optima admit closed form solutions.
+Theorem 3. If we denote
+
+αmax(β) =
+
+1
+1 − γ
+
+max
+i∈[n]
+
+(cid:8)(cid:104)¯xi, Sβ(
+
+¯X1)(cid:105)(cid:9),
+
+1
+n
+
+then for all α ∈ [max{αmax(β), 0}, ∞) ∩ (0, ∞), we have
+
+w∗(α, β) =
+
+¯X1
+
+, θ∗(α, β) = 1.
+
+(4)
+
+r2 =
+
+1
+α
+
+Sβ
+
+(cid:18) 1
+n
+
+(cid:19)
+
+Similar to Lemma 2, the next result shows that ISS can
+improve the estimation of the dual optimum.
+Lemma 3. Suppose that the reference solution θ∗(α0, β0)
+with β0 ∈ (0, βmax] and α0 ∈ (0, αmax(β0)] is known.
+Consider problem (D∗) with parameters α > 0 and β0.
+Let ˆR and ˆL be the index sets of inactive samples iden-
+tiﬁed by the previous ISS steps, i.e., [θ∗(α, β0)] ˆR = 0,
+[θ∗(α, β0)] ˆL = 1, and ˆD = ˆR ∪ ˆL. We deﬁne
+α0 + α
+2α
+
+[θ∗(α0, β0)] ˆDc,
+
+1 +
+
+c =
+
+(8)
+
+α − α0
+2γα
+(α0 − α)2
+4α2
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+−
+
+−
+
+α − α0
+2γα
+
+(cid:13)
+(cid:13)
+θ∗(α0, β0) −
+(cid:13)
+(cid:13)
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+
+1
+
+1
+γ
+
+(2γ − 1)α + α0
+2γα
+
+1 −
+
+α0 + α
+2α
+
+[θ∗(α0, β0)] ˆL
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+
+.
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+(cid:13)
+
+(9)
+
+1 +
+
+α0 + α
+2α
+
+[θ∗(α0, β0)] ˆR
+
+Then, the following holds:
+
+[θ∗(α, β0)] ˆDc ∈ Θ := (cid:107)θ : θ − c(cid:107) ≤ r.
+
+(10)
+
+Similar to Lemma 2, Lemma 3 also bounds [θ∗(α, β0)] ˆDc
+by a ball. In view of Eq. (9), a similar discussion of Lemma
+2—that is, the index sets ˆL and ˆR monotonically increase
+and thus the last two terms on the RHS of Eq. (9) monoton-
+ically increase when we perform ISS multiple times (alter-
+nating with IFS)—implies that the ISS steps can reduce the
+radius and thus improve the dual optimum estimation.
+Remark 1. To estimate w∗(α, β0) and θ∗(α, β0) by Lem-
+mas 2 and 3, we have a free reference solution pair
+w∗(α0, β0) and θ∗(α0, β0) with α0 = αmax(β0). From
+Theorems 2 and 3, we know that in this setting, w∗(α0, β0)
+and θ∗(α0, β0) admit closed form solutions.
+
+We ﬁrst present the IFS and ISS rules in Sections 4.1 and
+4.2, respectively. Then, in Section 4.3, we develop the SIFS
+screening rule by an alternating application of IFS and ISS.
+
+4.1. Inactive Feature Screening (IFS)
+
+Suppose that w∗(α0, β0) and θ∗(α0, β0) are known, we de-
+rive IFS to identify inactive features for problem (P∗) at
+(α, β0) by solving the optimization problem in Eq. (1) (see
+Section E in the supplementary material):
+
+si(α, β0) = max
+θ∈Θ
+
+(cid:26) 1
+n
+
+|(cid:104)[¯xi] ˆDc , θ(cid:105) + (cid:104)[¯xi] ˆL, 1(cid:105)|
+
+, i ∈ ˆF c,
+
+(cid:27)
+
+(11)
+
+By Theorems 2 and 3, we only need to consider the cases
+with β ∈ (0, βmax] and α ∈ (0, αmax(β)].
+
+3.2. Primal Optimum Estimation
+
+In Section 1, we mention that the proposed SIFS consists of
+IFS and ISS, and an alternating application of IFS and ISS
+can improve the estimation of the primal and dual optima,
+which can in turn make ISS and IFS more effective in iden-
+tifying inactive samples and features, respectively. Lemma
+2 shows that discarding inactive features by IFS leads to a
+more accurate estimation of the primal optimum.
+Lemma 2. Suppose that the reference solution w∗(α0, β0)
+with β0 ∈ (0, βmax] and α0 ∈ (0, αmax(β0)] is known.
+Consider problem (P∗) with parameters α > 0 and β0. Let
+ˆF be the index set of the inactive features identiﬁed by the
+previous IFS steps, i.e., [w∗(α, β0)] ˆF = 0. We deﬁne
+
+[w∗(α0, β0)] ˆF c,
+
+(5)
+
+(cid:107)w∗(α0, β0)(cid:107)2
+
+c =
+
+r2 =
+
+α0 + α
+2α
+(α0 − α)2
+4α2
+(α0 + α)2
+4α2
+
+−
+
+Then, the following holds:
+
+[w∗(α, β0)] ˆF c ∈ W := {w : (cid:107)w − c(cid:107) ≤ r}.
+
+(7)
+
+As ˆF is the index set of identiﬁed inactive features, we
+have [w∗(α, β0)] ˆF = 0. Hence, we only need to ﬁnd an
+accurate estimation of [w∗(α, β0)] ˆF c . Lemma 2 shows that
+[w∗(α, β0)] ˆF c lies in a ball of radius r centered at c. Note
+that, before we perform IFS, the set ˆF is empty and thus the
+second term on the right hand side (RHS) of Eq. (6) is 0. If
+we apply IFS multiple times (alternating with ISS), the set
+ˆF will be monotonically increasing. Thus, Eq. (6) implies
+that the radius will be monotonically decreasing, leading to
+a more accurate primal optimum estimation.
+
+(cid:107)[w∗(α0, β0)] ˆF (cid:107)2.
+
+(6)
+
+4. The Proposed SIFS Screening Rule
+
+Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+where Θ is given by Eq. (10) and ˆF and ˆD = ˆR ∪ ˆL are the
+index sets of inactive features and samples that have been i-
+dentiﬁed in previous screening processes, respectively. The
+next result shows the closed form solution of problem (11).
+Lemma 4. Consider problem (11). Let c and r be given by
+Eq. (8) and Eq. (9). Then, for all i ∈ ˆF c, we have
+
+si(α, β0) =
+
+(|(cid:104)[¯xi] ˆDc, c(cid:105) + (cid:104)[¯xi] ˆL, 1(cid:105)| + (cid:107)[¯xi] ˆDc(cid:107)r).
+
+1
+n
+
+We are now ready to present the IFS rule.
+Theorem 4. Consider problem (P∗). We suppose that
+w∗(α0, β0) and θ∗(α0, β0) are known. Then,
+
+(1): The feature screening rule IFS takes the form of
+
+si(α, β0) ≤ β0 ⇒ [w∗(α, β0)]i = 0, ∀i ∈ ˆF c (IFS)
+
+(2): We update the index set ˆF by
+
+ˆF ← ˆF ∪ {i : si ≤ β0, i ∈ ˆF c}.
+
+(12)
+
+Recall that (Lemma 3), previous sample screening results
+give us a more tighter dual estimation, i.e., a smaller fea-
+sible region Θ for problem (11), which results in a smaller
+si(α, β0).
+It ﬁnally leads us to a more powerful feature
+screening rule IFS. This is the so called synergy effect.
+
+4.2. Inactive Sample Screening (ISS)
+
+Similar to IFS, we derive ISS to identify inactive samples
+by solving the optimization problems in Eq. (2) and Eq. (3)
+(see Section G in the supplementary material for details):
+
+ui(α, β0) = max
+w∈W
+
+li(α, β0) = min
+w∈W
+
+{1 − (cid:104)[¯xi] ˆF c, w(cid:105)}, i ∈ ˆDc,
+{1 − (cid:104)[¯xi] ˆF c, w(cid:105)}, i ∈ ˆDc,
+
+(13)
+
+(14)
+
+where W is given by Eq. (7) and ˆF and ˆD = ˆR ∪ ˆL are the
+index sets of inactive features and samples that have been
+identiﬁed in previous screening processes. We show that
+problems (13) and (14) admit closed form solutions.
+Lemma 5. Consider problems (13) and (14). Let c and r
+be given by Eq. (5) and Eq. (6). Then,
+
+ui(α, β0) = 1 − (cid:104)[¯xi] ˆF c , c(cid:105) + (cid:107)[¯xi] ˆF c(cid:107)r, i ∈ ˆDc,
+li(α, β0) = 1 − (cid:104)[¯xi] ˆF c , c(cid:105) − (cid:107)[¯xi] ˆF c(cid:107)r, i ∈ ˆDc.
+
+(2): We update the the index sets ˆR and ˆL by
+
+ˆR ← ˆR ∪ {i : ui(α, β0) < 0, i ∈ ˆDc},
+ˆL ← ˆL ∪ {i : li(α, β0) > γ, i ∈ ˆDc}.
+
+(15)
+
+(16)
+
+The synergy effect also exists here. Recall that (Lemma 2),
+previous feature screening results lead a smaller feasible
+region W for the problems (13) and (14), which results in
+smaller ui(α, β0) and bigger li(α, β0). It ﬁnally leads us to
+a more accurate sample screening rule ISS.
+
+4.3. The Proposed SIFS Rule by An Alternating
+
+Application of IFS and ISS
+
+In real applications, the optimal parameter values of α and
+β are usually unknown. To determine appropriate param-
+eter values, common approaches, like cross validation and
+stability selection, need to solve the model over a grid of
+parameter values {(αi,j, βj) : i ∈ [M ], j ∈ [N ]} with
+βmax > β1 > ... > βN > 0 and αmax(βj) > α1,j > ... >
+αM,j > 0. This can be very time-consuming. Inspired by
+Strong Rule (Tibshirani et al., 2012) and SAFE (El Ghaoui
+et al., 2012), we develop a sequential version of SIFS in
+Algorithm 1. Speciﬁcally, given the primal and dual opti-
+
+Algorithm 1 SIFS
+1: Input: βmax > β1 > ... > βN > 0 and αmax(βj) =
+
+α0,j > α1,j > ... > αM,j > 0.
+
+2: for j = 1 to N do
+3:
+
+Compute the ﬁrst reference solution w∗(α0,j, βj)
+and θ∗(α0,j, βj) using the close-form formula (4).
+for i = 1 to M do
+
+Initialization: ˆF = ˆR = ˆL = ∅
+repeat
+
+Run sample screening using rule ISS based on
+w∗(αi−1,j, βj).
+Update ˆR and ˆL by Eq. (15) and Eq. (16), re-
+spectively.
+Run feature screening using rule IFS based on
+θ∗(αi−1,j, βj).
+Update ˆF by Eq. (12).
+
+until No new inactive features or samples are i-
+dentiﬁed
+Compute w∗(αi,j, βj) and θ∗(αi,j, βj) by solv-
+ing the scaled problem.
+
+4:
+5:
+6:
+7:
+
+8:
+
+9:
+
+10:
+11:
+
+12:
+
+end for
+
+13:
+14: end for
+15: Output:w∗(αi,j, βj) and θ∗(αi,j, βj), i ∈ [M ], j ∈
+
+We are now ready to present the ISS rule.
+Theorem 5. Consider problem (D∗). We suppose that
+w∗(α0, β0) and θ∗(α0, β0) are known. Then,
+
+[N ].
+
+(1): The sample screening rule ISS takes the form of
+
+ui(α, β0) < 0 ⇒ [θ∗(α, β0)]i = 0,
+li(α, β0) > γ ⇒ [θ∗(α, β0)]i = 1,
+
+∀i ∈ ˆDc (ISS)
+
+ma w∗(αi−1,j, βj) and θ∗(αi−1,j, βj) at (αi−1,j, βj), we
+apply SIFS to identify the inactive features and samples for
+problem (P∗) at (αi,j, βj). Then, we perform optimization
+on the reduced dataset and solve the primal and dual optima
+
+Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+at (αi,j, βj). We repeat this process until we solve problem
+(P∗) at all pairs of parameter values.
+
+choose the state-of-art screening method for Sparse SVMs
+in (Shibagaki et al., 2016) as a baseline in the experiments.
+
+Note that we insert α0,j into every sequence {αi,j : i ∈
+[M ]} ( see line 1 in Algorithm 1) to obtain a closed-form
+solution as the ﬁrst reference solution. In this way, we can
+avoid solving problem at (α1,j, βj), j ∈ [N ] directly (with-
+out screening), which is time consuming. At last, we would
+like to point out that the values {(αi,j, βj) : i ∈ [M ], j ∈
+[N ]} in SIFS can be speciﬁed by users arbitrarily.
+
+SIFS applies ISS and IFS in an alternating manner to re-
+inforce their capability in identifying inactive samples and
+features. In Algorithm 1, we apply ISS ﬁrst. Of course, we
+can also apply IFS ﬁrst. The theorem below demonstrates
+that the orders have no impact on the performance of SIFS.
+
+Theorem 6. Given the optimal solutions w∗(αi−1,j, βj)
+and θ∗(αi−1,j, βj) at (αi−1,j, βj) as the reference solution
+pair at (αi,j, βj) for SIFS, we assume SIFS with ISS ﬁrst
+stops after applying IFS and ISS for p times and denote
+the identiﬁed inactive features and samples as ˆF A
+p and
+ˆLA
+p . Similarly, when we apply IFS ﬁrst, the results are de-
+noted as ˆF B
+q . Then, the followings hold:
+q and ˆLA
+p = ˆF B
+(1) ˆF A
+(2) With different orders of applying ISS and IFS, the differ-
+ence of the times of ISS and IFS we need to apply in SIFS
+can never be larger than 1, that is, |p − q| ≤ 1.
+
+q and ˆLB
+p = ˆRB
+
+q , ˆRB
+q , ˆRA
+
+p = ˆLB
+q .
+
+p , ˆRA
+
+Remark 2. From Remark 1, we can see that our SIFS can
+also be applied to solve a single problem, due to the exis-
+tence of the free reference solution pair.
+
+5. Experiments
+
+np
+
+We evaluate SIFS on both synthetic and real datasets in
+terms of three measurements. The ﬁrst one is the scaling
+ratio: 1− (n−˜n)(p− ˜p)
+, where ˜n, ˜p, n, and p are the numbers
+of inactive samples and features identiﬁed by SIFS, sample
+size, and feature dimension of the datasets. The second
+measure is rejection ratios of each triggering of ISS and
+IFS in SIFS: ˜ni
+, where ˜ni and ˜pi are the numbers
+n0
+of inactive samples and features identiﬁed in i-th triggering
+of ISS and IFS in SIFS. n0 and p0 are the numbers of inac-
+tive samples and features in the solution. The third measure
+is speedup, i.e., the ratio of the running time of the solver
+without screening to that with screening.
+
+and ˜pi
+p0
+
+Recall that, we can integrate SIFS with any solvers for
+problem (P∗).
+In this experiment, we use Accelerated
+Proximal Stochastic Dual Coordinate Ascent (Accelerated-
+Prox-SDCA) (Shalev-Shwartz & Zhang, 2016), as it is one
+of the state-of-the-arts. As we mentioned in the introduc-
+tion section that screening differs greatly from features s-
+election methods, it is not appropriate to make compar-
+isons with feature selection methods. To this end, we only
+
+For each dataset, we solve problem (P∗) at a grid of turning
+parameter values. Speciﬁcally, we ﬁrst compute βmax by
+Theorem 2 and then select 10 values of β that are equally
+spaced on the logarithmic scale of β/βmax from 1 to 0.05.
+Then, for each value of β, we ﬁrst compute αmax(β) by
+Theorem 3 and then select 100 values of α that are equal-
+ly spaced on the logarithmic scale of α/αmax(β) from 1
+to 0.01. Thus, for each dataset, we solve problem (P∗) at
+1000 pairs of parameter values in total. We write the code
+in C++ along with Eigen library for some numerical com-
+putations. We perform all the computations on a single core
+of Intel(R) Core(TM) i7-5930K 3.50GHz, 128GB MEM.
+
+5.1. Simulation Studies
+
+We evaluate SIFS on 3 synthetic datasets named
+syn1,
+syn2 and syn3 with sample and feature size
+(n, p) ∈ {(10000, 1000), (10000, 10000), (1000, 10000)}.
+We present each data point as x = [x1; x2] with x1 ∈
+R0.02p and x2 ∈ R0.98p. We use Gaussian distributions
+G1 = N (u, 0.75I), G2 = N (−u, 0.75I) and G3 = N (0, 1)
+to generate the data points, where u = 1.51 and I ∈
+R0.02p×0.02p is the identity matrix. To be precise, x1 for
+positive and negative points are sampled from G1 and G2,
+respectively. For each entry in x2, it has chance η = 0.02
+to be sampled from G3 and chance 1 − η to be 0.
+
+(a) The scaling ratios of ISS, IFS, and SIFS on syn1.
+
+(b) The scaling ratios of ISS, IFS, and SIFS on syn2.
+
+(c) The scaling ratios of ISS, IFS, and SIFS on syn3.
+
+Figure 1. Scaling ratios of ISS, IFS and SIFS (from left to right).
+
+Fig. 1 shows the scaling ratios by ISS, IFS, and SIFS on
+the synthetic datasets at 1000 parameter values. We can
+see that IFS is more effective in scaling problem size than
+ISS, with scaling ratios roughly 98% against 70 − 90%.
+Moreover, SIFS, which is an alternating application of IFS
+and ISS, signiﬁcantly outperforms ISS and IFS, with scal-
+
+log(α/αmax)-2-1.5-1-0.50log(β/βmax)0-0.7-1-1.3log(α/αmax)-2-1.5-1-0.500-0.7-1-1.3log(α/αmax)-2-1.5-1-0.500-0.7-1-1.30.951log(α/αmax)-2-1.5-1-0.50log(β/βmax)0-0.7-1-1.3log(α/αmax)-2-1.5-1-0.500-0.7-1-1.3log(α/αmax)-2-1.5-1-0.500-0.7-1-1.30.80.91log(α/αmax)-2-1.5-1-0.50log(β/βmax)0-0.7-1-1.3log(α/αmax)-2-1.5-1-0.500-0.7-1-1.3log(α/αmax)-2-1.5-1-0.500-0.7-1-1.30.80.91Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+(a) β/βmax=0.05
+
+(b) β/βmax=0.1
+
+(c) β/βmax=0.5
+
+(d) β/βmax=0.9
+
+(e) β/βmax=0.05
+
+(f) β/βmax=0.1
+
+(g) β/βmax=0.5
+
+(h) β/βmax=0.9
+
+Figure 2. Rejection ratios of SIFS on syn 2 (ﬁrst row: Feature Screening, second row: Sample Screening).
+
+Table 1. Running time (in seconds) for solving problem (P∗) at 1000 pairs of parameter values on three synthetic datasets.
+
+Data
+
+syn1
+syn2
+syn3
+
+Solver
+
+499.1
+8749.9
+1279.7
+
+ISS
+4.9
+24.9
+2.0
+
+ISS+Solver
+Solver
+27.8
+1496.6
+257.1
+
+Speedup
+15.3
+5.8
+4.9
+
+IFS+Solver
+Solver
+42.6
+288.1
+33.4
+
+Speedup
+11.1
+28.1
+36.0
+
+SIFS+Solver
+
+SIFS
+8.6
+92.6
+7.2
+
+Solver
+6.0
+70.3
+9.5
+
+Speedup
+34.2
+53.7
+76.8
+
+IFS
+2.3
+23.0
+2.2
+
+ing ratios roughly 99.9%. This high scaling ratios imply
+that SIFS can lead to a signiﬁcant speedup.
+
+Due to the space limitation, we only report the rejection
+ratios of SIFS on syn2. Other results can be found in the
+supplementary material. Fig. 2 shows that SIFS can identi-
+fy most of the inactive features and samples. However, few
+features and samples are identiﬁed in the second and later
+triggerings of ISS and IFS. The reason may be that the task
+here is so simple that one triggering is enough.
+
+Table 1 reports the running time of solver without and with
+IFS, ISS and SIFS for solving problem (P∗) at 1000 pairs of
+parameter values. We can see that SIFS leads to signiﬁcant
+speedups, that is, up to 76.8 times. Taking syn2 for exam-
+ple, without SIFS, the solver takes more than two hours to
+solve problem (P∗) at 1000 pairs of parameter values. How-
+ever, combined with SIFS, the solver only needs less than
+three minutes for solving the same set of problems. From
+the theoretical analysis in (Shalev-Shwartz & Zhang, 2016)
+for Accelerated-Prox-SDCA, we can see that its computa-
+tional complexity rises proportionately to the sample size
+n and the feature dimension p. From this theoretical result,
+we can see that the results in Figure 1 are roughly consis-
+tent with the speedups we achieved shown in Table 1.
+
+5.2. Experiments on Real Datasets
+
+In this experiment, we evaluate the performance of SIFS
+on 5 large-scale real datasets: real-sim, rcv1-train, rcv1-
+
+test, url, and kddb, which are all collected from the project
+page of LibSVM (Chang & Lin, 2011). See Table 2 for a
+brief summary. We note that, the kddb dataset has about 20
+million samples with 30 million features.
+
+Table 2. Statistics of the real datasets.
+
+Dataset
+real-sim
+rcv1-train
+rcv1-test
+url
+kddb
+
+Feature size: p
+20,958
+47,236
+47,236
+3,231,961
+29,890,095
+
+Sample size:n
+72,309
+20,242
+677, 399
+2,396,130
+19,264,097
+
+Recall that, SIFS detects the inactive features and sam-
+ples in a static manner, i.e., we perform SIFS only once
+before the optimization and thus the size of the problem
+we need to perform optimization on is ﬁxed. However, the
+method in (Shibagaki et al., 2016) detects inactive features
+and samples in a dynamic manner (Bonnefoy et al., 2014),
+i.e., they perform their method along with the optimization
+and thus the size of the problem would keep decreasing
+during the iterative process. Thus, comparing SIFS with
+the method in (Shibagaki et al., 2016) in terms of rejec-
+tion ratios is inapplicable. We compare the performance of
+SIFS with the method in (Shibagaki et al., 2016) in terms of
+speedup. Speciﬁcally, we compare the speedup gained by
+SIFS and the method in (Shibagaki et al., 2016) for solving
+problem (P∗) at 1000 pairs of parameter values. The code
+of the method in (Shibagaki et al., 2016) is obtained from
+(https://github.com/husk214/s3fs).
+
+α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+(a) β/βmax=0.05
+
+(b) β/βmax=0.1
+
+(c) β/βmax=0.5
+
+(d) β/βmax=0.9
+
+(e) β/βmax=0.05
+
+(f) β/βmax=0.1
+
+(g) β/βmax=0.5
+
+(h) β/βmax=0.9
+
+Figure 3. Rejection ratios of SIFS on the real-sim dataset (ﬁrst row: Feature Screening, second row: Sample Screening).
+
+Table 3. Running time (in seconds) for solving problem (P∗) at 1000 pairs of parameter values on ﬁve real datasets.
+
+Data
+Set
+real-sim
+rcv1-train
+rcv1-test
+url
+kddb
+
+Solver
+
+3.93E+04
+2.98E+04
+1.10E+06
+—
+—
+
+Method in (Shibagaki et al., 2016)+Solver
+
+Screen
+24.10
+10.00
+398.00
+3.18E+04
+4.31E+04
+
+Solver
+4.94E+03
+3.73E+03
+1.35E+05
+8.60E+05
+1.16E+06
+
+Speedup
+7.91
+7.90
+8.10
+—
+—
+
+Screen
+60.01
+27.11
+1.17E+03
+7.66E+03
+1.10E+04
+
+SIFS+Solver
+Solver
+140.25
+80.11
+2.55E+03
+2.91E+04
+3.6E+04
+
+Speedup
+195.00
+277.10
+295.11
+—
+—
+
+Fig. 3 shows the rejection ratios of SIFS on the real-sim
+dataset (other results are in the supplementary material). In
+Fig. 3, we can see that some inactive features and samples
+are identiﬁed in the 2nd and 3rd triggering of ISS and IFS,
+which veriﬁes the necessity of the alternating application
+of ISS and IFS. SIFS is efﬁcient since it always stops in 3
+times of triggering. In addition, most of (> 98%) the in-
+active features can be identiﬁed in the 1st triggering of IFS
+while identifying inactive samples needs to apply ISS two
+or more times. It may result from two reasons: 1) We run
+ISS ﬁrst, which reinforces the capability of IFS due to the
+synergy effect (see Sections 4.1 and 4.2), see Section L.1 in
+the supplementary material for further veriﬁcation; 2) Fea-
+ture screening here may be easier than sample screening.
+
+Table 3 reports the running time of solver without and with
+the method in (Shibagaki et al., 2016) and SIFS for solv-
+ing problem (P∗) at 1000 pairs of parameter values on real
+datasets. The speedup gained by SIFS is up to 300 times on
+real-sim, rcv1-train and rcv1-test. Moreover, SIFS signif-
+icantly outperforms the method in (Shibagaki et al., 2016)
+in terms of speedup—by about 30 to 40 times faster on the
+aforementioned three datasets. For datasets url and kddb,
+we do not report the results of the solver as the sizes of the
+datasets are huge and the computational cost is prohibitive.
+Instead, we can see that the solver with SIFS is about 25
+
+times faster than the solver with the method in (Shibagaki
+et al., 2016) on both datasets url and kddb. Take the dataset
+kddb as an example. The solver with SIFS takes about 13
+hours to solve problem (P∗) for all 1000 pairs of parame-
+ter values, while the solver with the method in (Shibagaki
+et al., 2016) needs 11 days to ﬁnish the same task.
+
+6. Conclusion
+
+In this paper, we develop a novel data reduction method
+SIFS to simultaneously identify inactive features and sam-
+ples for sparse SVM. Our major contribution is a novel
+framework for an accurate estimation of the primal and d-
+ual optima based on strong convexity. To the best of our
+knowledge, the proposed SIFS is the ﬁrst static screening
+method that is able to simultaneously identify inactive fea-
+tures and samples for sparse SVMs. An appealing feature
+of SIFS is that all detected features and samples are guaran-
+teed to be irrelevant to the outputs. Thus, the model learned
+on the reduced data is identical to the one learned on the
+full data. Experiments on both synthetic and real datasets
+demonstrate that SIFS can dramatically reduce the problem
+size and the resulting speedup can be orders of magnitude.
+We plan to generalize SIFS to more complicated models,
+e.g., SVM with a structured sparsity-inducing penalty.
+
+α/αmax0.010.030.10.41Rejection Ratio0.9850.990.9951Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio00.51Trigger 1Trigger 2Trigger 3α/αmax0.010.030.10.41Rejection Ratio0.9850.990.9951Trigger 1Trigger 2Trigger 3Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+Acknowledgements
+
+This work was supported by the National Basic Re-
+search Program of China (973 Program) under Grant
+2013CB336500, National Natural Science Foundation of
+China under Grant 61233011 and National Youth Top-
+notch Talent Support Program.
+
+References
+
+Bi, Jinbo, Bennett, Kristin, Embrechts, Mark, Breneman,
+Curt, and Song, Minghu. Dimensionality reduction via
+sparse support vector machines. The Journal of Machine
+Learning Research, 3:1229–1243, 2003.
+
+Bonnefoy, Antoine, Emiya, Valentin, Ralaivola, Liva, and
+Gribonval, R´emi. A dynamic screening principle for
+In Signal Processing Conference (EUSIP-
+the lasso.
+CO), 2014 Proceedings of the 22nd European, pp. 6–10.
+IEEE, 2014.
+
+Catanzaro, Bryan, Sundaram, Narayanan, and Keutzer,
+Kurt. Fast support vector machine training and classi-
+In Proceedings of the
+ﬁcation on graphics processors.
+25th international conference on Machine learning, pp.
+104–111. ACM, 2008.
+
+Chang, Chih-Chung and Lin, Chih-Jen. Libsvm: a library
+for support vector machines. ACM Transactions on In-
+telligent Systems and Technology (TIST), 2(3):27, 2011.
+
+El Ghaoui, Laurent, Viallon, Vivian, and Rabbani, Tarek.
+Safe feature elimination in sparse supervised learning.
+Paciﬁc Journal of Optimization, 8:667–698, 2012.
+
+Kotsia, Irene and Pitas, Ioannis. Facial expression recog-
+nition in image sequences using geometric deformation
+features and support vector machines. Image Processing,
+IEEE Transactions on, 16(1):172–187, 2007.
+
+Mohr, Johannes and Obermayer, Klaus. A topographic sup-
+port vector machine: Classiﬁcation using local label con-
+ﬁgurations. In Advances in Neural Information Process-
+ing Systems, pp. 929–936, 2004.
+
+Narasimhan, Harikrishna and Agarwal, Shivani. Svm pauc
+tight: a new support vector method for optimizing partial
+auc based on a tight convex upper bound. In Proceed-
+ings of the 19th ACM SIGKDD international conference
+on Knowledge discovery and data mining, pp. 167–175.
+ACM, 2013.
+
+Ndiaye, Eugene, Fercoq, Olivier, Gramfort, Alexandre, and
+Salmon, Joseph. Gap safe screening rules for sparse-
+group lasso.
+In Lee, D. D., Sugiyama, M., Luxburg,
+U. V., Guyon, I., and Garnett, R. (eds.), Advances in
+Neural Information Processing Systems 29, pp. 388–
+396. Curran Associates, Inc., 2016.
+
+Ogawa, Kohei, Suzuki, Yoshiki, and Takeuchi, Ichiro. Safe
+screening of non-support vectors in pathwise svm com-
+putation. In Proceedings of the 30th International Con-
+ference on Machine Learning, pp. 1382–1390, 2013.
+
+Shalev-Shwartz, Shai and Zhang, Tong. Accelerated proxi-
+mal stochastic dual coordinate ascent for regularized loss
+minimization. Mathematical Programming, 155(1-2):
+105–145, 2016.
+
+Fan, Rong-En, Chang, Kai-Wei, Hsieh, Cho-Jui, Wang,
+Xiang-Rui, and Lin, Chih-Jen. Liblinear: A library
+for large linear classiﬁcation. The Journal of Machine
+Learning Research, 9:1871–1874, 2008.
+
+Shalev-Shwartz, Shai, Singer, Yoram, Srebro, Nathan, and
+Cotter, Andrew. Pegasos: Primal estimated sub-gradient
+solver for svm. Mathematical programming, 127(1):3–
+30, 2011.
+
+Hastie, Trevor, Rosset, Saharon, Tibshirani, Robert, and
+Zhu, Ji. The entire regularization path for the support
+vector machine. The Journal of Machine Learning Re-
+search, 5:1391–1415, 2004.
+
+Hastie, Trevor, Tibshirani, Robert, and Wainwright, Mar-
+tin. Statistical learning with sparsity: the lasso and gen-
+eralizations. CRC Press, 2015.
+
+Hsieh, Cho-Jui, Chang, Kai-Wei, Lin, Chih-Jen, Keerthi,
+S Sathiya, and Sundararajan, Sellamanickam. A dual
+coordinate descent method for large-scale linear svm. In
+Proceedings of the 25th international conference on Ma-
+chine learning, pp. 408–415. ACM, 2008.
+
+Joachims, Thorsten. Text categorization with support vec-
+tor machines: Learning with many relevant features.
+Springer, 1998.
+
+Shibagaki, Atsushi, Karasuyama, Masayuki, Hatano, Ko-
+hei, and Takeuchi, Ichiro. Simultaneous safe screening
+of features and samples in doubly sparse modeling. In
+Proceedings of The 33rd International Conference on
+Machine Learning, 2016.
+
+Tibshirani, Robert, Bien, Jacob, Friedman, Jerome, Hastie,
+Trevor, Simon, Noah, Taylor, Jonathan, and Tibshirani,
+Ryan J. Strong rules for discarding predictors in lasso-
+type problems. Journal of the Royal Statistical Soci-
+ety: Series B (Statistical Methodology), 74(2):245–266,
+2012.
+
+Wang, Jie, Zhou, Jiayu, Wonka, Peter, and Ye, Jieping. Las-
+so screening rules via dual polytope projection. In Ad-
+vances in Neural Information Processing Systems, pp.
+1070–1078, 2013.
+
+Scaling Up Sparse Support Vector Machines by Simultaneous Feature and Sample Reduction
+
+Wang, Jie, Zhou, Jiayu, Liu, Jun, Wonka, Peter, and Ye,
+Jieping. A safe screening rule for sparse logistic regres-
+sion. In Advances in Neural Information Processing Sys-
+tems, pp. 1053–1061, 2014.
+
+Wang, Li, Zhu, Ji, and Zou, Hui. The doubly regularized
+support vector machine. Statistica Sinica, pp. 589–615,
+2006.
+
+Xiang, Zhen James and Ramadge, Peter J. Fast lasso
+In Acoustics,
+screening tests based on correlations.
+Speech and Signal Processing (ICASSP), 2012 IEEE In-
+ternational Conference on, pp. 2137–2140. IEEE, 2012.
+
+Yoshikawa, Yuya, Iwata, Tomoharu, and Sawada, Hiroshi.
+Latent support measure machines for bag-of-words data
+classiﬁcation. In Advances in Neural Information Pro-
+cessing Systems, pp. 1961–1969, 2014.
+
+

@@ -1,0 +1,4433 @@
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+Hongseok Namkoong 1 Aman Sinha 2 Steve Yadlowsky 2 John C. Duchi 2 3
+
+Abstract
+Standard forms of coordinate and stochastic gra-
+dient methods do not adapt to structure in data;
+their good behavior under random sampling is
+predicated on uniformity in data. When gradi-
+ents in certain blocks of features (for coordinate
+descent) or examples (for SGD) are larger than
+others, there is a natural structure that can be ex-
+ploited for quicker convergence. Yet adaptive
+variants often suffer nontrivial computational
+overhead. We present a framework that discov-
+ers and leverages such structural properties at a
+low computational cost. We employ a bandit op-
+timization procedure that “learns” probabilities
+for sampling coordinates or examples in (non-
+smooth) optimization problems, allowing us to
+guarantee performance close to that of the opti-
+mal stationary sampling distribution. When such
+structures exist, our algorithms achieve tighter
+convergence guarantees than their non-adaptive
+counterparts, and we complement our analysis
+with experiments on several datasets.
+
+1. Introduction
+
+Identifying and adapting to structural aspects of problem
+data can often improve performance of optimization algo-
+rithms. In this paper, we study two forms of such structure:
+variance in the relative importance of different features and
+observations (as well as blocks thereof). As a motivating
+concrete example, consider the (cid:96)p regression problem
+(cid:41)
+
+(cid:40)
+
+minimize
+x
+
+f (x) := (cid:107)Ax − b(cid:107)p
+
+p =
+
+|aT
+
+i x − bi|p
+
+,
+
+(1)
+
+n
+(cid:88)
+
+i=1
+
+where ai denote the rows of A ∈ Rn×d. When the columns
+(features) of A have highly varying norms—say because
+
+1Management Science & Engineering, Stanford Univer-
+sity, USA 2Electrical Engineering, Stanford University, USA
+3Statistics, Stanford University, USA. Correspondence to:
+Hongseok Namkoong <hnamk@stanford.edu>, Aman Sinha
+<amans@stanford.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+certain features are infrequent—we wish to leverage this
+during optimization. Likewise, when rows ai have dis-
+parate norms, “heavy” rows of A inﬂuence the objective
+more than others. We develop optimization algorithms that
+automatically adapt to such irregularities for general non-
+smooth convex optimization problems.
+
+Standard (stochastic) subgradient methods (Nemirovski
+et al., 2009), as well as more recent accelerated variants for
+smooth, strongly convex incremental optimization prob-
+lems (e.g. Johnson and Zhang, 2013; Defazio et al., 2014),
+follow deterministic or random procedures that choose data
+to use to compute updates in ways that are oblivious to con-
+ditioning and structure. As our experiments demonstrate,
+choosing blocks of features or observations—for instance,
+all examples belonging to a particular class in classiﬁca-
+tion problems—can be advantageous. Adapting to such
+structure can lead to substantial gains, and we propose
+a method that adaptively updates the sampling probabil-
+ities from which it draws blocks of features/observations
+(columns/rows in problem (1)) as it performs subgradient
+updates. Our method applies to both coordinate descent
+(feature/column sampling) and mirror descent (observa-
+tion/row sampling). Heuristically, our algorithm learns to
+sample informative features/observations using their gradi-
+ent values and requires overhead only logarithmic in the
+number of blocks over which it samples. We show that
+our method optimizes a particular bound on convergence,
+roughly sampling from the optimal stationary probability
+distribution in hindsight, and leading to substantial im-
+provements when the data has pronounced irregularity.
+
+When the objective f (·) is smooth and the desired solu-
+tion accuracy is reasonably low, (block) coordinate descent
+methods are attractive because of their tractability (Nes-
+terov, 2012; Necoara et al., 2011; Beck and Tetruashvili,
+2013; Lee and Sidford, 2013; Richt´arik and Tak´aˇc, 2014;
+Lu and Xiao, 2015). In this paper, we consider potentially
+non-smooth functions and present an adaptive block co-
+ordinate descent method, which iterates over b blocks of
+coordinates, reminiscent of AdaGrad (Duchi et al., 2011).
+Choosing a good sampling distribution for coordinates
+in coordinate descent procedures is nontrivial (Lee and
+Sidford, 2013; Necoara et al., 2011; Shalev-Shwartz and
+Zhang, 2012; Richt´arik and Tak´aˇc, 2015; Csiba et al., 2015;
+Allen-Zhu and Yuan, 2015). Most work focuses on choos-
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+ing a good stationary distribution using problem-speciﬁc
+knowledge, which may not be feasible; this motivates auto-
+matically adapting to individual problem instances. For ex-
+ample, Csiba et al. (2015) provide an updating scheme for
+the probabilities in stochastic dual ascent. However, the up-
+date requires O(b) time per iteration, making it impractical
+for large-scale problems. Similarly, Nutini et al. (2015) ob-
+serve that the Gauss-Southwell rule (choosing the coordi-
+nate with maximum gradient value) achieves better perfor-
+mance, but this also requires O(b) time per iteration. Our
+method roughly emulates this behavior via careful adaptive
+sampling and bandit optimization, and we are able to pro-
+vide a number of a posteriori optimality guarantees.
+
+In addition to coordinate descent methods, we also consider
+the ﬁnite-sum minimization problem
+
+minimize
+x∈X
+
+1
+n
+
+n
+(cid:88)
+
+i=1
+
+fi(x),
+
+where the fi are convex and may be non-smooth. Variance-
+reduction techniques for ﬁnite-sum problems often yield
+substantial gains (Johnson and Zhang, 2013; Defazio et al.,
+2014), but
+they generally require smoothness. More
+broadly, importance sampling estimates (Strohmer and Ver-
+shynin, 2009; Needell et al., 2014; Zhao and Zhang, 2014;
+2015; Csiba and Richt´arik, 2016) can yield improved con-
+vergence, but the only work that allows online, problem-
+speciﬁc adaptation of sampling probabilities of which we
+are aware is Gopal (2016). However, these updates require
+O(b) computation and do not have optimality guarantees.
+
+We develop these ideas in the coming sections, focusing
+ﬁrst in Section 2 on adaptive procedures for (non-smooth)
+coordinate descent methods and developing the necessary
+bandit optimization and adaptivity machinery. In Section 3,
+we translate our development into convergence results for
+ﬁnite-sum convex optimization problems. Complementing
+our theoretical results, we provide a number of experiments
+in Section 4 that show the importance of our algorithmic
+development and the advantages of exploiting block struc-
+tures in problem data.
+
+end, we develop an adaptive procedure that exploits vari-
+ability in block “importance” online. In the coming sec-
+tions, we show that we obtain certain near-optimal guar-
+antees, and that the computational overhead over a simple
+random choice of block j ∈ [b] is at most O(log b).
+In
+addition, under some natural structural assumptions on the
+blocks and problem data, we show how our adaptive sam-
+pling scheme provides convergence guarantees polynomi-
+ally better in the dimension than those of naive uniform
+sampling or gradient descent.
+
+Notation for coordinate descent Without loss of gen-
+rality we assume that the ﬁrst d1 coordinates of x ∈ Rd
+correspond to X1, the second d2 to X2, and so on. We let
+Uj ∈ {0, 1}d×dj be the matrix identifying the jth block, so
+that Id = [U1 · · · Ud]. We deﬁne the projected subgradient
+vectors for each block j by
+
+Gj(x) = UjU (cid:62)
+
+j f (cid:48)(x) ∈ Rd,
+
+where f (cid:48)(x) ∈ ∂f (x) is a ﬁxed element of the subdiffer-
+j x ∈ Rdj and G[j](x) =
+ential ∂f (x). Deﬁne x[j] := U (cid:62)
+j f (cid:48)(x) ∈ Rdj . Let ψj denote a differen-
+U (cid:62)
+tiable 1-strongly convex function on Xj with respect to the
+norm (cid:107)·(cid:107)j, meaning for all ∆ ∈ Rdj we have
+
+j Gj(x) = U (cid:62)
+
+ψj
+
+(cid:0)x[j] + ∆(cid:1) ≥ ψj
+
+(cid:0)x[j]
+
+(cid:1) + ∇ψj(x[j])(cid:62)∆ +
+
+1
+2
+
+(cid:107)∆(cid:107)2
+j ,
+
+and let (cid:107)·(cid:107)j,∗ be the dual norm of (cid:107)·(cid:107)j. Let Bj(u, v) =
+ψj(u) − ψj(v) − ∇ψj(v)(cid:62)(u − v) be the Bregman diver-
+gence associated with ψj, and deﬁne the tensorized diver-
+gence B(x, y) := (cid:80)b
+j=1 Bj(x[j], y[j]). Throughout the pa-
+per, we assume the following.
+Assumption 1. For all x, y ∈ X , we have B(x, y) ≤ R2
+(cid:13)G[j](x)(cid:13)
+and (cid:13)
+2
+j,∗ ≤ L2/b for j = 1, . . . , b.
+(cid:13)
+
+2.1. Coordinate descent for non-smooth functions
+
+The starting point of our analysis is the simple observation
+that if a coordinate J ∈ [b] is chosen according to a proba-
+bility vector p > 0, then the importance sampling estimator
+
+2. Adaptive sampling for coordinate descent
+
+GJ (x)/pJ satisﬁes Ep[GJ (x)/pJ ] = f (cid:48)(x) ∈ ∂f (x).
+
+We begin with the convex optimization problem
+
+minimize
+x∈X
+
+f (x)
+
+(2)
+
+where X = X1 × · · · × Xb ⊂ Rd is a Cartesian product
+of closed convex sets Xj ⊂ Rdj with (cid:80)
+j dj = d, and
+f is convex and Lipschitz. When there is a natural block
+structure in the problem, some blocks have larger gradi-
+ent norms than others, and we wish to sample these blocks
+more often in the coordinate descent algorithm. To that
+
+Thus the randomized coordinate subgradient method
+of Algorithm 1 is essentially a stochastic mirror de-
+scent method (Nemirovski and Yudin, 1983; Beck and
+Teboulle, 2003; Nemirovski et al., 2009), and as long
+as supx∈X
+∗] < ∞ it converges at rate
+√
+O(1/
+T ). With this insight, a variant of standard stochas-
+tic mirror descent analysis yields the following conver-
+gence guarantee for Algorithm 1 with non-stationary prob-
+abilities (cf. Dang and Lan (2015), who do not quite as
+carefully track dependence on the sampling distribution
+
+J GJ (x)(cid:107)2
+
+E[(cid:107)p−1
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+Algorithm 1 Non-smooth Coordinate Descent
+
+Algorithm 2 Stepsize Doubling Coordinate Descent
+
+Input: Stepsize αx > 0, Probabilities p1, . . . , pT .
+Initialize: x1 = x
+for t ← 1, . . . , T
+Sample Jt ∼ pt
+Update x:
+
+xt+1
+[Jt] ← argminx∈XJt
+(cid:80)T
+
+return ¯xT ← 1
+T
+
+t=1 xt
+
+(cid:40)(cid:42)
+
+(cid:43)
+
+G[Jt] (xt)
+pt
+Jt
+
+, x
+
++ 1
+αx
+
+BJt
+
+x, xt
+
+[Jt]
+
+(cid:16)
+
+(cid:41)
+
+(cid:17)
+
+(cid:13)G[Jl](xl)(cid:13)
+2
+Jl,∗ ≤ 4k, t ≤ T do
+(cid:13)
+
+Initialize: x1 = x, p1 = p, k = 1
+while t ≤ T do
+while (cid:80)t
+
+l=1(pl
+Jl
+
+)−2 (cid:13)
+Run inner loop of Algorithm 1 with
+4k + L2
+bp2
+
+(cid:17)− 1
+2
+
+2R
+
+√
+
+(cid:16)
+
+min
+
+αx,k =
+t ← t + 1
+
+k ← k + 1
+return ¯xT ← 1
+T
+
+(cid:80)T
+
+t=1 xt
+
+p). Throughout, we deﬁne the expected sub-optimality gap
+of an algorithm outputing an estimate (cid:98)x by S(f, (cid:98)x) :=
+E[f ((cid:98)x)] − inf x∗∈X f (x∗). See Section A.1 for the proof.
+Proposition 1. Under Assumption 1, Algorithm 1 achieves
+
+S(f, xT ) ≤
+
+R2
+αxT
+
++
+
+αx
+2T
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+
+
+ . (3)
+
+where S(f, ¯xT ) = E[f (¯xT )] − inf x∈X f (x).
+
+T pmin
+
+(cid:113) 2
+
+(cid:113) 2pmin
+
+T , then S(f, ¯xT ) ≤ RL
+
+As an immediate consequence, if pt ≥ pmin > 0 and αx =
+R
+. To make this
+L
+more concrete, we consider sampling from the uniform dis-
+1 so that pmin = 1/b, and assume homo-
+tribution pt ≡ 1
+b
+geneous block sizes dj = d/b for simplicity. Algorithm 1
+solves problem (2) to (cid:15)-accuracy within O(bR2L2/(cid:15)2) it-
+erations, where each iteration approximately costs O(d/b)
+plus the cost of projecting into Xj. In contrast, mirror de-
+scent with the same constraints and divergence B achieves
+the same accuracy within O(R2L2/(cid:15)2) iterations, taking
+O(d) time plus the cost of projecting to X per iteration. As
+the projection costs are linear in the number b of blocks, the
+two algorithms are comparable.
+
+In practice, coordinate descent procedures can signiﬁcantly
+outperform full gradient updates through efﬁcient memory
+usage. For huge problems, coordinate descent methods can
+leverage data locality by choosing appropriate block sizes
+so that each gradient block ﬁts in local memory.
+
+2.2. Optimal stepsizes by doubling
+
+j,∗
+
+t=1
+
+j=1
+
+E(cid:2) (cid:80)b
+
+(cid:107)G[j](xt)(cid:107)2
+pt
+j
+
+In the the upper bound (3), we wish to choose the optimal
+stepsize αx that minimizes this bound. However, the term
+(cid:3) is unknown a priori. We cir-
+(cid:80)T
+cumvent this issue by using the doubling trick (e.g. Shalev-
+Shwartz, 2012, Section 2.3.1) to achieve the best possible
+rate in hindsight. To simplify our analysis, we assume that
+there is some pmin > 0 such that
+pt ∈ ∆b := (cid:8)p ∈ Rb
+
++ : p(cid:62)1 = 1, p ≥ pmin
+
+(cid:9) .
+
+Maintaining the running sum (cid:80)t
+
+l=1 p−2
+l,Jl
+
+(cid:13)G[Jl](xl)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jl,∗
+
+requires incremental time O(dJt ) at each iteration t, choos-
+ing the stepsizes adaptively via Algorithm 2 only requires
+a constant factor of extra computation over using a ﬁxed
+step size. The below result shows that the doubling trick in
+Algorithm 2 acheives (up to log factors) the performance
+of the optimal stepsize that minimizes the regret bound (3).
+
+Proposition 2. Under Assumption 1, Algorithm 2 achieves
+
+S(f, ¯xT ) ≤ 6
+
+
+
+
+
+R
+T
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+
+
+
+
+1
+2
+
+
+
+
+
+(cid:114) 2
+b
+
++
+
+RL
+pminT log 4
+
+log
+
+(cid:19)
+
+(cid:18) 4bT L2
+pmin
+
+where S(f, ¯xT ) = E[f (¯xT )] − inf x∈X f (x).
+
+2.3. Adaptive probabilities
+
+We now present an adaptive updating scheme for pt, the
+sampling probabilities. From Proposition 2, the stationary
+distribution achieving the smallest regret upper bound min-
+imizes the criterion
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+pj
+
+
+
+ =
+
+T
+(cid:88)
+
+E
+
+t=1
+
+
+
+
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+p2
+Jt
+
+
+
+ ,
+
+where the equality follows from the tower property. Since
+xt depends on the pt, we view this as an online convex
+optimization problem and choose p1, . . . , pT to minimize
+the regret
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+max
+p∈∆b
+
+(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+j,∗
+
+(cid:32)
+
+1
+pt
+j
+
+−
+
+1
+pj
+
+(cid:33)
+ .
+
+(4)
+
+Note that due to the block coordinate nature of Algorithm 1,
+we only compute (cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+j,∗ for the sampled j = Jt at
+(cid:13)
+each iteration. Hence, we treat this as a multi-armed bandit
+problem where the arms are the blocks j = 1, . . . , b and
+we only observe the loss (cid:13)
+)2 associated
+with the arm Jt pulled at time t.
+
+(cid:13)G[j](xt)(cid:13)
+2
+j,∗ /(pt
+(cid:13)
+Jt
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+Algorithm 3 Coordinate Descent with Adaptive Sampling
+
+Input: Stepsize αp > 0, Threshold pmin > 0 with
+
+P = {p ∈ Rb
+Initialize: x1 = x, p1 = p
+for t ← 1, . . . , T
+
++ : p(cid:62)1 = 1, p ≥ pmin}
+
+Sample Jt ∼ pt
+Choose αx,k according to Algorithm 2
+Update x:
+
+xt+1
+[Jt] ← argminx∈XJt
+
+(cid:40)(cid:42)
+
+G[Jt] (xt)
+pt
+Jt
+
+(cid:43)
+
+, x
+
+(cid:16)
+
++ 1
+
+αx,k
+
+B
+
+x, xt
+
+[Jt]
+
+(cid:41)
+
+(cid:17)
+
+Update p: for (cid:98)(cid:96)t,j(x) deﬁned in (5),
+wt+1 ← pt exp(−(αp(cid:98)(cid:96)t,Jt(xt)/pt
+Jt
+(cid:0)q||wt+1(cid:1)
+pt+1 ← argminq∈P Dkl
+
+)eJt),
+
+return ¯xT ← 1
+T
+
+(cid:80)T
+
+t=1 xt
+
+By using a bandit algorithm—another coordinate descent
+method— to update p, we show that our updates achieve
+performance comparable to the best stationary probability
+in ∆b in hindsight. To this end, we ﬁrst bound the regret (4)
+by the regret of a linear bandit problem. By convexity of
+x (cid:55)→ 1/x and d
+
+dx x−1 = −x−2, we have
+
+T
+(cid:88)
+
+E
+
+t=1
+
+
+
+
+
+b
+(cid:88)
+
+j=1
+
+
+T
+(cid:88)
+
+E
+
+≤
+
+t=1
+
+(cid:42)
+
+
+
+
+
+
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+
+(cid:32)
+
+1
+pt
+j
+
+−
+
+1
+pj
+
+(cid:33)
+
+
+−
+
+(cid:124)
+
+(cid:110)(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+j,∗ /(pt
+(cid:13)
+(cid:123)(cid:122)
+(∗)
+
+j)2(cid:111)b
+
+j=1
+(cid:125)
+
+, pt − p
+
+(cid:43)
+
+
+
+
+
+
+
+
+.
+
+Now, let us view the vector (∗) as the loss vector for a con-
+strained linear bandit problem with feasibility region ∆b.
+We wish to apply EXP3 (due to Auer et al. (2002)) or equiv-
+alently, a 1-sparse mirror descent to p with ψP (p) = p log p
+(see, for example, Section 5.3 of Bubeck and Cesa-Bianchi
+(2012) for the connections). However, EXP3 requires the
+loss values be positive in order to be in the region where
+ψP is strongly convex, so we scale our problem using the
+fact that p and pt’s are probability vectors. Namely,
+
+T
+(cid:88)
+
+E
+
+(cid:20)(cid:28)
+
+t=1
+
+(cid:110)(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+
+−
+
+/(pt
+
+j)2(cid:111)b
+
+j,∗
+
+j=1
+
+(cid:29)(cid:21)
+
+, pt − p
+
+T
+(cid:88)
+
+(cid:104)(cid:68)
+
+E
+
+=
+
+(cid:98)(cid:96)t(xt), pt − p
+
+(cid:69)(cid:105)
+
+,
+
+t=1
+
+where
+
+(cid:98)(cid:96)t,j(x) := −
+
+(cid:13)G[j](x)(cid:13)
+(cid:13)
+(cid:13)
+(pt
+j)2
+
+2
+j,∗
+
++
+
+L2
+bp2
+
+min
+
+.
+
+scaling (5) ensures that we penalize blocks with low sig-
+nal (as opposed to rewarding those with high signal) which
+enforces diversity in the sampled coordinates as well. In
+Section A.3, we will see how this scaling plays a key role
+in proving optimality of Algorithm 3. Here, the signal is
+measured by the relative size of the gradient in the block
+against the probability of sampling the block. This means
+that blocks with large “surprises”—those with higher gra-
+dient norms relative to their sampling probability—will get
+sampled more frequently in the subsequent iterations. Al-
+gorithm 3 guarantees low regret for the online convex op-
+timization problem (4) which in turn yields the following
+guarantee for Algorithm 3.
+
+Theorem 3. Under Assumption 1, the adaptive updates in
+Algorithm 3 with αp = p2
+
+achieve
+
+(cid:113) 2b log b
+T
+
+min
+L2
+
+S(f, ¯xT ) ≤
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:117)
+(cid:116) min
+p∈∆b
+
+6R
+T
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+(cid:107)G[j](xt)(cid:107)2
+j,∗
+pj
+
+(6)
+
+(cid:124)
+
+t=1
+
+j=1
+(cid:123)(cid:122)
+(a):best in hindsight
+
+
+
+
+
+(cid:125)
+
++
+
+4
+
+(cid:19) 1
+
+(cid:18) T log b
+b
+
+8LR
+T pmin
+(cid:124)
+(cid:125)
+(cid:123)(cid:122)
+(b):regret for bandit problem
+
++
+
+√
+
+2RL
+bT pmin
+
+log
+
+(cid:18) 4bT L2
+pmin
+
+(cid:19)
+
+.
+
+where S(f, ¯xT ) = E[f (¯xT )] − inf x∈X f (x).
+
+See Section A.3 for the proof. Note that there is a trade-off
+in the regret bound (6) in terms of pmin: for small pmin,
+the ﬁrst term is small, as the the set ∆b is large, but sec-
+ond (regret) term is large, and vice versa. To interpret the
+bound (6), take pmin = δ/b for some δ ∈ (0, 1). The ﬁrst
+term dominates the remainder as long as T = Ω(b log b);
+we require T (cid:16) (bR2L2/(cid:15)2) to guarantee convergence of
+coordinate descent in Proposition 1, so that we roughly ex-
+pect the ﬁrst term in the bound (6) to dominate. Thus, Al-
+gorithm 3 attains the best convergence guarantee for the
+optimal stationary sampling distribution in hindsight.
+
+2.4. Efﬁcient updates for p
+
+The updates for p in Algorithm 3 can be done in O(log b)
+time by using a balanced binary tree. Let Dkl (p||q) :=
+(cid:80)d
+i=1 pi log pi
+denote the Kullback-Leibler divergence be-
+qi
+tween p and q.
+Ignoring the subscript on t so that w =
+wt+1, p = pt and J = Jt, the new probability vector q is
+given by the minimizer of
+
+(5)
+
+Dkl (q||w) s.t. q(cid:62)1 = 1, q ≥ pmin,
+
+(7)
+
+Using scaled loss values, we perform EXP3 (Algorithm
+3).
+Intuitively, we penalize the probability of the sam-
+pled block by the strength of the signal on the block. The
+
+where w is the previous probability vector p modiﬁed only
+at the index J. We store w in a binary tree, keeping val-
+ues up to their normalization factor. At each node, we
+also store the sum of elements in the left/right subtree for
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+Algorithm 4 KL Projection
+1: Input: J, pJ , wJ , mass = (cid:80)
+2: wcand ← pJ · mass.
+3: if wcand/(mass −wJ + wcand) ≤ pmin then
+wcand ← pmin
+4:
+1−pmin
+5: Update(wcand, J)
+
+(mass −wJ )
+
+i wi
+
+efﬁcient sampling (for completeness, the pseudo-code for
+sampling from the binary tree in O(log b) time is given in
+Section B.3). The total mass of the tree can be accessed by
+inspecting the root of the tree alone.
+
+The following proposition shows that it sufﬁces to touch at
+most one element in the tree to do the update. See Section B
+for the proof.
+
+Proposition 4. The solution to (7) is given by
+
+(cid:40)
+
+(cid:40)
+
+qj(cid:54)=J =
+
+wj
+
+1
+1−pJ +wJ
+1−pmin
+wj
+1−pJ
+
+if wJ ≥ pmin(1−pJ )
+otherwise
+
+1−pmin
+
+,
+
+qJ =
+
+1
+1−pJ +wJ
+pmin
+
+w if wJ ≥ pmin(1−pJ )
+
+1−pmin
+
+otherwise.
+
+As seen in Algorithm 4, we need to modify at most one
+element in the binary tree. Here, the update function mod-
+iﬁes the value at index J and propagates the value up the
+tree so that the sum of left/right subtrees are appropriately
+updated. We provide the full pseudocode in Section B.2.
+
+2.5. Example
+
+The optimality guarantee given in Theorem 3 is not directly
+interpretable since the term (a) in the upper bound (6)
+is only optimal given the iterates x1, . . . , xT despite the
+fact that xt’s themselves depend on the sampling probabil-
+ities. Hence, we now study a setting where we can further
+bound (6) to get a explicit regret bound for Algorithm 3 that
+is provably better than non-adaptive counterparts. Indeed,
+under certain structural assumptions on the problem similar
+to those of McMahan and Streeter (2010) and Duchi et al.
+(2011), our adaptive sampling algorithm provably achieves
+regret polynomially better in the dimension than either us-
+ing a uniform sampling distribution or gradient descent.
+
+Consider the SVM objective
+
+f (x) =
+
+(cid:0)1 − yiz(cid:62)
+
+i x(cid:1)
+
++
+
+1
+n
+
+n
+(cid:88)
+
+i=1
+
+(cid:80)n
+
+i=1 1 (cid:8)1 − yiz(cid:62)
+
+where n is small and d is large. Here, ∂f (x) =
+i x ≥ 0(cid:9) zi. Assume that for some
+1
+n
+ﬁxed α ∈ (1, ∞) and Lj := βj−α, we have |∂jf (x)|2 ≤
+1
+j . In particular, this is the case if we
+n
+have sparse features zU ∈ {−1, 0, +1}d with power law
+
+i=1 |zi,j|2 ≤ L2
+
+(cid:80)n
+
+Algorithm
+
+ACD
+
+UCD
+
+GD
+
+(cid:1)2
+
+α ∈ [2, ∞)
+(cid:0) R
+log2 d
+(cid:15)
++ (cid:0) R
+
+3 d log
+
+(cid:1) 4
+
+(cid:15)
+
+(cid:1)2
+
+α ∈ (1, 2)
+(cid:0) R
+d2−α
+(cid:15)
++ (cid:0) R
+(cid:15)
+d log d
+
+3 d log
+
+(cid:1) 4
+
+5
+3 d
+
+d log d
+
+5
+3 d
+(cid:1)2
+
+(cid:1)2
+
+(cid:0) R
+(cid:15)
+(cid:0) R
+(cid:15)
+
+Table 1. Runtime comparison (computations needed to guar-
+antee (cid:15)-optimality gap) under heavy-tailed block structures.
+ACD=adaptive coordinate descent, UCD=uniform coordinate de-
+scent, GD=gradient descent
+
+tails P (|zU,j| = 1) = βj−α where U is a uniform random
+variable over {1, . . . , n}.
+
+Take Cj = {j} for j = 1, . . . , d (and b = d). First, we
+show that although for the uniform distribution p = 1/d
+
+d
+(cid:88)
+
+j=1
+
+E[(cid:107)Gj(xt)(cid:107)2
+∗]
+1/d
+
+d
+(cid:88)
+
+j=1
+
+≤ d
+
+L2
+
+j = O(d log d),
+
+the term (a) in (6) can be orders of magnitude smaller.
+Proposition 5. Let b = d, pmin = δ/d for some δ ∈ (0, 1),
+j := βj−α for some
+and Cj = {j}.
+α ∈ (1, ∞), then
+
+If (cid:107)Gj(x)(cid:107)2
+
+∗ ≤ L2
+
+min
+p∈∆b,p≥pmin
+
+E[(cid:13)
+
+(cid:13)Gj(xt)(cid:13)
+(cid:13)
+pj
+
+2
+∗
+
+]
+
+(cid:40)
+
+=
+
+d
+(cid:88)
+
+j=1
+
+O(log d),
+O(d2−α),
+
+if α ∈ [2, ∞)
+if α ∈ (1, 2).
+
+We defer the proof of the proposition to Section A.5. Using
+this bound, we can show explicit regret bounds for Algo-
+rithm 3. From Theorem 3 and Proposition 5, we have that
+Algorithm 3 attains
+
+S(f, ¯xT ) ≤
+
+if α ∈ [2, ∞)
+
+(cid:40)
+
+O( R log d√
+R√
+T
+
+),
+T
+O(d1− α
+(cid:16)
+
++ O
+
+2 ),
+
+if α ∈ (1, 2)
+(cid:17)
+Rd3/4T −3/4 log5/4 d
+
+.
+
+Setting above to be less than (cid:15) and inverting with respect to
+T , we obtain the iteration complexity in Table 1.
+
+To see the runtime bounds for uniformly sampled co-
+ordinate descent and gradient descent, recall the regret
+bound (3) given in Proposition 1. Plugging pt
+j = 1/d in
+the bound, we obtain
+
+√
+
+S(f, ¯xT ) ≤ O(R(cid:112)log d
+
+2dT ).
+for αx = (cid:112)2R2/(L2T d) where L2 := (cid:80)d
+larly, gradient descent with αx = (cid:112)2R2/(L2T ) attains
+S(f, ¯xT ) ≤ O(R(cid:112)log d
+
+j=1 L2
+
+2T ).
+
+√
+
+j . Simi-
+
+Since each gradient descent update takes O(d), we obtain
+the same runtime bound.
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+3. Adaptive probabilities for stochastic
+
+S(f, ¯xT ) ≤
+
+gradient descent
+
+Consider the empirical risk minimization problem
+
+where S(f, ¯xT ) = E[f (¯xT )] − inf x∈X f (x).
+
+While non-adaptive algorithms such as uniformly-sampled
+coordinate descent or gradient descent have the same run-
+time for all α, our adaptive sampling method automatically
+tunes to the value of α. Note that for α ∈ (1, ∞), the ﬁrst
+term in the runtime bound for our adaptive method given in
+Table 1 is strictly better than that of uniform coordinate de-
+scent or gradient descent. In particular, for α ∈ [2, ∞) the
+best stationary sampling distribution in hindsight yields an
+improvement that is at most O(d) better in the dimension.
+However, due to the remainder terms for the bandit prob-
+lem, this improvement only matters (i.e.ﬁrst term is larger
+than second) when
+
+(cid:16)
+
+(cid:16)
+
+
+
+
+O
+
+O
+
+
+
+√
+
+(cid:17)
+
+2
+
+Rd− 3
+Rd 3
+
+log d
+(cid:17)
+2 (1−α) log−5/2 d
+
+(cid:15) =
+
+if α ∈ [2, ∞)
+
+if α ∈ (1, 2).
+
+In Section 4, we show that these remainder terms can be
+made smaller than what their upper bounds indicate. Em-
+pirically, our adaptive method outperforms the uniformly-
+sampled counterpart for larger values of (cid:15) than above.
+
+minimize
+x∈X
+
+(cid:40)
+
+1
+n
+
+n
+(cid:88)
+
+i=1
+
+(cid:41)
+
+fi(x) =: f (x)
+
+where X ∈ Rd is a closed convex set and fi(·) are con-
+vex functions. Let C1, . . . , Cb be a partition of the n sam-
+ples so that each example belongs to some Cj, a set of size
+nj := |Cj| (note that the index j now refers to blocks of ex-
+amples instead of coordinates). These block structures nat-
+urally arise, for example, when Cj’s are the examples with
+the same label in a multi-class classiﬁcation problem. In
+this stochastic optimization setting, we now sample a block
+Jt ∼ pt at each iteration t, and perform gradient updates
+using a gradient estimate on the block CJt. We show how
+a similar adaptive updating scheme for pt’s again achieves
+the optimality guarantees given in Section 2.
+
+3.1. Mirror descent with non-stationary probabilities
+
+Following the approach of (Nemirovski et al., 2009), we
+run mirror descent for the updates on x. At iteration
+t, a block Jt is drawn from a b-dimensional probabil-
+ity vector pt. We assume that we have access to unbi-
+ased stochastic gradients Gj(x) for each block. That is,
+E[Gj(x)] = 1
+∂fi(x). In particular, the estimate
+nj
+GJt(xt) := ∂fIt(x) where It is drawn uniformly in CJt
+gives the usual unbiased stochastic gradient of minibatch
+size 1. The other extreme is obtained by using a minibatch
+size of nj where GJt(xt) := 1
+∂fi(x). Then,
+nJt
+
+i∈CJt
+
+i∈Cj
+
+(cid:80)
+
+(cid:80)
+
+the importance sampling estimator nJt
+npt
+Jt
+biased estimate for the subgradient of the objective.
+
+GJt(xt) is an un-
+
+Let ψ be a differentiable 1-strongly convex function on
+X with respect to the norm (cid:107)·(cid:107) as before and denote by
+(cid:107)·(cid:107)∗ the dual norm of (cid:107)·(cid:107). Let B(x, y) = ψ(x) − ψ(y) −
+∇ψ(y)(cid:62)(x−y) be the Bregman divergence associated with
+ψ. In this section, we assume the below (standard) bound.
+Assumption 2. For all x, y ∈ X , we have B(x, y) ≤ R2
+and (cid:107)Gj(x)(cid:107)2
+
+∗ ≤ L for j = 1, . . . , b.
+
+We use these stochastic gradients to perform mirror up-
+dates, replacing the update in Algorithm 1 with the update
+
+xt+1 ← argmin
+
+x∈X
+
+(cid:26) nJt
+npt
+Jt
+
+(cid:10)GJt (xt), x(cid:11) +
+
+B(x, xt)
+
+.
+
+(8)
+
+(cid:27)
+
+1
+αx
+
+From a standard argument (e.g., (Nemirovski et al., 2009)),
+we obtain the following convergence guarantee. The proof
+follows an argument similar to that of Proposition 1.
+Proposition 6. Under Assumption 2, the updates (8) attain
+
+R2
+αxT
+
++
+
+αx
+2T
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+j (cid:107)Gj(xt)(cid:107)2
+n2
+n2pt
+j
+
+∗
+
+
+
+ . (9)
+
+Again, we wish to choose the optimal step size αx that
+minimizes the regret bound (9). To this end, modify
+the doubling trick given in Algorithm 2 as follows: use
+(cid:13)GJl (xl)(cid:13)
+(cid:13)
+2
+(cid:80)t
+∗ for the second while condition,
+(cid:13)
+√
+L2 maxj n2
+j
+n2p2
+
+and stepsizes αx,k =
+similar to Proposition 2, we have
+
+n2
+Jl
+n2p2
+
+. Then,
+
+4k +
+
+(cid:17)− 1
+
+2R
+
+l=1
+
+l,Jl
+
+(cid:16)
+
+min
+
+2
+
+S(f, ¯xT ) ≤ 6
+
+
+
+
+
+R
+T
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+√
+
++
+
+2RL
+pminT log 4
+
+maxj nj
+n
+
+n2
+j
+n2pt
+j
+
+
+log
+
+
+
+
+
+
+
+1
+2
+
+(cid:13)Gj(xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+∗
+
+
+
+
+
+4T L2
+pmin
+
+b
+(cid:88)
+
+j=1
+
+n2
+j
+n2
+
+
+
+ .
+
+3.2. Adaptive probabilities
+Now, we consider an adaptive updating scheme for pt’s
+similar to Section 2.3. Using the scaled gradient estimate
+
+(cid:98)(cid:96)t,j(x) := −
+
+(cid:107)Gj(x)(cid:107)∗
+
++
+
+(10)
+
+(cid:18) nj
+npt
+j
+
+(cid:19)2
+
+L2 maxj n2
+j
+n2p2
+
+min
+
+to run EXP3, we obtain Algorithm 5. Again, the additive
+scaling L2(maxj nj/npmin)2 is to ensure that (cid:98)(cid:96) ≥ 0. As in
+Section 2.4, the updates for p in Algorithm 5 can be done in
+O(log b) time. We can also show similar optimality guar-
+antees for Algorithm 5 as before. The proof is essentially
+the same to that given in Section A.3.
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+Algorithm 5 Mirror Descent with Adaptive Sampling
+
+Input: Stepsize αp > 0
+Initialize: x1 = x, p1 = p
+for t ← 1, . . . , T
+Sample Jt ∼ pt
+Choose αx,k according to (modiﬁed) Algorithm 2.
+Update x:
+
+xt+1
+Jt
+
+← argminx∈X
+
+(cid:40)
+
+1
+pt
+
+Jt
+
+(cid:10)GJt (xt), x(cid:11) + 1
+αx,k
+
+B
+
+(cid:16)
+
+x, xt
+Jt
+
+(cid:41)
+
+(cid:17)
+
+Update p:
+wt+1 ← pt exp(−(αp(cid:98)(cid:96)t,Jt (xt)/pt
+Jt
+(cid:0)q||wt+1(cid:1)
+pt+1 ← argminq∈P Dkl
+
+)eJt)
+
+return ¯xT ← 1
+T
+
+(cid:80)T
+
+t=1 xt
+
+Theorem 7. Let W := L maxj nj
+pminn . Under Assumption 2,
+(cid:113) 2 log b
+bT
+
+Algorithm 5 with αp = 1
+W 2
+
+achieves
+
+S(f, ¯xT ) ≤
+
+6R
+T
+
+min
+p∈∆b
+
++ W (2T b log b)
+
+1
+4 +
+
+
+
+
+
+b
+(cid:88)
+
+j=1
+
+T
+(cid:88)
+
+E
+
+t=1
+√
+
+2RW
+T log 4
+
+log
+
+n2
+j
+n2pj
+
+(cid:32)
+
+(cid:13)GJt(xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+∗
+
+
+
+
+
+(cid:33)
+
+4T L2
+pmin
+
+b
+(cid:88)
+
+j=1
+
+n2
+j
+n2
+
+where S(f, ¯xT ) = E[f (¯xT )] − inf x∈X f (x).
+
+With equal block sizes nj = n/b and pmin = δ/b for
+some δ ∈ (0, 1), the ﬁrst term in the boudn of The-
+orem 7 is O(T L2) which dominates the second term if
+T = Ω(b log b). Since we usually have T = Θ(n) for
+SGD, as long as n = Ω(b log b) we have
+
+S(f, ¯xT ) ≤ O
+
+
+
+
+
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:117)
+(cid:116) min
+p∈∆b
+
+R
+T
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+(cid:13)
+pj
+
+2
+j,∗
+
+
+
+
+
+
+
+
+ .
+
+That is, Algorithm 5 attains the best regret bound achieved
+by the optimal stationary distribution in hindsight had the
+xt’s had remained the same. Further, under similar struc-
+tural assumptions (cid:107)Gj(x)(cid:107)2
+∗ ∝ j−α as in Section 2.5, we
+can prove that the regret bound for our algorithm is better
+than that of the uniform distribution.
+
+4. Experiments
+
+We compare performance of our adaptive approach with
+stationary sampling distributions on real and synthetic
+datasets. To minimize parameter tuning, we ﬁx αp at the
+value suggested by theory in Theorems 3 and 7. However,
+we make a heuristic modiﬁcation to our adaptive algorithm
+since rescaling the bandit gradient (5) and (10) dwarfs the
+signals in gradient values if L is too large. We present
+performance of our algorithm with respect to multiple esti-
+mates of the Lipschitz constant ˆL = L/c for c > 1, where
+
+L is the actual upper bound.1 We tune the stepsize αx for
+both methods, using the form β/
+
+t and tuning β.
+
+√
+
+For all our experiments, we compare our method against
+the uniform distribution and blockwise Lipschitz sampling
+distribution pj ∝ Lj where Lj is the Lipschitz constant
+of the j-th block (Zhao and Zhang, 2015). We observe
+that the latter method often performs very well with re-
+spect to iteration count. However, since computing the
+blockwise Lipschitz sampling distribution takes O(nd), the
+method is not competitive in large-scale settings. Our algo-
+rithm, on the other hand, adaptively learns the latent struc-
+ture and often outperforms stationary counterparts with re-
+spect to runtime. While all of our plots are for a single
+run with a random seed, we can reject the null hypothesis
+f (xT
+adaptive) at 99% conﬁdence for all in-
+stances where our theory guarantees it. We take (cid:107)·(cid:107) = (cid:107)·(cid:107)2
+throughout this section.
+
+uniform) < f (xT
+
+4.1. Adaptive sampling for coordinate descent
+
+Synthetic Data We begin with coordinate descent, ﬁrst
+verifying the intuition of Section 2.5 on a synthetic dataset.
+1
+n (cid:107)Ax − b(cid:107)1,
+We consider the problem minimize(cid:107)x(cid:107)∞≤1
+and we endow A ∈ Rn×d with the following block struc-
+ture: the columns are drawn as aj ∼ j−α/2N (0, I). Thus,
+the gradients of the columns decay in a heavy-tailed man-
+ner as in Section 2.5 so that L2
+j = j−α. We set n = d =
+b = 256; the effects of changing ratios n/d and b/d man-
+ifest themselves via relative norms of the gradients in the
+columns, which we control via α instead. We run all exper-
+iments with pmin = 0.1/b and multiple values of c.
+
+Results are shown in Figure 1, where we show the op-
+timality gap vs. runtime in (a) and the learned sampling
+distribution in (b). Increasing α (stronger block structure)
+improves our relative performance with respect to uniform
+sampling and our ability to accurately learn the underlying
+block structure. Experiments over more α and c in Section
+C further elucidate the phase transition from uniform-like
+behavior to regimes learning/exploiting structure.
+
+We also compare our method with (non-preconditioned)
+SGD using leverage scores pj ∝ (cid:107)aj(cid:107)1 given by (Yang
+et al., 2016). The leverage scores (i.e., sampling distribu-
+tion proportional to blockwise Lipschitz constants) roughly
+correpond to using pj ∝ j−α/2, which is the stationary
+distribution that minimizes the bound (3); in this synthetic
+setting, this sampling probability coincides with the actual
+block structure. Although this is expensive to compute, tak-
+ing O(nd) time, it exploits the latent block structure very
+well as expected. Our method quickly learns the structure
+and performs comparably with this “optimal” distribution.
+
+1We guarantee a positive loss by taking max((cid:98)(cid:96)t,j(x), 0).
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+(a) Optimality gap
+
+(a) Optimality gap
+
+(b) Learned sampling distribution
+
+(b) Learned sampling distribution
+
+Figure 1. Adaptive coordinate descent (left to right: α = 0.4, 2.2)
+
+Figure 3. Adaptive SGD (left to right: α = 0.4, 6)
+
+(a) Optimality gap
+
+(b) Learned distribution
+
+(a) CUB-200
+
+(b) ALOI
+
+Figure 2. Model selection for nucleotide sequences
+
+Figure 4. Optimality gap for CUB-200-2011 and ALOI
+
+Model selection Our algorithm’s ability to learn underly-
+ing block structure can be useful in its own right as an on-
+line feature selection mechanism. We present one example
+of this task, studying an aptamer selection problem (Cho
+et al., 2013), which consists of n = 2900 nucleotide se-
+quences (aptamers) that are one-hot-encoded with all k-
+grams of the sequence, where 1 ≤ k ≤ 5 so that d =
+105, 476. We train an l1-regularized SVM on the binary
+labels, which denote (thresholded) binding afﬁnity of the
+aptamer. We set the blocksize as 50 features (b = 2110)
+and pmin = 0.01/b. Results are shown in Figure 2, where
+we see that adaptive feature selection certainly improves
+training time in (a). The learned sampling distribution de-
+picted in (b) for the best case (c = 107) places larger weight
+on features known as G-complexes; these features are well-
+known to affect binding afﬁnities (Cho et al., 2013).
+
+4.2. Adaptive sampling for SGD
+
+Synthetic data We use the same setup as in Section 4.1
+but now endow block structure on the rows of A rather than
+the columns. In Figure 3, we see that when there is little
+block structure (α = 0.4) all sampling schemes perform
+similarly. When the block structure is apparent (α = 6),
+our adaptive method again learns the underlying structure
+
+and outperforms uniform sampling. We provide more ex-
+periments in Section C to illustrate behaviors over more
+c and α. We note that our method is able to handle on-
+line data streams unlike stationary methods such as lever-
+age scores.
+
+CUB-200-2011/ALOI We apply our method to two
+multi-class object detection datasets: Caltech-UCSD
+Birds-200-2011 (Wah et al., 2011) and ALOI (Geusebroek
+et al., 2005). Labels are used to form blocks so that b = 200
+for CUB and b = 1000 for ALOI. We use softmax loss for
+CUB-200-2011 and a binary SVM loss for ALOI, where
+in the latter we do binary classiﬁcation between shells and
+non-shell objects. We set pmin = 0.5/b to enforce enough
+exploration. For the features, outputs of the last fully-
+connected layer of ResNet-50 (He et al., 2016) are used
+for CUB so that we have 2049-dimensional features. Since
+our classiﬁer x is (b · d)-dimensional, this is a fairly large
+scale problem. For ALOI, we use default histogram fea-
+tures (d = 128). In each case, we have n = 5994 and n =
+108, 000 respectively. We use X := {x ∈ Rm : (cid:107)x(cid:107)2 ≤ r}
+where r = 100 for CUB and r = 10 for ALOI. We observe
+in Figure 4 that our adaptive sampling method outperforms
+stationary counterparts.
+
+00.511.522.533.5410-110000.511.5210-210-110005010015020025000.20.40.60.8105010015020025000.20.40.60.8105010015020025030035010-11001001011021030123456710-400.511.522.510-110000.511.522.510-310-205010015020025000.20.40.60.8105010015020025000.20.40.60.8105010015020025010-1100101024681010-410-310-210-1100Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+Acknowledgements
+
+HN was supported by the Samsung Scholarship. AS and
+SY were supported by Stanford Graduate Fellowships and
+AS was also supported by a Fannie & John Hertz Foun-
+dation Fellowship. JCD was supported by NSF-CAREER-
+1553086.
+
+References
+
+Z. Allen-Zhu and Y. Yuan. Even faster accelerated coordi-
+nate descent using non-uniform sampling. arXiv preprint
+arXiv:1512.09103, 2015.
+
+P. Auer, N. Cesa-Bianchi, and P. Fischer. Finite-time anal-
+ysis of the multiarmed bandit problem. Machine Learn-
+ing, 47(2-3):235–256, 2002.
+
+J. C. Duchi, E. Hazan, and Y. Singer. Adaptive subgradient
+methods for online learning and stochastic optimization.
+Journal of Machine Learning Research, 12:2121–2159,
+2011.
+
+J.-M. Geusebroek, G. J. Burghouts, and A. W. Smeulders.
+The amsterdam library of object images. International
+Journal of Computer Vision, 61(1):103–112, 2005.
+
+S. Gopal. Adaptive sampling for sgd by exploiting side
+information. In Proceedings of The 33rd International
+Conference on Machine Learning, pages 364–372, 2016.
+
+K. He, X. Zhang, S. Ren, and J. Sun. Deep residual learn-
+ing for image recognition. In Proceedings of the IEEE
+Conference on Computer Vision and Pattern Recogni-
+tion, pages 770–778, 2016.
+
+A. Beck and M. Teboulle. Mirror descent and nonlinear
+projected subgradient methods for convex optimization.
+Operations Research Letters, 31:167–175, 2003.
+
+R. Johnson and T. Zhang. Accelerating stochastic gradient
+descent using predictive variance reduction. In Advances
+in Neural Information Processing Systems 26, 2013.
+
+A. Beck and L. Tetruashvili. On the convergence of block
+coordinate descent type methods. SIAM Journal on Op-
+timization, 23(4):2037–2060, 2013.
+
+S. Bubeck and N. Cesa-Bianchi.
+
+Regret analysis of
+stochastic and nonstochastic multi-armed bandit prob-
+lems. Foundations and Trends in Machine Learning, 5
+(1):1–122, 2012.
+
+N. Cesa-Bianchi and G. Lugosi. Prediction, learning, and
+
+games. Cambridge University Press, 2006.
+
+M. Cho, S. S. Oh, J. Nie, R. Stewart, M. Eisenstein,
+J. Chambers, J. D. Marth, F. Walker, J. A. Thomson,
+and H. T. Soh. Quantitative selection and parallel char-
+acterization of aptamers. Proceedings of the National
+Academy of Sciences, 110(46), 2013.
+
+D. Csiba and P. Richt´arik. Importance sampling for mini-
+
+batches. arXiv preprint arXiv:1602.02283, 2016.
+
+D. Csiba, Z. Qu, and P. Richt´arik. Stochastic dual coordi-
+nate ascent with adaptive probabilities. arXiv preprint
+arXiv:1502.08053, 2015.
+
+C. D. Dang and G. Lan.
+
+Stochastic block mirror de-
+scent methods for nonsmooth and stochastic optimiza-
+tion. SIAM Journal on Optimization, 25(2):856–881,
+2015.
+
+A. Defazio, F. Bach, and S. Lacoste-Julien. SAGA: A
+fast incremental gradient method with support for non-
+In Advances in
+strongly convex composite objectives.
+Neural Information Processing Systems 27, 2014.
+
+Y. T. Lee and A. Sidford. Efﬁcient accelerated coordinate
+descent methods and faster algorithms for solving linear
+systems. In 54th Annual Symposium on Foundations of
+Computer Science, pages 147–156. IEEE, 2013.
+
+Z. Lu and L. Xiao. On the complexity analysis of random-
+ized block-coordinate descent methods. Mathematical
+Programming, 152(1-2):615–642, 2015.
+
+B. McMahan and M. Streeter. Adaptive bound optimiza-
+tion for online convex optimization. In Proceedings of
+the Twenty Third Annual Conference on Computational
+Learning Theory, 2010.
+
+I. Necoara, Y. Nesterov, and F. Glineur. A random co-
+ordinate descent method on large optimization prob-
+lems with linear constraints. University Politehnica
+Bucharest, Tech. Rep, 2011.
+
+D. Needell, R. Ward, and N. Srebro. Stochastic gradient
+descent, weighted sampling, and the randomized Kacz-
+marz algorithm. In Advances in Neural Information Pro-
+cessing Systems 27, pages 1017–1025, 2014.
+
+A. Nemirovski and D. Yudin. Problem Complexity and
+
+Method Efﬁciency in Optimization. Wiley, 1983.
+
+A. Nemirovski, A. Juditsky, G. Lan, and A. Shapiro. Ro-
+bust stochastic approximation approach to stochastic
+programming. SIAM Journal on Optimization, 19(4):
+1574–1609, 2009.
+
+Y. Nesterov. Efﬁciency of coordinate descent methods on
+huge-scale optimization problems. SIAM Journal on Op-
+timization, 22(2):341–362, 2012.
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+J. Nutini, M. Schmidt, I. H. Laradji, M. Friedlander, and
+H. Koepke. Coordinate descent converges faster with
+the gauss-southwell rule than random selection. arXiv
+preprint arXiv:1506.00552, 2015.
+
+P. Richt´arik and M. Tak´aˇc. Iteration complexity of random-
+ized block-coordinate descent methods for minimizing a
+composite function. Mathematical Programming, 144
+(1-2):1–38, 2014.
+
+P. Richt´arik and M. Tak´aˇc.
+
+Parallel coordinate de-
+Math-
+scent methods for big data optimization.
+ematical Programming,
+2015.
+URL http://link.springer.com/article/
+10.1007/s10107-015-0901-6.
+
+page Online ﬁrst,
+
+S. Shalev-Shwartz. Online learning and online convex opti-
+mization. Foundations and Trends in Machine Learning,
+4(2):107–194, 2012.
+
+S. Shalev-Shwartz and T. Zhang.
+
+Proximal stochastic
+dual coordinate ascent. arXiv preprint arXiv:1211.2717,
+2012.
+
+T. Strohmer and R. Vershynin. A randomized Kacz-
+marz algorithm with exponential convergence. Journal
+of Fourier Analysis and Applications, 15(2):262–278,
+2009.
+
+C. Wah, S. Branson, P. Welinder, P. Perona, and S. Be-
+longie. The Caltech-UCSD Birds-200-2011 Dataset.
+Technical Report CNS-TR-2011-001, California Insti-
+tute of Technology, 2011.
+
+J. Yang, Y.-L. Chow, C. R´e, and M. W. Mahoney. Weighted
+sgd for p regression with randomized precondition-
+ing. In Proceedings of the Twenty-Seventh Annual ACM-
+SIAM Symposium on Discrete Algorithms, pages 558–
+569. Society for Industrial and Applied Mathematics,
+2016.
+
+P. Zhao and T. Zhang.
+
+Accelerating minibatch
+stochastic gradient descent using stratiﬁed sampling.
+arXiv:1405.3080 [stat.ML], 2014.
+
+P. Zhao and T. Zhang. Stochastic optimization with impor-
+tance sampling. In Proceedings of the 32nd International
+Conference on Machine Learning, 2015.
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+A. Proofs
+
+A.1. Proof of Proposition 1
+
+Let σt := σ(x1, . . . , xt, J1, . . . , Jt−1) and Et[·] = E[·|σt].
+By convexity of f and unbiasedness of our gradient estima-
+tor Et
+
+= g(xt) ∈ ∂f (xt), we have
+
+(cid:105)
+GJt(xt)
+
+(cid:104) 1
+pt
+Jt
+
+f (xt) − f (x) ≤ Et
+
+(cid:10)GJt(xt), xt − x(cid:11)
+
+(cid:21)
+
+.
+
+(cid:20) 1
+pt
+Jt
+
+1
+pt
+Jt
+
+≤
+
+We use the following lemma.
+Lemma 1. For any t = 1, . . . , T , we have
+
+1
+pt
+Jt
+
+(cid:10)GJt(xt), xt − x(cid:11) ≤
+
+(cid:0)B(x, xt) − B(x, xt+1)(cid:1)
+
+1
+αx
+
+and strong convexity of ψJt given by BJt
+(cid:13)
+(cid:13)xt+1
+1
+(cid:13)
+2
+inequality:
+
+[Jt] − xt
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+[Jt]
+
+Jt
+
+. For step (c), we used Fenchel-Young’s
+
+(cid:16)
+
+xt+1
+[Jt] , xt
+
+[Jt]
+
+(cid:17)
+
+≥
+
+(cid:68)
+G[Jt](xt), xt
+
+[Jt] − xt+1
+[Jt]
+
+(cid:69)
+
+αx
+2(pt
+Jt
+
+)2
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+Jt,∗ +
+(cid:13)
+
+1
+2αx
+
+(cid:13)
+(cid:13)xt+1
+(cid:13)
+
+[Jt] − xt
+
+[Jt]
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+Jt
+
+.
+
+Furthermore, due to the fact that xt and xt+1 only differ in
+the Jt-th block, we have
+
+(cid:16)
+
+(cid:17)
+
+BJt
+
+x[Jt], xt
+
+[Jt]
+= B(x, xt) − B(x, xt+1)
+
+− BJt
+
+(cid:16)
+
+x[Jt], xt+1
+[Jt]
+
+(cid:17)
+
++
+
+αx
+2(pt
+Jt
+
+)2
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+Jt,∗ .
+(cid:13)
+
+from which (d) follows.
+
+Proof of Lemma
+
+(cid:10)GJt (xt), xt − x(cid:11)
+
+1
+pt
+Jt
+
+=
+
+=
+
+1
+pt
+Jt
+1
+pt
+Jt
+
+(cid:68)
+
+(a)
+≤
+
+1
+αx
+
++
+
+1
+pt
+Jt
+
+(cid:68)
+
++
+
+1
+pt
+Jt
+
+(cid:10)GJt(xt), xt+1 − x(cid:11) +
+
+(cid:10)GJt(xt), xt − xt+1(cid:11)
+
+1
+pt
+Jt
+(cid:69)
+
+G[Jt](xt), xt+1
+
+[Jt] − x[Jt]
+
+(cid:68)
+G[Jt](xt), xt
+
+[Jt] − xt+1
+[Jt]
+
+(cid:69)
+
+∇ψJt
+
+(cid:17)
+
+(cid:16)
+
+xt+1
+[Jt]
+
+− ∇ψJt
+
+(cid:16)
+
+(cid:17)
+
+xt
+[Jt]
+
+, x[Jt] − xt+1
+[Jt]
+
+(cid:69)
+
+(cid:68)
+G[Jt](xt), xt
+
+[Jt] − xt+1
+[Jt]
+
+(cid:69)
+
+(b)
+≤
+
+1
+αx
+
+(cid:16)
+
+BJt
+
+(cid:16)
+x[Jt], xt
+
+[Jt]
+
+(cid:17)
+
+(cid:16)
+
+− BJt
+
+x[Jt], xt+1
+[Jt]
+
+(cid:17)(cid:17)
+
+−
+
++
+
+1
+2αx
+1
+pt
+Jt
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+Jt
+
+[Jt] − xt
+
+(cid:13)
+(cid:13)xt+1
+(cid:13)
+(cid:68)
+G[Jt](xt), xt
+
+[Jt]
+
+(cid:69)
+
+[Jt] − xt+1
+[Jt]
+
+(cid:17)
+
+(cid:16)
+
+x[Jt], xt
+
+[Jt]
+
+− BJt
+
+x[Jt], xt+1
+[Jt]
+
+(cid:17)(cid:17)
+
+(cid:13)
+(cid:13)G[Jt](xt)(cid:13)
+2
+(cid:13)
+Jt,∗
+
+(cid:1)2
+
+(c)
+≤
+
+1
+αx
+
+(cid:16)
+
+(cid:16)
+
+BJt
+αx
+2 (cid:0)pt
+Jt
+
++
+
+(d)
+=
+
+1
+αx
+
+(cid:0)B(x, xt) − B (cid:0)x, xt+1(cid:1)(cid:1) +
+
+αx
+2(pt
+Jt
+
+)2
+
+(cid:13)
+(cid:13)G[Jt](xt)(cid:13)
+2
+Jt,∗ .
+(cid:13)
+
+where in step (a) we used the optimality conditions for the
+mirror update in Algorithm 1. Step (b) follows from the
+algebraic relation
+(cid:68)
+∇ψJt(xt+1
+(cid:16)
+
+[Jt]), x[Jt] − xt+1
+[Jt]
+(cid:17)
+
+[Jt] ) − ∇ψJt(xt
+x[Jt], xt
+
+= BJt
+
+− BJt
+
+− BJt
+
+x[Jt], xt+1
+[Jt]
+
+xt+1
+[Jt] , xt
+
+[Jt]
+
+(cid:69)
+
+(cid:17)
+
+(cid:16)
+
+(cid:16)
+
+(cid:17)
+
+,
+
+[Jt]
+
+Using convexity and Lemma 1 to bound f (xt) − f (x) and
+summing each side over t = 1, . . . , T , we conclude
+
+T E[f (¯xT ) − f (x)]
+
+≤ E
+
+(f (xt) − f (x))
+
+(cid:35)
+
+(cid:34) T
+
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+E
+
+≤
+
+t=1
+
+(cid:20) 1
+pt
+Jt
+
+(cid:10)GJt(xt), xt − x(cid:11)
+
+(cid:21)
+
+≤
+
+B(x, x1)
+αx
+
++
+
+αx
+2
+
+(∗)
+≤
+
+R2
+αx
+
++
+
+αx
+2
+
+T
+(cid:88)
+
+E
+
+
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+
+T
+(cid:88)
+
+t=1
+
+
+E 1
+(pt
+)2
+Jt
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+b
+(cid:88)
+
+
+
+
+
+t=1
+
+j=1
+where in step (∗) we used the tower law E[·] = E[Et[·]].
+The second result follows from the bound pt
+
+j ≥ pmin.
+
+A.2. Proof of Proposition 2
+
+Denote by Ek the indices in epoch k. Let K be the total
+number of epochs used in Algorithm 2. Applying Lemma 1
+to each of the epochs, we obtain
+
+T
+(cid:88)
+
+t=1
+
+1
+pt
+Jt
+
+(cid:10)GJt(xt), xt − x(cid:11)
+
+(cid:10)GJt(xt), xt − x(cid:11)
+
+1
+pt
+Jt
+
+K
+(cid:88)
+
+(cid:88)
+
+t∈Ek
+(cid:40)
+
+k=1
+
+K
+(cid:88)
+
+=
+
+≤
+
+R2
+αx,k
+
+(cid:88)
+
++
+
+t∈Ek
+
+(cid:26) R2
+αx,k
+
++
+
+αx,k
+2
+
+αx,k
+2 (cid:0)pt
+Jt
+(cid:18)
+
+4k +
+
+k=1
+
+K
+(cid:88)
+
+k=1
+
+(a)
+≤
+
+(cid:19)(cid:27)
+
+L2
+bp2
+
+min
+
+(cid:41)
+
+(cid:13)
+(cid:13)G[Jt](xt)(cid:13)
+2
+(cid:13)
+Jt,∗
+
+(cid:1)2
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+√
+
+(b)
+≤
+
+2R
+
+K
+(cid:88)
+
+(cid:18)
+
+2k +
+
+(cid:19)
+
+L
+pmin
+
+√
+
+b
+
+A.3. Proof of Theorem 3
+
+≤
+
+2R
+
+4k +
+
+√
+
+√
+
+(cid:115)
+
+K
+(cid:88)
+
+k=1
+(cid:18)
+
+L2
+bp2
+
+min
+
+=
+
+2R
+
+2K+1 − 2 + K
+
+√
+
+(c)
+≤
+
+2R
+
+(cid:32)
+4
+
+
+
+
+
+T
+(cid:88)
+
+t=1
+
+k=1
+
+(cid:19)
+
+b
+
+√
+
+L
+pmin
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+(cid:0)pt
+(cid:1)2
+Jt
+
+
+
+
+1
+2
+
+
+
++
+
+pmin
+
+L
+√
+b log 4
+
+log
+
+4
+
+T
+(cid:88)
+
+t=1
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+(cid:1)2
+(cid:0)pt
+Jt
+
+(cid:33)
+
+
+
+
+
+where
+(cid:80)
+
+(a)
+follows
+(cid:13)
+(cid:13)G[Jt](xt)(cid:13)
+Jt,∗ /(cid:0)pt
+2
+(cid:13)
+Jt
+t∈Ek
+√
+√
+√
+b.
+a +
+a + b ≤
+
+from
+stopping condition of the K − 1th epoch
+
+from
+
+(cid:1)2
+
+noting
+
+≤ 4k + L2
+bp2
+
+,
+
+min
+
+that
+(b)
+
+In step (c), we used the
+
+T
+(cid:88)
+
+t=1
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+(cid:1)2
+(cid:0)pt
+Jt
+
+≥ 4K−1.
+
+(cid:10)GJt(xt), xt − x(cid:11)
+
+(cid:21)
+
+Taking expectations on both sides, we have
+
+T (E[f (¯xT )] − f (x))
+
+≤
+
+(E[f (xt)] − f (x)) ≤
+
+T
+(cid:88)
+
+t=1
+
+√
+
+(cid:34)
+2RE
+4
+
+≤
+
+T
+(cid:88)
+
+E
+
+t=1
+
+(cid:20) 1
+pt
+Jt
+
+
+
+1
+2
+
+
+
+
+
+
+
+T
+(cid:88)
+
+t=1
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+(cid:0)pt
+(cid:1)2
+Jt
+
+
++
+
+pmin
+
+L
+√
+b log 4
+
+log
+
+4
+
+T
+(cid:88)
+
+t=1
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+(cid:1)2
+(cid:0)pt
+Jt
+
+
+
+(cid:35)
+
+
+
+√
+
+(a)
+≤ 4
+
+2R
+
+
+
+
+
+1
+2
+
+
+
+
+
+
+E
+
+
+
+
+
+T
+(cid:88)
+
+t=1
+
+√
+
+2RL
+√
+
+(cid:13)G[Jt](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+Jt,∗
+(cid:0)pt
+(cid:1)2
+Jt
+
+4E
+
+T
+(cid:88)
+
+log
+
+
+
+
+
++
+
+pmin
+
+b log 4
+
+(cid:13)
+(cid:13)G[Jt](xt)(cid:13)
+2
+(cid:13)
+Jt,∗
+(cid:0)pt
+(cid:1)2
+Jt
+
+
+
+
+
+
+
+
+
+t=1
+
+
+
+√
+
+(b)
+= 4
+
+2R
+
+
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+
+
+
+
+1
+2
+
+
+
+
+
+√
+
+2RL
+√
+
++
+
+pmin
+
+b log 4
+
+
+
+log
+
+4
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+
+
+
+
+
+
+
+
+where (a) follows from Jensen’s inequality and (b) from
+the tower law.
+
+From Proposition 2, it sufﬁces to show that Algorithm 3
+with αp attains the regret bound
+
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+pj
+
+sup
+p∈P
+
+T
+(cid:88)
+
+b
+(cid:88)
+
+−
+
+
+
+
+
+
+
+E
+
+t=1
+
+j=1
+
+(cid:114)
+
+≤
+
+L2
+p2
+min
+
+2T log b
+b
+
+.
+
+(11)
+
+Note that the bandit updates in Algorithm 3 correspond to
+mirror descent updates with ψP (p) = (cid:80)b
+j=1 pj log pj and
+P (u) = (cid:80)b
+ψ(cid:63)
+j=1 exp(uj − 1) (Beck and Teboulle, 2003).
+We wish show that the bandit mirror descent updates in
+T . To this end, we
+Algorithm 3 achieves regret scaling as
+ﬁrst state a standard result for mirror descent algorithms.
+See for example, Cesa-Bianchi and Lugosi (2006, Ch.11)
+or Bubeck and Cesa-Bianchi (2012, Thm 5.3). We outline
+the proof for completeness in Appendix A.4.
+Lemma 2 (Bubeck and Cesa-Bianchi (2012), Thm 5.3).
+The following bound holds for Algorithm 3 for any p ∈ P.
+
+√
+
+(cid:68)
+(cid:98)(cid:96)t(xt), pt − p
+
+(cid:69)
+
+T
+(cid:88)
+
+t=1
+
+≤
+
+BψP (p, p1)
+αp
+
++
+
+1
+αp
+
+T
+(cid:88)
+
+t=1
+
+Bψ(cid:63)
+
+P
+
+(cid:16)
+
+(cid:17)
+∇ψP (pt) − αp(cid:98)(cid:96)t(xt), ∇ψP (pt)
+
+(12)
+
+(13)
+
+A straightforward calculation gives that
+
+∇ψP (pt) − αp(cid:98)(cid:96)t(xt), ∇ψP (pt)
+
+(cid:17)
+
+(cid:16)
+
+Bψ(cid:63)
+
+P
+
+=
+
+≤
+
+b
+(cid:88)
+
+j=1
+α2
+p
+2
+
+(cid:16)
+
+(cid:17)
+exp(−αp(cid:98)(cid:96)t,j(xt)) + αp(cid:98)(cid:96)t,j(xt) − 1
+
+pt
+j
+
+Jt (cid:98)(cid:96)t,Jt(xt)2 ≤
+pt
+
+L4α2
+p
+minb2pt
+Jt
+
+2p4
+
+since ez − z − 1 ≤ z2 for z ≤ 0 where we used the fact
+that (cid:98)(cid:96) ≥ 0. From convexity, we have for p ∈ P
+
+
+
+
+T
+(cid:88)
+
+t=1
+
+E
+
+
+
+T
+(cid:88)
+
+(a)
+=
+
+b
+(cid:88)
+
+j=1
+
+
+E
+
+
+
+(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+j,∗
+pj
+
+
+
+−
+
+b
+(cid:88)
+
+(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+j,∗
+pt
+j
+
+(cid:13)
+(cid:13)G[j](xt)(cid:13)
+2
+(cid:13)
+j,∗
+pj
+
+
+
+
+
+−
+
+t=1
+
+j=1
+
+T
+(cid:88)
+
+E
+
+(cid:20)(cid:28)
+
++
+
+pt − p,
+
+t=1
+
+
+E
+
+
+
+b
+(cid:88)
+
+
+
+−
+
+T
+(cid:88)
+
+(b)
+≤
+
+t=1
+
+j=1
+
+(cid:29)(cid:21)
+
+1
+
+min
+
+L2
+bp2
+(cid:13)G[j](xt)(cid:13)
+(cid:13)
+2
+(cid:13)
+j,∗
+(pt
+j)2
+
+
+ (pt
+
++
+
+L2
+bp2
+
+min
+
+
+
+j − pj)
+
+
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+T
+(cid:88)
+
+(cid:104)(cid:68)
+
+E
+
+(c)
+=
+
+(cid:98)(cid:96)t(xt), pt − p
+
+(cid:69)(cid:105)
+
+T
+(cid:88)
+
+(cid:21)
+
+L4
+p4
+minb2
+
+E
+
+(cid:20) 1
+pt
+Jt
+
+t=1
+
+log b
+αp
+
+log b
+αp
+
+(d)
+≤
+
+(e)
+≤
+
++
+
++
+
+αp
+2
+
+αp
+2
+
+t=1
+L4
+p4
+minb
+
+T
+
+j=1
+
+1
+pj
+
+(cid:16)(cid:13)
+(cid:13)G[j](xt)(cid:13)
+
+that p, pt are prob-
+where in (a) we used the fact
+abilities and in (b) we used convexity of g(p) =
+(cid:80)b
++ p(cid:62)1. To obtain (d), we used
+Dkl (p||p1) ≤ log b, Lemma 2 and (13). Finally, step (e)
+follows from tower law. Setting αp = p2
+obtain
+
+(cid:113) 2b log b
+T
+
+(cid:13)j,∗
+
+, we
+
+min
+L2
+
+(cid:17)2
+
+T
+(cid:88)
+
+E
+
+
+
+
+
+b
+(cid:88)
+
+t=1
+
+j=1
+
+max
+p∈P
+
+(cid:107)Gj(xt)(cid:107)2
+∗
+pt
+j
+
+−
+
+(cid:107)Gj(xt)(cid:107)2
+∗
+pj
+
+
+
+
+
+we have
+
+Now, noting that ∇ψP (wt+1) = ∇ψP (pt) + αp(cid:98)(cid:96)t(xt), we
+obtain the result.
+
+A.5. Proof of Proposition 5
+
+Let us ﬁrst solve for the KKT conditions of the following
+minimization problem
+
+minimize
+p∈Rn
+
+b
+(cid:88)
+
+j=1
+
+L2
+j
+pj
+
+subject to p(cid:62)1 = 1, p ≥ pmin.
+
+Taking the ﬁrst order conditions for the Lagrangian
+
+L(p, η, θ) =
+
+− η(p(cid:62) − 1) − θ(cid:62)(p − pmin1),
+
+b
+(cid:88)
+
+j=1
+
+L2
+j
+pj
+
+(cid:114)
+
+≤
+
+L2
+p2
+min
+
+2T log b
+b
+
+.
+
+Using this in the bound of Proposition 2, we obtain the de-
+sired result.
+
+A.4. Proof of Lemma 2
+
+From Algorithm 3, we have
+
+αp(cid:98)(cid:96)t(xt)(cid:62)(pt − p)
+= (cid:0)∇ψP (wt+1) − ∇ψP (pt)(cid:1)(cid:62)
+= BψP (p, pt) + BψP (pt, wt+1) − BψP (p, wt+1).
+
+(pt − p)
+
+For any p ∈ P, we have for all p ∈ P,
+
+BψP (p, wt+1) ≥ BψP (p, pt+1) + BψP (pt+1, wt+1)
+≡ (cid:0)∇ψP (p) − ∇ψP (wt+1)(cid:1)(cid:62)
+
+(p − pt+1) ≥ 0.
+
+The latter inequality is just the optimality condition for
+pt+1 = argminp∈P BψP (p, wt+1). Applying the ﬁrst
+equality in (15) and summing for t = 1, . . . , T , we obtain
+
+αp
+
+(cid:98)(cid:96)t(xt)(cid:62)(pt − p)
+
+T
+(cid:88)
+
+t=1
+
+≤ BψP (p, p1) − BψP (p, pT +1)
+
++
+
+T
+(cid:88)
+
+t=1
+
+(cid:0)BψP (pt, wt+1) − BψP (pt+1, wt+1)(cid:1)
+
+≤ BψP (p, p1) +
+
+BψP (pt, wt+1)
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+(14)
+
+pj =
+
+Lj
+(cid:112)|η + θj|
+
+=
+
+(cid:40) Lj√
+|η|
+pmin
+
+if Lj ≥ (cid:112)|η|pmin
+
+otherwise
+
+where the last equality follows from complementary slack-
+ness. Let I :=
+. Plugging pj’s into
+the equality constraint, we get
+
+(cid:110)
+j : Lj ≥ (cid:112)|η|pmin
+
+(cid:111)
+
+b
+(cid:88)
+
+j=1
+
+pj =
+
+1
+(cid:112)|η|
+
+(cid:88)
+
+j∈I
+
+Lj + (b − |I|)pmin = 1
+
+so that
+
+(cid:112)|η| =
+
+1
+1 − (b − |I|)pmin
+
+(cid:88)
+
+j∈I
+
+Lj.
+
+(16)
+
+(15)
+
+Then, by plugging in pj into the objective and using the
+above identity for |η| yields
+
+b
+(cid:88)
+
+j=1
+
+L2
+j
+pj
+
+= (cid:112)|η|
+
+(cid:88)
+
+Lj +
+
+j∈I
+
+1
+pmin
+
+(cid:88)
+
+j∈I c
+
+L2
+j
+
+= ((1 − (b − |I|)pmin) |η| +
+
+1
+pmin
+
+(cid:88)
+
+j∈I c
+
+L2
+
+j . (17)
+
+Now, let L2
+
+j = cj−α so that I =
+
+j : j ≤
+
+(cid:26)
+
+(cid:16) c
+|η|p2
+
+min
+
+α (cid:27)
+
+(cid:17) 1
+
+.
+
+When α ∈ [2, ∞), we have
+
+Lj = c
+
+j−α/2 = O(log |I|) = O
+
+log
+
+(cid:18)
+
+(cid:18) b
+|η|
+
+(cid:19)(cid:19)
+
+.
+
+From (16), we have |η| = O(log2 b) and |I| =
+
+= o(b). Using these in the bound (17),
+
+|I|
+(cid:88)
+
+j=1
+
+|I|
+(cid:88)
+
+j=1
+
+α (cid:19)
+
+(cid:17) 1
+
+O
+
+(cid:18)(cid:16) b2
+log2 b
+we obtain
+
+b
+(cid:88)
+
+j=1
+
+L2
+j
+pj
+
+= BψP (p, p1) +
+
+Bψ(cid:63)
+
+P
+
+(∇ψP (wt+1), ∇ψP (pt)).
+
+≤ O(log2 b) +
+
+c(b − |I|)1−α = O(log2 b)
+
+b
+δ
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+which was the result for α ∈ [2, ∞).
+
+When α ∈ (1, 2), we have
+
+and J ∗ := max {1 ≤ j ≤ b : f (j) ≥ 0}. We ﬁrst show
+that the optimal dual variable η∗ is given by
+
+Lj = c
+
+j−α/2 = Θ
+
+(cid:16)
+
+|I|1−α/2(cid:17)
+
+|I|
+(cid:88)
+
+j=1
+
+|I|
+(cid:88)
+
+j=1
+
+(cid:19) 1
+
+α − 1
+
+2 (cid:33)
+
+= Θ
+
+(cid:32)(cid:18) b2
+|η|
+
+so that from (16), |η| = Θ(b2−α) and |I| = Θ(b). Using
+these in the bound (17) for the objective, we obtain
+
+b
+(cid:88)
+
+j=1
+
+L2
+j
+pj
+
+= Θ(b2−α)
+
+which gives the second result.
+
+B. Procedures for Efﬁcient Updates
+
+B.1. Proof of Proposition 4
+
+We are interested in ﬁnding the solution to the projection
+problem
+
+minimize
+q
+
+(cid:8)Dkl (q||w) : q(cid:62)1 = 1, q ≥ pmin
+
+(cid:9)
+
+where w ∈ Rb
+element shrunken down. Let the Lagrangian be
+
++ is a probability vector with its value at J-th
+
+L(q, η, θ) =
+
+qj log
+
+− η(q(cid:62)1 − 1) − θ(cid:62)(q − pmin1)
+
+b
+(cid:88)
+
+j=1
+
+qj
+wj
+
+where θ ∈ Rb
+q, we have
+
++. Writing down the ﬁrst order conditions for
+
+log
+
++ 1 − η1 − θ = 0
+
+q
+w
+
+where η ∈ R is the dual variable for q(cid:62)1 = 1 − bpmin
+and θ ∈ Rb
++ is the dual variable for q ≥ 0. From strict
+complementarity, we have that
+
+qj = (wj exp(η − 1) − pmin)+ + pmin
+
+Then, it sufﬁces to solve for η∗ such that
+
+(cid:88)
+
+j∈I(η)
+
+(wj exp(η − 1) − pmin) = 1 − bpmin
+
+(18)
+
+where I(η) := {1 ≤ j ≤ b : wj exp(η − 1) ≥ pmin}.
+
+Now, assume that w is sorted and stored in a binary tree up
+to a constant s. At each node, we also store the sum of the
+values in the right/left subtree. Denote by w(1) ≥ . . . ≥
+w(b) the sorted values of w. Let
+
+f (j) := w(j)(1 − (b − j)pmin) − pmin
+
+w(j)
+
+j
+(cid:88)
+
+i=1
+
+eη∗−1 =
+
+1 − (b − J ∗)pmin
+i=1 w(j)
+
+(cid:80)J ∗
+
+.
+
+To this end, let J(η) := |I(η)|. For the optimal dual vari-
+able η∗, we have that J(η∗) satisﬁes
+
+w(J(η∗)) exp(η∗ − 1) ≥ pmin
+w(J(η∗)+1) exp(η∗ − 1) < pmin.
+
+and
+
+(19)
+
+Now, note that eη∗−1 satisﬁes
+
+eη∗−1 =
+
+1 − (b − J(η∗))pmin
+i=1 w(j)
+
+(cid:80)J(η∗)
+
+from p(cid:62)1 = 1. Plugging this back into (19), we have that
+f (J(η∗)) ≥ 0 and f (J(η∗)) < 0. Since f (j) is nonin-
+creasing in j, it follows that J(η∗) = J ∗ which show the
+claim.
+
+Next, we show that J ∗ = b − 1 or b are the only possibili-
+ties.
+
+1. Case wJ < pmin: Here, wJ = w(b) since p ≥ pmin.
+
+Noting that wj = pj for j (cid:54)= J, if
+
+w(b)
+
+1
+j=1 w(j)
+
+(cid:80)b
+
+= wJ
+
+1
+1 − pJ + wJ
+
+≥ pmin,
+
+then J ∗ = b and eη∗−1 =
+surely have that
+
+(cid:80)b
+
+1
+j=1 wj
+
+. Otherwise, we
+
+w(b−1)
+
+1 − pmin
+(cid:80)b−1
+j=1 w(j)
+
+= w(b−1)
+
+≥ w(b−1) ≥ pmin
+
+1 − pmin
+1 − pJ
+
+since pj = wj for j (cid:54)= J and pJ ≥ pmin. It follows
+that J ∗ = b − 1 and eη∗−1 = 1−pmin
+1−pJ
+
+.
+
+2. Case wJ ≥ pmin: since
+
+w(b)
+
+1
+j=1 w(j)
+
+(cid:80)b
+
+≥ w(b) ≥ pmin,
+
+we have J ∗ = b and eη∗−1 =
+
+(cid:80)b
+
+1
+j=1 wj
+
+.
+
+Combining the two cases and noting that
+
+(cid:16)
+
+q =
+
+weη∗−1 − pmin
+
+(cid:17)
+
++
+
++ pmin,
+
+we have
+
+
+
+q =
+
+w
+
+1
+1−pJ +wJ
+(cid:16) 1−pmin
+1−pJ
+
+
+
+w − pmin
+
++ pmin
+
+(cid:17)
+
++
+
+if wJ ≥ pmin(1−pJ )
+otherwise
+
+1−pmin
+
+Since wj ≥ pmin for j (cid:54)= J, result follows.
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+B.2. Update
+
+We recapitulate that a key characteristic of our tree imple-
+mentation is that at each node, in addition to the value v, we
+store suml, sumr, the sum of elements in the left/right sub-
+tree. Below, we give an algorithm that modiﬁes an element
+of the tree and updates suml, sumr of its parents accord-
+ingly. All node comparisons are based on their correspond-
+ing index values.
+
+if node is a left child then
+
+Algorithm 6 Update
+1: wnew, J
+2: Set value at index J to wnew
+3: Initialize node with that of index J
+4: while node.parent ! = NULL do
+5:
+6:
+7:
+8:
+9:
+10:
+11:
+12: node ← node.parent
+
+else
+
+node.parent.suml ← node.parent.sumr
+
++wnew − wold
+
+node.parent.sumr ← node.parent.sumr
+
++wnew − wold
+
+B.3. Sampling
+
+For completeness, we give the pseudo-code for sampling
+from the BST in O(log b).
+
+over uniform sampling is smaller than in the coordinate
+sampling case (Figure 5). We postulate that this is due to
+the following effect: for an (cid:15)-optimality gap, SGD requires
+O(R2L2/(cid:15)2) iterations, whereas O(R2L2b/(cid:15)2) iterations.
+Since our bandit algorithm requires roughly O(b log b) iter-
+ations to learn structure, it has more time to take advantage
+of this structure in coordinate sampling before reaching a
+given optimality gap. For SGD, our adaptive algorithm
+does better than leverage scores when α = 2.2 which is a
+result of learning a more aggressive sampling distribution.
+
+Figure 7 analyzes the effects of stepsize on the performance
+of our algorithm. Speciﬁcally, we consider the same syn-
+thetic dataset as in Section 4.1, and we ﬁx the number of
+iterations to 105. Varying the stepsize parameter β, we
+track the optimality gap at the end of the procedure for our
+method as well as uniform sampling. Although the sensi-
+tivity to stepsize (the width of the bowl) appears the same in
+both approaches, our method is able to handle larger step-
+sizes (our “bowl” is shifted to the right) and learns more
+efﬁciently for a given stepsize (our “bowl” is deeper) at
+larger α. Importantly, we achieve these advantages solely
+by tilting the sampling distribution to match the underlying
+data’s structure.
+
+Finally, we consider using the Gauss-Southwell rule for the
+experiments in Section 4.1; similar to using blockwise Lip-
+schitz constants, the Gauss-Southwell rule descends on the
+coordinate with the largest gradient magnitude at every it-
+eration. This method is inefﬁcient except for specialized
+loss functions, as seen in Figure 8.
+
+Return node
+
+if coin < node.v then
+
+Algorithm 7 Sample Tree
+1: coin ← Uniform(0,1), node ← root
+2: coin ← scale · coin
+3: while node is not a leaf do
+4:
+5:
+6:
+7:
+8:
+9:
+10:
+11:
+12: return node
+
+coin ← coin − node.v
+node ← node.left
+
+else
+
+coin ← coin − node.v − node.suml
+node ← node.right
+
+elseif coin < node.v + node.suml then
+
+C. Detailed synthetic experiments
+
+Here we present further experiments for Sections 4.1 and
+4.2. Namely, Figures 5 and 6 shows experiments over more
+α and more values of c for each α. This more detailed
+setup illustrates the phase change in behavior: from em-
+ulating uniform sampling at small α to learning and tak-
+ing advantage of structure at large α. Interestingly, we see
+that even though we are able to learn structure in sampling
+over examples (Figure 6), the magnitude of improvement
+
+Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+(a) Optimality gap vs. runtime
+
+(b) Learned probability distribution compared to j−α. We use c that resulted in the best performance.
+
+Figure 5. Adaptive coordinate descent (left to right: α = 0.2, 0.4, 1.0, 2.2)
+
+(a) Optimality gap vs. runtime
+
+(b) Learned probability distribution compared to j−α. We use c that resulted in the best performance.
+
+Figure 6. Adaptive SGD (left to right: α = 0.4, 1.8, 2.2, 6.0)
+
+(a) α = 0.4
+
+(b) α = 2.2
+
+Figure 7. Optimality gap vs. stepsize after 105 iterations
+
+012345610-1100012345610-11000246810-1100012345610-210-110005010015020025000.20.40.60.8105010015020025000.20.40.60.8105010015020025000.20.40.60.8105010015020025000.20.40.60.8100.511.522.533.5410-110000.511.522.533.5410-210-110000.511.522.533.5410-210-11000123410-310-210-110005010015020025000.20.40.60.8105010015020025000.20.40.60.8105010015020025000.20.40.60.8105010015020025000.20.40.60.8110-310-210-110010110210-110-310-210-110010110210-2Adaptive Sampling Probabilities for Non-Smooth Optimization
+
+Figure 8. Optimality gap vs.
+0.2, 0.4, 1.0, 2.2)
+
+runtime for the same experiments as in Figure 5 with the Gauss-Southwell rule (left to right: α =
+
+01234510-110001234510-110001234567810-110001234510-210-1100

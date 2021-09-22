@@ -1,0 +1,1893 @@
+Neural Taylor Approximations:
+Convergence and Exploration in Rectiﬁer Networks
+
+David Balduzzi 1 Brian McWilliams 2 Tony Butler-Yeoman 1
+
+Abstract
+
+Modern convolutional networks,
+incorporating
+rectiﬁers and max-pooling, are neither smooth
+nor convex; standard guarantees therefore do not
+apply. Nevertheless, methods from convex opti-
+mization such as gradient descent and Adam are
+widely used as building blocks for deep learning
+algorithms. This paper provides the ﬁrst conver-
+gence guarantee applicable to modern convnets,
+which furthermore matches a lower bound for
+convex nonsmooth functions. The key techni-
+cal tool is the neural Taylor approximation – a
+straightforward application of Taylor expansions
+to neural networks – and the associated Taylor
+loss. Experiments on a range of optimizers, lay-
+ers, and tasks provide evidence that the analysis
+accurately captures the dynamics of neural opti-
+mization. The second half of the paper applies
+the Taylor approximation to isolate the main dif-
+ﬁculty in training rectiﬁer nets – that gradients
+are shattered – and investigates the hypothesis
+that, by exploring the space of activation con-
+ﬁgurations more thoroughly, adaptive optimizers
+such as RMSProp and Adam are able to converge
+to better solutions.
+
+1. Introduction
+
+Deep learning has achieved impressive performance on a
+range of tasks (LeCun et al., 2015). The workhorse under-
+lying deep learning is gradient descent or backprop. Gra-
+dient descent has convergence guarantees in settings that
+are smooth, convex or both. However, modern convnets
+are neither smooth nor convex. Every winner of the Im-
+ageNet classiﬁcation challenge since 2012 has used recti-
+ﬁers which are not smooth (Krizhevsky et al., 2012; Zeiler
+
+1Victoria University of Wellington, New Zealand 2Disney Re-
+search, Z¨urich, Switzerland. Correspondence to: David Balduzzi
+<dbalduzzi@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Fig. 1: Shattered gradients in a PL-function.
+
+& Fergus, 2014; Simonyan & Zisserman, 2015; Szegedy
+et al., 2015; He et al., 2015). Even in convex settings,
+convergence for nonsmooth functions is lower-bounded by
+1/
+
+N (Bubeck, 2015).
+
+√
+
+The paper’s main contribution is the ﬁrst convergence re-
+sult for modern convnets, Theorem 2. The idea is sim-
+ple: backprop constructs linear snapshots (gradients) of a
+neural net’s landscape; section 2 introduces neural Taylor
+approximations which are used to construct Taylor losses
+as convex snapshots closely related to backprop. We then
+use the online convex optimization framework (Zinkevich,
+2003) to show 1/
+N convergence to the Taylor optimum,
+matching the lower bound in (Bubeck, 2015). Section 2.4
+investigates the Taylor optimum and regret terms empiri-
+cally. We observe that convergence to the Taylor optimum
+occurs at 1/
+N in practice. The theorem applies to any
+neural net with a loss convex in the output of the net (for
+example, the cross-entropy loss is convex in the output but
+not the parameters of a neural net).
+
+√
+
+√
+
+The nonsmoothness of rectiﬁer nets is perhaps underappre-
+ciated (Balduzzi et al., 2017). Fig. 1 shows a piecewise-
+linear (PL) function and its gradient. The gradient is dis-
+continuous or shattered. Shattering is problematic for ac-
+celerated and Hessian-based methods which speed up con-
+vergence by exploiting the relationship between gradients
+at nearby points (Sutskever et al., 2013). The success of
+these methods on rectiﬁer networks, where the number of
+kinks grows exponentially with depth (Pascanu et al., 2014;
+Telgarsky, 2016), requires explanation since gradients at
+nearby points can be very different (Balduzzi et al., 2017).
+
+Section 3 addresses the success of adaptive optimizers
+
+Neural Taylor Approximations
+
+in rectiﬁer nets.1 Adaptive optimizers normalize gradi-
+ents by their root-mean-square; e.g. AdaGrad, RMSProp,
+Adam and RadaGrad (Duchi et al., 2011; Hinton et al.,
+2012; Kingma & Ba, 2015; Krummenacher et al., 2016).
+Dauphin et al. (2015) argue that RMSProp approximates
+the equilibriation matrix (cid:112)
+diag(H 2) which approximates
+the absolute Hessian |H| (Dauphin et al., 2014). How-
+ever, the argument is at best part of the story when gra-
+dients are shattered. In fact, curvature-based explanations
+for RMS-normalization schemes do not tell the whole story
+even in smooth convex settings: Krummenacher et al.
+(2016) and Duchi et al. (2013) show that diagonal nor-
+malization schemes show no theoretical improvement over
+vanilla SGD when the coordinates are not axis-aligned or
+extremely sparse respectively.
+
+The only way an optimizer can estimate gradients of a shat-
+tered function is to compute them directly. Effective opti-
+mizers must therefore explore the space of smooth regions
+– the bound in theorem 2 is only as good as the optimum
+over the Taylor losses encountered during backprop. Ob-
+servations 1 and 2 relate smooth regions in rectiﬁer nets and
+the Taylor losses to conﬁgurations of active neurons. We
+hypothesize that root-mean-square normalization increases
+exploration through the set of smooth regions in a rectiﬁer
+net’s landscape. Experiments in section 3.3 provide partial
+support for the hypothesis.
+
+1.1. Comparison with related work
+
+Researchers have applied convex techniques to neural net-
+works. Bengio et al. (2006) show that choosing the number
+of hidden units converts neural optimization into a convex
+problem, see also Bach (2014). A convex multi-layer archi-
+tectures are developed in Aslan et al. (2014); Zhang et al.
+(2016). However, these approaches have not achieved the
+practical success of convnets. In this work, we analyze con-
+vnets as they are rather than proposing a more tractable, but
+potentially less useful, model. A Taylor decomposition for
+neural networks was proposed in Montavon et al. (2015).
+They treat inputs as variable instead of weights and study
+interpretability instead of convergence. Taylor approxima-
+tions to neural nets have also been used in Schraudolph
+(2002); Martens et al. (2012) to construct the generalized
+Gauss-Newton matrix as an alternative to the Hessian.
+
+Our results are closely related to Balduzzi (2016), which
+uses game-theoretic techniques to prove convergence in
+rectiﬁer nets. The approach taken here is more direct and
+holds in greater generality.
+
+1For simplicity, we restrict to fully connected rectiﬁer (ReLU)
+nets.
+The results also apply to convolutions, max-pooling,
+dropout, dropconnect, maxout, PReLUs and CReLUs (Srivastava
+et al., 2014; Wan et al., 2013; Goodfellow et al., 2013; He et al.,
+2015; Shang et al., 2016).
+
+2. Convergence of Neural Networks
+
+Before presenting the main result, we highlight some is-
+sues that arise when studying convergence in rectiﬁer nets.
+Many optimization methods have guarantees that hold in
+convex or smooth settings. However, none of the guar-
+antees extend to rectiﬁer nets. For example, the litera-
+ture provides no rigorous account of when or why Adam
+or Adagrad converges faster on rectiﬁer nets than vanilla
+gradient descent. Instead, we currently have only intuition,
+empirics and an analogy with convex or smooth settings.
+
+Gradient-based optimization on neural nets can converge
+on local optima that are substantially worse than the global
+optimum. Fortunately, “bad” local optima are rare in prac-
+tice. A partial explanation for the prevalence of “good
+enough” local optima is Choromanska et al. (2015). Nev-
+ertheless, it is important to acknowledge that neural nets
+can and do converge to bad local optima. It is therefore
+impossible to prove (non-stochastic) bounds relative to the
+global optimum. Such a result may be provable under fur-
+ther assumptions. However, since the result would contra-
+dict empirical evidence, the assumptions would necessarily
+be unrealistic.
+
+2.1. What kind of guarantee is possible?
+
+The landscape of a rectiﬁer net decomposes into smooth
+regions separated by kinks (Pascanu et al., 2014; Telgar-
+sky, 2016), see ﬁgure 2. Gradients on different sides of
+a kink are unrelated since the derivative is discontinuous.
+Gradient-based optimizers cannot “peer around” the kinks
+in rectiﬁer nets.
+
+Gradient-based optimization on rectiﬁer nets thus decom-
+poses into two components. The ﬁrst is steepest descent
+in a smooth region; the second moves between smooth re-
+gions. The ﬁrst component is vanilla optimization whereas
+the second involves an element of exploration: what the
+optimizer encounters when it crosses a kink cannot be pre-
+dicted.
+
+The convergence guarantee in theorem 2 takes both com-
+ponents of the factorization into account in different ways.
+It is formulated in the adversarial setting of online convex
+optimization. Intuitively, the adversary is the nonsmooth
+geometry of the landscape, which generates what may-as-
+well-be a new loss whenever backprop enters a different
+smooth region.
+
+Backprop searches a vast nonconvex landscape with a lin-
+ear ﬂashlight (the Taylor losses are a more sharply focused
+convex ﬂashlight, see A4). The adversary is the land-
+scape: from backprop’s perspective its geometry – espe-
+cially across kinks – is an unpredictable external force.
+
+The Taylor losses are a series of convex problems that back-
+
+Neural Taylor Approximations
+
+a lower-bound. It cannot be improved without additional
+assumptions.
+
+2.3. Neural Taylor Approximation
+
+Consider a network with L − 1 hidden layers and weight
+matrices W := {W1, . . . , WL}. Let x0 denote the input.
+For hidden layers l ∈ {1, . . . , L − 1}, set al = Wl · xl
+1
+−
+and xl = s(al) where s(·) is applied coordinatewise. The
+1. Let pl de-
+last layer outputs xL = aL = WL · xL
+note the size of the lth layer; p0 is the size of the input
+and pL is the size of the output. Suppose the loss (cid:96)(f , y)
+is smooth and convex in the ﬁrst argument. The training
+data is (xd, yd)D
+d=1. The network is trained on stochas-
+tic samples from the training data on a series of rounds
+n = 1, . . . , N . For simplicity we assume minibatch size
+1; the results generalize without difﬁculty.
+
+−
+
+We recall backprop using notation from Martens et al.
+(2012). Let Ja
+b denote the Jacobian matrix of the vector a
+with respect to the vector b. By the chain rule the gradient
+decomposes as
+
+∇Wl (cid:96)(cid:0)fW(x0), y) = JEL · JL
+
+L
+
+(2)
+
+1
+
+(cid:124)
+
+= JEL
+(cid:124)(cid:123)(cid:122)(cid:125)
+f (cid:96)(f ,y)
+
+∇
+
+l
+
+−
+
+⊗xl
+
+1 · · · Jl+1
+−
+(cid:125)
+(cid:123)(cid:122)
+δl
+· JL
+l ⊗ xl
+(cid:123)(cid:122)
+(cid:124)
+Wl fW(x0)=:Gl
+
+1
+−
+(cid:125)
+
+∇
+
+l
+
+where δl = JEl
+is the backpropagated error computed re-
+cursively via δl = δl+1 · Jl+1
+.2 The middle expression in
+(2) is the standard representation of backpropagated gradi-
+ents. The expression on the right factorizes the backpropa-
+gated error δl = JEL ·JL
+l into the gradient of the loss JEL and
+the Jacobian JL
+l between layers, which describes gradient
+ﬂow within the network.
+
+The ﬁrst-order Taylor approximation to a differentiable
+function f : R → R near a is Ta(x) = f (a)+f (cid:48)(a)·(x−a).
+The neural Taylor approximation for a fully connected net-
+work is as follows.
+
+−
+
+Deﬁnition 1. The Jacobian tensor of layer l, Gl := JL
+l ⊗
+1, is the gradient of the output of the neural network
+xl
+with respect to the weights of layer l. It is the outer prod-
+uct of a (pL × pl)-matrix with a pl
+1-vector, and so is a
+(pL, pl, pl
+
+1)-tensor.
+
+−
+
+−
+
+the expression
+Given Gl and (pl × pl
+−
+(cid:104)Gl, V(cid:105) := JL
+1 is the pL-vector computed via
+l
+matrix-matrix-vector multiplication. The neural Taylor ap-
+proximation to f in a neighborhood of Wn, given input xn
+0 ,
+
+1)-matrix V,
+
+· V · xl
+
+−
+
+2Note: we suppress the dependence of the Jacobians on the
+
+round n to simplify notation.
+
+Fig. 2: Neural Taylor approximation.
+
+prop de facto optimizes – the gradients of the actual and
+Taylor losses are identical. The Taylor optimum improves
+when, stepping over a kink, backprop shines its light on a
+new (better) region of the landscape (ﬁg. 2). Regret quanti-
+ﬁes the gap between the Taylor optimal loss and the losses
+incurred during training.
+
+2.2. Online Convex Optimization
+
+In online convex optimization (Zinkevich, 2003), a learner
+is given convex loss functions (cid:96)1, . . . (cid:96)N . On the nth round,
+the learner predicts Wn prior to observing (cid:96)n, and then
+incurs loss (cid:96)n(Wn). Since the losses are not known in ad-
+vance, the performance of the learner is evaluated post hoc
+via the regret, the difference between the incurred losses
+and the optimal loss in hindsight:
+
+Regret(N ) :=
+
+N
+(cid:88)
+
+(cid:104)
+
+n=1
+
+(cid:96)n(Wn)
+(cid:124) (cid:123)(cid:122) (cid:125)
+losses incurred
+
+− (cid:96)n(V∗)
+(cid:124) (cid:123)(cid:122) (cid:125)
+optimal-in-hindsight
+
+(cid:105)
+
+(cid:104) (cid:80)N
+
+(cid:105)
+n=1 (cid:96)n(V)
+
+where V∗ := argminV
+. An algorithm
+Regret(N )/N = 0 for any se-
+has no-regret if limN
+quence of convex losses with bounded gradients. For ex-
+ample, Kingma & Ba (2015) prove:
+
+→∞
+
+∈H
+
+Theorem 1 (Adam has no-regret).
+Suppose the convex losses (cid:96)n have bounded gradients
+(cid:107) ∇W (cid:96)n(W)(cid:107)2 ≤ G and (cid:107) ∇W (cid:96)n(W)(cid:107)
+≤ G for all
+W ∈ H and suppose that the weights chosen by the algo-
+rithm satisfy (cid:107)Wm − Wn(cid:107)2 ≤ D and (cid:107)Wm − Wn(cid:107)
+≤
+D for all m, n ∈ {1, . . . , N }. Then Adam satisﬁes
+
+∞
+
+∞
+
+Regret(N )/N ≤ O
+
+1/
+
+N
+
+for all N ≥ 1.
+
+(1)
+
+(cid:16)
+
+√
+
+(cid:17)
+
+The regret of gradient descent, AdaGrad (Duchi et al.,
+2011), mirror descent and a variety of related algorithms
+satisfy (1), albeit with different constant terms that are hid-
+den in the big-O notation. Finally, the 1/
+N rate is also
+
+√
+
+Tn−1TnTn+1Wn−1WnWn+1fW(x)smooth regionsNeural Taylor Approximations
+
+is the ﬁrst-order Taylor expansion
+
+l/α(Vl/α) := (cid:96)(Tn
+Tn
+
+l/α(Vl/α), yn). Then,
+
+Tn(V) := fWn (xn
+
+0 ) +
+
+(cid:10)Gl, Vl − Wn
+
+l
+
+(cid:11) ≈ fV(xn
+0 ).
+
+L
+(cid:88)
+
+l=1
+
+the Taylor loss of the network on round n is
+
+Finally,
+Tn(V) = (cid:96)(Tn(V), yn).
+
+N
+(cid:88)
+
+(cid:96) (fWn (xn
+
+1
+N
+(cid:124)
+(cid:125)
+(cid:123)(cid:122)
+running average of training errors
+
+0 ), yn)
+
+n=1
+
+≤ min
+Vl/α
+(cid:124)
+
+(cid:40)
+
+1
+N
+
+N
+(cid:88)
+
+n=1
+
+(cid:41)
+
+Tn
+
+l/α(Vl/α)
+
+(cid:123)(cid:122)
+layer-wise/neuronal Taylor optimum
+(4)
+
+(cid:125)
+
+The Taylor approximation to layer l is
+
+Tn
+
+l (Vl) := fWn (xn
+
+0 ) + (cid:10)Gl, Vl − Wn
+
+l
+
+(cid:11).
+
+We can also construct the Taylor approximation to neuron
+α in layer l. Let the pL-vector JL
+l [ :, α] denote the
+Jacobian with respect to neuron α and let the (pL × pl
+1)-
+matrix Gα := JL
+1 denote the Jacobian with respect
+to the weights of neuron α. The Taylor approximation to
+neuron α is
+
+α := JL
+
+α ⊗ xl
+
+−
+
+−
+
+Tn
+
+α(Vα) := fWn (xn
+
+0 ) + (cid:10)Gα, Vα − Wn
+
+α
+
+(cid:11).
+
+The Taylor losses are the simplest non-trivial (i.e. non-
+afﬁne) convex functions encoding the information gener-
+ated by backprop, see section A4.
+
+The following theorem provides convergence guarantees at
+mutiple spatial scales: network-wise, layer-wise and neu-
+ronal. See sections A2 for a proof of the theorem. It is not
+currently clear which scale provides the tightest bound.
+
+Theorem 2 (no-regret relative to Taylor optimum).
+Suppose, as in Theorem 1, the Taylor losses have bounded
+gradients and the weights of the neural network have
+bounded diameter during training.
+
+Suppose the neural net is optimized by an algorithm with
+N ) such as gradient descent, Ada-
+Regret(N ) ≤ O(
+Grad, Adam or mirror descent.
+
+√
+
+• Network guarantee:
+
+The running average of the training error of the neural
+network satisﬁes
+
+N
+(cid:88)
+
+(cid:96) (fWn(xn
+
+1
+N
+(cid:124)
+(cid:125)
+(cid:123)(cid:122)
+running average of training errors
+
+0 ), yn)
+
+n=1
+
+≤ min
+V
+
+(cid:124)
+
+N
+(cid:88)
+
+(cid:40)
+
+1
+N
+
+n=1
+(cid:123)(cid:122)
+Taylor optimum
+
+Tn(V)
+
+(cid:41)
+(3)
+
+(cid:125)
+
++ O
+
+(cid:18) 1
+√
+N
+
+(cid:19)
+
+.
+
+(cid:125)
+(cid:123)(cid:122)
+(cid:124)
+Regret(N )/N
+
+• Layer-wise / Neuron-wise guarantee:
+loss of
+
+The Taylor
+
+[layer-l
+
+/ neuron-α]
+
+is
+
++ O
+
+(cid:18) 1
+√
+N
+
+(cid:19)
+
+.
+
+(cid:124)
+(cid:125)
+(cid:123)(cid:122)
+Regret(N )/N
+
+The running average of errors during training (or cumula-
+tive loss) is the same quantity that arises in the analyses
+of Adam and Adagrad (Kingma & Ba, 2015; Duchi et al.,
+2011).
+
+Implications of the theorem. The global optima of neu-
+ral nets are not computationally accessible. Theorem 2
+sidesteps the problem by providing a guarantee relative to
+the Taylor optimum. The bound is path-dependent; it de-
+pends on the convex snapshots encountered by backprop
+during training.
+
+It is a
+Path-dependency is a key feature of the theorem.
+simple matter to construct a deep fully connected network
+(> 100 layers) that fails to learn because gradients do not
+propagate through the network (He et al., 2016). A con-
+vergence theorem for neural nets must also be applicable
+in such pathological cases. Theorem 2 still holds because
+the failure of gradients to propagate through the network
+results in Taylor losses with poor solutions.
+
+Although the bound in theorem 2 is path-dependent, it is
+nevertheless meaningful. The right-hand-side is given by
+the Taylor optimum, which is the optimal solution to the
+best convex approximations to the actual losses; best in the
+sense that they have the same value and have the same gra-
+dient for the encountered weights. The theorem replaces a
+seemingly intractable problem – neither smooth nor convex
+– with a sequence of convex problems.
+
+Empirically, see below, we ﬁnd that the Taylor optimum is
+a tough target on a range of datasets and settings: MNIST
+and CIFAR10; supervised and unsupervised learning; con-
+volutional and fully-connected architectures; under a vari-
+ety of optimizers (Adam, SGD, RMSProp), and for indi-
+vidual neurons as well as entire layers.
+
+Finally, the decomposition of learning over rectiﬁer net-
+works into vanilla optimization and exploration compo-
+nents suggests investigating the exploratory behavior of
+different optimizers – with the theorem providing concrete
+tools to do so, see section 3.
+
+Neural Taylor Approximations
+
+(a) All conv layers
+
+(b) Layer 1 (input layer)
+
+(c) Layer 2
+
+Fig. 3: Average normalized cumulative regret for RMSProp on CIFAR-10. (a) Average regret incurred by neurons in
+each layer over 50 neurons/layer. (b)-(c) Average regret incurred eachs neuron in layers 1 and 2 respectively, along with
+average loss, Taylor optimum and cumulative network loss. Shaded areas represent one standard deviation.
+
+2.4. Empirical Analysis of Online Neural Optimization
+
+This section empirically investigates the Taylor optimum
+and regret terms in theorem 2 on two tasks:
+
+Autoencoder trained on MNIST. Dense layers with archi-
+tecture 784 → 50 → 30 → 20 → 30 → 50 → 784 and
+ReLU non-linearities. Trained with MSE loss using mini-
+batches of 64.
+
+Convnet trained on CIFAR-10. Three convolutional lay-
+ers with stack size 64 and 5 × 5 receptive ﬁelds, ReLU non-
+linearities and 2 × 2 max-pooling. Followed by a 192 unit
+fully-connected layer with ReLU before a ten-dimensional
+fully-connected output layer. Trained with cross-entropy
+loss using minibatches of 128.
+
+For both tasks we compare the optimization performance of
+Adam, RMSProp and SGD (ﬁgure 6 in appendix). Learn-
+ing rates were tuned for optimal performance. Additional
+parameters for Adam and RMSProp were left at default.
+For the convnet all three methods perform equally well:
+achieving a small loss and an accuracy of ≥ 99% on the
+training set. However, SGD exhibits slightly more vari-
+ance. For the autoencoder, although it is an extremely sim-
+ple model, SGD with the best (ﬁxed) learning rate performs
+signiﬁcantly worse than the adaptive optimizers.
+
+The neuronal and layer-wise regret are evaluated for each
+model. At every iteration we record the training error – the
+left-hand-side of eq. (4). To evaluate the Taylor loss, we
+record the input to the neuron/layer, its weights, the output
+of the network and the gradient tensor Gl. After training,
+we minimize the Taylor loss with respect to V to ﬁnd the
+Taylor optimum at each round. The regret is the difference
+between the observed training loss and the optimal Taylor
+loss.
+
+The ﬁgures show cumulative losses and regret. For illustra-
+N : quantities growing
+tive purposes we normalize by 1/
+
+√
+
+√
+
+N therefore ﬂatten out. Figure 3(a) compares the aver-
+at
+age regret incurred by neurons in each convolutional layer
+of the convnet. Shaded regions show one standard devia-
+tion. Dashed lines are the regret of individual neurons –
+importantly the regret behaviour of neurons holds both on
+average and individually. Figs 3(b) and 3(c) show the re-
+gret, cumulative loss incurred by the network, the average
+loss incurred and the Taylor optimal loss for neurons in lay-
+ers 1 and 2 respectively.
+
+Fig. 4 compares Adam, RMSProp and SGD. Figure 4(a)
+shows the layer-wise regret on the convnet. The regret of all
+√
+N for both models, matching
+of the optimizers scales as
+the bound in Theorem 2. The additional variance exhib-
+ited by SGD explains the difference in regret magnitude.
+Similar behaviour was observed in the other layers of the
+networks and also for convnets trained on MNIST.
+
+√
+
+Figure 4(b) shows the same plot for the autoencoder. The
+N (this also holds for the
+regret of all methods scales as
+other layers in the network). The gap in performance can
+be further explained by examining the difference between
+the observed loss and Taylor optimal loss. Figure 4(c) com-
+pares these quantities for each method on the autoencoder.
+The adaptive optimizers incur lower losses than SGD. Fur-
+ther, the gap between the actually incurred and optimal loss
+is smaller for adaptive optimizers. This is possibly because
+adaptive optimizers ﬁnd better activation conﬁgurations of
+the network, see discussion in section 3.
+
+Remarkably, ﬁgures 3 and 4 conﬁrm that regret scales as
+√
+N for a variety of optimizers, datasets, models, neurons
+and layers – verifying the multi-scale guarantee of Theo-
+rem 2. A possible explanation for why optimizers match
+the worst-case (1/
+N ) regret is that the adversary (that is,
+the landscape) keeps revealing Taylor losses with better so-
+lutions. The optimizer struggles to keep up with the hind-
+sight optimum on the constantly changing Taylor losses.
+
+√
+
+20406080100epochs02468Cumul. RegretLayer 1Layer 2Layer 320406080100epochs0816Cumul. LossNeuron lossTaylor optimalRegretNetwork loss20406080100epochs0816Cumul. LossNeuron lossTaylor optimalRegretNetwork lossNeural Taylor Approximations
+
+(a) Convnet regret, layer 2
+
+(b) Autoencoder regret, layer 3
+
+(c) Cumul. losses for autoencoder
+
+Fig. 4: Comparison of regret for Adam, RMSProp and SGD. The y-axis in (b) is scaled by ×1000. (c) reports cumula-
+tive loss and Taylor optimal loss on layer 3 for each method.
+
+3. Optimization and Exploration in Rectiﬁer
+
+training data is
+
+Neural Networks
+
+Poor optima in rectiﬁer nets are related to shattered gradi-
+ents: backprop cannot estimate gradients in nearby smooth
+regions without directly computing them;
+the ﬂashlight
+does not shine across kinks. Two recent papers have shown
+that noise improves the local optima found during train-
+ing: Neelakantan et al. (2016) introduce noise into gradi-
+ents whereas Gulcehre et al. (2016) use noisy activations to
+extract gradient information from across kinks. Intuitively,
+noise is a mechanism to “peer around kinks” in shattered
+landscapes.
+
+Introducing noise is not the only way to ﬁnd better optima.
+Not only do adaptive optimizers often converge faster than
+vanilla gradient descent, they often also converge to better
+local minima.
+
+This section investigates how adaptive optimizers explore
+shattered landscapes. Section 3.1 shows that smooth re-
+gions in rectiﬁer nets correspond to conﬁgurations of active
+neurons and that neural Taylor approximations clamp the
+the convex ﬂashlight does
+activation conﬁguration – i.e.
+not shine across kinks in the landscape. Section 3.2 ob-
+serves that adaptive optimizers incorporate an exploration
+bias and hypothesizes that the success of adaptive optimiz-
+ers derives from exploring the set of smooth regions more
+extensively than SGD. Section 3.3 evaluates the hypothesis
+empirically.
+
+3.1. The Role of Activation Conﬁgurations in
+
+Optimization
+
+We describe how conﬁgurations of active neurons relate to
+smooth regions of rectiﬁer networks and to neural Taylor
+approximations. Recall that the loss of a neural net on its
+
+ˆ(cid:96)(W) =
+
+(cid:96)(cid:0)fW(xd), yd(cid:1).
+
+1
+D
+
+D
+(cid:88)
+
+d=1
+
+Deﬁnition 2. Enumerate the data as [D] = {1, . . . , D}
+and neurons as [M ]. The activation conﬁguration A(W)
+is a (D ×M ) binary matrix representing the active neurons
+for each input. The set of all possible activation conﬁgura-
+tions corresponds to the set of all (D×M ) binary matrices.
+
+Observation 1 (activation conﬁgurations correspond to
+smooth regions in rectiﬁer networks).
+A parameter value exhibits a kink in ˆ(cid:96) iff an inﬁnitesimal
+change alters the of activation conﬁguration, i.e. ˆ(cid:96) is not
+smooth at W iff there is a V s.t. A(W) (cid:54)= A(W + δV)
+for all δ > 0.
+
+The neural Taylor approximation to a rectiﬁer net admits a
+natural description in terms of activation conﬁgurations.
+
+Observation 2 (the Taylor approximation clamps activa-
+tion conﬁgurations in rectiﬁer networks).
+Suppose datapoint d is sampled on round n. Let 1k :=
+A(Wn)[d, layer k] be the pk-vector given by entries of
+row d of A(Wn) corresponding to neurons in layer k of a
+rectiﬁer network. The Taylor approximation Tn
+
+l is
+
+Tn
+
+l (Vl) = 1l ·
+
+
+
+Wn
+
+k · diag(1k)
+
+
+
+
+
+(cid:89)
+
+k
+
+=l
+
+(cid:124)
+
+(cid:123)(cid:122)
+clamped
+
+
+
+(cid:125)
+
+· (Vl − Wn
+l )
+(cid:123)(cid:122)
+(cid:125)
+(cid:124)
+free
+
+which clamps the activation conﬁguration, and weights of
+all layers excluding l.
+
+Observations 1 and 2 connect shattered gradients in recti-
+ﬁer nets to activation conﬁgurations and the Taylor loss.
+The main implication is to factorize neural optimization
+
+20406080100epochs481216Cumul. RegretAdamRMSPropSGD20406080epochs 2 3 4 5 6 7Cumul. RegretAdamRMSPropSGD20406080epochs0.10.20.3Cumul. LossTaylor optimalloss(cid:54)
+Neural Taylor Approximations
+
+into hard (ﬁnding “good” smooth regions) and easy (op-
+timizing within a smooth region) subproblems that corre-
+spond, roughly, to ﬁnding “good” Taylor losses and opti-
+mizing them respectively.
+
+as a (D × M ) binary matrix, recall deﬁnition 2. The set of
+activation conﬁgurations encountered by a network over N
+rounds of training is represented by an (N, D, M ) binary
+tensor denoted A where An := A[n, :, :] := A(Wn).
+
+3.2. RMS-Normalization encourages Exploration
+
+Adaptive optimizers based on root-mean-square normaliza-
+tion exhibit an up-to-exponential improvement over non-
+adaptive methods when gradients are sparse (Duchi et al.,
+2013) or low-rank (Krummenacher et al., 2016) in convex
+settings. We propose an alternate explanation for the per-
+formance of adaptive optimizers in nonconvex nonsmooth
+settings.
+
+(cid:80)D
+
+Let ∇(cid:96) := 1
+d=1 ∇ (cid:96)d denote the average gradient over
+D
+a dataset. RProp replaces the average gradient with its co-
+ordinatewise sign (Riedmiller & Braun, 1993). An interest-
+ing characterization of the signed-gradient is
+
+Observation 3 (signed-gradient is a maximizer).
+Suppose none of the coordinates in ∇(cid:96) are zero. The
+signed-gradient satisﬁes
+
+sign(∇(cid:96)) = argmax
+
+(cid:111)
+(cid:110)
+(cid:107)x(cid:107)1 : (cid:10)x, ∇(cid:96)(cid:11) ≥ 0
+,
+
+where Bp
+∞
+
+Bp
+∞
+
+∈
+
+x
+= {x ∈ Rp : max
+i=1,...,p
+
+|xi| ≤ 1}.
+
+The signed-gradient
+therefore has two key properties.
+Firstly, small weight updates using the signed-gradient de-
+crease the loss since (cid:104)∇(cid:96), sign(∇(cid:96))(cid:105) > 0. Secondly, the
+signed-gradient is the update that, subject to an (cid:96)
+con-
+straint, has the largest impact on the most coordinates. To
+adapt RProp to minibatches, Hinton and Tieleman sug-
+gested to approximate the signed gradient by normalizing
+with the root-mean-square: sign(∇(cid:96)) ≈
+,
+
+(cid:96)d
+(cid:96)d)2
+where (∇ (cid:96)d)2 is the square taken coordinatewise. Viewing
+the signed-gradient as changing weights – or exploring –
+maximally suggests the following hypothesis:
+
+d=1 ∇
+d=1(
+
+(cid:80)D
+
+(cid:80)D
+
+√
+
+∞
+
+∇
+
+Hypothesis 1 (RMS-normalization encourages exploration
+over activation conﬁgurations).
+Gradient descent with RMS-normalized updates (or run-
+ning average of RMS) performs a broader search through
+the space of activation conﬁgurations than vanilla gradient
+descent.
+
+3.3. Empirical Analysis of Exploration by Adaptive
+
+Optimizers
+
+Motivated by hypothesis 1, we investigate how RMSProp
+and SGD explore the space of activation conﬁgurations on
+the tasks from section 2.4; see A6 for details.
+
+For ﬁxed parameters W, the activation conﬁguration of a
+neural net with M neurons and D datapoints is represented
+
+Figure 5 quantiﬁes exploration in the space of activation
+conﬁgurations in three ways:
+
+5(a): Hamming distance plots mink<n (cid:107)An − Ak(cid:107)2
+F , the
+minimum Hamming distance between the current activa-
+tion conﬁguration and all previous conﬁgurations. It indi-
+cates the novelty of the current activation conﬁguration.
+
+1[d, :](cid:13)
+2
+(cid:13)
+F
+
+(cid:13)
+5(b): Activation-state switches plots
+(cid:13)An[d, :
+]−An
+, the total number of times each data point
+(sorted) switches its activation state across all neurons and
+epochs as a proportion of possible switches. It indicates the
+variability of the network response.
+
+1
+−
+n=1
+
+1
+tot
+
+(cid:80)N
+
+−
+
+5(c): Log-product of singular values. The matrix A[ :, :
+, m] speciﬁes the rounds and datapoints that activate neuron
+m. The right column plots the log-product of A[ :, :, m]’s
+ﬁrst 50 singular values for each neuron (sorted).3 It indi-
+cates the (log-)volume of conﬁguration space covered by
+each neuron. Note that values reaching the bottom of the
+plot indicate singular values near 0.
+
+We observe the following.
+
+RMSProp explores the space of activation conﬁgura-
+tions far more than SGD. The result holds on both tasks,
+across all three measures, and for multiple learning rates
+for SGD (including the optimally tuned rate). The ﬁnding
+provides evidence for hypothesis 1.
+
+RMSProp converges to a signiﬁcantly better local op-
+timum on the autoencoder, see Fig. 6. We observe no
+difference on CIFAR-10. We hypothesize that RMSProp
+ﬁnds a better optimum through more extensive exploration
+through the space of activation conﬁgurations. CIFAR is
+an easier problem and possibly requires less exploration.
+
+Adam explores less than RMSProp. Adam achieves the
+best performance on the autoencoder. Surprisingly, it ex-
+plores substantially less than RMSProp according to the
+Hamming distance and activation-switches, although still
+more than SGD. The singular values provide a higher-
+the ±40 most exploratory neurons
+resolution analysis:
+match the behavior of RMSProp, with a sharp dropoff from
+neuron 60 onwards. A possible explanation is that momen-
+tum encourages targeted exploration by rapidly discard-
+ing avenues that are not promising. The results for Adam
+are more ambiguous than for RMSProp compared to SGD.
+
+3The time-average is subtracted from each column of A[ :, :
+, m]. If the response of neuron m to datapoint d is constant over
+all rounds, then column A[ :, d, m] maps to (0, . . . , 0) and does
+not contribute to the volume.
+
+Neural Taylor Approximations
+
+t
+e
+n
+v
+n
+o
+C
+
+r
+e
+d
+o
+c
+n
+e
+o
+t
+u
+A
+
+(a) Minimum hamming distance.
+
+(b) Activation-state switches.
+
+(c) Log-product of singular values.
+
+Fig. 5: Top: results for a CIFAR-trained convnet. Bottom: MNIST-trained autoencoder.
+(a) Minimum hamming
+distance between the activation conﬁguration at curent epoch and all previous epochs.
+(b) Number of activation-state
+switches undergone for all neurons over all epochs for each data point (sorted). (c) Log-product of the ﬁrst 50 singular
+values of each neuron activation conﬁguration (sorted).
+
+More generally, the role of momentum in nonsmooth non-
+convex optimization requires more investigation.
+
+4. Discussion
+
+Rectiﬁer convnets are the dominant technology in com-
+puter vision and a host of related applications. Our main
+contribution is the ﬁrst convergence result applicable to
+convnets as they are used in practice, including rectiﬁer
+nets, max-pooling, dropout and related methods. The key
+analytical tool is the neural Taylor approximation, the ﬁrst-
+order approximation to the output of a neural net. The Tay-
+lor loss – the loss on the neural Taylor approximation – is a
+convex approximation to the loss of the network. Remark-
+ably, the convergence rate matches known lower bounds on
+convex nonsmooth functions (Bubeck, 2015). Experiments
+in section 2.4 show the regret matches the theoretical anal-
+ysis under a wide range of settings.
+
+The bound in theorem 2 contains an easy term to optimize
+(the regret) and a hard term (ﬁnding “good” Taylor losses).
+Section 3.1 observes that the Taylor losses speak directly to
+the fundamental difﬁculty of optimizing nonsmooth func-
+tions: that gradients are shattered – the gradient at a point
+is not a reliable estimate of nearby gradients.
+
+Smooth regions of rectiﬁer nets correspond to activation
+
+conﬁgurations. Gradients in one smooth region cannot be
+used to estimate gradients in another. Exploring the set of
+activation conﬁgurations may therefore be crucial for opti-
+mizers to ﬁnd better local minima in shattered landscapes.
+Empirical results in section 3.3 suggest that the improved
+performance of RMSProp over SGD can be explained in
+part by a carefully tuned exploration bias.
+
+Finally, the paper raises several questions:
+
+1. To what extent is exploration necessary for good per-
+
+formance?
+
+2. Can exploration/exploitation tradeoffs in nonsmooth
+
+neural nets be quantiﬁed?
+
+3. There are exponentially more kinks in early layers
+(near the input) compared to later layers. Should opti-
+mizers explore more aggressively in early layers?
+
+4. Can exploring activation conﬁgurations help design
+
+better optimizers?
+
+The Taylor decomposition provides a useful tool for sep-
+arating the convex and nonconvex aspects of neural opti-
+mization, and may also prove useful when tackling explo-
+ration in neural nets.
+
+RMSPropAdamSGD lr=1.0SGD lr=0.1SGD lr=0.01020406080100epochs0.000.010.020.030.040.050.060.0702004006008001000data (ordered)0.000.010.020.030.040.050.06-2000-1500-1000-5000500050010001500200025003000neurons (ordered)0204060801000.000.010.020.030.040.050.060.07epochs0.000.010.020.030.040.050.06data (ordered)01000020000300004000050000020406080100120140160180neurons (ordered)-2000-1500-1000-5000500Neural Taylor Approximations
+
+Acknowledgements
+
+We thank L. Helminger and T. Vogels for useful discus-
+sions and help with TensorFlow. Some experiments were
+performed using a Tesla K80 kindly donated by Nvidia.
+
+References
+
+Aslan, O, Zhang, X, and Schuurmans, Dale. Convex Deep Learn-
+
+ing via Normalized Kernels. In NIPS, 2014.
+
+Bach, Francis. Breaking the Curse of Dimensionality with Con-
+
+vex Neural Networks. In arXiv:1412.8690, 2014.
+
+Balduzzi, David. Deep Online Convex Optimization with Gated
+
+Games. In arXiv:1604.01952, 2016.
+
+Balduzzi, David, Frean, Marcus, Leary, Lennox, Ma, Kurt Wan-
+Duo, and McWilliams, Brian. The Shattered Gradients Prob-
+lem: If resnets are the answer, then what is the question? In
+ICML, 2017.
+
+Bengio, Yoshua, Roux, Nicolas Le, Vincent, Pascal, Delalleau,
+Olivier, and Marcotte, Patrice. Convex Neural Networks. In
+NIPS, 2006.
+
+Bubeck, S´ebastien. Convex Optimization: Algorithms and Com-
+plexity. Foundations and Trends in Machine Learning, 8(3-4):
+231–358, 2015.
+
+Choromanska, A, Henaff, M, Mathieu, M, Arous, G B, and Le-
+Cun, Y. The loss surface of multilayer networks. In Journal of
+Machine Learning Research: Workshop and Conference Pro-
+ceeedings, volume 38 (AISTATS), 2015.
+
+Dauphin, Yann, Pascanu, Razvan, Gulcehre, Caglar, Cho,
+Kyunghyun, Ganguli, Surya, and Bengio, Yoshua.
+Identify-
+ing and attacking the saddle point problem in high-dimensional
+non-convex optimization. In NIPS, 2014.
+
+Dauphin, Yann, de Vries, Harm, and Bengio, Yoshua. Equili-
+brated adaptive learning rates for non-convex optimization. In
+NIPS, 2015.
+
+Duchi, John, Hazan, Elad, and Singer, Yoram. Adaptive Subgradi-
+ent Methods for Online Learning and Stochastic Optimization.
+JMLR, 12:2121–2159, 2011.
+
+Duchi, John, Jordan, Michael I, and McMahan, Brendan. Estima-
+tion, optimization, and parallelism when data is sparse. In Ad-
+vances in Neural Information Processing Systems, pp. 2832–
+2840, 2013.
+
+Goodfellow, Ian J, Warde-Farley, David, Mirza, Mehdi, Courville,
+In ICML,
+
+Aaron, and Bengio, Yoshua. Maxout Networks.
+2013.
+
+Gulcehre, Caglar, Moczulski, Marcin, Denil, Misha, and Bengio,
+
+Yoshua. Noisy Activation Functions. In ICML, 2016.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun, Jian.
+Delving Deep into Rectiﬁers: Surpassing Human-Level Per-
+formance on ImageNet Classiﬁcation. In ICCV, 2015.
+
+Hinton, G, Srivastava, Nitish, and Swersky, Kevin. Lecture 6a:
+
+Overview of minibatch gradient descent. 2012.
+
+Kingma, Diederik P and Ba, Jimmy Lei. Adam: A method for
+
+stochastic optimization. In ICLR, 2015.
+
+Krizhevsky, A, Sutskever, I, and Hinton, G E. Imagenet classiﬁ-
+cation with deep convolutional neural networks. In Advances
+in Neural Information Processing Systems (NIPS), 2012.
+
+Krummenacher, Gabriel, McWilliams, Brian, Kilcher, Yannic,
+Buhmann, Joachim M., and Meinshausen, Nicolai. Scalable
+adaptive stochastic optimization using random projections. In
+NIPS, 2016.
+
+LeCun, Yann, Bengio, Yoshua, and Hinton, Geoffrey. Deep learn-
+
+ing. Nature, 521:436–444, 2015.
+
+Martens, James, Sutskever, Ilya, and Swersky, Kevin. Estimating
+the Hessian by Backpropagating Curvature. In ICML, 2012.
+
+Montavon, G, Bach, S, Binder, A, Samek, W, and M¨uller, K. Ex-
+plaining NonLinear Classiﬁcation Decisions with Deep Taylor
+Decomposition. In arXiv:1512.02479, 2015.
+
+Neelakantan, Arvind, Vilnis, Luke, Le, Quoc, Sutskever, Ilya,
+Kaiser, Lukasz, Kurach, Karol, and Martens, James. Adding
+Gradient Noise Improves Learning for Very Deep Networks.
+In ICLR, 2016.
+
+Pascanu, Razvan, Gulcehre, Caglar, Cho, Kyunghyun, and Ben-
+gio, Yoshua. On the number of inference regions of deep feed
+forward networks with piece-wise linear activations. In ICLR,
+2014.
+
+Riedmiller, Martin and Braun, H. A direct adaptive method for
+faster backpropagation learning: The RPROP algorithm.
+In
+IEEE Int Conf on Neural Networks, pp. 586 – 591, 1993.
+
+Schraudolph, Nicol N. Fast Curvature Matrix-Vector Products
+for Second-Order Gradient Descent. Neural Comp, 14:1723–
+1738, 2002.
+
+Shang, Wenling, Sohn, Kihyuk, Almeida, Diogo, and Lee,
+Honglak. Understanding and Improving Convolutional Neural
+Networks via Concatenated Rectiﬁed Linear Units. In ICML,
+2016.
+
+Simonyan, Karen and Zisserman, Andrew. Very Deep Convolu-
+tional Networks for Large-Scale Image Recognition. In ICLR,
+2015.
+
+Srivastava, Nitish, Hinton, Geoffrey, Krizhevsky, Alex, Sutskever,
+Ilya, and Salakhutdinov, Ruslan. Dropout: A Simple Way to
+Prevent Neural Networks from Overﬁtting. JMLR, 15:1929–
+1958, 2014.
+
+Sutskever, Ilya, Martens, James, Dahl, George, and Hinton, Ge-
+offrey. On the importance of initialization and momentum in
+deep learning. In Proceedings of the 30th International Confer-
+ence on Machine Learning (ICML-13), pp. 1139–1147, 2013.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet, Pierre,
+Reed, Scott, Anguelov, Dragomir, Erhan, Dumitru, Van-
+houcke, Vincent, and Rabinovich, Andrew. Going Deeper With
+Convolutions. In CVPR, 2015.
+
+Telgarsky, Matus. Beneﬁts of depth in neural networks. In COLT,
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun, Jian.
+In CVPR,
+
+Deep Residual Learning for Image Recognition.
+2016.
+
+2016.
+
+Neural Taylor Approximations
+
+Wan, Li, Zeiler, Matthew, Zhang, Sixin, LeCun, Yann, and Fer-
+gus, Rob. Regularization of Neural Networks using DropCon-
+nect. In ICML, 2013.
+
+Zeiler, Matthew and Fergus, Rob. Visualizing and Understanding
+
+Convolutional Networks. In ECCV, 2014.
+
+Zhang, Yuchen, Liang, Percy, and Wainwright, Martin J. Convex-
+In arXiv:1609.01000,
+
+iﬁed Convolutional Neural Networks.
+2016.
+
+Zinkevich, Martin. Online Convex Programming and Generalized
+
+Inﬁnitesimal Gradient Ascent. In ICML, 2003.
+
+APPENDIX
+
+A1. Background on convex optimization
+
+A continuous function f is smooth if there exists a β > 0
+such that (cid:107) ∇ f (x)−∇ f (y)(cid:107)2 ≤ β ·(cid:107)x−y(cid:107)2 for all x and
+y in the domain. Rectiﬁers are not smooth for any value of
+β.
+Nonsmooth convex functions. Let X ⊂ Rp be a convex
+set contained in a ball of radius R. Let (cid:96) : X → R be a
+convex function. Section 3.1 of Bubeck (2015) shows that
+projected gradient descent has convergence guarantee
+
+(cid:33)
+
+(cid:32)
+
+(cid:96)
+
+1
+N
+
+N
+(cid:88)
+
+n=1
+
+wn
+
+− (cid:96)(w∗) ≤ O
+
+(cid:19)
+
+(cid:18) 1
+√
+N
+
+where wn are generated by gradient descent and w∗ :=
+X (cid:96)(w) is the minimizer of (cid:96). It is also shown,
+argminw
+section 3.5, that
+
+∈
+
+(cid:96)(wn) − (cid:96)(w∗) ≥ Ω
+
+min
+n
+≤
+≤
+
+1
+
+N
+
+(cid:19)
+
+(cid:18) 1
+√
+N
+
+where the weights are in the span of the previously ob-
+served gradients: wn ∈ span{∇ (cid:96)(w1), . . . , ∇ (cid:96)(wn
+1)}
+for all n ∈ {1, . . . , N }.
+
+−
+
+The gradient of a convex function increases monotonically.
+That is
+
+(cid:10) ∇ (cid:96)(w) − ∇ (cid:96)(v), w − v(cid:11) ≥ 0
+
+for all points w, v where the gradient exists. Gradients at
+one point of a nonsmooth convex function therefore do con-
+tain information about other points, although not as much
+information as in the smooth case. In contrast, the gradi-
+ents of nonsmooth nonconvex functions can vary wildly as
+shown in Fig. 1.
+
+Smooth convex functions. In the smooth setting, gradient
+descent converges at rate 1
+N . The lower bound for conver-
+gence is even better, 1
+N 2 . The lower bound is achieved by
+Nesterov’s accelerated gradient descent method.
+
+A2. Proof of Theorem 2
+
+Proof. We prove the network case; the others are similar.
+The Taylor loss has three key properties by construction:
+
+T1. The Taylor loss Tn coincides with the loss at
+
+Wn:
+(cid:96)(fWn(xn
+
+0 ), yn) = Tn(V)
+V=Wn
+|
+
+T2. The Taylor loss gradient Tn coincides with the
+
+loss gradient at Wn:
+∇W (cid:96)(fWn(xn
+
+0 ), yn) = ∇V Tn(V)
+|
+
+V=Wn
+
+T3. The Taylor losses are convex functions of V be-
+cause (cid:96)(f , y) is convex in its ﬁrst argument and
+convexity is invariant under afﬁne maps. If (cid:96) is
+a convex function, then so is g(x) = (cid:96)(Ax + b),
+n and b ∈ Rm.
+where A ∈ Rm
+
+×
+
+By T1, the training loss, i.e. the left-hand side of (3), ex-
+actly coincides with the Taylor losses. By T2, the gradients
+of the Taylor losses exactly coincide with the errors com-
+puted by backpropagation on the training losses. That is,
+the training loss over n rounds is indistinguishable from
+the Taylor losses to the ﬁrst order:
+
+1
+N
+
+N
+(cid:88)
+
+n=1
+
+=
+
+1
+N
+
+N
+(cid:88)
+
+n=1
+(cid:32)
+
+losses:
+
+(cid:96) (fWn (xn
+
+0 ), yn)
+
+gradients: ∇W
+
+(cid:96) (fWn (xn
+
+0 ), yn)
+
+(cid:33)
+
+Tn (Wn)
+
+N
+(cid:88)
+
+n=1
+
+1
+N
+
+(cid:32)
+
+1
+N
+
+N
+(cid:88)
+
+n=1
+
+= ∇W
+
+(cid:33)
+
+Tn (Wn)
+
+We can therefore substitute the Taylor losses in place of the
+training loss (fW(x0), y) without altering either the losses
+incurred during training or the dynamics of backpropaga-
+tion (or any ﬁrst-order method).
+
+Since the Taylor losses are convex, the bound holds for any
+no-regret optimizer following Zinkevich (2003).
+
+A3. Proof of Observations in Section 3
+
+Proof of observation 1.
+
+(cid:80)D
+
+Proof. The loss (cid:96)(f , y) is a smooth function of the net-
+work’s output f by assumption. Kinks in ˆ(cid:96)(W) =
+d=1 (cid:96)(cid:0)fW(xd), yd(cid:1) can therefore only arise when a
+1
+D
+rectiﬁer changes its activation for at least one element of
+the training data.
+
+Neural Taylor Approximations
+
+(b) Convnet
+
+(c) Autoencoder
+
+Fig. 6: Training loss on CIFAR-10 and MNIST.
+
+Proof of observation 2. Note that the rectiﬁer is ρ(a) =
+max(0, a) with derivative ρ(cid:48)(a) = 1 if a > 0 and ρ(cid:48)(a) = 0
+if a < 0.
+
+Tn
+
+Proof. Recall that the Taylor approximation to layer l is
+0 ) + (cid:10)Gl, Vl − Wn
+l
+l ) · xn
+· (Vl − Wn
+0 ) + JL
+l
+l
+−
+(cid:32) l+1
+(cid:89)
+
+l (Vl) := fWn (xn
+= fWn (xn
+
+(cid:33)
+
+(cid:11)
+
+1
+
+= fWn (xn
+
+0 ) +
+
+Jk
+k
+
+1
+
+−
+
+· (Vl − Wn
+
+l ) · xn
+l
+−
+
+1
+
+k=L
+
+The Jacobian of layer k is the function Jk+1
+(ak) = Wk+1·
+diag (cid:0)s(cid:48)(ak)(cid:1) which in general varies nonlinearly with ak.
+The Taylor approximation clamps the Jacobian by setting
+it as constant.
+
+k
+
+For a layer of rectiﬁers, s(·) = ρ(·), the Jacobian Jk+1
+k =
+Wk+1 · diag (cid:0)ρ(cid:48)(ak)(cid:1) is constructed by zeroing out the
+rows of Wk+1 corresponding to inactive neurons in layer
+k. It follows that the Taylor loss can be written as
+
+Tn
+
+l (Vl) =
+
+Wn
+
+k · diag(1k
+
+1)
+
+−
+
+·(Vl −Wn
+
+l )·xn
+l
+−
+
+1
+
+(cid:33)
+
+(cid:32) l+1
+(cid:89)
+
+k=L
+
+(cid:33)
+
+diag(1k) · Wn
+k
+
+· xn
+0
+
+1 = diag (cid:0)ρ(cid:48)(ak)(cid:1) · Wn
+
+k xn
+k
+−
+
+1 =
+
+Finally, observe that
+
+xn
+l
+−
+
+1 =
+
+(cid:32) 1
+(cid:89)
+
+k=l
+
+1
+
+−
+k · xn
+k
+−
+
+since diag(1k) · Wn
+ρ(Wn
+
+k · xn
+k
+−
+
+1).
+
+Proof of observation 3.
+
+Proof. Immediate.
+
+A4. Comparison of Taylor loss with Taylor
+
+approximation to loss
+
+It is instructive to compare the Taylor loss in deﬁnition 1
+with the Taylor approximation to the loss. The Taylor loss
+is
+
+(cid:16)
+(cid:96)
+
+Tn(V), yn(cid:17)
+
+= (cid:96)
+
+(cid:32)
+
+fWn (xn
+
+0 ) +
+
+(cid:10)Gl, Vl − Wn
+
+(cid:11), yn
+
+l
+
+(cid:33)
+
+L
+(cid:88)
+
+l=1
+
+In contrast, the Taylor approximation to the loss is
+
+(cid:96) (V) = (cid:96)(cid:0)fWn (xn
+0 ), yn(cid:1)
+T n
+(cid:125)
+(cid:123)(cid:122)
+(cid:124)
+loss incurred on round n
+
++
+
+L
+(cid:88)
+
+l=1
+
+(cid:10) JEL · Gl
+(cid:124) (cid:123)(cid:122) (cid:125)
+δl
+
+, Vl − Wn
+l
+
+(cid:11)
+
+= (cid:96)n +
+
+(cid:10) ∇Wl (cid:96), Vl − Wn
+
+(cid:11).
+
+l
+
+L
+(cid:88)
+
+l=1
+
+The constant term is the loss incurred on round n; the linear
+coefﬁcients are the backpropagated errors.
+
+It is easy to see that the two expressions have the same gra-
+dient. Why not work directly with the Taylor approxima-
+tion to the loss? The problem is that the Taylor approxima-
+tion to the loss is afﬁne, and so decreases without bound.
+Upgrading to a second order Taylor approximation is no
+help since it is not convex.
+
+A5. Details on experiments on regret
+
+See section 2.4 for the architecture of the autoencoder and
+convnet used. The hyperparameters used for different op-
+timizers are as follows: the autoencoder uses learning rate
+η = 0.001 for RMSprop and η = 0.01 for Adam, while the
+convnet uses learning rate η = 0.0005 for RMSprop and
+
+RMSPropAdamSGD lr=1.0SGD lr=0.1SGD lr=0.01020406080100epochs0.00.51.01.52.02.5loss020406080100epochs0.000.020.040.060.080.100.12lossNeural Taylor Approximations
+
+η = 0.0002 for Adam. All other hyperparameters are kept
+at their literature-standard values.
+
+Fig. 6 shows the training losses obtained by the convnet on
+CIFAR-10 and the autoencoder on MNIST.
+
+The gradient tensor Gl is not computed explicitly by Ten-
+sorFlow. Instead, it is necessary to compute the gradient
+of each component of the output layer (e.g. 10 in total for
+a network trained on CIFAR-10, 784 for an autoencoder
+trained on MNIST) with respect to Wl and then assemble
+the gradients into a tensor. When the loss is the squared
+error, the Taylor optimal at round n can be computed in
+closed form. Otherwise we use SGD.
+
+A6. Details on experiments on exploration
+
+Given matrix or vector A or a, the squared Frobenius norm
+is
+
+(cid:107)A(cid:107)2
+
+F =
+
+A2
+
+m,n
+
+and (cid:107)a(cid:107)2
+
+F =
+
+a2
+n.
+
+M,N
+(cid:88)
+
+m,n=1
+
+N
+(cid:88)
+
+n=1
+
+The Hamming distance between two binary vectors a and
+b can be computed as (cid:107)a − b(cid:107)2
+F .
+
+For tractability in the convnet, we only record activations
+for 1% of the CIFAR dataset, and at most 10000 units of
+each convolutional layer. We record the full network state
+on all inputs for the autoencoder. The singular value plots
+in ﬁgure 5 are calculated only on the ﬁrst 50 epochs.
+
+

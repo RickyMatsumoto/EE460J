@@ -1,0 +1,1266 @@
+Discovering Discrete Latent Topics with Neural Variational Inference
+
+Yishu Miao 1 Edward Grefenstette 2 Phil Blunsom 1 2
+
+Abstract
+
+Topic models have been widely explored as prob-
+abilistic generative models of documents. Tra-
+ditional inference methods have sought closed-
+form derivations for updating the models, how-
+ever as the expressiveness of these models grows,
+so does the difﬁculty of performing fast and
+accurate inference over their parameters. This
+paper presents alternative neural approaches to
+topic modelling by providing parameterisable
+distributions over topics which permit training
+by backpropagation in the framework of neu-
+In addition, with the
+ral variational inference.
+help of a stick-breaking construction, we pro-
+pose a recurrent network that is able to dis-
+cover a notionally unbounded number of top-
+ics, analogous to Bayesian non-parametric topic
+models.
+Experimental results on the MXM
+Song Lyrics, 20NewsGroups and Reuters News
+datasets demonstrate the effectiveness and efﬁ-
+ciency of these neural topic models.
+
+1. Introduction
+
+Probabilistic models for inducing latent topics from docu-
+ments are one of the great success stories of unsupervised
+learning. Starting with latent semantic analysis (LSA (Lan-
+dauer et al., 1998)), models for uncovering the underly-
+ing semantic structure of a document collection have been
+widely applied in data mining, text processing and informa-
+tion retrieval. Probabilistic topic models (e.g. PLSA (Hof-
+mann, 1999), LDA (Blei et al., 2003) and HDPs (Teh et al.,
+2006)) provide a robust, scalable, and theoretically sound
+foundation for document modelling by introducing latent
+variables for each token to topic assignment.
+
+For the traditional Dirichlet-Multinomial topic model, ef-
+ﬁcient inference is available by exploiting conjugacy with
+
+1University of Oxford, Oxford, United Kingdom 2DeepMind,
+London, United Kingdom. Correspondence to: Yishu Miao
+<yishu.miao@cs.ox.ac.uk>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+either Monte Carlo or Variational techniques (Jordan et al.,
+1999; Attias, 2000; Beal, 2003)). However, as topic mod-
+els have grown more expressive, in order to capture topic
+dependencies or exploit conditional information, inference
+methods have become increasingly complex. This is espe-
+cially apparent for non-conjugate models (Carlin & Polson,
+1991; Blei & Lafferty, 2007; Wang & Blei, 2013).
+
+Deep neural networks are excellent function approximators
+and have shown great potential for learning complicated
+non-linear distributions for unsupervised models. Neural
+variational inference (Kingma & Welling, 2014; Rezende
+et al., 2014; Mnih & Gregor, 2014) approximates the pos-
+terior of a generative model with a variational distribution
+parameterised by a neural network. This allows both the
+generative model and the variational network to be jointly
+trained with backpropagation. For models with continu-
+ous latent variables associated with particular distributions,
+such as Gaussians, there exist reparameterisations (Kingma
+& Welling, 2014; Rezende et al., 2014) of the distribution
+permitting unbiased and low-variance estimates of the gra-
+dients with respect to the parameters of the inference net-
+work. For models with discrete latent variables, Monte-
+Carlo estimates of the gradient must be employed. Re-
+cently, algorithms such as REINFORCE have been used ef-
+fectively to decrease variance and improve learning (Mnih
+& Gregor, 2014; Mnih et al., 2014).
+
+In this work we propose and evaluate a range of topic mod-
+els parameterised with neural networks and trained with
+variational inference. We introduce three different neural
+structures for constructing topic distributions: the Gaussian
+Softmax distribution (GSM), the Gaussian Stick Breaking
+distribution (GSB), and the Recurrent Stick Breaking pro-
+cess (RSB), all of which are conditioned on a draw from
+a multivariate Gaussian distribution. The Gaussian Soft-
+max topic model constructs a ﬁnite topic distribution with a
+softmax function applied to the projection of the Gaussian
+random vector. The Gaussian Stick Breaking model also
+constructs a discrete distribution from the Gaussian draw,
+but this time employing a stick breaking construction to
+provide a bias towards sparse topic distributions. Finally,
+the Recurrent Stick Breaking process employs a recurrent
+neural network, again conditioned on the Gaussian draw, to
+progressively break the stick, yielding a neural analog of a
+Dirichlet Process topic model (Teh et al., 2006).
+
+Discovering Discrete Latent Topics with Neural Variational Inference
+
+Our neural topic models combine the merits of both neural
+networks and traditional probabilistic topic models. They
+can be trained efﬁciently by backpropagation, scaled to
+large data sets, and easily conditioned on any available
+contextual information. Further, as probabilistic graphi-
+cal models, they are interpretable and explicitly represent
+the dependencies amongst the random variables. Previ-
+ous neural document models, such as the neural varia-
+tional document model (NVDM) (Miao et al., 2016), belief
+networks document model (Mnih & Gregor, 2014), neu-
+ral auto-regressive document model (Larochelle & Lauly,
+2012) and replicated softmax (Hinton & Salakhutdinov,
+2009), have not explicitly modelled latent topics. Through
+evaluations on a range of data sets we compare our mod-
+els with previously proposed neural document models and
+traditional probabilistic topic models, demonstrating their
+robustness and effectiveness.
+
+2. Parameterising Topic Distributions
+
+In probabilistic topic models, such as LDA (Blei et al.,
+2003), we use the latent variables θd and zn for the topic
+proportion of document d, and the topic assignment for
+the observed word wn, respectively. In order to facilitate
+efﬁcient inference, the Dirichlet distribution (or Dirichlet
+process (Teh et al., 2006)) is employed as the prior to gen-
+erate the parameters of the multinomial distribution θd for
+each document. The use of a conjugate prior allows the
+tractable computation of the posterior distribution over the
+latent variables’ values. While alternatives have been ex-
+plored, such as log-normal topic distributions (Blei & Laf-
+ferty, 2006; 2007), extra approximation (e.g. the Laplace
+approximation (Wang & Blei, 2013)) is required for closed
+form derivations. The generative process of LDA is:
+
+θd ∼ Dir(α0),
+zn ∼ Multi(θd),
+wn ∼ Multi(βzn ),
+
+for d ∈ D
+for n ∈ [1, Nd]
+for n ∈ [1, Nd]
+
+where βzn represents the topic distribution over words
+given topic assignment zn and Nd is the number of tokens
+in document d. βzn can be drawn from another Dirichlet
+distribution, but here we consider it a model parameter. α0
+is the hyper-parameter of the Dirichlet prior and Nd is the
+total number of words in document d. The marginal likeli-
+hood for a document in collection D is:
+
+(cid:90)
+p(d|α0, β)=
+
+p(θ|α0)
+
+θ
+
+(cid:89)
+
+(cid:88)
+
+n
+
+zn
+
+The generative process is:
+
+θd ∼ G(µ0, σ2
+0),
+zn ∼ Multi(θd),
+wn ∼ Multi(βzn ),
+
+for d ∈ D
+for n ∈ [1, Nd]
+for n ∈ [1, Nd]
+
+where G(µ0, σ2
+g(x) conditioned on a isotropic Gaussian x ∼ N (µ0, σ2
+The marginal likelihood is:
+
+0) is composed of a neural network θ =
+0)1.
+
+p(d|µ0, σ0, β) =
+
+p(θ|µ0, σ2
+0)
+
+(2)
+
+(cid:90)
+
+θ
+(cid:89)
+n
+
+(cid:88)
+
+zn
+
+p(wn|βzn )p(zn|θ)dθ.
+
+Compared to Equation (1), here we parameterise the la-
+tent variable θ by a neural network conditioned on a draw
+from a Gaussian distribution. To carry out neural varia-
+tional inference (Miao et al., 2016), we construct an in-
+ference network q(θ|µ(d), σ(d)) to approximate the poste-
+rior p(θ|d), where µ(d) and σ(d) are functions of d that
+are implemented by multilayer perceptrons (MLP). By us-
+ing a Gaussian prior distribution, we are able to employ
+the re-parameterisation trick (Kingma & Welling, 2014) to
+build an unbiased and low-variance gradient estimator for
+the variational distribution. Without conjugacy, the updates
+of the parameters can still be derived directly and easily
+from the variational lower bound. We defer discussion of
+the inference process until the next section. Here we in-
+troduce several alternative neural networks for g(x) which
+transform a Gaussian sample x into the topic proportions θ.
+
+2.1. The Gaussian Softmax Construction
+
+In deep learning, an energy-based function is generally
+used to construct probability distributions (LeCun et al.,
+2006). Here we pass a Gaussian random vector through
+a softmax function to parameterise the multinomial docu-
+ment topic distributions. Thus θ ∼ GGSM(µ0, σ2
+0) is de-
+ﬁned as:
+
+x ∼ N (µ0, σ2
+0)
+1 x)
+
+θ = softmax(W T
+
+where W1 is a linear transformation, and we leave out the
+bias terms for brevity. µ0 and σ2
+0 are hyper-parameters
+which we set for a zero mean and unit variance Gaussian.
+
+p(wn|βzn )p(zn|θ)dθ.
+
+(1)
+
+2.2. The Gaussian Stick Breaking Construction
+
+If we employ mean-ﬁeld variational inference, the updates
+for the variational parameters q(θ) and q(zn) can be di-
+rectly derived in closed form.
+
+In contrast, our proposed models introduce a neural net-
+work to parameterise the multinomial topic distribution.
+
+In Bayesian non-parametrics, the stick breaking process
+(Sethuraman, 1994) is used as a constructive deﬁnition
+of the Dirichlet process, where sequentially drawn Beta
+
+1Throughout this presentation we employ isotropic Gaussian
+distributions. As such we use N (µ, σ2) to represent the Gaussian
+distributions, where σ2 is the diagonal of the covariance matrix.
+
+Discovering Discrete Latent Topics with Neural Variational Inference
+
+Figure 1. The Stick Breaking Construction.
+
+random variables deﬁne breaks from a unit stick. In our
+case, following Khan et al. (2012), we transform the mod-
+elling of multinomial probability parameters into the mod-
+elling of the logits of binomial probability parameters using
+Gaussian latent variables. More speciﬁcally, conditioned
+on a Gaussian sample x ∈ RH , the breaking proportions
+η ∈ RK−1 are generated by applying the sigmoid func-
+2 x) where W ∈ RH×K−1. Starting
+tion η = sigmoid(W T
+with the ﬁrst piece of the stick, the probability of the ﬁrst
+category is modelled as a break of proportion η1, while the
+length of the remainder of the stick is left for the next break.
+Thus each dimension can be deterministically computed by
+θk = ηk
+i=1 (1 − ηi) until k = K−1, and the remain-
+ing length is taken as the probability of the Kth category
+θK = (cid:81)K−1
+For instance assume K = 3, θ is generated by 2 breaks
+where θ1 = η1, θ2 = η2(1 − η1) and the remaining stick
+θ3 = (1 − η2)(1 − η1). If the model proceeds to break
+the stick for K = 4, the remaining stick θ3 is broken into
+(θ(cid:48)
+3, θ(cid:48)
+4 = (1 − η3) · θ3 and
+θ3 = θ(cid:48)
+4. Hence, for different values of K, it al-
+ways satisﬁes (cid:80)K
+k=1 θk = 1. The stick breaking construc-
+tion fSB(η) is illustrated in Figure 1 and the distribution
+θ ∼ GGSB(µ0, σ2
+
+4), where θ(cid:48)
+3 + θ(cid:48)
+
+3 = η3 · θ3, θ(cid:48)
+
+i=1 (1 − ηi).
+
+(cid:81)k−1
+
+0) is deﬁned as:
+x ∼ N (µ0, σ2
+0)
+η = sigmoid(W T
+θ = fSB(η)
+
+2 x)
+
+Although the Gaussian stick breaking construction breaks
+exchangeability, compared to the stick breaking deﬁni-
+tion of the Dirichlet process,
+it does provide a more
+amenable form for neural variational inference. More inter-
+estingly, this stick breaking construction introduces a non-
+parametric aspect to neural topic models.
+
+2.3. The Recurrent Stick Breaking Construction
+
+Recurrent Neural Networks (RNN) are commonly used for
+modelling sequences of inputs in deep learning. Here we
+consider the stick breaking construction as a sequential
+
+Figure 2. The unrolled Recurrent Neural Network that produces
+the stick breaking proportions η.
+
+draw from an RNN, thus capturing an unbounded number
+of breaks with a ﬁnite number of parameters. Conditioned
+on a Gaussian latent variable x, the recurrent neural net-
+work fSB(x) produces a sequence of binomial logits which
+are used to break the stick sequentially. The fRNN(x) is
+decomposed as:
+
+hk = RNNSB(hk−1)
+ηk = sigmoid(hT
+
+k−1x)
+
+where hk is the output of the kth state, which we feed into
+the next state of the RNNSB as an input. Figure 2 shows the
+recurrent neural network structure. Now θ ∼ GRSB(µ0, σ2
+0)
+is deﬁned as:
+
+x ∼ N (µ0, σ2
+0)
+η = fRNN(x)
+θ = fSB(η)
+
+where fSB(η) is equivalent to the stick breaking function
+used in the Gaussian stick breaking construction. Here, the
+RNN is able to dynamically produce new logits to break
+the stick ad inﬁnitum. The expressive power of the RNN to
+model sequences of unbounded length is still bounded by
+the parametric model’s capacity, but for topic modelling it
+is adequate to model the countably inﬁnite topics amongst
+the documents in a truncation-free fashion.
+
+3. Models
+
+Given the above described constructions for the topic dis-
+tributions, in this section we introduce our family of neural
+topic models and corresponding inference methods.
+
+3.1. Neural Topic Models
+
+Assume we have ﬁnite number of topics K,
+the topic
+distribution over words given a topic assignment zn is
+p(wn|β, zn) = Multi(βzn ). Here we introduce topic vec-
+tors t ∈ RK×H , word vectors v ∈ RV ×H and generate the
+topic distributions over words by:
+
+βk = softmax(v · tT
+
+k ).
+
+  η1η3(1−η2)(1−η1)η2(1−η1)θ1θ2θ3θK......break1stbreak2ndbreak3rdK-1 simplex  η1η2η3η4h0h1h2h3xh1h2h3h4Discovering Discrete Latent Topics with Neural Variational Inference
+
+Figure 3. Network structure of the inference model q(θ | d), and
+of the generative model p(d | θ).
+
+Therefore, β ∈ RK×V is a collection of simplexes achieved
+by computing the semantic similarity between topics and
+words. Following the notation introduced in Section 2,
+the prior distribution is deﬁned as G(θ|µ0, σ2
+0) in which
+x ∼ N (x|µ0, σ2
+0) and the projection network generates
+θ = g(x) for each document. Here, g(x) can be the Gaus-
+sian Softmax gGSM(x), Gaussian Stick Breaking gGSB(x),
+or Recurrent Stick Breaking gRSB(x) constructions with
+ﬁxed length RNNSB. We derive a variational lower bound
+for the document log-likelihood according to Equation (2):
+
+Ld = Eq(θ|d)
+
+(cid:20)(cid:88)N
+
+(cid:88)
+
+log
+
+n=1
+
+zn
+(cid:2)q(θ|d)||p(θ|µ0, σ2
+
+−DKL
+
+(cid:21)
+[p(wn|βzn )p(zn|θ)]
+0)(cid:3)
+
+(3)
+
+where q(θ|d) is the variational distribution approximating
+the true posterior p(θ|d). Following the framework of neu-
+ral variational inference (Miao et al., 2016; Kingma &
+Welling, 2014; Rezende et al., 2014), we introduce an in-
+ference network conditioned on the observed document d
+to generate the variational parameters µ(d) and σ(d) so
+that we can estimate the lower bound by sampling θ from
+q(θ|d) = G(θ|µ(d), σ2(d)). In practise we reparameterise
+ˆθ = µ(d) + ˆ(cid:15) · σ(d) with the sample ˆ(cid:15) ∈ N (0, I).
+
+the
+
+distribution
+
+generative
+0) = p(x|µ0, σ2
+
+p(θ|µ0, σ2
+=
+0)
+Since
+p(g(x)|µ0, σ2
+0) and the variational
+distribution q(θ|d) = q(g(x)|d) = q(x|µ(d), σ2(d)), the
+KL term in Equation (3) can be easily integrated as a
+Gaussian KL-divergence. Note that, the parameterisation
+network g(x) and its parameters are shared across all the
+In addition, given a sampled ˆθ, the latent
+documents.
+variable zn can be integrated out as:
+(cid:104)
+
+(cid:88)
+
+log p(wn|β, ˆθ) = log
+
+(cid:105)
+p(wn|βzn )p(zn|ˆθ)
+
+zn
+= log(ˆθ · β)
+
+Thus there is no need to introduce another variational ap-
+
+Figure 4. The unrolled Recurrent Neural Network that produces
+the topic-word distributions β.
+
+proximation for the topic assignment z. The variational
+lower bound is therefore:
+
+Ld ≈ ˆLd =
+
+(cid:88)N
+
+(cid:105)
+(cid:104)
+log p(wn|β, ˆθ)
+
+n=1
+
+− DKL [q(x|d)||p(x)]
+
+We can directly derive the gradients of the generative pa-
+rameters Θ, including t, v and g(x). While for the varia-
+tional parameters Φ, including µ(d) and σ(d), we use the
+gradient estimators:
+
+∇µ(d)
+
+∇σ(d)
+
+ˆLd,
+ˆLd ≈ ∇ˆθ
+ˆLd ≈ ˆ(cid:15) · ∇ˆθ
+
+ˆLd.
+
+Θ and Φ are jointly updated by stochastic gradient back-
+propagation. The structure of this variational auto-encoder
+is illustrated in Figure 3.
+
+3.2. Recurrent Neural Topic Models
+
+For the GSM and GSB models the topic vectors t ∈ RK×H
+have to be predeﬁned for computing the topic distribution
+over words β. With the RSB construction we can model
+an unbounded number of topics, however in addition to the
+RNNSB that generates the topic proportions θ ∈ R∞ for
+each document, we must introduce another neural network
+RNNTopic to produce the topics t ∈ R∞×H dynamically, so
+as to avoid the need to truncate the variational inference.
+
+For comparison, in ﬁnite neural topic models we have topic
+vectors t ∈ RK×H , while in unbounded neural topic mod-
+els the topics t ∈ R∞×H are dynamically generated by
+RNNTopic and the order of the topics corresponds to the or-
+der of the states in RNNSB. The generation of β follows:
+
+tk = RNNTopic(tk−1),
+βk = softmax(v · tT
+k ),
+
+where v ∈ RV ×H represents the word vectors, tk is the
+kth topic generated by RNNTopic and k < ∞. Figure 4
+illustrates the neural structure of RNNTopic.
+
+For the unbounded topic models we introduce a truncation-
+free neural variational inference method which enables the
+
+(4)
+
+  dxθdμlogσMLPϵ∼N(0,I2)N(μ0,σ02)g(x)log(θ⋅β)wnq(θ∣d)p(d∣θ)x=μ+ϵ⋅σ  β1β2β3β4vt1t2t3t4t0t1t2t3Discovering Discrete Latent Topics with Neural Variational Inference
+
+model to dynamically decide the number of active topics.
+Assume the current active number of topics is i, RNNTopic
+generates ti ∈ Ri×H by an i−1 step stick-breaking process
+(the logit for the nth topic is the remaining stick after i − 1
+breaks). The variational lower bound for a document d is:
+
+(cid:88)N
+
+Li
+
+d ≈
+
+n=1
+
+(cid:105)
+(cid:104)
+log p(wn|βi, ˆθi)
+
+− DKL [q(x|d)||p(x)] ,
+
+where ˆθi corresponds to the topic distribution over words
+βt. In order to dynamically increase the number of topics,
+the model proposes the ith break on the stick to split the
+(i + 1)th topic. In this case, RNNTopic proceeds to the next
+state and generates topic t(i+1) for β(i+1) and the RNNSB
+generates ˆθ(i+1) by an extra break of the stick. Firstly, we
+compute the likelihood increase brought by topic i across
+the documents D:
+
+I =
+
+(cid:88)D
+d
+
+(cid:2)Li
+
+d − Li−1
+
+d
+
+(cid:3) /
+
+(cid:88)D
+d
+
+[Li
+d]
+
+Then, we employ an acceptance hyper-parameter γ to de-
+cide whether to generate a new topic. If I > γ, the previous
+proposed new topic (the ith topic) contributes to the gener-
+ation of words and we increase the active number of topics
+i by 1, otherwise we keep the current i unchanged. Thus γ
+controls the rate at which the model generates new topics.
+In practise, the increase of the lower bound is computed
+over mini-batches so that the model is able to generate new
+topics before the current epoch is ﬁnished. The details of
+the algorithm are described in Algorithm 1.
+
+3.3. Topic vs. Document Models
+
+In most topic models documents are modelled by a mix-
+ture of topics, and each word is associated with a single
+topic latent variable. Miao et al. (2016) proposed a neu-
+ral variational document model (NVDM) implemented as a
+variational auto-encoder (Kingma & Welling, 2014), which
+has a very similar neural structure to our models. The ma-
+jor difference is that NVDM employs a softmax decoder
+(Equation (5)) to generate all of the words of a document
+conditioned on an unnormalised vector:
+
+log p(wn|β, ˆθ) = log softmax(ˆθ · β).
+
+(5)
+
+In the GSM construction, if we replace the generative dis-
+tribution (Equation 4) with the above distribution (Equation
+5) and remove the softmax function over θ, it reduces to a
+variant of the NVDM model (GSM applies topic and word
+vectors to compute β, while NVDM directly models β).
+Srivastava & Sutton (2016) interpret the above decoder as a
+weighted product of experts topic model, but do not model
+the topics explicitly. Here we refer to such models that do
+not directly assign topics to words as document models. We
+can also convert our constructions to document models by
+employing the softmax decoder. We include these models
+in the experimental evaluation section.
+
+Algorithm 1 Unbounded Recurrent Neural Topic Model
+
+Compute topic vector tk = RNNTopic(tk−1)
+Compute topic distribution βk = softmax(v · tT
+k )
+
+Sample topic proportion ˆθ ∼ GRSB(θ|µ(d), σ2(d))
+for w ∈ document d do
+
+Compute log-likelihood log p(w|ˆθ, β)
+
+for k ∈ [1, i] do
+
+for s ∈ minibatches S do
+
+end for
+for d ∈ Ds do
+
+0: Initialise Θ and Φ; Set active topic number i
+1: repeat
+2:
+3:
+4:
+5:
+6:
+7:
+8:
+9:
+10:
+11:
+12:
+13:
+14:
+15:
+16:
+17:
+end if
+18:
+end for
+19:
+20: until Convergence
+
+end for
+Compute likelihood increase I
+if I > γ then
+
+end for
+Compute lowerbound Li−1
+Compute gradients ∇Θ,ΦLi
+
+d
+
+Increase active topic number i = i + 1
+
+and Li
+d
+d and update
+
+4. Related Work
+
+Topic models have been extensively studied for a va-
+riety of applications in document modelling and infor-
+mation retrieval. Beyond LDA, signiﬁcant extensions
+have sought to capture topic correlations (Blei & Laf-
+ferty, 2007), model temporal dependencies (Blei & Laf-
+ferty, 2006) and discover an unbounded number of topics
+(Teh et al., 2006). Topic models have been extended to
+capture extra context information such as time (Wang &
+McCallum, 2006), authorship (Rosen-Zvi et al., 2004), and
+class labels (McAuliffe & Blei, 2008). Such extensions of-
+ten require carefully tailored graphical models, and asso-
+ciated inference algorithms, to capture the desired context.
+Neural models provide a more generic and extendable op-
+tion and a number of works have sought to leverage these,
+such as the Replicated Softmax (Hinton & Salakhutdinov,
+2009), the Auto-Regressive Document Model (Larochelle
+& Lauly, 2012), Sigmoid Belief Document Model (Mnih &
+Gregor, 2014), Variational Auto-Encoder Document Model
+(NVDM) (Miao et al., 2016) and TopicRNN Model (Dieng
+et al., 2016). However, these neural works do not explicitly
+capture topic assignments.
+
+The recent work of Srivastava & Sutton (2016) also em-
+ploys neural variational inference to train topic models and
+is closely related to our work. Their model follows the orig-
+inal LDA formulation in keeping the Dirichlet-Multinomial
+parameterisation and applies a Laplace approximation to
+allow gradient to back-propagate to the variational distri-
+bution. In contrast, our models directly parameterise the
+multinomial distribution with neural networks and jointly
+learn the model and variational parameters during infer-
+ence. Nalisnick & Smyth (2016) proposes a reparameter-
+
+Discovering Discrete Latent Topics with Neural Variational Inference
+
+Finite Topic Model
+
+Finite Document Model
+
+GSM
+GSB
+RSB
+
+MXM 20News
+
+RCV1
+
+50 200 50
+
+200
+
+50
+
+200
+
+306 272 822 830 717 602
+309 296 838 826 788 634
+311 297 835 822 750 628
+
+GSM
+GSB
+RSB
+
+MXM 20News RCV1
+
+50 200 50 200 50 200
+
+270 267 787 829 653 521
+285 275 816 815 712 544
+286 283 785 792 662 534
+
+345 345 837 873 717 588
+
+OnlineLDA
+
+312 342 893 1015 1062 1058
+
+NVDM
+
+(Hoffman et al., 2010)
+
+(Miao et al., 2016)
+
+NVLDA
+
+330 357 1073 993 791 797
+
+ProdLDA
+
+319 326 1009 989 780 788
+
+(Srivastava & Sutton, 2016)
+
+(Srivastava & Sutton, 2016)
+
+Unbounded Topic Model MXM 20News
+
+RCV1
+
+Unbounded Document Model MXM 20News RCV1
+
+RSB-TF
+HDP (Wang et al., 2011)
+
+303
+370
+
+825
+937
+
+622
+918
+
+Table 1. Perplexities of the topic models on the test datasets. The
+upper section of the table lists the results for ﬁnite neural topic
+models, with 50 or 200 topics, on the MXM, 20NewsGroups
+and RCV1 datasets. We compare our neural topic models with
+the Gaussian Softmax (GSM), Gaussian Stick Breaking (GSB)
+and Recurrent Stick Breaking (RSB) constructions to the online
+variational LDA (onlineLDA) (Hoffman et al., 2010) and neural
+variational inference LDA (NVLDA) (Srivastava & Sutton, 2016)
+models. The lower section shows the results for the unbounded
+topic models, including our truncation-free RSB (RSB-TF) and
+the online HDP topic model (Wang et al., 2011).
+
+isation approach for continuous latent variables with Beta
+prior, which enables neural variational inference for Dirich-
+let process. However, Taylor expansion is required to ap-
+proximate the KL Divergence while having multiple draws
+from the Kumaraswamy variational distribution.
+In our
+case, we can easily apply the Gaussian reparametersation
+trick with only one draw from the Gaussian distribution.
+
+5. Experiments
+
+We perform an experimental evaluation employing three
+datasets: MXM2 song lyrics, 20NewsGroups3 and Reuters
+RCV1-v24 news. MXM is the ofﬁcial lyrics collection of
+the Million Song Dataset with 210,519 training and 27,143
+testing datapoints respectively. The 20NewsGroups cor-
+pus is divided into 11,314 training and 7,531 testing doc-
+uments, while the RCV1-v2 corpus is a larger collection
+with 794,414 training and 10,000 test cases from Reuters
+newswire stories. We employ the original 5,000 vocabu-
+lary provided for MXM, while the other two datasets are
+processed by stemming, ﬁltering stopwords and taking the
+most frequent 2,0005 and 10,000 words as the vocabularies.
+
+2http://labrosa.ee.columbia.edu/millionsong/musixmatch
+
+(Bertin-Mahieux et al., 2011)
+
+3http://qwone.com/ jason/20Newsgroups
+4http://trec.nist.gov/data/reuters/reuters.html
+5We use the vocabulary provided by Srivastava & Sutton
+
+(2016) for direct comparison.
+
+RSB-TF
+
+285
+
+788
+
+532
+
+Table 2. Perplexities of document models on the test datasets. The
+table compares the results for a ﬁxed dimension latent variable, 50
+or 200, achieved by our neural document models to Product of Ex-
+perts LDA (prodLDA) (Srivastava & Sutton, 2016) and the Neural
+Variational Document Model (NVDM) (Miao et al., 2016).
+
+The hidden dimension of the MLP for constructing q(θ|d)
+is 256 for all the neural topic models and the benchmarks
+that apply neural variational inference (e.g. NVDM, pro-
+LDA, NVLDA), and 0.8 dropout is applied on the output
+of the MLP before parameterising the isotropic Gaussian
+distribution. Grid search is carried out on learning rate and
+batch size for achieving the held-out perplexity. For the
+recurrent stick breaking construction we use a one layer
+LSTM cell (256 hidden units) for constructing the recurrent
+neural network. For the ﬁnite topic models we set the max-
+imum number of topics K as 50 and 200. The models are
+trained by Adam (Kingma & Ba, 2015) and only one sam-
+ple is used for neural variational inference. We follow the
+optimisation strategy of Miao et al. (2016) by alternately
+updating the model parameters and the inference network.
+To alleviate the redundant topics issue, we also apply topic
+diversity regularisation (Xie et al., 2015) while carrying out
+neural variational inference. The details can be found in the
+Appendix ??.
+
+5.1. Evaluation
+
+1
+Nd
+
+(cid:80)D
+d
+
+We use Perplexity as the main metric for assessing the gen-
+eralisation ability of our generative models. Here we use
+the variational lower bound to estimate the document per-
+plexity: exp(− 1
+log p(d)) following Miao et al.
+D
+(2016). Table 1 presents the test document perplexities of
+the topic models on the three datasets. Amongst the ﬁnite
+topic models, the Gaussian softmax construction (GSM)
+achieves the lowest perplexity in most cases, while all of
+the GSM, GSB and RSB models are signiﬁcantly better
+than the benchmark LDA and NVLDA models. Amongst
+our selection of unbounded topic models, we compare our
+truncation-free RSB model, which applies an RNN to dy-
+namically increase the active topics (γ is empirically set
+
+Discovering Discrete Latent Topics with Neural Variational Inference
+
+as 5e−5), with the traditional non-parametric HDP topic
+model (Teh et al., 2006). Here we see that the recurrent
+neural topic model performs signiﬁcantly better than the
+HDP topic model on perplexity.
+
+Next we evaluate our neural network parameterisations as
+document models with the implicit topic distribution intro-
+duced in Section 3.3. Table 2 compares the proposed neu-
+ral document models with the benchmarks. According to
+our experimental results, the generalisation abilities of the
+GSM, GSB and RSB models are all improved by switching
+to an implicit topic distribution, and their performance is
+also signiﬁcantly better than the NVDM and ProdLDA. We
+hypothesise that this effect is due to the models not needing
+to infer the topic-word assignments, which makes optimi-
+sation much easier. Interestingly, the RSB model performs
+better than the GSM and GSB on 20NewsGroups in both
+the 50 and 200 topic settings. This is possibly due to the
+fact that GSM and GSB apply linear transformations W1
+and W2 to generate the hidden variable θ and breaking pro-
+portions η from a Gaussian draw, while the RSB applies re-
+current neural networks to produce η in a sequence which
+induces dependencies in η and helps escape local minima.
+It is worth noting that the recurrent neural network uses
+more parameters than the other two models. As mentioned
+in Section 3.3, GSM is a variant of NVDM that applies
+topic and word vectors to construct the topic distribution
+over words instead of directly modelling a multinomial dis-
+tribution by a softmax function, which further simpliﬁes
+optimisation.
+If it is not necessary to model the explicit
+topic distribution over words, using an implicit topic distri-
+bution may lead to better generalisation.
+
+To further demonstrate the effectiveness of the stick-
+breaking construction, Figure 5 presents the average prob-
+ability of each topic by estimating the posterior probability
+q(z|d) of each document from 20NewsGroups. Here we set
+the number of topics to 400, which is large enough for this
+dataset. Figure 5a shows that the topics with higher proba-
+bility are evenly distributed. While in Figure 5a the higher
+probability ones are placed in the front, and we can see a
+small tail on the topics after 300. Due to the sparsity induc-
+ing property of the stick-breaking construction, the topics
+on the tail are less likely to be sampled. This is also the ad-
+vantage of stick-breaking construction when we apply the
+RSB-TF as a non-parameteric topic model, since the model
+activates the topics according to the knowledge learned
+from data and it becomes less sensitive to the hyperparame-
+ter controlling the initial number of topics. Figure 6 shows
+the impact on test perplexity for the neural topic models
+when the maximum number of topics is increased. We can
+see that the performance of the GSM model gets worse if
+the maximum number of topics exceeds 400, but the GSB
+and RSB are stable even though the number of topics far
+In addition, the
+outstrips that which the model requires.
+
+(a) GSM Model
+
+(b) GSB Model
+
+Figure 5. Corpus level topic probability distributions.
+
+RSB model performs better than GSB when the number
+of topics is under 200, but it becomes slightly worse than
+GSB when the number exceeds 400, possibly due to the
+difﬁculty of learning long sequences with RNNs.
+
+Figure 7 shows the convergence process of the truncation-
+free RSB (RSB-TF) model on the 20NewsGroups. With
+different initial number of topics, 10, 30, and 50. The RSB-
+TF dynamically increases the number of active topics to
+achieve a better variational lower bound. We can see the
+training perplexity keeps decreasing while the RSB-TF ac-
+tivates more topics. The numbers of active topics will sta-
+bilise when the convergence point is approaching (normally
+between 200 and 300 active topics on the 20NewsGroups).
+Hence, as a non-parametric model, RSB-TF is not sensitive
+to the initial number of active topics.
+
+In addition since the quality of the discovered topics is
+not directly reﬂected by perplexity (i.e. a function of log-
+likelihood), we evaluate the topic observed coherence by
+normalised point-wise mutual information (NPMI) (Lau
+et al., 2014). Table 3 shows the topic observed coherence
+achieved by the ﬁnite neural topic models. According to
+these results, there does not appear to be a signiﬁcant dif-
+ference in topic coherence amongst the neural topic mod-
+els. We observe that in both the GSB and RSB, the NPMI
+scores of the former topics in the stick breaking order are
+
+050100150200250300350400Topic0.0000.0020.0040.0060.0080.0100.012Average 3robability 0easures050100150200250300350400Topic0.0000.0050.0100.0150.0200.0250.0300.035Average 3robability 0easuresDiscovering Discrete Latent Topics with Neural Variational Inference
+
+Topic Model
+
+GSM
+GSB
+RSB
+OnlineLDA
+NVLDA
+
+GSM
+GSB
+RSB
+NVDM
+ProdLDA
+
+Topics
+
+50
+0.121
+0.095
+0.111
+0.131
+0.110
+
+50
+0.223
+0.217
+0.224
+0.186
+0.240
+
+200
+0.110
+0.081
+0.097
+0.112
+0.110
+
+200
+0.186
+0.171
+0.177
+0.157
+0.190 6
+
+Document Model
+
+Latent Dimension
+
+Figure 6. Test perplexities of the neural topic models with a vary-
+ing maximum number of topics on the 20NewsGroups dataset.
+The truncation-free RSB (RSB-TF) dynamically increases the ac-
+tive topics, we use a dashed line to represent its test perplexity for
+reference in the ﬁgure.
+
+Table 3. Topic coherence on 20NewsGroups (higher is better). We
+compute coherence over the top-5 words and top-10 words for all
+topics and then take the mean of both values.
+
+Figure 7. The convergence behavior of the truncation-free RSB
+model (RSB-TF) with different initial active topics on 20News-
+Groups. Dash lines represent the corresponding active topics.
+
+It is plausible as the stick-
+higher than the latter ones.
+breaking construction implicitly assumes the order of the
+topics, the former topics obtain more sufﬁcient gradients to
+update the topic distributions. Likewise we present the re-
+sults obtained by the neural document models with implicit
+topic distributions. Though the topic probability distribu-
+tion over words does not exist, we could rank the words by
+the positiveness of the connections between the words and
+each dimension of the latent variable. Interestingly the per-
+formance of these document models are signiﬁcantly bet-
+ter than their topic model counterparts on topic coherence.
+The results of RSB-TF and HDP are not presented due to
+the fact that the number of active topics is dynamic, which
+makes these two models not directly comparable to the oth-
+ers. To further demonstrate the quality of the topics, we
+produce a t-SNE projection for the estimated topic propor-
+tions of each document in Figure 8.
+
+6The best scores we obtained are 0.222 and 0.175 for 50 and
+200 topics respectively, but here we report the higher scores from
+Srivastava & Sutton (2016).
+
+Figure 8. t-SNE projection of the estimated topic proportions of
+each document (i.e. q(θ|d)) from 20NewsGroups. The vectors are
+learned by the GSM model with 50 topics and each color repre-
+sents one group from the 20 different groups of the dataset.
+
+6. Conclusion
+
+In this paper we have introduced a family of neural
+topic models using the Gaussian Softmax, Gaussian Stick-
+Breaking and Recurrent Stick-Breaking constructions for
+parameterising the latent multinomial topic distributions of
+each document. With the help of the stick-breaking con-
+struction, we are able to build neural topic models which
+exhibit similar sparse topic distributions as found with tra-
+ditional Dirichlet-Multinomial models. By exploiting the
+ability of recurrent neural networks to model sequences
+of unbounded length, we further present a truncation-free
+variational inference method that allows the number of top-
+ics to dynamically increase. The evaluation results show
+that our neural models achieve state-of-the-art performance
+on a range of standard document corpora.
+
+02004006008001000TRSiFs800820840860880900Test PerSlexityG60G6BR6BR6B-TF050100150200250300350400450epoch (s)8001000120014001600Training 3erplexity10 init topics30 init topics50 init topics020406080100120140160Active Topics−15−10−5051015−15−10−5051015Discovering Discrete Latent Topics with Neural Variational Inference
+
+References
+
+Attias, Hagai. A variational bayesian framework for graph-
+
+ical models. In Proceedings of NIPS, 2000.
+
+Beal, Matthew James. Variational algorithms for approxi-
+mate Bayesian inference. University of London, 2003.
+
+Bertin-Mahieux, Thierry, Ellis, Daniel P.W., Whitman,
+Brian, and Lamere, Paul. The million song dataset.
+In Proceedings of the 12th International Conference on
+Music Information Retrieval (ISMIR), 2011.
+
+Blei, David M and Lafferty, John D. Dynamic topic mod-
+els. In Proceedings of ICML, pp. 113–120. ACM, 2006.
+
+Blei, David M and Lafferty, John D. A correlated topic
+model of science. The Annals of Applied Statistics, 2007.
+
+Blei, David M, Ng, Andrew Y, and Jordan, Michael I. La-
+tent dirichlet allocation. The Journal of Machine Learn-
+ing Research, 3:993–1022, 2003.
+
+Carlin, Bradley P and Polson, Nicholas G.
+
+Inference for
+nonconjugate bayesian models using the gibbs sampler.
+Canadian Journal of statistics, 19(4):399–405, 1991.
+
+Dieng, Adji B, Wang, Chong, Gao, Jianfeng, and Pais-
+Topicrnn: A recurrent neural network
+ley, John.
+with long-range semantic dependency. arXiv preprint
+arXiv:1611.01702, 2016.
+
+Hinton, Geoffrey E and Salakhutdinov, Ruslan. Replicated
+softmax: an undirected topic model. In Proceedings of
+NIPS, 2009.
+
+Hoffman, Matthew, Bach, Francis R, and Blei, David M.
+In Pro-
+
+Online learning for latent dirichlet allocation.
+ceedings of NIPS, pp. 856–864, 2010.
+
+Hofmann, Thomas. Probabilistic latent semantic indexing.
+
+In Proceedings of SIGIR, 1999.
+
+Jordan, Michael
+
+I, Ghahramani, Zoubin,
+
+Jaakkola,
+Tommi S, and Saul, Lawrence K. An introduction
+to variational methods for graphical models. Machine
+learning, 37(2):183–233, 1999.
+
+Khan, Mohammad Emtiyaz, Mohamed, Shakir, Marlin,
+Benjamin M, and Murphy, Kevin P. A stick-breaking
+likelihood for categorical data analysis with latent gaus-
+sian models. In Proceedings of AISTATS, 2012.
+
+Kingma, Diederik P. and Ba, Jimmy. Adam: A method for
+stochastic optimization. In Proceedings of ICLR, 2015.
+
+Kingma, Diederik P and Welling, Max. Auto-encoding
+
+variational bayes. In Proceedings of ICLR, 2014.
+
+Landauer, Thomas K, Foltz, Peter W, and Laham, Darrell.
+An introduction to latent semantic analysis. Discourse
+processes, 25(2-3):259–284, 1998.
+
+Larochelle, Hugo and Lauly, Stanislas. A neural autore-
+gressive topic model. In Proceedings of NIPS, 2012.
+
+Lau, Jey Han, Newman, David, and Baldwin, Timothy.
+Machine reading tea leaves: Automatically evaluating
+topic coherence and topic model quality. In Proceedings
+of EACL, pp. 530–539, 2014.
+
+LeCun, Yann, Chopra, Sumit, and Hadsell, Raia. A tutorial
+on energy-based learning. Predicting structured data,
+2006.
+
+McAuliffe, Jon D and Blei, David M. Supervised topic
+models. In Advances in neural information processing
+systems, pp. 121–128, 2008.
+
+Miao, Yishu, Yu, Lei, and Blunsom, Phil. Neural varia-
+In Proceedings of
+
+tional inference for text processing.
+ICML, 2016.
+
+Mnih, Andriy and Gregor, Karol. Neural variational infer-
+ence and learning in belief networks. In Proceedings of
+ICML, 2014.
+
+Mnih, Volodymyr, Heess, Nicolas, and Graves, Alex. Re-
+In Proceedings of
+
+current models of visual attention.
+NIPS, 2014.
+
+Nalisnick, Eric and Smyth, Padhraic.
+
+Deep genera-
+tive models with stick-breaking priors. arXiv preprint
+arXiv:1605.06197, 2016.
+
+Rezende, Danilo J, Mohamed, Shakir, and Wierstra, Daan.
+Stochastic backpropagation and approximate inference
+In Proceedings of ICML,
+in deep generative models.
+2014.
+
+Rosen-Zvi, Michal, Grifﬁths, Thomas, Steyvers, Mark, and
+Smyth, Padhraic. The author-topic model for authors and
+In Proceedings of the 20th conference on
+documents.
+Uncertainty in artiﬁcial intelligence, pp. 487–494. AUAI
+Press, 2004.
+
+Sethuraman, Jayaram. A constructive deﬁnition of dirichlet
+
+priors. Statistica sinica, pp. 639–650, 1994.
+
+Srivastava, Akash and Sutton, Charles. Neural variational
+inference for topic models. Bayesian deep learning
+workshop, NIPS 2016, 2016.
+
+Teh, Yee Whye, Jordan, Michael I, Beal, Matthew J, and
+Blei, David M. Hierarchical dirichlet processes. Journal
+of the American Statistical Asociation, 101(476), 2006.
+
+Discovering Discrete Latent Topics with Neural Variational Inference
+
+Wang, Chong and Blei, David M. Variational inference
+in nonconjugate models. Journal of Machine Learning
+Research, 14(Apr):1005–1031, 2013.
+
+Wang, Chong, Paisley, John William, and Blei, David M.
+Online variational inference for the hierarchical dirichlet
+process. In Proceedings of AISTATS, 2011.
+
+Wang, Xuerui and McCallum, Andrew. Topics over time:
+a non-markov continuous-time model of topical trends.
+In Proceedings of the 12th ACM SIGKDD international
+conference on Knowledge discovery and data mining,
+pp. 424–433. ACM, 2006.
+
+Xie, Pengtao, Deng, Yuntian, and Xing, Eric. Diversifying
+restricted boltzmann machine for document modeling. In
+Proceedings of KDD, pp. 1315–1324. ACM, 2015.
+
+

@@ -1,0 +1,1548 @@
+Scalable Multi-Class Gaussian Process Classiﬁcation
+using Expectation Propagation
+
+Carlos Villacampa-Calvo * 1 Daniel Hern´andez-Lobato * 1
+
+Abstract
+
+This paper describes an expectation propagation
+(EP) method for multi-class classiﬁcation with
+Gaussian processes that scales well to very large
+datasets.
+In such a method the estimate of the
+log-marginal-likelihood involves a sum across
+the data instances. This enables efﬁcient train-
+ing using stochastic gradients and mini-batches.
+When this type of training is used, the compu-
+tational cost does not depend on the number of
+data instances N . Furthermore, extra assump-
+tions in the approximate inference process make
+the memory cost independent of N . The conse-
+quence is that the proposed EP method can be
+used on datasets with millions of instances. We
+compare empirically this method with alternative
+approaches that approximate the required com-
+putations using variational inference. The results
+show that it performs similar or even better than
+these techniques, which sometimes give signiﬁ-
+cantly worse predictive distributions in terms of
+the test log-likelihood. Besides this, the training
+process of the proposed approach also seems to
+converge in a smaller number of iterations.
+
+1. Introduction
+
+Gaussian processes (GPs) are non-parametric models that
+can be used to address multi-class classiﬁcation problems
+(Rasmussen & Williams, 2006). These models become
+more expressive as the number of data instances N grows.
+They are also very useful to introduce prior knowledge in
+the learning problem, as many properties of the model are
+speciﬁed by a covariance function. Moreover, GPs pro-
+vide an estimate of the uncertainty in the predictions made
+which may be critical in some applications. Neverthe-
+
+*Equal contribution
+
+1Universidad Aut´onoma de Madrid,
+Madrid, Spain. Correspondence to: Carlos Villacampa-Calvo
+<carlos.villacampa@uam.es>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+less, in spite of these advantages, GPs scale poorly to large
+datasets because their training cost is O(N 3), where N is
+the number of instances. An additional challenge is that
+exact inference in these models is generally intractable and
+one has to resort to approximate methods in practice.
+
+Traditionally, GP classiﬁcation has received more attention
+in the binary case than in the multi-class setting (Kuss &
+Rasmussen, 2005; Nickisch & Rasmussen, 2008). The rea-
+son is that approximate inference is more challenging in
+the multi-class case where there is one latent function per
+class. To this one has to add more complicated likelihood
+factors, which often have the form of softmax functions or
+intractable Gaussian integrals. In spite of these difﬁculties,
+there have been several works addressing multi-class GP
+classiﬁcation (Williams & Barber, 1998; Kim & Ghahra-
+mani, 2006; Girolami & Rogers, 2006; Chai, 2012; Ri-
+ihim¨aki et al., 2013). Nevertheless, most of the proposed
+methods do not scale well with the size of the training set.
+
+In the literature there have been some efforts to scale up
+GPs. These techniques often introduce a set of M (cid:28) N
+inducing points whose location is learnt alongside with the
+other model hyper-parameters. The use of inducing points
+in the model can be understood as an approximate GP prior
+with a low-rank covariance structure (Qui˜nonero-Candela
+& Rasmussen, 2005). When inducing points are consid-
+ered, the training cost can be reduced to O(N M 2). This
+allows to address datasets with several thousands of in-
+stances, but not millions. The reason is the difﬁculty of es-
+timating the model hyper-parameters, which is often done
+by maximizing an estimate of the log-marginal-likelihood.
+Because such an estimate does not involve a sum across the
+data instances, one cannot rely on efﬁcient methods for op-
+timization based on stochastic gradients and mini-batches.
+
+A notable exception is the work of (Hensman et al., 2015a)
+which uses variational inference to approximate the cal-
+culations. Such a method allows for stochastic optimiza-
+tion and can address datasets with millions of instances. In
+this work we propose an alternative based on expectation
+propagation (EP) (Minka, 2001) and recent advances on
+binary GP classiﬁcation (Hern´andez-Lobato & Hern´andez-
+Lobato, 2016). The proposed approach also allows for ef-
+ﬁcient training using mini-batches. This leads to a training
+
+Scalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+cost that is O(CM 3), where C is the number of classes.
+An experimental comparison with the variational approach
+and related methods from the literature shows that the pro-
+posed approach has beneﬁts both in terms of the training
+speed and the accuracy of the predictive distribution.
+
+and p(f |y) is intractable. Thus, these computations must
+be approximated. Often, one computes a Gaussian approx-
+imation to p(f |y) (Kim & Ghahramani, 2006). This results
+in a non-parametric classiﬁer with training cost O(N 3),
+where N is the number of data instances.
+
+2. Scalable Multi-class Classiﬁcation
+
+Here we describe multi-class Gaussian process classiﬁca-
+tion and the proposed method. Such a method uses the ex-
+pectation propagation algorithm whose original description
+is modiﬁed to be more efﬁcient both in terms of memory
+and computational costs. For this, we consider stochastic
+gradients to update the hyper-parameters and an approxi-
+mate likelihood that avoids one-dimensional quadratures.
+
+2.1. Multi-class Gaussian Process Classiﬁcation
+
+We consider a dataset of N instances in the form of a ma-
+trix of attributes X = (x1, . . . , xN )T with labels y =
+(y1, . . . , yN )T, where yi ∈ {1, . . . , C} and C > 2 is the
+total number of different classes. The task of interest is to
+predict the class label of a new data instance x(cid:63).
+
+yi = arg maxk
+
+A typical approach in multi-class Gaussian process
+(GP) classiﬁcation is to assume the following label-
+f k(xi),
+ing rule for yi given xi:
+for k = 1, . . . , C, where each f k(·) is a non-linear
+latent function (Kim & Ghahramani, 2006).
+Deﬁne
+f k = (f k(x1), . . . , f k(xN ))T ∈ RN and fi =
+(f 1(xi), . . . , f C(xi))T ∈ RC. The likelihood of f =
+(f 1, . . . , f C)T ∈ RN ×C, p(y|f ) = (cid:81)N
+i=1 p(yi|fi), is then a
+product of N factors of the form:
+
+p(yi|fi) =
+
+Θ (cid:0)f yi(xi) − f k(xi)(cid:1) ,
+
+(1)
+
+(cid:89)
+
+k(cid:54)=yi
+
+where Θ(·) is the Heaviside step function. This likelihood
+takes value one if f can explain the observed data and zero
+otherwise. Potential classiﬁcation errors can be easily in-
+troduced in (1) by considering that each f k has been con-
+taminated with Gaussian noise with variance σ2
+k. That is,
+f k(xi) = ˆf k(xi) + (cid:15)k
+
+i ∼ N (0, σ2
+
+i , where (cid:15)k
+
+k).
+
+In multi-class GP classiﬁcation a GP prior is assumed
+for each function f k(·) (Rasmussen & Williams, 2006).
+Namely, f k ∼ GP(0, c(·, ·; ξ)), where c(·, ·; ξk) is some
+covariance function with hyper-parameters ξk. Often these
+priors are assumed to be independent. That is, p(f ) =
+(cid:81)C
+k=1 p(f k), where each p(f k) is a multivariate Gaus-
+sian distribution. The task of interest is to make infer-
+ence about f and for that Bayes’ rule is used: p(f |y) =
+p(y|f )p(f )/p(y), where p(y) is a normalization constant
+(the marginal likelihood) which can be maximized to ﬁnd
+good hyper-parameters ξk, for k = 1, . . . , C. However, be-
+cause the likelihood in (1) is non-Gaussian, evaluating p(y)
+
+k
+
+k
+
+k
+
+k
+
+k
+
+i (xi)|f
+
+i=1 p(f k
+
+= (f k(xk
+
+1), . . . , f k(xk
+
+= (x1, . . . , xk
+
+To reduce the computational cost of the method described
+a typical approach is to consider a sparse representation
+for each GP. With this goal, one can introduce C datasets
+M )T,
+of M (cid:28) N inducting points X
+M ))T for
+with associated values f
+k = 1, . . . , C (Snelson & Ghahramani, 2006; Naish-
+Guzman & Holden, 2008). Given each X
+the prior for
+k
+f k is approximated as p(f k) = (cid:82) p(f k|f
+≈
+)df
+|X
+(cid:82) [(cid:81)N
+k
+|X
+which the conditional Gaussian distribution p(f k|f
+)
+has been approximated by the factorizing distribution
+(cid:81)N
+). This approximation is known as the
+full independent training conditional (FITC) (Qui˜nonero-
+Candela & Rasmussen, 2005), and it leads to a Gaus-
+sian prior pFITC(f k|X
+) with a low-rank covariance matrix.
+This allows for approximate inference with cost O(N M 2).
+}C
+The inducing points {X
+k=1 can be regarded as hyper-
+parameters and can be learnt by maximizing the estimate
+of the marginal likelihood p(y).
+
+)p(f
+= pFITC(f k|X
+
+i=1 p(f k
+
+), in
+k
+
+i (xi)|f
+
+)]p(f
+
+)df
+
+k
+
+k
+
+k
+
+k
+
+k
+
+k
+
+k
+
+k
+
+2.2. Method Speciﬁcation and Expectation Propagation
+
+The formulation of the previous section is limited because
+the estimate of the log-marginal-likelihood log p(y) cannot
+be expressed as a sum across the data instances. This makes
+infeasible the use of efﬁcient methods based on stochastic
+optimization for ﬁnding the model hyper-parameters.
+
+k
+
+A recent work focusing on the binary case has shown that it
+is possible to obtain an estimate of log p(y) that involves a
+sum across the data instances if the values f
+associated
+to the inducing points are not marginalized (Hern´andez-
+Lobato & Hern´andez-Lobato, 2016). We follow that
+work and consider the posterior approximation p(f |y) ≈
+(cid:82) p(f |f )q(f )df , where f = (f
+)T, p(f |f ) =
+k
+), we have deﬁned p(f ) = (cid:81)C
+(cid:81)C
+k=1 p(f
+),
+and q is a Gaussian approximation to p(f |y). This distribu-
+tion q is obtained in three steps. First, we use on the exact
+posterior the FITC approximation:
+
+k=1 p(f k|f
+
+, . . . , f
+
+k
+|X
+
+C
+
+k
+
+1
+
+p(f |y) =
+
+(cid:82) p(y|f )p(f |f )df p(f )
+p(y)
+
+(cid:82) p(y|f )pFITC(f |f )df p(f )
+p(y)
+
+[(cid:81)N
+
+i=1 φi(f )]p(f )
+p(y)
+
+,
+
+≈
+
+=
+
+(2)
+
+Scalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+where we have deﬁned pFITC(f |f ) = (cid:81)N
+|f
+
+) ≈ p(f |f ) = (cid:81)C
+
+) and
+
+k=1 p(f k|f
+
+k
+
+k
+
+i=1
+
+(cid:81)C
+
+k=1 p(f k(xi)
+
+φi(f ) = (cid:82) [(cid:81)
+
+Θ (cid:0)f yi (xi) − f k(xi)(cid:1)]
+
+k(cid:54)=yi
+k=1 p(f k(xi)|f
+
+k
+
+× [(cid:81)C
+
+)]dfi ,
+
+with p(f k(xi)|f
+
+) = N (f k(xi)|mk
+
+i , vk
+
+i ), where
+
+k
+
+mk
+
+i = (kk
+sk
+i = κk
+
+xiXk )T(Kk
+− (kk
+
+XkXk )−1f
+xiXk )T(Kk
+
+xixi
+
+k
+
+,
+
+XkXk )−1kk
+
+xiXk .
+
+(3)
+
+(4)
+
+(5)
+
+tween f
+
+k; and, ﬁnally, κk
+
+In the previous expressions N (·|µ, σ2) is the p.d.f. of a
+Gaussian with mean µ and variance σ2. Furthermore, kk
+is a vector with the covariances between f k(xi) and f
+Kk
+
+xiXk
+k;
+Xk Xk is a M × M matrix with the cross covariances be-
+xixi is the prior variance of f k(xi).
+A practical difﬁculty is that the integral in (3) is intractable.
+Although it can be evaluated using one-dimensional
+quadrature techniques (Hern´andez-Lobato et al., 2011), in
+this paper we follow a different approach. For that, we note
+that (3) is simply the probability that f yi(xi) > f k(xi) for
+k (cid:54)= yi, given f . Let f yi
+i = f k(xi). The
+second step consists in approximating (3) as follows:
+
+i = f yi(xi) and f k
+
+k(cid:54)=yi
+
+p((cid:84)
+f yi > f k) =p(f yi > f 1|S1) × p(f yi > f 2|S2)×
+· · · × p(f yi > f yi−1|Syi−1) × p(f yi > f yi+1|Syi+1)×
+
+· · · ≈ (cid:81)
+
+p(f yi > f k) = (cid:81)
+
+k(cid:54)=yi
+
+Φ(αk
+
+i ) ,
+
+k(cid:54)=yi
+
+(6)
+
+(cid:113)
+
+i , mk
+
+i = (myi
+
+i and sk
+
+where Sj = (cid:84)
+k /∈{1,...,j}∪{yi} f yi > f k, Φ(·) is the c.d.f.
+syi
+i − mk
+of a standard Gaussian and αk
+i + sk
+i ,
+with myi
+i , syi
+i deﬁned in (5). We have omit-
+ted in (6) the dependence on f to improve the readability.
+The quality of this approximation is supported by the good
+experimental results obtained in Section 4. When (6) is re-
+placed in (2) we get an approximate posterior distribution
+in which we can evaluate all the likelihood factors:
+
+i )/
+
+p(f |y) ≈
+
+[(cid:81)N
+i=1
+
+(cid:81)
+
+φk
+i (f )]p(f )
+
+k(cid:54)=yk
+p(y)
+
+,
+
+(7)
+
+where we have deﬁned φk
+
+i (f ) = Φ(αk
+
+i ).
+
+The r.h.s. of (7) is intractable due to the non-Gaussian form
+of the likelihood factors. The third and last step uses expec-
+tation propagation (EP) (Minka, 2001) to get a Gaussian
+approximation q to (7). This approximation is obtained by
+i with an approximate Gaussian factor ˜φk
+replacing each φk
+i :
+
+˜φk
+i (f ) = ˜si,k exp
+
+(cid:110)
+
+− 1
+
+yi)T ˜Vyi
+i,kf
+
+yi + (f
+
+exp
+
+(cid:110)
+
+k
+
+− 1
+
+2 (f
+
+2 (f
+)T ˜Vi,kf
+
+(cid:111)
+
+×
+
+yi)T ˜myi
+(cid:111)
+
+i,k
+
+k
+
+k
+
++ (f
+
+)T ˜mi,k
+
+,
+
+(8)
+
+(cid:81)
+
+k(cid:54)=yi
+
+i (υyi
+
+i,k, C 2
+
+i,k υyi
+
+i,k υyi
+
+i,k , C 2,yi
+
+i,k = C 2,yi
+
+i )T, ˜myi
+i,kυk
+
+XkXk )−1. In (8) C 1,yi
+
+i,k = C 1,yi
+i )T, ˜mi,k = C 2
+
+i , and we have deﬁned υk
+i,k , C 1
+
+i , ˜Vi,k =
+where ˜Vyi
+i,kυk
+C 1
+i (υk
+i =
+(kk
+xiXk )T(Kk
+i,k and
+˜si,k are free parameters adjusted by EP. Because the pre-
+cision matrices in (8) are one-rank (see the supplemen-
+tary material for details), we only have to store in mem-
+ory O(M ) parameters for each ˜φk
+i . The posterior approx-
+imation q is obtained by replacing in (7) each exact factor
+φi,k by the corresponding approximate factor ˜φi,k. That is,
+q(f ) = (cid:81)N
+˜φk
+i (f )p(f )/Zq, where Zq is a normal-
+i=1
+ization constant that approximates the marginal likelihood
+p(y). Because all the factors involved in the computation
+of q are Gaussian, and we assume independence among the
+latent functions of different classes in (8), q is a product of
+C multivariate Gaussians (on per class) on M dimensions.
+In EP each ˜φk
+is updated until convergence as follows:
+i
+i is removed from q by computing q\i,k ∝ q/ ˜φk
+First, φk
+i .
+Because the Gaussian family is closed under the product
+and division operations, q\i,k is also Gaussian with pa-
+rameters given by the equations in (Roweis, 1999). Then,
+the Kullback-Leibler divergence between Z −1
+i q\i,k and
+q, i.e, KL[Z −1
+i q\i,k|q], is minimized with respect to q,
+i q\i,k. This
+where Zi,k is the normalization constant of φk
+is done by matching the moments of Z −1
+i q\i,k. These
+moments can be obtained from the derivatives of Zi,k with
+respect to the parameters of q\i,k (Seeger, 2006). After up-
+dating q, the new approximate factor is ˜φi,k = Zi,kq/q\i,k.
+We update all the approximate factors at the same time, and
+reconstruct q afterwards by computing the product of all the
+˜φk
+i and the prior, as in (Hern´andez-Lobato et al., 2011).
+
+i,k φk
+
+i,k φk
+
+i,k φk
+
+The EP approximation to the marginal likelihood is the nor-
+malization constant of q, Zq. The log of its value is:
+
+log Zq = g(θ) − g(θprior) + (cid:80)N
+
+(cid:80)
+
+i=1
+
+k(cid:54)=yk
+
+log ˜si,k ,
+
+(9)
+
+where log ˜si,k = log Zi,k + g(θ\i,k) − g(θ); θ, θ\i,k, and
+θprior are the natural parameters of q, q\i,k and the prior, re-
+spectively; and g(θ) is the log-normalizer of a multi-variate
+Gaussian distribution with natural parameters θ.
+
+It is possible to show that if EP converges, the gradient of
+log Zq w.r.t the parameters of each ˜φi,k is zero. Thus, the
+gradient of log Zq w.r.t. a hyper-parameter ξk
+j of the k-th
+covariance function (including the inducing points) is:
+
+∂ log Zq
+∂ξk
+j
+
+= (ηT − ηT
+
+prior)
+
+∂θprior
+∂ξk
+j
+
++
+
+N
+(cid:88)
+
+(cid:88)
+
+i=1
+
+k(cid:54)=yi
+
+log Zi,k
+∂ξk
+j
+
+,
+
+(10)
+
+where η and ηprior are the expected sufﬁcient statistics un-
+der q and the prior, respectively. Importantly, only the di-
+rect dependency of log Zi,k on ξk
+j has to be taken into ac-
+count. See (Seeger, 2006). The dependency through θ\i,k,
+i.e., the natural parameters of q\i,k can be ignored.
+
+Scalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+After obtaining q and ﬁnding the model hyper-parameters
+by maximizing log Zq, one can get an approximate predic-
+tive distribution for the label y(cid:63) of a new instance x(cid:63):
+
+p(y(cid:63)|x(cid:63), y) = (cid:82) p(y(cid:63)|f(cid:63), f )q(f )df df(cid:63) ,
+
+(11)
+
+where we have deﬁned f(cid:63) = (f 1(x(cid:63)), . . . , f C(x(cid:63)))T, and
+(cid:82) p(y(cid:63)|f(cid:63), f )df(cid:63) has the same form as the likelihood factor
+in (3). The resulting integral in (11) is again intractable.
+However, it can be approximated using a one-dimensional
+quadrature. See the supplementary material.
+
+Because some simpliﬁcations occur when computing the
+derivatives of log Zq w.r.t the inducing points, the total
+training time of EP is O(N M 2) while the total memory
+cost is O(N M C) (Snelson, 2007).
+
+2.3. Scalable Expectation Propagation
+
+Traditionally, for ﬁnding the model hyper-parameters with
+EP one re-runs EP until convergence (using the previous
+solution as the starting point), after each gradient ascent
+update of the hyper-parameters. The reason for this is that
+(10) is only true if EP has converged (i.e., the approximate
+factors do not change any more). This approach is partic-
+ularly inefﬁcient initially, when there are strong changes to
+the model hyper-parameters, and EP may require several
+iterations to converge. Recently, a more efﬁcient method
+has been proposed in (Hern´andez-Lobato & Hern´andez-
+Lobato, 2016).
+In that work the authors suggest to up-
+date both the approximate factors and the model hyper-
+parameters at the same time. Because we do not wait for
+EP to converge, one should ideally add to (10) extra terms
+to get the gradient. These terms account for the mismatch
+between the moments of Z −1
+i q\i,k and q. However, ac-
+i,k φk
+cording to (Hern´andez-Lobato & Hern´andez-Lobato, 2016)
+these extra terms can be ignored and one can simply use
+(10) for an inner update of the hyper-parameters.
+
+Figure 1. Estimate of p(y) on the Vehicle dataset as a function of
+the training time for the proposed EP method when considering
+three different schemes to update the model hyper-parameters.
+
+Figure 1 shows, for the Vehicle dataset from UCI repository
+(Lichman, 2013), the estimate of the marginal likelihood
+log Zq with respect to the training time, for 250 updates of
+the hyper-parameters, and M = N/5. We compare three
+
+methods: (i) re-running EP until convergence each time and
+using (10) to update the hyper-parameters (EP-outer); (ii)
+updating at the same time the approximate factors ˜φk
+i and
+the hyper-parameters with (10) (EP-inner-approx); and (iii)
+the same approach as the previous one, but using the exact
+gradient for the update instead of (10) (EP-inner-exact). All
+approaches successfully maximize log Zq. However, the
+inner updates are more efﬁcient as they do not wait until
+EP converges. Moreover, using the approximate gradient
+is faster (it is cheaper to compute), and it gives almost the
+same results as the exact gradient.
+
+2.3.1. STOCHASTIC EXPECTATION PROPAGATION
+
+(cid:81)
+
+k(cid:54)=yk
+
+The memory cost of EP can be signiﬁcantly reduced by a
+technique called stochastic EP (SEP) (Li et al., 2015). In
+SEP all the approximate factors ˜φk
+i are tied. This means
+that instead of storing their individual parameters, what is
+stored is their product, i.e., ˜φ = (cid:81)N
+˜φk
+i . A con-
+i=1
+sequence of this is that we no longer have direct access to
+their individual parameters. This only affects the computa-
+tion of the cavity distribution q\i,k which now is obtained
+in an approximate way q\i,k ∝ q/ ˜φ 1
+n , where n is the to-
+tal number of factors and ˜φ 1
+n approximates each individual
+factor. Thus, SEP reduces the memory costs of EP by a fac-
+tor of n. All the other steps are carried out as in the original
+EP algorithm, including the computation of log Zq and its
+gradients. Figure 2 shows the differences between EP and
+SEP on a toy example. When SEP is used in the proposed
+method, the memory cost is reduced to O(CM 2).
+
+Figure 2. (top) EP approximation of a distribution over the vari-
+able θ with complicated likelihood factors, but tractable prior.
+(bottom) SEP approximation of the same distribution.
+
+2.3.2. TRAINING USING MINI-BATCHES
+
+Both the estimate of the log-marginal-likelihood in (9)
+and its gradient in (10) contain a sum across the data in-
+stances. This allows to write an EP algorithm that pro-
+cesses mini-batches of data, as in (Hern´andez-Lobato &
+Hern´andez-Lobato, 2016). For this, the data are split in
+mini-batches Mj of size S (cid:28) N , where N is the number
+of instances. Given a mini-batch Mj, we process all the
+approximate factors corresponding to that mini-batch, i.e.,
+{{ ˜φk
+i }k(cid:54)=yi : (xi, yi) ∈ Mj}. Then, we update the model
+hyper-parameters using a stochastic approximation of (10):
+
+∂ log Zq
+∂ξk
+j
+
+≈ (ηT − ηT
+
+prior)
+
+∂θprior
+∂ξk
+j
+
++ ρ
+
+(cid:88)
+
+(cid:88)
+
+i∈Mj
+
+k(cid:54)=yi
+
+log Zi,k
+∂ξk
+j
+
+, (12)
+
+where ρ = N/|Mj|. We reconstruct q after each update
+of the approximate factors and each update of the hyper-
+
+-800-700-600-500-400-3000500100015002000TrainingTimeinSecondslogZqEP-Inner-Approx.GradientEP-Inner-ExactGradientEP-OuterUpdateEPSEPScalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+parameters. When using mini-batches of data, we update
+more frequently q and the hyper-parameters. The conse-
+quence is that the training cost is O(CM 3), assuming a
+constant number of updates until convergence. This train-
+ing scheme can handle datasets with millions of instances.
+
+3. Related Work
+
+k
+
+k
+
+associated to the inducing points X
+
+The likelihood used in (1) was ﬁrst considered for multi-
+class Gaussian process classiﬁcation in (Kim & Ghahra-
+mani, 2006). That work considers full non-parametric GP
+priors, which lead to a training cost that is O(CN 3). The
+consequence is that it can only address small classiﬁca-
+tion problems. It is, however, straight forward to replace
+the non-parametric GP priors with the FITC approximate
+priors pFITC(f k|X
+) (Qui˜nonero-Candela & Rasmussen,
+2005). These priors are obtained by marginalizing the la-
+tent variables f
+, as
+indicated in Section 2.1. This allows to address datasets
+with a few thousand instances. This is precisely the ap-
+proach followed in (Naish-Guzman & Holden, 2008) to
+address binary GP classiﬁcation problems. We refer to
+such an approach as the generalized FITC approxima-
+tion (GFITC). Nevertheless, such an approach cannot use
+stochastic optimization. The reason is that the estimate
+of the log-marginal-likelihood (needed for hyper-parameter
+estimation) does not contain a sum across the instances.
+Thus, GFITC cannot scale well to very large datasets. Nev-
+ertheless, unlike the proposed approach, it can run expecta-
+tion propagation over the exact likelihood factors in (1). In
+GFITC we follow the traditional approach and run EP until
+convergence before updating the hyper-parameters.
+
+k
+
+Multi-class GP classiﬁcation for potentially huge datasets
+has also been considered in (Hensman et al., 2015b) using
+variational inference (VI). However, such an approach can-
+not use the likelihood in (1) since its logarithm is not well
+deﬁned (note that it takes value zero for some values of fi).
+As an alternative, Hensman et al. (2015b) have considered
+the robust likelihood of (Hern´andez-Lobato et al., 2011):
+
+p(yi|fi) = (1 − (cid:15)) (cid:81)
+
+Θ (cid:0)f yi (xi) − f k(xi)(cid:1) + (cid:15)
+
+C ,
+
+(13)
+
+k(cid:54)=yi
+
+where (cid:15) is the probability of a labeling error (in that case,
+yi is chosen at random from the potential class labels). In
+(Hensman et al., 2015b) it is suggested to set (cid:15) = 10−3.
+
+We now describe the VI approach in detail. Using (13)
+and the deﬁnitions of Section 2, we know that p(y|f ) =
+(cid:82) p(y|f )p(f |f )df . If we take the log and use Jensen’s in-
+equality we get the bound log p(y|f ) ≥ E
+p(f |f )[log p(y|f )].
+Consider now a Gaussian approximation q to p(f |y). Then,
+
+back Leibler divergence. If we use the ﬁrst bound we get
+
+log p(y) ≥ E
+
+q(f )[E
+
+p(f |f )[log p(y|f )]]KL[q(f )||p(f )]
+
+≥ Eq(f )[log p(y|f )] − KL[q(f )||p(f )]
+≥ (cid:80)N
+
+Eq(fi)[log p(yi|fi)] − KL[q(f )||p(f )] ,
+
+i=1
+
+(15)
+
+i , ˆsk
+
+k=1 N (f k(xi)| ˆmk
+
+where q(f ) = (cid:82) p(f |f )q(f )df and the corresponding
+marginal over fi = (f 1(xi), . . . , f C(xi))T is q(fi) =
+(cid:81)C
+i ). Note that q(fi) is Gaussian be-
+cause q(f ) involves a Gaussian convolution. As in the pro-
+posed approach, q(f ) is assumed to be a Gaussian factoriz-
+1
+ing over the latent functions f
+. However, its mean
+k=1 and {Sk}C
+and covariance parameters, i.e., {mk}C
+k=1 are
+found by maximizing (15). The parameters of q(fi) are:
+
+, . . . , f
+
+C
+
+ˆmk
+
+i = (kk
+i = κk
+ˆsk
++ (kk
+
+xiXk )T(Kk
+xixi − (kk
+xiXk )T(Kk
+
+XkXk )−1mk ,
+xiXk )T(Kk
+XkXk )−1Sk(Kk
+
+XkXk )−1kk
+
+xiXk
+XkXk )−1kk
+
+(16)
+
+xiXk .
+
+(17)
+
+Hensman et al. (2015b) consider Markov chain Monte
+Carlo (MCMC) to sample the hyper-parameters. Here we
+simply maximize (15) to ﬁnd the hyper-parameters and the
+inducing points. The reason for this is that in very large
+datasets MCMC is not expected to give much better results.
+We refer to the described approach as VI. The objective in
+(15) contains a sum across the data instances. Thus, VI
+also allows for stochastic optimization and it results in the
+same cost as the proposed approach. However, the expecta-
+tions in (15) must be approximated using one-dimensional
+quadratures. This is a drawback with respect to the pro-
+posed method which is free of any quadrature. Finally,
+there are some methods related to the VI approach just de-
+scribed. Dezfouli & Bonilla (2015) assume that q can be
+a mixture of Gaussians, and Chai (2012) uses a soft-max
+likelihood (but does not consider stochastic optimization).
+Both works need to introduce extra approximations.
+
+In the literature there are other research works address-
+ing multi-class Gaussian process classiﬁcation. Some ex-
+amples include (Williams & Barber, 1998; Girolami &
+Rogers, 2006; Hern´andez-Lobato et al., 2011; Henao &
+Winther, 2012; Riihim¨aki et al., 2013). These works
+employ expectation propagation, variational inference or
+the Laplace approximation to approximate the computa-
+tions. Nevertheless, the corresponding estimate of the log-
+marginal-likelihood cannot be expressed as a sum across
+the data instances. This avoids using efﬁcient techniques
+for optimization based on stochastic gradients. Thus, one
+cannot address very large datasets with these methods.
+
+log p(y) = (cid:82) q(f )p(y|f )p(f )/q(f )df
+
+≥ E
+
+q(f )[log p(y|f )] − KL[q(f )||p(f )] ,
+
+(14)
+
+4. Experiments
+
+where we have used Jensen’s inequality and KL is the Kull-
+
+We evaluate the performance of the method proposed in
+Section 2.2. We consider two versions of it. A ﬁrst
+
+Scalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+one, using expectation propagation (EP). A second, us-
+ing the memory efﬁcient stochastic EP (SEP). EP and SEP
+are compared with the methods described in Section 3.
+Namely, GFITC and VI. All methods are codiﬁed in the
+R language (the source code is in the supplementary mate-
+rial), and they consider the same initial values for the model
+hyper-parameters (including the inducing points, that are
+chosen at random from the training instances). The hyper-
+parameters are optimized by maximizing the estimate of
+the marginal likelihood. A Gaussian covariance function
+with automatic relevance determination, an amplitude pa-
+rameter and an additive noise parameter is employed.
+
+4.1. Performance on Datasets from the UCI Repository
+
+We evaluate the performance of each method on 8 datasets
+from the UCI repository (Lichman, 2013). The characteris-
+tics of the datasets are displayed in Table 4.1. We use batch
+training in each method (i.e., we go through all the data to
+compute the gradients). Batch training does not scale to
+large datasets. However, it is preferred on small datasets
+like the ones considered here. We use 90% of the data for
+training and 10% for testing, expect for Satellite which is
+fairly big, where we use 20% for training and 80% for test-
+In Waveform, which is synthetic, we generate 1000
+ing.
+instances and split them in 30% for training and 70% for
+testing. Finally, in Vowel we consider only the points that
+belong to the 6 ﬁrst classes. All methods are trained for
+250 iterations using gradient ascent (GFITC and VI use l-
+BFGS, EP and SEP use an adaptive learning rate described
+in the supplementary material). We consider three values
+for M , the number of inducing points. Namely 5%, 10%
+and 20% of the number of training instances. We report
+averages over 20 repetitions of the experiments.
+
+Table 1. Characteristics of the datasets from the UCI Repository.
+
+Dataset
+Glass
+New-thyroid
+Satellite
+Svmguide2
+Vehicle
+Vowel
+Waveform
+Wine
+
+#Instances
+214
+215
+6435
+391
+846
+540
+1000
+178
+
+#Attributes
+9
+5
+36
+20
+18
+10
+21
+13
+
+#Classes
+6
+3
+6
+3
+4
+6
+3
+3
+
+Table 2 shows, for each value of M , the average negative
+test log-likelihood of each method with the correspond-
+ing error bars (test errors are shown in the supplemen-
+tary material). The average training time of each method
+is also displayed. The best method (the lower the bet-
+ter) for each dataset is highlighted in bold face. We ob-
+serve that the proposed approach, EP, obtains very sim-
+ilar results to those of GFITC, and sometimes it obtains
+the best results. The memory efﬁcient version of EP, SEP,
+seems to provide similar results without reducing the per-
+formance. Regarding the computational cost, SEP is the
+
+fastest method (between 2 and 3 times faster than GFITC).
+VI is slower as a consequence of the quadratures required
+by this method. VI also gives much worse results in some
+datasets, e.g., Glass, Svmguide2 and Waveform. This is re-
+lated to the optimization of Eq(fi)[log p(yi|fi)] in (15), in-
+stead of log Eq(fi)[p(yi|fi)], which is closer to the data log-
+In the EP objective in (9), (cid:80)
+log Zi,k is
+likelihood.
+probably more similar to log Eq(fi)[p(yi|fi)]. This explains
+the much better results obtained by EP and SEP.
+
+k(cid:54)=yi
+
+Table 2. Average negative test log likelihood for each method and
+average training time in seconds on UCI repository datasets.
+
+VI
+
+EP
+
+SEP
+
+GFITC
+
+Problem
+0.61 ± 0.05 0.78 ± 0.06 0.77 ± 0.07 2.45 ± 0.14
+Glass
+New-thyroid 0.06 ± 0.01 0.11 ± 0.03 0.06 ± 0.01 0.09 ± 0.02
+0.33 ± 0.00 0.31 ± 0.00 0.33 ± 0.00 0.61 ± 0.01
+Satellite
+Svmguide2 0.63 ± 0.06 0.63 ± 0.06 0.67 ± 0.06 1.03 ± 0.08
+0.32 ± 0.01 0.34 ± 0.02 0.34 ± 0.02 0.76 ± 0.05
+Vehicle
+0.16 ± 0.01 0.25 ± 0.01 0.25 ± 0.01 0.41 ± 0.05
+Vowel
+Waveform 0.42 ± 0.01 0.36 ± 0.00 0.39 ± 0.01 0.89 ± 0.02
+0.08 ± 0.02 0.07 ± 0.01 0.08 ± 0.01 0.08 ± 0.02
+Wine
+131 ± 3.11 53.8 ± 0.19 48.5 ± 0.97 157 ± 0.59
+Avg. Time
+0.58 ± 0.05 0.74 ± 0.06 0.79 ± 0.07 2.18 ± 0.14
+Glass
+New-thyroid 0.07 ± 0.01 0.06 ± 0.01 0.06 ± 0.01 0.05 ± 0.01
+0.34 ± 0.00 0.30 ± 0.00 0.34 ± 0.00 0.58 ± 0.01
+Satellite
+Svmguide2 0.67 ± 0.05 0.67 ± 0.05 0.74 ± 0.07 0.90 ± 0.10
+0.33 ± 0.01 0.33 ± 0.02 0.34 ± 0.02 0.72 ± 0.04
+Vehicle
+0.14 ± 0.01 0.19 ± 0.01 0.19 ± 0.01 0.30 ± 0.04
+Vowel
+Waveform 0.42 ± 0.01 0.36 ± 0.01 0.41 ± 0.01 0.85 ± 0.01
+0.07 ± 0.01 0.06 ± 0.01 0.07 ± 0.01 0.07 ± 0.01
+Wine
+264 ± 6.91 102 ± 0.64 96.6 ± 1.99 179 ± 0.78
+Avg. Time
+0.6 ± 0.07 0.75 ± 0.06 0.81 ± 0.07 2.30 ± 0.15
+Glass
+New-thyroid 0.07 ± 0.01 0.06 ± 0.01 0.05 ± 0.01 0.05 ± 0.01
+0.34 ± 0.01 0.30 ± 0.00 0.36 ± 0.00 0.53 ± 0.01
+Satellite
+Svmguide2 0.67 ± 0.05 0.65 ± 0.06 0.74 ± 0.07 0.94 ± 0.08
+0.33 ± 0.01 0.33 ± 0.02 0.34 ± 0.02 0.63 ± 0.04
+Vehicle
+0.12 ± 0.01 0.16 ± 0.01 0.18 ± 0.01 0.15 ± 0.03
+Vowel
+Waveform 0.43 ± 0.01 0.37 ± 0.01 0.45 ± 0.01 0.80 ± 0.01
+0.07 ± 0.01 0.05 ± 0.01 0.06 ± 0.01 0.06 ± 0.02
+Wine
+683 ± 17.3 228 ± 0.78 216 ± 2.88 248 ± 0.66
+Avg. Time
+
+%
+5
+=
+M
+
+%
+0
+1
+=
+M
+
+%
+0
+2
+=
+M
+
+4.2. Analysis of Inducing Point Learning
+
+We generate a synthetic two dimensional problem with
+three classes by sampling the latent functions from the
+GP prior and applying the rule yi = arg maxk f k(xi).
+The distribution of xi is uniform in the box [−2.5, 2.5] ×
+[−2.5, 2.5]. We consider 1000 training instances and a
+growing number of inducing points, i.e., M = 1 to M =
+256. The initial location of the inducing points is chosen at
+random and it is the same for all the methods. We are in-
+terested in the location of the inducing points after training.
+Thus, we set the other hyper-parameters to their true values
+(speciﬁed before generating the data) and we keep them
+ﬁxed. All methods but VI are trained using batch methods
+during 2000 iterations. VI is trained using stochastic gra-
+dients for 2000 epochs (the batch version often gets stuck
+in local optima). We use ADAM with the default settings
+(Kingma & Ba, 2015), and 100 as the mini-batch size.
+
+Scalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+M = 1
+
+M = 2
+
+M = 4
+
+M = 8
+
+M = 16
+
+M = 32
+
+M = 64
+
+M = 128
+
+M = 256
+
+C
+T
+I
+F
+G
+
+P
+E
+
+P
+E
+S
+
+I
+V
+
+Figure 3. Decision boundaries and location of the inducing points after training for each method. GFITC, EP and SEP seem to place
+the inducing points one on top of each other. By contrast, VI prefers to place them near the decision boundaries. Best seen in color.
+
+ﬁcient than the EP updates. Similar results are obtained
+in terms of the test error. See the supplementary material.
+However, in that case VI does not overﬁt the training data.
+
+Figure 3 shows the location learnt by each method for the
+inducing points. Blue, red and green points represent the
+training data, black lines are decision boundaries and black
+border points are the inducing points. As we increase the
+number of inducing points the methods become more ac-
+curate. However, GFITC, EP and SEP identify decision
+boundaries that are better with a smaller number of induc-
+ing points. VI fails in this task. This is probably because VI
+updates the inducing-points with a bad estimate of q dur-
+ing the initial iterations. VI uses gradient steps to update
+q, which is less efﬁcient than the EP updates (free of any
+learning rate). GFITC, EP and SEP overlap the inducing
+points, which can be seen as a pruning mechanism (if two
+inducing points are equal, it is like having only one). This
+has already been observed in regression problems (Bauer
+et al., 2016). By contrast, VI places the inducing points
+near the decision boundaries. This agrees with previous
+results on binary classiﬁcation (Hensman et al., 2015a).
+
+4.3. Performance as a Function of the Training Time
+
+Figure 4 shows the negative test log-likelihood of each
+method as a function of the training time on the Satellite
+dataset (EP results are not shown since it performs equal
+to SEP). Training is done as in Section 4.1. We consider
+a growing number of inducing points M = 4, 20, 100 and
+report averages over 100 repetitions of the experiments. In
+all methods we use batch training. We observe that SEP
+is the method with the best performance at the lowest cost.
+Again, it is faster than GFITC because it optimizes q and
+the hyper-parameters at the same time, while GFITC waits
+until EP has converged to update the hyper-parameters.
+VI is not very efﬁcient for small values of M , due to the
+quadratures. It also takes more time to get a good estimate
+of q, which is updated by gradient descent and is less ef-
+
+Figure 4. Negative test log-likelihood for GFITC, SEP and VI on
+Satellite as a function of the training time. Best seen in color.
+
+4.4. Performance When Using Stochastic Gradients
+
+In very large datasets batch training is infeasible, and one
+must use mini-batches to update q and to approximate the
+required gradients. We evaluate the performance of each
+method on the MNIST dataset (LeCun et al., 1998) with
+M = 200 inducing points and mini-batches with 200 in-
+stances. This dataset has 60, 000 instances for training and
+10, 000 for testing. The learning rate of each method is
+set using ADAM with the default parameters (Kingma &
+Ba, 2015). GFITC does not allow for stochastic optimiza-
+tion. Thus, it is ignored in the comparison. The test error
+and the negative test log-likelihood of each method is dis-
+played in Figure 5 (top) as a function of the training time.
+In this larger dataset all methods perform similarly. How-
+ever, EP and SEP take less time to converge than VI. SEP
+obtains a test error that is 2.08% and average negative test
+log-likelihood that is 0.0725. The results of VI are 2.02%
+and 0.0686, respectively. These results are similar to the
+
+lll                    llllll                              llllllllllll                                        llllllllllllllllllllllll                                                      lllllllllllllllllllllllllllllllllllllllllll                                                        lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          ll                    llllll                    llllllllllll                                        llllllllllllllllllllllll                                                        lllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                            lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                            ll                    llllll                                        llllllllllll                                        llllllllllllllllllllllll                                                        llllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                            lllllllll                    llllllllllll                              llllllllllllllllllllllll                              lllllllllllllllllllllllllllllllllllllllllllllll                                                  llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                  lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll                                                          −1012340.51.01.5Satellite DatasetAvg. Time in seconds in log10Avg. Negative Test Log LikelihoodGFITC M = 4GFITC M = 20GFITC M = 100SEP M = 4SEP M = 20SEP M = 100VI M = 4VI M = 20VI M = 100Scalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+Figure 5. Average test error and average negative test log-likelihood for each method on the MNIST (top) and the Airline (bottom)
+dataset. In the Airline dataset a linear model based on logistic regression is included in the comparison. Best seen in color.
+
+ones reported in (Hensman et al., 2015a) using M = 500.
+
+A last experiment considers all ﬂights within the USA be-
+tween 01/2008 and 04/2008 (http://stat-computing.
+org/dataexpo/2009). The task is to classify the ﬂights
+according to their delay using three classes: On time, more
+than 5 minutes of delay, or more than 5 minutes before
+time. We consider 8 attributes: age of the aircraft, dis-
+tance covered, airtime, departure time, arrival time, day
+of the week, day of the month and month. After remov-
+ing all instances with missing data 2, 127, 068 instances re-
+main, from which 10, 000 are used for testing and the rest
+for training. We use the same settings as on the MNIST
+dataset and evaluate each method. The results obtained
+are shown in Figure 5 (bottom). We also report the perfor-
+mance of a logistic regression classiﬁer. Again, all meth-
+ods perform similarly in terms of test error. However, EP
+and SEP converge faster and quickly outperform the linear
+model. Importantly, the negative test log-likelihood of VI
+starts increasing at some point, which is again probably due
+to the optimization of Eq(fi)[log p(yi|fi)] in (15). The sup-
+plementary material has further evidence supporting this.
+
+5. Conclusions
+
+We have proposed the ﬁrst method for multi-class classiﬁ-
+cation with Gaussian processes, based on expectation prop-
+agation (EP), that scales well to very large datasets. Such
+a method uses the FITC approximation to reduce the num-
+ber of latent variables in the model from O(N ) to O(M ),
+where M (cid:28) N , and N is the number of data instances. For
+this, M inducing points are introduced for each latent func-
+tion in the model.
+Importantly, the proposed method al-
+lows for stochastic optimization as the estimate of the log-
+
+marginal-likelihood involves a sum across the data. More-
+over, we have also considered a stochastic version of EP
+(SEP) to reduce the memory usage. When mini-batches
+and stochastic gradients are used for training, the computa-
+tional cost of the proposed approach is O(CM 3), with C
+the number of classes. The memory cost is O(CM 2).
+
+We have compared the proposed method with other ap-
+proaches from the literature based on variational inference
+(VI) (Hensman et al., 2015b), and with the model consid-
+ered by Kim & Ghahramani (2006), which has been com-
+bined with FITC approximate priors (GFITC) (Qui˜nonero-
+Candela & Rasmussen, 2005). The proposed approach
+outperforms GFITC in large datasets as this method does
+not allow for stochastic optimization, and in small datasets
+it produces similar results. The proposed method, SEP,
+is slightly faster than VI which also allows for stochastic
+optimization.
+In particular, VI requires one-dimensional
+quadratures which in small datasets are expensive. We have
+also observed that SEP converges faster than VI. This is
+probably because the EP updates, free of any learning rate,
+are more efﬁcient for ﬁnding a good posterior approxima-
+tion than the gradient ascent updates employed by VI.
+
+An important conclusion of this work is that VI sometimes
+gives bad predictive distributions in terms of the test log-
+likelihood. The EP and SEP methods do not seem to have
+this problem. Thus, if one cares about accurate predictive
+distributions, VI should be avoided in favor of the proposed
+methods. In our experiments we have also observed that
+the proposed approaches tend to place the inducing points
+one on top of each other, which can be seen as an inducing
+point pruning technique (Bauer et al., 2016). By contrast,
+VI tends to place them near the decision boundaries.
+
+0.000.120.240.360.480.6010010000Training Time in Seconds in a Log10 ScaleTest ErrorMethodsEPSEPVIMNIST0.100.540.981.421.862.3010010000Training Time in Seconds in a Log10 ScaleNeg. Test Log−LikelihoodMethodsEPSEPVIMNIST0.500.520.540.560.580.601e+011e+031e+05Training Time in Seconds in a Log10 ScaleTest ErrorMethodsEPLinearSEPVIAirline Delays0.951.001.051.101.151e+011e+031e+05Training Time in Seconds in a Log10 ScaleNeg. Test Log−LikelihoodMethodsEPLinearSEPVIAirline DelaysScalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+Acknowledgements
+
+The authors gratefully acknowledge the use of the fa-
+cilities of Centro de Computaci´on Cient´ıﬁca (CCC) at
+Universidad Aut´onoma de Madrid.
+The authors also
+acknowledge ﬁnancial support from Spanish Plan Na-
+cional I+D+i, Grants TIN2013-42351-P, TIN2016-76406-
+P, TIN2015-70308-REDT and TEC2016-81900-REDT
+(MINECO/FEDER EU), and from Comunidad de Madrid,
+Grant S2013/ICE-2845.
+
+References
+
+Bauer, M., van der Wilk, M., and Rasmussen, C. E. Under-
+standing probabilistic sparse Gaussian process approxi-
+mations. In Advances in Neural Information Processing
+Systems 29, pp. 1533–1541. 2016.
+
+Chai, K. M. A. Variational multinomial logit Gaussian pro-
+cess. Journal of Machine Learning Research, 13:1745–
+1808, 2012.
+
+Dezfouli, A. and Bonilla, E. V. Scalable inference for
+Gaussian process models with black-box likelihoods. In
+Advances in Neural Information Processing Systems 28,
+pp. 1414–1422. 2015.
+
+Girolami, M. and Rogers, S. Variational Bayesian multi-
+nomial probit regression with Gaussian process priors.
+Neural Computation, 18:1790–1817, 2006.
+
+Henao, R. and Winther, O. Predictive active set selection
+methods for Gaussian processes. Neurocomputing, 80:
+10–18, 2012.
+
+Hensman, J., Matthews, A., and Ghahramani, Z. Scalable
+variational Gaussian process classiﬁcation. In Proceed-
+ings of the Eighteenth International Conference on Arti-
+ﬁcial Intelligence and Statistics, pp. 351–360, 2015a.
+
+Hensman, J., Matthews, A. G., Filippone, M., and Ghahra-
+mani, Z. MCMC for variationally sparse Gaussian pro-
+cesses. In Advances in Neural Information Processing
+Systems 28, pp. 1648–1656. 2015b.
+
+Hern´andez-Lobato, D. and Hern´andez-Lobato, J. M. Scal-
+able Gaussian process classiﬁcation via expectation
+In Proceedings of the 19th International
+propagation.
+Conference on Artiﬁcial Intelligence and Statistics, pp.
+168–176, 2016.
+
+Hern´andez-Lobato, D., ´andez Lobato, J.M., and Dupont,
+P. Robust multi-class Gaussian process classiﬁcation. In
+Advances in Neural Information Processing Systems 24,
+pp. 280–288, 2011.
+
+Kim, H.-C. and Ghahramani, Z. Bayesian Gaussian process
+classiﬁcation with the EM-EP algorithm. IEEE Transac-
+tions on Pattern Analysis and Machine Intelligence, 28:
+1948–1959, 2006.
+
+Kingma, D. P. and Ba, J. ADAM: a method for stochastic
+optimization. In Inrernational Conference on Learning
+Representations, pp. 1–15, 2015.
+
+Kuss, M. and Rasmussen, C. E. Assessing approximate in-
+ference for binary Gaussian process classiﬁcation. Jour-
+nal of Machine Learning Research, 6:1679–1704, 2005.
+
+LeCun, Yann, Bottou, L´eon, Bengio, Yoshua, and Haffner,
+Patrick. Gradient-based learning applied to document
+recognition. Proceedings of the IEEE, 86:2278–2324,
+1998.
+
+Li, Y., Hern´andez-Lobato, J. M., and Turner, R. E. Stochas-
+tic expectation propagation. In Advances in Neural In-
+formation Processing Systems 28, pp. 2323–2331. 2015.
+
+Lichman, M. UCI machine learning repository, 2013. URL
+
+http://archive.ics.uci.edu/ml.
+
+Minka, T.
+
+Expectation propagation for approximate
+Bayesian inference. In Proceedings of the 17th Annual
+Conference on Uncertainty in Artiﬁcial Intelligence, pp.
+362–36, 2001.
+
+Naish-Guzman, A. and Holden, S. The generalized FITC
+approximation. In Advances in Neural Information Pro-
+cessing Systems 20, pp. 1057–1064. 2008.
+
+Nickisch, H. and Rasmussen, C. E. Approximations for bi-
+nary Gaussian process classiﬁcation. Journal of Machine
+Learning Research, 9:2035–2078, 2008.
+
+Qui˜nonero-Candela, J. and Rasmussen, C. E. A unifying
+view of sparse approximate Gaussian process regression.
+Journal of Machine Learning Research, 6:1939–1959,
+2005.
+
+Rasmussen, C. E. and Williams, C. K. I. Gaussian Pro-
+cesses for Machine Learning (Adaptive Computation
+and Machine Learning). The MIT Press, 2006.
+
+Riihim¨aki, J., Jyl¨anki, P., and Vehtari, A. Nested expecta-
+tion propagation for Gaussian process classiﬁcation with
+Journal of Machine
+a multinomial probit likelihood.
+Learning Research, 14:75–109, 2013.
+
+Roweis, S. Gaussian identities. Technical report, New York
+
+University, 1999.
+
+Seeger, M. Expectation propagation for exponential fami-
+lies. Technical report, Department of EECS, University
+of California, Berkeley, 2006.
+
+Scalable Multi-Class Gaussian Process Classiﬁcation using Expectation Propagation
+
+Snelson, E. Flexible and efﬁcient Gaussian process models
+
+for machine learning. PhD thesis, 2007.
+
+Snelson, E. and Ghahramani, Z. Sparse Gaussian processes
+using pseudo-inputs. In Advances in Neural Information
+Processing Systems 18, pp. 1257–1264, 2006.
+
+Williams, C. K. I. and Barber, D. Bayesian classiﬁcation
+IEEE Transactions on Pat-
+with Gaussian processes.
+tern Analysis and Machine Intelligence, 20:1342–1351,
+1998.
+
+

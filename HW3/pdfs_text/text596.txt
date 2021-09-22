@@ -1,0 +1,1858 @@
+Boosted Fitted Q-Iteration
+
+Samuele Tosatto 1 2 Matteo Pirotta 3 Carlo D’Eramo 1 Marcello Restelli 1
+
+Abstract
+
+This paper is about the study of B-FQI, an Ap-
+proximated Value Iteration (AVI) algorithm that
+exploits a boosting procedure to estimate the
+action-value function in reinforcement learning
+problems. B-FQI is an iterative off-line algo-
+rithm that, given a dataset of transitions, builds an
+approximation of the optimal action-value func-
+tion by summing the approximations of the Bell-
+man residuals across all iterations. The advan-
+tage of such approach w.r.t. to other AVI meth-
+ods is twofold: (1) while keeping the same func-
+tion space at each iteration, B-FQI can repre-
+sent more complex functions by considering an
+additive model; (2) since the Bellman residual
+decreases as the optimal value function is ap-
+proached, regression problems become easier as
+iterations proceed. We study B-FQI both theoret-
+ically, providing also a ﬁnite-sample error upper
+bound for it, and empirically, by comparing its
+performance to the one of FQI in different do-
+mains and using different regression techniques.
+
+1. Introduction
+
+Among Reinforcement Learning (RL) techniques, value-
+based methods play an important role. Such methods use
+function approximation techniques to represent the near
+optimal value function in domains with large (continuous)
+state spaces. Approximate Value Iteration (AVI) (Puter-
+man, 1994) is the main class of algorithms able to deal
+with this scenario and, by far, it is the most analyzed in
+literature (e.g., Gordon, 1995; Ernst et al., 2005; Munos
+& Szepesv´ari, 2008; Farahmand et al., 2009; 2010; Farah-
+mand & Precup, 2012). AVI aims to recover the optimal
+value function as ﬁxed point of the optimal Bellman oper-
+ator. Under this perspective, the solution to a RL problem
+
+1Politecnico di Milano, Piazza Leonardo da Vinci, 32, Mi-
+lano, Italy, 2IAS, Darmstadt, Germany, 3SequeL Team, INRIA
+Lille - Nord Europe. Correspondence to: Marcello Restelli <mar-
+cello.restelli@polimi.it>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+is obtained by solving a sequence of supervised learning
+problems where, at each iteration, the application of the
+empirical optimal Bellman operator to the current approx-
+imation of the value function is projected in a predeﬁned
+function space. This AVI strategy is called ﬁtted value it-
+eration in literature. The idea is that, if enough samples
+are provided and the function space is sufﬁciently rich, the
+ﬁtted function will be a good approximation of the one ob-
+tained through the optimal Bellman operator, thus mimick-
+ing the behavior of Value Iteration (Puterman, 1994).
+
+This means that the core of AVI approaches is to control
+the approximation and estimation errors. While the esti-
+mation error can be regulated by varying the number of
+samples, the control of the approximation error is critical.
+The choice of the function approximator is the key point
+and determines the success or the failure of these methods.
+The critical design aspect in ﬁtted approaches is that the
+ability of “well” approximating the optimal value function
+is not sufﬁcient to ensure a good algorithm performance. In
+fact, by translating the RL problem into a sequence of re-
+gression tasks, ﬁtted methods require the function space to
+be able to represent all the functions obtained over time by
+the application of the empirical optimal Bellman operator.
+
+Although parametric models have proved to be effective in
+several applications (e.g., Moody & Saffell, 1998; Kober
+et al., 2013; Mnih et al., 2015), the design of a suitable
+class of function approximation is difﬁcult unless one has
+substantial knowledge of the underlying domain. RL litera-
+ture has extensively focused on automatic features genera-
+tion (e.g., Mahadevan & Maggioni, 2007; Parr et al., 2007;
+Fard et al., 2013) to overcome this issue. Despite the strong
+theoretical results, it is often difﬁcult to exploit such ap-
+proaches in real applications with continuous spaces.
+
+Recent advances in compute hardware have allowed to ex-
+ploit deeper neural networks to solve complex problem
+with extremely high state space (Mnih et al., 2015; Sil-
+ver et al., 2016). The increased richness of the func-
+tional space, coped with efﬁcient algorithms for the training
+of neural networks, has reduce (and eventually removed)
+the importance of the feature design. However, these ap-
+proaches scale unfavorably with the number of samples.
+To be able to work on richer function spaces an increased
+number of samples (often scaling non linearly with the pa-
+rameters) is required along with dedicated hardware. Al-
+
+Boosted Fitted Q-Iteration
+
+though this requirement can be fulﬁlled when a simulator
+is available, it is rarely met in practice when only historical
+data are available and replacing techniques, such as expe-
+rience replay (Mnih et al., 2015), cannot be exploited (we
+consider full ofﬂine settings).
+
+In this paper we theoretically and empirically analyze the
+use of boosting (B¨uhlmann & Hothorn, 2008) in AVI. Fol-
+lowing the proposed approach, named B-FQI, at each it-
+eration k > 0, the estimate of the action-value function
+Qk+1 is obtained by the earlier estimate Qk plus the ap-
+proximated Bellman residual T Qk − Qk. The idea behind
+the proposed approach is that ﬁtting the Bellman residual
+is easier than the direct approximation of the value func-
+Intuitively, the complexity (e.g., supremum norm)
+tion.
+of ﬁtting the Bellman residual should decrease as the es-
+timated value function approaches the optimal one (due to
+the ﬁxed-point optimality (Puterman, 1994)), thus allowing
+to use simpler function approximators and requiring less
+samples. This further simpliﬁes the design of the function
+space. Since we expect that the complexity and contribute
+of the Bellman residual decreases over time we can con-
+centrate the design effort by analyzing the early iterations.1
+Furthermore, boosting can leverage on nonparametric ap-
+proaches to build rich function space so that no feature de-
+sign is required at all. Finally, we can exploit simpler mod-
+els (weak regressor) as base function space without loosing
+any representational power. In fact, by exploiting a additive
+model expanded at each iteration, boosting may “increase
+the complexity over time” (B¨uhlmann & Hothorn, 2008).
+
+Bellman Residual Minimization (BRM) has been exten-
+sively studied in RL literature for policy evaluation (Antos
+et al., 2008; Maillard et al., 2010), learning from demon-
+strations (Piot et al., 2014) and feature construction (e.g.,
+Parr et al., 2007; Fard et al., 2013). Recently, Abel et al.
+(2016) have empirically shown that a variant of boosting
+is able to learn near optimal policies in complex domains
+when coped with exploratory strategies. The resulting algo-
+rithm is a semi-batch approach since at each iterations new
+samples are collected through a randomized policy. While
+there are some insights on the soundness and efﬁcacy of
+boosted AVI, a theoretical analysis is missing. As pointed
+out by the authors this analysis is relevant to better under-
+stand the properties of boosting in RL.
+
+This paper provides an analysis of how the boosting proce-
+dure on the Bellman residual inﬂuences the quality of the
+resulting policy. We characterize the properties of the weak
+regressor and we derive a ﬁnite-sample analysis of the error
+propagation. Similar analysis has been provided for BRM,
+but in the simplest policy evaluation scenario (Antos et al.,
+2008; Maillard et al., 2010). Concerning AVI, several vari-
+
+1Although interesting, in this paper we do not address the
+
+problem of adapting the complexity of the model over time.
+
+ants of Fitted Value Iteration (FVI) have been studied in lit-
+erature: FVI (Munos & Szepesv´ari, 2008; Farahmand et al.,
+2010), regularized FVI (Farahmand et al., 2009) and FVI
+with integrated dictionary learning (Farahmand & Precup,
+2012). All the papers share the same objective: provide a
+theoretical analysis of a specialized FVI algorithm. Unlike
+many of the mentioned paper, we provide also an empirical
+analysis on standard RL domains.
+
+2. Deﬁnitions
+
+In this section, we introduce the notation that will be used
+in the rest of the paper and we brieﬂy recall some notions
+about Markov Decision Processes (MDPs) and Reinforce-
+ment Learning (RL). We follow the notation used in (Farah-
+mand et al., 2010; Farahmand & Precup, 2012). For further
+information we refer the reader to (Sutton & Barto, 1998).
+
+For a space Σ, with σ-algebra σΣ, M(Σ) denotes the set of
+probability measures over σΣ. B(Σ, B) denotes the space
+of bounded measurable functions w.r.t. σΣ with bound B.
+A ﬁnite-action discounted MDP is a tuple (X , A, P, R, γ),
+where X is a measurable state space, A is a ﬁnite set of
+actions, P : X × A → M(X ) is the transition probabil-
+ity kernel, R is the reward function, and γ ∈ [0, 1) is the
+discount factor. Let r(x, a) = E [R(·|x, a)] be uniformly
+bounded by Rmax.
+
+P (dy|x, a) (cid:80)
+
+As a consequence of
+
+A policy is a mapping from X to a distribution over
+A.
+taking action At at Xt
+we receive a reward signal Rt ∼ R(·|x, a) and the
+state evolves accordingly to Xt+1 ∼ P (·|Xt, At).
+For a policy π we deﬁne the operator P π as follows
+(P πQ)(x, a) (cid:44) (cid:82)
+π(u|y)Q(y, u).
+The action-value function for policy π is deﬁned as
+Qπ(x, a) (cid:44) E [(cid:80)∞t=0 γtRt|X0 = x, A0 = a]. Qπ is uni-
+formly bounded (for any π) by Qmax = Rmax
+γ . The op-
+−
+timal action-value function is Q∗(x, a) = supπ Qπ(x, a)
+for all (x, a) ∈ X × A. A policy is greedy when π(x) ∈
+Q(x, a) for any x ∈ X . A greedy policy w.r.t.
+arg maxa
+to the optimal action-value function Q∗ is an optimal pol-
+icy (e.g., Puterman, 1994).
+
+∈A
+
+∈A
+
+X
+
+u
+
+1
+
+Given a policy π, the Bellman operator T π : B(X × A) →
+B(X × A) is (T πQ)(x, a) (cid:44) r(x, a) + γ(P πQ)(x, a) and
+its ﬁxed point is T πQπ = Qπ. The Bellman optimal oper-
+ator T ∗ : B(X × A) → B(X × A) introduces a maximiza-
+tion over actions (or equivalently policies) (T ∗Q)(x, a) (cid:44)
+r(x, a) + γ (cid:82)
+maxa(cid:48) Q(x(cid:48), a(cid:48))P (dx(cid:48)|x, a). Its ﬁxed point
+is the optimal value function Q∗ (Puterman, 1994).
+
+X
+
+Norms and Operators. Given a probability measure
+µ ∈ M(X × A) and a measurable function Q ∈
+(cid:44)
+B(X × A) we deﬁne the Lp(µ)-norm of Q as (cid:107)Q(cid:107)p,µ
+[(cid:82)
+|Q(x, a)|pdµ(x, a)]1/p. Let z1:n be a Z-valued se-
+
+X ×A
+
+Boosted Fitted Q-Iteration
+
+(cid:105)
+
+quence (z1, . . . , zn) for some space Z. For Dn = z1:n, the
+empirical norm of a function f : Z → R is (cid:107)f (cid:107)p
+(cid:44)
+p,
+(cid:80)n
+1
+i=1 |f (zi)|p. Note that when Zi ∼ µ, we have that
+n
+(cid:104)
+E
+= (cid:107)f (cid:107)p,µ. In all the cases where the subscript
+(cid:107)f (cid:107)p,
+p is omitted we refer to the L2-norm. Finally, we introduce
+the truncation operator βB : B(X × A) → B(X × A, B)
+for some real B > 0 as in (Gy¨orﬁ et al., 2002, Chapter 10).
+For any function f ∈ B(X × A), βBf (x, a) ∈ [−B, B] for
+any (x, a) ∈ X × A.
+
+Dn
+
+Dn
+
+3. Boosted Fitted Q-Iteration
+
+Boosted Fitted Q-Iteration (B-FQI) belongs to the family
+of Approximate Value Iteration (AVI), which, starting with
+an arbitrary Q0, at each iteration k > 0 approximates the
+application of the optimal Bellman operator in a suitable
+functional space such that Qk+1 ≈ T ∗Qk. The main point
+is in how to control the approximation error caused at each
+iteration so that the sequence eventually converges as close
+as possible to Q∗. In AVI we account for two sources of
+approximation: I) representation of the Q-function, and II)
+computation of the optimal Bellman operator. The former
+source of approximation is due to the use of a function
+space F ⊂ B(X × A) to represent Qk, while the latter
+is caused by an approximate computation of T ∗Qk.
+
+We start considering that T ∗Qk can be computed, but can-
+not be represented exactly. We deﬁne the nonlinear opera-
+tor S : B(X × A) → F as:
+
+Sy = arg inf
+
+(cid:107)f − y(cid:107)2
+µ ,
+
+y ∈ B(X × A),
+
+f
+
+∈F
+
+and the Bellman residual at each iteration as:
+
+The estimate Qk+1 built by B-FQI is a (generalized) addi-
+tive model (Hastie & Tibshirani, 1990):
+
+Qk+1 = Qk + S(cid:37)k =
+
+S(cid:37)i,
+
+(2)
+
+k
+(cid:88)
+
+i=0
+
+obtained by ﬁtting the Bellman residual at each iteration.
+Without loss of generality we assume Q0(x, a) = 0 for any
+(x, a) ∈ X × A.
+
+Now that we have given an idea of the iterative schema ex-
+ploited by B-FQI, we can consider the case where T ∗Qk is
+approximated through samples. At each step k we receive
+a set of transitions D(k)
+n and the empirical Bellman operator
+is computed by means of this dataset.
+
+Deﬁnition 1.
+(Empirical Operators (Farahmand et al.,
+2010)) Let Dn = {Xi, Ai, Ri, X (cid:48)i}n
+i=1 be a set of transi-
+tions such that (Xi, Ai) ∼ µ, Ri ∼ R(·|Xi, Ai) and X (cid:48)i ∼
+P (·|Xi, Ai) and deﬁne Hn = {(X1, A1), . . . , (Xn, An)}.
+
+Algorithm 1 Boosted Fitted Q-Iteration
+
+Input: (D(i)
+for k = 0, . . . , K do
+
+n )K
+
+i=0, (βBi)K
+
+i=0, Q0 = 0
+
+˜(cid:37)k ← ˆT ∗Qk − Qk (w.r.t. D(k)
+n )
+Qk+1 ← Qk + βBk arg inf f
+
+end for
+return ¯π(x) = arg maxa QK+1(x, a) ∀x ∈ X
+
+D
+
+∈F
+
+(cid:107)f − ˜(cid:37)k(cid:107)
+
+(k)
+n
+
+The empirical Bellman optimal operator ˆT ∗ : Hn → Rn is
+deﬁned as
+
+( ˆT ∗Q)(Xi, Ai) (cid:44) Ri + γ max
+a(cid:48)
+
+Q(X (cid:48)i, a(cid:48)).
+
+We also introduce the empirical Bellman residual:
+
+˜(cid:37)k (cid:44) ˆT ∗Qk − Qk.
+
+(3)
+
+i
+
+(cid:105)
+
+(cid:104)
+
+, A(k)
+i
+
+)|X (k)
+i
+
+ˆT ∗Qk(X (k)
+
+The whole class of Fitted Q-Iteration (FQI) algo-
+rithms (Ernst et al., 2005; Riedmiller, 2005; Farahmand
+et al., 2009; Farahmand & Precup, 2012) is based on
+the ﬁt of the empirical optimal Bellman operator in
+F. The correctness of this procedure is guaranteed by
+, A(k)
+E
+).
+i
+Note that the same result holds for the Bellman residual
+E
+We are now ready to describe the sample-based boosting
+procedure (Algorithm 1). For any k ≥ 0, B-FQI receives a
+dataset D(k)
+n and an estimate Qk. Let ˆS : B(X × A) → F
+be a nonlinear operator as deﬁned below. The base regres-
+sion step applies ˆS and the truncation operator βBk to ˜(cid:37)k
+to build an estimate:
+
+= T ∗Qk(X (k)
+
+(cid:104)
+˜(cid:37)k(X (k)
+i
+
+= (cid:37)k(X (k)
+
+)|X (k)
+i
+
+, A(k)
+i
+
+, A(k)
+i
+
+, A(k)
+i
+
+, A(k)
+i
+
+).
+
+(cid:105)
+
+i
+
+i
+
+(cid:107)f − ˜(cid:37)k(cid:107)2
+D
+
+(k)
+n
+
+ˆS ˜(cid:37)k = βBk arg inf
+∈F
+f (X (k)
+i
+
+n
+(cid:88)
+
+f
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+1
+n
+
+f
+
+∈F
+
+i=1
+
+= βBk arg inf
+
+, A(k)
+i
+
+) − ˜(cid:37)k(X (k)
+
+i
+
+, A(k)
+i
+
+2
+
+(cid:12)
+(cid:12)
+)
+(cid:12)
+(cid:12)
+
+,
+
+which is used to updated the approximation of T ∗Qk. Sim-
+ilarly to (2), Qk+1 is given by
+
+Qk+1 = Qk + βBk
+
+ˆS ˜(cid:37)k =
+
+ˆ(cid:37)i, Qk+1 ∈ Hk+1.
+
+(4)
+
+k
+(cid:88)
+
+i=0
+
+Note that the introduction of the truncated projected Bell-
+man residual ˆ(cid:37)k ∈ B(X × A, Bk) is required for the the-
+oretical guarantees, while the role of Hk ⊂ B(X × A)
+is explained below. As shown in (Friedman, 2001), this
+boosting procedure can be seen as an instance of functional
+gradient descend.
+
+3.1. Remarks
+
+Supervised learning (SL) literature has deeply analyzed
+boosting both from practical and theoretical perspective.
+
+(cid:37)k (cid:44) T ∗Qk − Qk.
+
+ˆ(cid:37)k = βBk
+
+(1)
+
+Boosted Fitted Q-Iteration
+
+We state some nice properties inherited by B-FQI. By ex-
+ploiting a weak regressor as base model—e.g., regression
+trees (Geurts et al., 2006)—the algorithm is able to in-
+crease the complexity of the function space over time. In
+fact, at each iteration a new function is added to the ad-
+ditive model representing the estimate of Q∗. This incre-
+ment can be seen as a procedure of altering the under-
+lying function space and, potentially, increasing the rich-
+ness of Hk at each iteration. Now suppose that our func-
+tion space F is Glivenko-Cantelli, i.e., the error due to
+the empirical process goes to zero at least asymptotically.
+The preservation theorem (van der Vaart & Wellner, 2000)
+states that, under mild assumptions, the space obtained by
+the sum of Glivenko-Cantelli functions is still Glivenko-
+Cantelli. This means that if we start from a sufﬁciently
+powerful functional space, the boosting procedure at least
+preserves its properties. Although this does not provide any
+insight about the “increased” complexity of Hk, it shows
+the soundness of boosting. In practice this means that B-
+FQI is able to learn complex, nonparametric approxima-
+tions of Q∗ over time.
+
+Additionally, the update procedure is computationally efﬁ-
+cient since it can rely on specialized batch algorithms avail-
+able for several regression techniques. In SL the boosting
+procedure comes at an increased computational cost since
+it should estimate k > 1 regressors. Even if regression
+tasks become simpler at each successive iteration, the com-
+plexity is proportional to the number of steps (B¨uhlmann
+& Hothorn, 2008). In our settings, we enjoy the beneﬁts
+of exploiting a richer approximation space, without paying
+any additional cost, since the number of regression tasks
+is the same as in the other FVI methods. In particular, we
+can see B-FQI as a single boosting procedure with time-
+varying target: Yk+1 = T ∗Qk (while in SL the target is
+ﬁxed). This aspect prevents to directly reuse results from
+SL. However, as we will see in the next section, we are still
+able to characterize the behavior of the B-FQI.
+
+In this paper we use the norm of the residuals as a proxy
+for the learning complexity. Clearly, this is not the only
+factor that affects the complexity of learning. However,
+since we are using a generalized additive model, the norm
+of the residuals at iteration k is a good measure for the im-
+portance of the learned model. If the residual is small w.r.t.
+the previous iterations the new model will provide a small
+contribute when summed to the previous ones.
+
+FQI comparison. Several variants of FQI simply for-
+malize the SL task as a plain (Ernst et al., 2005; Ried-
+miller, 2005) or regularized regression task (Farahmand
+et al., 2009) These approaches have ﬁxed representational
+power given by the chosen function space F. When F is
+rich enough to represent all the functions in the sequence
+(Qi), there are no clear advantages in using B-FQI from
+
+the point of view of the approximation (while, as we will
+see in the next section, there may still be beneﬁts to the
+estimation error). Note that this statement is true even in
+SL. If we know that the target function belongs to a spe-
+ciﬁc class and we use this information to model F there is
+no need of boosting. However, in practice this information
+is almost never available, specially in RL, where the shape
+of Q∗ is almost always unknown. In this case, B-FQI can
+take advantage of the weak regressor to “adapt” over time.
+Value Pursuit Iteration (Farahmand & Precup, 2012) is also
+able to adapt overtime. It is a nonparametric approach that
+exploits a modiﬁed version of Orthogonal Matching Pur-
+suit (OMP) to construct a sparse Q-function representation
+from a dataset of atoms (updated over time). The design
+problem is somehow mitigated, but not removed because
+features are not automatically learned (but generated by
+pre-deﬁned link functions that operate on the approximated
+value function at the last iteration). It is worth mention-
+ing that it is possible to modiﬁed the OMP procedure to
+always incorporate the latest recovered Q-function and to
+construct an approximation of the Bellman residual by us-
+ing the atoms in the dictionary. This procedure will mimic
+the behavior of B-FQI without the automatic construction
+of features. Finally notice that B-FQI and plain FQI behave
+in the same way when a linear regressor is considered.
+
+4. Theoretical Analysis
+
+This section is devoted to the theoretical analysis of B-FQI.
+We start with the error propagation (Section 4.1) and then
+we show a ﬁnite-sample error analysis (Section 4.2).
+
+4.1. Error Propagation
+
+We start by introducing tools that will be used through all
+the results of this section.
+Deﬁnition 2. ((Farahmand, 2011; Farahmand & Precup,
+2012)) Let µ be a distribution over the state-action pairs,
+be the marginal distribution of X , and
+(X, A) ∼ µ, µ
+πb(·|·) be the conditional probability of A given X of the
+behavioral policy. Further, let P be a transition probability
+kernel P : X × A → M(X ) and Px,a = P (·|x, a). Deﬁne
+the one-step concentrability coefﬁcient w.r.t. µ as
+
+X
+
+(cid:32)
+
+(cid:34)
+
+=
+
+E
+
+Cµ
+
+→∞
+
+sup
+
+(y,a(cid:48))
+
+∈X ×A
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+1
+πb(a(cid:48)|y)
+
+dPX,A
+dµ
+
+X
+
+(cid:12)
+(cid:12)
+(y)
+(cid:12)
+(cid:12)
+
+(cid:35)(cid:33) 1
+
+2
+
+,
+
+where Cµ
+w.r.t. µ
+some (y, a(cid:48)) ∈ X × A.
+
+X
+
+= ∞ if Px,a is not absolutely continuous
+→∞
+for some (x, a) ∈ X × A, or if πb(a(cid:48)|y) = 0 for
+
+The concentrability of one-step transitions is important
+since is used in (Farahmand, 2011, Lemma 5.11) to show
+that the optimal Bellman operator is γCµ
+–Lipschitz
+w.r.t. the Banach space of Q-functions equipped with (cid:107)·(cid:107)µ.
+
+→∞
+
+Boosted Fitted Q-Iteration
+
+Additionally, as done in SL theory, it is necessary to char-
+acterize the operator S.
+Assumption 1. (Bounded operator) The operator S is such
+that the operator (I − S) is bounded:
+
+∃χ > 0 : (cid:107)(I − S)y(cid:107)µ ≤ χ (cid:107)y(cid:107)µ
+
+∀y ∈ B(X × A).
+
+We now provide the following result that shows how the
+distance between Qk and Q∗ changes between iterations.
+Theorem 2. Let (Qi)k
+i=0 be a sequence of measurable
+action-value functions obtained following the boosted pro-
+. Then, under Assumption 1
+cedure in (2) and L = γCµ
+
+→∞
+
+(cid:107)Qk − Q∗(cid:107)µ ≤ ((1 + L)χ + L) (cid:107)Qk
+
+1 − Q∗(cid:107)µ ,
+
+−
+
+Proof.
+
+(cid:107)Qk − Q∗(cid:107)µ = (cid:107)Qk − T ∗Qk
+≤ (cid:107)Qk
+1 − T ∗Qk
+1 + S(cid:37)k
+−
+−
+≤ χ (cid:107)(cid:37)k
+1(cid:107)µ + L (cid:107)Qk
+−
+≤ (1 + L)χ (cid:107)Qk
+
+1 + T ∗Qk
+−
+1(cid:107)µ + (cid:107)T ∗Qk
+−
+1 − Q∗(cid:107)µ
+1 − Q∗(cid:107)µ + L (cid:107)Qk
+
+−
+
+−
+
+−
+
+1 − Q∗(cid:107)µ
+
+1 − Q∗(cid:107)µ
+−
+(5)
+
+1 − Q∗(cid:107)µ
+−
+
+(6)
+
+where (5) follows Assumption 1 and inequality (6) is a con-
+sequence of the fact that
+
+(cid:107)(cid:37)k(cid:107)µ ≤ (cid:107)T ∗Qk − T ∗Q∗(cid:107)µ + (cid:107)T ∗Q∗ − Qk(cid:107)µ
+
+≤ (1 + L) (cid:107)Qk − Q∗(cid:107)µ
+
+First of all, notice that when S = I (i.e., χ = 0) we
+correctly obtain the usual convergence rate of value iter-
+ation. On the other cases, similarly to SL (e.g., B¨uhlmann
+& Hothorn, 2008), we can still converge to the target (here
+Q∗) given that the operator I −S is sufﬁciently contractive.
+Corollary 3. Given the settings of Theorem 2, the sequence
+(Qi)k
+
+i=0 converges to Q∗ when
+
+χ <
+
+1 − γCµ
+1 + γCµ
+
+→∞
+
+→∞
+
+and
+
+γCµ
+
+< 1.
+
+→∞
+
+While previous results were somehow expected to hold as a
+consequence of the results in SL, we now show how the ap-
+proximation error due to the ﬁtting of the Bellman residual
+propagates. For a sequence (Qi)k
+i=0 denotes the approxi-
+mation error as:
+
+(cid:15)k (cid:44) (cid:37)k − βBk
+
+ˆS ˜(cid:37)k,
+
+(7)
+
+so that Qk+1 = T ∗Qk − (cid:15)k . The result we are going to
+provide is the boosted counterpart of (Farahmand & Pre-
+cup, 2012, Theorem2). Differently from Theorem 2, we
+implicitly consider the error due to the empirical process.
+Theorem 4. Let (Qi)k
+i=0 be a sequence of state-action
+−
+1
+value function, ((cid:15)i)k
+i=0 be the corresponding sequence as
+−
+
+1
+
+deﬁned in (7). Deﬁne (cid:37)∗k
+L = γCµ
+→∞
+able functions. Then,
+
+(cid:44) (T ∗)k+1Q0 − (T ∗)kQ0 and
+. Let F ⊆ B(X × A) be a subset of measur-
+
+(cid:107)f − (T ∗Qk − Qk)(cid:107)µ
+
+inf
+f
+∈F
+
+(cid:107)f − (cid:37)∗k(cid:107)µ + (1 + L)
+
+Lk
+
+1
+
+−
+
+−
+
+i (cid:107)(cid:15)i(cid:107)µ .
+
+≤ inf
+f
+∈F
+
+1
+k
+(cid:88)
+−
+
+i=0
+
+Proof. In order to bound inf f
+f ∈ F and by triangle inequality we have that:
+
+(cid:107)f − (cid:37)k(cid:107)µ we pick any
+
+∈F
+
+(cid:107)f − (cid:37)k(cid:107)µ ≤ (cid:107)f − (cid:37)∗k(cid:107)µ + (cid:107)(cid:37)∗k − (cid:37)k(cid:107)µ .
+
+(8)
+
+Since by (Farahmand, 2011), T is L (cid:44) γCµ
+→∞
+w.r.t. (cid:107)·(cid:107)µ, we can bound (cid:107)(cid:37)∗k − (cid:37)k(cid:107)µ as follows:
+
+-Lipschitz
+
+(cid:13)
+(cid:13)
+
++
+
+(cid:13)(T ∗)kQ0 −
+
+Qk
+
+(cid:13)
+(cid:13)
+(cid:13)µ
+
+(cid:13)
+(cid:13)(cid:37)∗
+
+(cid:13)
+(cid:13)
+
+k −
+(cid:13)
+(cid:13)
+
+L
+
+(cid:37)k
+
+(cid:13)
+(cid:13)µ ≤
+(cid:13)(T ∗)kQ0 −
+
+≤
+
+= (1 + L)
+
+(cid:13)(T ∗)k+1Q0 −
+
+T ∗Qk
+
+(cid:13)
+(cid:13)
+(cid:13)µ
+(cid:13)(T ∗)kQ0 −
+
+(cid:13)
+(cid:13)
+
++
+
+(cid:13)
+(cid:13)
+
+Qk
+
+(cid:13)
+(cid:13)
+(cid:13)µ
+(cid:13)(T ∗)kQ0 −
+(cid:18)(cid:13)
+(cid:13)(T ∗)kQ0 −
+(cid:13)
+(cid:13)(T ∗)k−1Q0 −
+
+(cid:13)
+(cid:13)
+
+(cid:18)
+
+L
+
+(T ∗Qk−1 −
+T ∗Qk−1
+
+(cid:13)
+(cid:13)
+(cid:13)µ
+(cid:13)
+(cid:13)
+(cid:13)µ
+
+(1 + L)
+
+(1 + L)
+
+Qk
+
+(cid:13)
+(cid:13)
+(cid:13)µ
+(cid:13)
+(cid:13)
+(cid:13)µ
+
+(cid:15)k−1)
+
++
+
+(cid:15)k−1(cid:107)µ
+(cid:107)
+
+(cid:19)
+
+(cid:19)
+
+Qk−1
+
++
+
+(cid:15)k−1(cid:107)µ
+
+(cid:107)
+
+(cid:18)
+
+(cid:18)
+
+(1 + L)
+
+L
+
+L
+
+(cid:13)
+(cid:13)
+
+(cid:13)(T ∗)k−2Q0 −
+
+Qk−2
+
+(cid:13)
+(cid:13)
+(cid:13)µ
+
+(cid:19)
+
+(cid:19)
+
++
+
+(cid:15)k−2(cid:107)µ
+(cid:107)
+
++
+
+(cid:15)k−1(cid:107)µ
+
+(cid:107)
+
+. . .
+
+(1 + L)
+
+≤
+
+≤
+
+Lk−1−i
+
+(cid:15)i(cid:107)µ
+
+(cid:107)
+
+k−1
+(cid:88)
+
+i=0
+
+(9)
+
+The result follows from the combination of (8) and (9).
+
+≤
+
+≤
+
+≤
+
+Previous theorem shows how the approximation error of
+the Bellman residual in the boosted scenario relates to the
+Bellman residual of Value Iteration ((cid:37)∗k) and the errors in
+earlier iterations. This bound will play a key role in the
+derivation of the ﬁnite-sample error bound (Theorem 7).
+
+Remark: τ -greedy policies. Previous FQI approaches
+have only focused on greedy policies, i.e., the application
+of the optimal Bellman operator. Recently, Munos et al.
+(2016) have analyzed the use of τ -greedy policies for con-
+trol purposes in off-policy learning. Inspired by such paper,
+by exploiting their deﬁnitions in L
+-norm, we show that it
+is possible to use τ -greedy policies in AVI.
+Lemma 5. Consider a sequence of policies (πi)k
+i=0 that
+are non-greedy w.r.t. the sequence (Qk)k
+i=0 of Q-functions
+obtained following the boosting procedure in (2) (with ηk
+in place of (cid:37)k). Assume the policies πk are τk-away from
+the greedy policy w.r.t. Qk, so that T πk Qk ≥ T ∗Qk −
+e, where e is the vector with 1-components.
+τk (cid:107)Qk(cid:107)
+Then for any k > 0, with ηk (cid:44) T πk Qk − Qk
+
+∞
+
+∞
+
+(cid:107)Qk − Q∗(cid:107)
+
+∞
+
+≤ (cid:107)(S − I)ηk
++ γ (cid:107)Qk
+
+1(cid:107)
+∞
+1 − Q∗(cid:107)
+
+−
+
+−
+
++ τk
+
+1 (cid:107)Qk
+
+1(cid:107)
+
+.
+
+∞
+
+−
+
+−
+
+∞
+
+Boosted Fitted Q-Iteration
+
+This result plays the same role of Theorem 2 and shows
+that by behaving τ -greedy we have a linear additive cost
+proportional to τ . Finally notice that when τk → 0 for
+any k, we recover the same bound, but in L
+-norm. We
+derived a similar result for AVI in App. 10 (Lemma 10).
+
+∞
+
+4.2. Finite-Sample Error Analysis
+
+In this section, we derive an upper bound to the difference
+between the performance of the optimal policy and the per-
+formance of the policy learned by B-FQI at the k-th itera-
+tion. Such upper bound depends on properties of the MDP,
+properties of the approximation space and the number of
+samples. Since B-FQI is an AVI algorithm, we can bound
+the performance loss at iteration k ((cid:107)Q∗ − Qπk (cid:107)1,ρ) using
+Theorem 3.4 presented in (Farahmand, 2011), that we re-
+port here for sake of completeness (for L1–norm):
+
+1
+
+Theorem 6. (Farahmand, 2011) Let k be a positive integer,
+Qmax ≤ Rmax
+γ , and ρ an initial state-action distribution.
+−
+Then for any sequence (Qi)k
+1
+i=0 ⊂ B(X × A, Qmax) and
+−
+the corresponding sequence ((cid:15)i)k
+i=0 deﬁned in (7), we have
+−
+(cid:2)2γkQmax
+
+(cid:107)Q∗ − Qπk (cid:107)1,ρ ≤
+
+1
+
+2γ
+(1 − γ)2
+
++ inf
+g
+∈
+
+[0,1]
+
+C 1/2
+
+V I,ρ,µ(k; g)E 1/2((cid:15)0, . . . , (cid:15)k
+
+(cid:21)
+1; g)
+
+,
+
+−
+
+where
+
+(cid:18) 1 − γ
+2
+
+(cid:19)2
+
+·
+
+C 1/2
+
+V I,ρ,µ(k; g) =
+
+
+·
+
+sup
+1,...,π(cid:48)
+π(cid:48)
+k
+
+k
+1
+(cid:88)
+−
+
+i=0
+
+(cid:88)
+
+
+
+m
+
+0
+
+≥
+
+γm (cV I1,ρ,µ(m, k − i; π(cid:48)k)
+
++cV I2,ρ,µ(m + 1; π(cid:48)i+1, . . . , π(cid:48)k)(cid:1)
+
+(cid:21)2
+
+and E((cid:15)0, . . . , (cid:15)k
+
+−
+
+1; g) = (cid:80)k
+
+1
+
+i=0 α2g
+
+i (cid:107)(cid:15)i(cid:107)2
+µ.
+
+−
+
+For the deﬁnitions of cV I1, cV I2, and αi and the proof of
+the theorem we refer the reader to (Farahmand, 2011).
+
+Although the above bound is shared by all the AVI ap-
+proaches (e.g., FQI, VPI, B-FQI), for each approach is pos-
+sible to bound differently the regression errors (cid:15)k made at
+each iteration k. The following theorem provides an upper
+bound to (cid:107)(cid:15)k(cid:107)2
+
+µ for the case of B-FQI:
+
+Theorem 7. Let (Qi)k
+i=0 be the sequence of state-action
+value functions generated by B-FQI using at each itera-
+tion i a dataset D(i)
+s=1 with
+i.i.d. samples (X (i)
+s , A(i)
+s )
+and R(i)
+s ) for s = 1, 2, . . . , n, where
+each dataset D(i)
+n is independent from the datasets used
+
+(i)}n
+(i) ∼ P (·|X (i)
+
+s , A(i)
+s ) ∼ µ, X (cid:48)s
+
+n = {X (i)
+s , A(i)
+
+s ∼ R(·|X (i)
+
+s , A(i)
+
+s , R(i)
+
+s , X (cid:48)s
+
+in other iterations.2 Let (cid:15)i (cid:44) (cid:37)i − ˆ(cid:37)i (0 ≤ i ≤ k),
+(cid:44) (T ∗)k+1Q0 − (T ∗)kQ0, and ˜(cid:37)k (cid:44) ˆT ∗Qk − Qk. Let
+(cid:37)∗k
+F ⊆ B(X , A) be a subset of measurable functions. Then,
+
+(cid:107)(cid:15)k(cid:107)2
+
+(cid:107)f − (cid:37)∗k(cid:107)2
+
+µ + 4(1 + L)2
+
+f
+
+µ ≤ 4 inf
+∈F
+24 · 214B4
+k
+n
+
++
+
+(cid:0)log 42e + 2 log(480eB2
+
+(cid:1)
+
++
+
+kn)V
+
+F
+
+k
+1
+(cid:88)
+−
+
+L2i
+
+k
+1
+(cid:88)
+−
+
+i=0
+
+j=0
+
+(cid:107)(cid:15)j(cid:107)2
+µ
+
++ is
+, Bk = max((cid:107)˜(cid:37)k(cid:107)
+where L = γCµ
+the VC dimension of F + that is the class of all subgraphs of
+functions f ∈ F (see Chapter 9.4 of (Gy¨orﬁ et al., 2002)).
+
+, 1), and V
+
+→∞
+
+∞
+
+F
+
+µ = (cid:107)(cid:37)k − ˆ(cid:37)k(cid:107)2
+Proof. Since by previous deﬁnitions (cid:107)(cid:15)k(cid:107)2
+µ
+ˆS ˜(cid:37)k = βBk arg inf f
+and ˆ(cid:37)k = βBk
+, and
+∈F
+given that |˜(cid:37)k| ≤ Bk = max((cid:107)˜(cid:37)k(cid:107)
+, 1), we can use The-
+orem 11.5 in (Gy¨orﬁ et al., 2002) to upper bound the above
+regression error as follows:
+(cid:107)f − (cid:37)k(cid:107)2
+(cid:107)(cid:15)k(cid:107)2
+µ
+
+(cid:107)f − ˜(cid:37)k(cid:107)2
+D
+
+(k)
+n
+
+∞
+
+µ ≤ 2 inf
+f
+∈F
+24 · 214B4
+n
+
++
+
+(cid:0)log 42e + 2 log(480eB2n)V
+
+(cid:1) .
+
++
+
+F
+
+Using Theorem 4 and the Cauchy-Schwartz inequality to
+bound the ﬁrst term completes the proof.
+
+The above theorem shows that the error of B-FQI at each
+iteration k can be bounded by the sum of three main terms,
+that, respectively, are: the approximation error in function
+space F of the Bellman error at the k-th iteration of VI, the
+propagation error that depends on the errors at previous
+iterations, and the estimation error induced by having a ﬁ-
+nite number of samples. The main differences between this
+result and related results presented in (Farahmand et al.,
+2010; Farahmand, 2011; Farahmand & Precup, 2012) are
+in the approximation and estimation errors. In B-FQI, (cid:37)∗k
+take the role played, respectively, by (T ∗)kQ0
+and (cid:107)˜(cid:37)k(cid:107)
+and Qmax in other FVI approaches, enjoying the advantage
+of being bounded by smaller constants. For what concerns
+(cid:37)∗k, assuming that Q0 is initialized at zero for any state-
+≤ γkRmax. To upper
+action pair, it is known that (cid:107)(cid:37)∗k(cid:107)
+bound (cid:107)˜(cid:37)k(cid:107)
+we start showing how to bound the supre-
+mum norm of the Bellman residuals at iteration k.
+Lemma 8. Let (Qi)k
+function, ((cid:15)i)k
+in (7), then
+
+i=0 be a sequence of state-action value
+−
+i=0 be the corresponding sequence as deﬁned
+−
+
+∞
+
+∞
+
+∞
+
+1
+
+1
+
+(cid:107)(cid:37)k(cid:107)
+
+≤ (1 + γ)
+
+γk
+
+−
+
+i
+−
+
+1 (cid:107)(cid:15)i(cid:107)
+
++ γkRmax.
+
+∞
+
+∞
+
+1
+k
+(cid:88)
+−
+
+i=0
+
+Leveraging on this result, we provide a bound to (cid:107)˜(cid:37)k(cid:107)
+
+.
+
+∞
+
+2The independence of the datasets at different iterations can
+
+be relaxed as done in (Munos & Szepesv´ari, 2008, Section 4.2).
+
+Boosted Fitted Q-Iteration
+
+Lemma 9. Let (Qi)k
+function, ((cid:15)i)k
+in (7), then
+
+1
+
+i=0 be a sequence of state-action value
+−
+i=0 be the corresponding sequence as deﬁned
+−
+
+1
+
+(cid:107)˜(cid:37)k(cid:107)
+
+≤ (1 + γ)
+
+γk
+
+i
+−
+
+−
+
+1 (cid:107)(cid:15)i(cid:107)
+
++ γkRmax + 2Rmax.
+
+∞
+
+∞
+
+k
+1
+(cid:88)
+−
+
+i=0
+
+From the stated results, it can be noticed that when the
+errors at previous iterations is small enough, B-FQI can
+achieve an upper bound to the estimation error at iteration
+k similar to other FVI methods, but needing fewer samples
+since the range of the target variable is smaller.
+
+5. Empirical Results
+
+We empirically evaluate the behavior of FQI (Ernst et al.,
+2005), Neural FQI (Riedmiller, 2005) and B-FQI on two
+different MDPs. As regression models we consider extra-
+trees (Geurts et al., 2006) and neural networks (Goodfel-
+low et al., 2016).3 We evaluate the quality of a learned
+policy πK (greedy w.r.t. to QK) with the score J πK =
+Ex0∼
+D [V πK (x0)], where J πN (x) is the discounted re-
+turn obtained following the policy πN starting from a state
+x0 drawn from the initial state distribution D ∈ M(X ).
+V π(xo) is always approximated by means of a single roll-
+out. Refer to App. C for additional details and experiments.
+
+5.1. Swing-Up Pendulum
+
+The aim of the problem is to swing a pendulum to make it
+stay upright. The experiments are based on OpenAI Gym
+implementation (Brockman et al., 2016) (version v0). Sim-
+ilarly to (Doya, 2000) the reward is deﬁned as r(x) =
+cos(θ) where θ is the angle of the pendulum w.r.t. to the
+upright position. The MDP action space is continuous with
+values in [−2, 2], but we consider (without loss in perfor-
+mance) two discrete actions for the computation of ˆT and
+the greedy policy. The discount factor is γ = 1. The
+extra-tree ensemble is composed of 30 regressors with a
+minimum number of samples per split of 4 and a mini-
+mum number of samples per leaf of 2. The neural network
+has 1 hidden layer with sigmoidal activation and is trained
+using RMSProp (Goodfellow et al., 2016). We averaged
+the results over multiple datasets having trajectories of 200
+steps collected using a random policy, starting from ran-
+dom initial states x = {(cos(θ), sin(θ), ˙θ)|θ ∈ [−π, π], ˙θ ∈
+[−1, 1]}. The number of episodes per dataset is one param-
+eter of our analysis. The score J πK is approximated by
+randomly sampling 5 initial states.
+
+3For neural networks, the activation function and early stop-
+ping parameters have been chosen by means of a genetic algo-
+rithm optimizing the score obtained after N iterations with FQI.
+Note that B-FQI uses the parameters optimized for “plain” FQI.
+
+Figure 1. Swing-up model complexity: score of the greedy pol-
+icy at last iteration (K) w.r.t. model complexity and iterations for
+neural networks (left column) and extra-trees (right column). The
+heatmap Difference show the score J πK
+
+DIFF = J πK
+
+B-FQI − J πK
+FQI .
+
+Model complexity. We want to show how the perfor-
+mance of FQI and B-FQI is affected by the model com-
+plexity and by the number K of iterations. We collected
+10 datasets of 2000 episodes to average the results. Fig-
+ure 1 shows the performance (darker is better) of FQI and
+B-FQI using neural networks and extra-trees of different
+complexity. The scores obtained by B-FQI overcome the
+FQI ones in both cases. Both algorithms require almost
+the same number of steps to solve the environment, but, as
+expected, B-FQI needs less complex models than FQI. Fig-
+ure 2a shows the scores of the greedy policy at last iteration
+as a function of the model complexity. These results em-
+pirically show that B-FQI is able to boosting the learning
+curve by efﬁciently exploiting weak models. Clearly, when
+the model is sufﬁciently rich (and the samples are enough)
+FQI and B-FQI are both able to solve the MDP.
+
+In the previous analysis, we compared the performances
+of B-FQI and FQI w.r.t. the model complexity used in the
+training phase. We have seen that B-FQI seems to achieve
+better performance with a lower model complexity. How-
+ever, since B-FQI uses an additive model, it is interesting to
+compare B-FQI with FQI using a model that has the same
+overall complexity of the model built by B-FQI. For this
+analysis we used a single layer neural network of 5 and 100
+neurons respectively for B-FQI and FQI. As we can notice
+
+15101515101520FQI7.26.45.64.84.03.22.41.60.8ofiterationsNumberofneuronsumberN15101515101520B-FQI7.26.45.64.84.03.22.41.60.8ofiterationsNumberofneuronsumberN15101515101520Difference0.80.00.81.62.43.24.04.85.6ofiterationsNumberofneuronsumberN15101515101520FQI7.26.45.64.84.03.22.41.60.80.0MaxdepthofiterationsumberN15101515101520B-FQI7.26.45.64.84.03.22.41.60.80.0MaxdepthumberofiterationsN15101515101520Difference0.80.00.81.62.43.24.04.8MaxdepthofiterationsumberN(a) Model Complexity
+
+(b)
+
+(c) Sample Complexity
+
+Boosted Fitted Q-Iteration
+
+Figure 2. Swing-up pendulum results. Score of the greedy policy at iteration 20 (J π20 ) w.r.t. the model complexity (Fig. a) or dataset
+size (Fig. c) with different models. Figure (b) reports the score of the greedy policy as a function of iterations when FQI model has a
+complexity equal to the ﬁnal one of B-FQI. Conﬁdence intervals at 95% are shown.
+
+from Figure 2b FQI shows a poor performance with large
+variance. Such behavior is due to the fact that the model
+is too complex and thus it overﬁts at each iteration, while
+the simpler model used at each iteration by B-FQI leads to
+better generalization and more stable learning.
+
+Sample complexity. We analyze how the algorithms be-
+have w.r.t. the dataset dimension. We collected 20 datasets
+of up to 2000 episodes to average the results. For both algo-
+rithms, in order to make a signiﬁcant analysis, we consid-
+ered the simplest models that in Figure 2a achieve a mean
+score greater than −1.5, thus indicating that the models
+have learned a “good” policy. Figure 2c shows that B-FQI
+is more robust than FQI w.r.t. the dimension of the dataset.
+When coped with neural networks FQI is not able to reach
+B-FQI scores even with a signiﬁcant amount of samples.
+
+5.2. Bicycle Balancing
+
+The problem of bicycle balancing is known to be a com-
+plex task (Ernst et al., 2005; Randløv & Alstrøm, 1998).
+The aim of the problem is to ride the bicycle without let-
+ting it fall down. The state is composed by 5 continuous
+variables while the action space is discrete. We deﬁned the
+reward as r(x) = −ω 180
+12π where ω is the tilt angle from the
+vertical of the bicycle. The discount factor is γ = 0.98. All
+the details can be found in the references. The extra-tree
+ensemble is composed of 50 regressors with a minimum
+number of samples per split of 7 and a minimum number of
+samples per leaf of 4. Compared to (Ernst et al., 2005), we
+have limited the depth to 17 levels (with full depth the algo-
+rithms behave similarly). Similarly to (Riedmiller, 2005),
+the neural network has 2 hidden layers composed of 10 sig-
+moidal neurons. We averaged the results over 10 datasets
+of 1000 episodes using a random policy, starting from ran-
+dom initial states. Episodes are truncated at 5000 steps. We
+evaluate the performance of FQI and B-FQI w.r.t. the num-
+ber of iterations. As shown in Figure 3 the behaviors of
+B-FQI and FQI with neural networks are similar. As men-
+tioned before, this means that the designed model is suf-
+
+Figure 3. Bicycle performance: score of the greedy policy πK as
+a function of the iterations with neural networks (left) and extra-
+trees (right). Conﬁdence intervals at 95% are shown.
+
+ﬁciently powerful. Instead B-FQI clearly outperform FQI
+with extra-trees. this shows that when the regressor is not
+sufﬁciently powerful FQI fails to learn near optimal perfor-
+mances. On contrary, B-FQI quickly learn “good” policies
+that are able to keep the bicycle up for all 5000 steps. This
+shows the robustness of B-FQI w.r.t. FQI and the ability to
+signiﬁcantly speed up the learning process.
+
+6. Conclusion and Future Works
+
+We proposed the Boosted FQI algorithm, a way to improve
+the performance of the FQI algorithm exploiting boosting.
+The main advantage of B-FQI w.r.t. other FVI methods, is
+that it can represent more complex value functions, while
+solving simpler regression problems. We analyzed B-FQI
+both theoretically, giving a ﬁnite-sample error bound, and
+empirically, conﬁrming that boosting helps to achieve bet-
+ter performance in practical applications.
+Like all the boosting approaches, B-FQI needs to keep in
+memory all the learned models. This clearly increases both
+memory occupancy and time of prediction. This issue calls
+for the investigation of the empirical approaches that are
+used in SL to mitigate this computational burden. A further
+development of this work can be the study of effective ways
+of dynamically changing the model complexity at each it-
+eration of our B-FQI in order to take even more advantage
+from the reduction of the Bellman residual along iterations.
+
+51015−8−6−4−20Jπ20NeuralNetworkFQIB-FQINumberofneurons51015−8−6−4−20Jπ20ExtraTreesFQIB-FQIMaxdepth5101520−8−6−4−20JπNNeuralNetworkFQIB-FQINumberofiterations101102103−6−4−2Jπ20NeuralNetworkFQIB-FQINumberofepisodes101102103−6−4−2Jπ20ExtraTreesFQIB-FQIExtraTreesNumberofepisodes020406080−4−20NumberofiterationsJπNNeuralNetworkFQIB-FQI05101520−4−20NumberofiterationsJπNExtraTreesFQIB-FQIBoosted Fitted Q-Iteration
+
+Acknowledgements
+
+This research was supported in part by French Ministry
+of Higher Education and Research, Nord-Pas-de-Calais
+Regional Council and French National Research Agency
+projects ExTra-Learn (n.ANR-14-CE24-0010-01).
+
+References
+
+Abel, David, Agarwal, Alekh, Diaz, Fernando, Krishna-
+murthy, Akshay, and Schapire, Robert E. Exploratory
+gradient boosting for reinforcement learning in complex
+domains. ICML Workshop on Reinforcement Learning
+and Abstraction, abs/1603.04119, 2016.
+
+Antos, Andr´as, Szepesv´ari, Csaba, and Munos, R´emi.
+Learning near-optimal policies with bellman-residual
+minimization based ﬁtted policy iteration and a single
+sample path. Machine Learning, 71(1):89–129, 2008.
+
+Barto, Andrew G, Sutton, Richard S, and Anderson,
+Charles W. Neuronlike adaptive elements that can solve
+IEEE transactions
+difﬁcult learning control problems.
+on systems, man, and cybernetics, (5):834–846, 1983.
+
+Brockman, Greg, Cheung, Vicki, Pettersson, Ludwig,
+Schneider, Jonas, Schulman, John, Tang, Jie, and
+Zaremba, Wojciech. Openai gym, 2016.
+
+B¨uhlmann, Peter and Hothorn, Torsten. Boosting Algo-
+rithms: Regularization, Prediction and Model Fitting.
+Statistical Science, 22(4):477–505, apr 2008.
+ISSN
+0883-4237. doi: 10.1214/07-STS242.
+
+Doya, Kenji. Reinforcement learning in continuous time
+and space. Neural computation, 12(1):219–245, 2000.
+
+Ernst, Damien, Geurts, Pierre, and Wehenkel, Louis. Tree-
+based batch mode reinforcement learning. Journal of
+Machine Learning Research, 6:503–556, 2005.
+
+Farahmand, Amir-Massoud. Regularization in Reinforce-
+ment Learning. PhD thesis, Edmonton, Alta., Canada,
+2011. AAINR89437.
+
+Farahmand, Amir Massoud and Precup, Doina. Value pur-
+
+suit iteration. In NIPS, pp. 1349–1357, 2012.
+
+Farahmand, Amir Massoud, Ghavamzadeh, Mohammad,
+Szepesv´ari, Csaba, and Mannor, Shie. Regularized ﬁtted
+q-iteration for planning in continuous-space markovian
+decision problems. In 2009 American Control Confer-
+ence, pp. 725–730, June 2009. doi: 10.1109/ACC.2009.
+5160611.
+
+Farahmand, Amir Massoud, Munos, R´emi, and Szepesv´ari,
+Csaba. Error propagation for approximate policy and
+In NIPS, pp. 568–576. Curran Asso-
+value iteration.
+ciates, Inc., 2010.
+
+Fard, Mahdi Milani, Grinberg, Yuri, Farahmand, Amir-
+massoud, Pineau, Joelle, and Precup, Doina. Bellman
+error based feature generation using random projections
+on sparse spaces. In NIPS, pp. 3030–3038, 2013.
+
+Friedman, Jerome H. Greedy function approximation: a
+gradient boosting machine. Annals of statistics, pp.
+1189–1232, 2001.
+
+Geurts, Pierre, Ernst, Damien, and Wehenkel, Louis. Ex-
+tremely randomized trees. Machine learning, 63(1):3–
+42, 2006.
+
+Goodfellow, I., Bengio, Y., and Courville, A. Deep Learn-
+ing. Adaptive Computation and Machine Learning Se-
+ries. MIT Press, 2016. ISBN 9780262035613.
+
+Gordon, Geoffrey J. Stable function approximation in dy-
+In Machine Learning, Proceed-
+namic programming.
+ings of the Twelfth International Conference on Machine
+Learning, Tahoe City, California, USA, July 9-12, 1995,
+pp. 261–268. Morgan Kaufmann, 1995.
+
+Gy¨orﬁ, L´aszl´o, Kohler, Michael, Krzyzak, Adam, and
+Walk, Harro. A Distribution-Free Theory of Nonpara-
+metric Regression. Springer series in statistics. Springer,
+2002.
+
+Hastie, Trevor J. and Tibshirani, Robert John. Generalized
+additive models. Monographs on statistics and applied
+probability. Chapman & Hall, London, 1990. ISBN 0-
+412-34390-8.
+
+Kober, Jens, Bagnell, J. Andrew, and Peters, Jan. Rein-
+forcement learning in robotics: A survey. The Interna-
+tional Journal of Robotics Research, 32(11):1238–1274,
+2013. doi: 10.1177/0278364913495721.
+
+Mahadevan, Sridhar and Maggioni, Mauro. Proto-value
+functions: A laplacian framework for learning represen-
+tation and control in markov decision processes. Journal
+of Machine Learning Research, 8:2169–2231, 2007.
+
+Maillard, Odalric-Ambrym, Munos, R´emi, Lazaric,
+Alessandro, and Ghavamzadeh, Mohammad. Finite-
+sample analysis of bellman residual minimization.
+In
+ACML, volume 13 of JMLR Proceedings, pp. 299–314.
+JMLR.org, 2010.
+
+Mnih, Volodymyr, Kavukcuoglu, Koray, Silver, David,
+Rusu, Andrei A., Veness, Joel, Bellemare, Marc G.,
+Graves, Alex, Riedmiller, Martin, Fidjeland, Andreas K.,
+Ostrovski, Georg, Petersen, Stig, Beattie, Charles, Sadik,
+Amir, Antonoglou, Ioannis, King, Helen, Kumaran,
+Dharshan, Wierstra, Daan, Legg, Shane, and Hassabis,
+Demis. Human-level control through deep reinforcement
+learning. Nature, 518(7540):529–533, 02 2015. URL
+http://dx.doi.org/10.1038/nature14236.
+
+Boosted Fitted Q-Iteration
+
+Moody, John E. and Saffell, Matthew. Reinforcement
+In NIPS, pp. 917–923. The MIT
+
+learning for trading.
+Press, 1998.
+
+Munos, R´emi and Szepesv´ari, Csaba. Finite-time bounds
+for ﬁtted value iteration. Journal of Machine Learning
+Research, 9:815–857, 2008.
+
+Munos, R´emi, Stepleton, Tom, Harutyunyan, Anna, and
+Bellemare, Marc G. Safe and efﬁcient off-policy rein-
+forcement learning. In NIPS, pp. 1046–1054, 2016.
+
+Parr, Ronald, Painter-Wakeﬁeld, Christopher, Li, Lihong,
+and Littman, Michael L. Analyzing feature generation
+for value-function approximation. In ICML, volume 227
+of ACM International Conference Proceeding Series, pp.
+737–744. ACM, 2007.
+
+Piot, Bilal, Geist, Matthieu, and Pietquin, Olivier. Boosted
+bellman residual minimization handling expert demon-
+In ECML/PKDD (2), volume 8725 of Lec-
+strations.
+ture Notes in Computer Science, pp. 549–564. Springer,
+2014.
+
+Puterman, Martin L. Markov Decision Processes: Dis-
+crete Stochastic Dynamic Programming. John Wiley &
+Sons, Inc., New York, NY, USA, 1st edition, 1994. ISBN
+0471619779.
+
+Randløv, Jette and Alstrøm, Preben. Learning to drive a
+bicycle using reinforcement learning and shaping.
+In
+ICML, volume 98, pp. 463–471. Citeseer, 1998.
+
+Riedmiller, Martin. Neural Fitted Q Iteration – First Ex-
+periences with a Data Efﬁcient Neural Reinforcement
+Learning Method, pp. 317–328. Springer Berlin Heidel-
+berg, Berlin, Heidelberg, 2005. ISBN 978-3-540-31692-
+3. doi: 10.1007/11564096 32.
+
+Silver, David, Huang, Aja, Maddison, Chris J., Guez,
+Arthur, Sifre, Laurent, van den Driessche, George,
+Schrittwieser, Julian, Antonoglou, Ioannis, Panneer-
+shelvam, Veda, Lanctot, Marc, Dieleman, Sander,
+Grewe, Dominik, Nham, John, Kalchbrenner, Nal,
+Sutskever, Ilya, Lillicrap, Timothy, Leach, Madeleine,
+Kavukcuoglu, Koray, Graepel, Thore, and Hassabis,
+Demis. Mastering the game of Go with deep neural net-
+works and tree search. Nature, 529(7587):484–489, Jan-
+uary 2016. doi: 10.1038/nature16961.
+
+Sutton, Richard S and Barto, Andrew G. Reinforcement
+learning: An introduction, volume 1. MIT press Cam-
+bridge, 1998.
+
+van der Vaart, Aad and Wellner, Jon A. Preservation
+Theorems for Glivenko-Cantelli and Uniform Glivenko-
+Cantelli Classes, pp. 115–133. Birkh¨auser Boston,
+Boston, MA, 2000.
+ISBN 978-1-4612-1358-1. doi:
+10.1007/978-1-4612-1358-1 9.
+
+

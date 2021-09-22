@@ -1,0 +1,1440 @@
+Zero-Inﬂated Exponential Family Embeddings
+
+Li-Ping Liu 1 2 David M. Blei 1
+
+Abstract
+Word embeddings are a widely-used tool to an-
+alyze language, and exponential family embed-
+dings (Rudolph et al., 2016) generalize the tech-
+nique to other types of data. One challenge to
+ﬁtting embedding methods is sparse data, such
+as a document/term matrix that contains many
+zeros. To address this issue, practitioners typi-
+cally downweight or subsample the zeros, thus
+focusing learning on the non-zero entries. In this
+paper, we develop zero-inﬂated embeddings, a
+new embedding method that is designed to learn
+from sparse observations. In a zero-inﬂated em-
+bedding (ZIE), a zero in the data can come from
+an interaction to other data (i.e., an embedding)
+or from a separate process by which many ob-
+servations are equal to zero (i.e. a probability
+mass at zero). Fitting a ZIE naturally down-
+weights the zeros and dampens their inﬂuence
+on the model. Across many types of data—
+language, movie ratings, shopping histories, and
+bird watching logs—we found that zero-inﬂated
+embeddings provide improved predictive perfor-
+mance over standard approaches and ﬁnd better
+vector representation of items.
+
+1. Introduction
+
+Word embeddings use distributed representations to cap-
+ture usage patterns in language data (Harris, 1954; Rumel-
+hart et al., 1988; Bengio et al., 2003; Mikolov et al.,
+2013a;b; Pennington et al., 2014). The main idea is to ﬁt
+the conditional distribution of words by using vector repre-
+sentations, called embeddings. The learned parameters—
+the embedding vectors—are useful as features about the
+meanings of words. Word embeddings have become a
+widely used method for unsupervised analysis of text.
+
+1Columbia University, 500 W 120th St., New York, NY 10027
+2Tufts University, 161 College Ave., Medford, MA 02155. Corre-
+spondence to: Li-Ping Liu <ll3105@columbia.edu>, David M.
+Blei <david.blei@columbia.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+In a recent paper, Rudolph et al. (2016) developed expo-
+nential family embeddings. Their work casts embeddings
+in a probabilistic framework and generalizes them to model
+various types of high-dimensional data.
+
+Exponential family embeddings give a recipe for creating
+new types of embeddings. There are three ingredients. First
+is a notion of a context, e.g., a neighborhood of surround-
+ing words around a word in a document. Second is a condi-
+tional distribution of data given its context, e.g., a categor-
+ical distribution for a word. Third is an “embedding struc-
+ture” that captures parameter sharing, e.g., that the embed-
+ding vector for PHILOSOPHY is the same wherever it ap-
+pears in the data. Rudolph et al. (2016) show that exponen-
+tial family embeddings embody many existing methods for
+word embeddings. Further, they easily extend to other sce-
+narios, such as movie ratings, shopping basket purchases,
+and neuroscience data.
+
+Many applications of embeddings—both the classical ap-
+plication to language and the others types of data—involve
+sparse observations, data that contain many zero entries.
+As examples, shoppers do not purchase most of the items in
+the store, authors do not use most of the words in a vocab-
+ulary, and movie-watchers do not view most of the movies
+in an online collection. Sparse observations are challeng-
+ing for many machine learning methods because the zeros
+dominate the data. Most methods will focus on capturing
+and predicting them, and embeddings are no exception.
+
+Folk wisdom says that zeros in sparse data contain less in-
+formation than the non-zeros. Consequently, practitioners
+use various methods to downweight them (Hu et al., 2008)
+or downsample them, as is often the case in word embed-
+dings (Mikolov et al., 2013b; Rudolph et al., 2016). Empir-
+ically, methods that downweight and downsample the zeros
+far outperform their counterparts.
+
+What this folk wisdom suggests is that zeros often occur
+for one of two reasons—either they are part of the underly-
+ing process that we are trying to model, such as capturing
+the meanings of words, or they part of a different process,
+such as that only a particular part of speech belongs in a
+particular location in a sentence. As other examples, a ﬁlm
+enthusiast might not watch a movie either because she does
+not think she will like it or because she has never heard of
+it; a shopper might not buy a brand of cookies either be-
+
+Zero-Inﬂated Exponential Family Embeddings
+
+cause he doesn’t like them or because he didn’t see them.
+Motivated by this intuition, we develop zero-inﬂated em-
+beddings, a probabilistic embedding model that captures
+the special status of the zeros in the data matrix.
+
+The main idea is as follows. Exponential family embed-
+dings model the conditional distribution of each data point
+given its context, where the parameter to that distribution
+relates to the embedding vectors. In a zero-inﬂated embed-
+ding, the conditional distribution places extra probability
+mass on zero, capturing conditions other than the embed-
+ding under which an item might not appear. If an observed
+zero is explained by this extra probability, then the cor-
+responding item is not exposed to its relation with other
+items.
+
+The probability of seeing a zero that is not from the em-
+bedding model can be a ﬁxed quantity or can depend on
+other properties, such as the popularity of an item, demo-
+graphics about the shopper, or the parts of speech of the
+context words. While zero-inﬂated embeddings sometimes
+fall into the class of an exponential family embedding (as in
+the Bernoulli case), they sometimes reﬂect a more complex
+distribution.
+
+The practical effect is that zero-inﬂated embeddings intelli-
+gently downweight the zeros of the data—the embeddings
+no longer need to explain all of the zeros—and empirically
+improve the learned representations of the words or other
+type of data. We will demonstrate zero-inﬂated embed-
+dings on language, movie ratings, and shopping baskets, as
+described above. We also study zero-inﬂated embeddings
+on bird watching logs (Munson et al., 2015), where fea-
+tures like time and location can inﬂuence which birds are
+possible to see.
+
+Below, we develop zero-inﬂated embeddings and show
+how we can ﬂexibly deﬁne the “exposure model” along-
+side the exponential family embedding model. We derive
+two algorithms to ﬁt them and study them on a variety of
+data sets. Zero-inﬂated embeddings improve performance
+in language, shopping histories, recommendation system
+data, and bird watching logs.
+
+Related work. The main thread of work on downweight-
+ing zeros comes from recommendation systems, where ab-
+sent user-item interaction can be misconstrued as a user dis-
+liking an item. Hu et al. (2008) and Rendle et al. (2009)
+proposed to manually down-weight zeros and showed ex-
+cellent empirical performance. Liang et al. (2016) builds
+on this work and introduces an exposure model to explain
+zero entries. The exposure model captures whether a user
+does not see an item or intentionally chooses not to con-
+In a sense, zero-inﬂated embeddings build on
+sume it.
+Liang et al. (2016), using a type of “exposure model” in
+the context of embeddings and capturing item-item interac-
+
+tions. They also share similarities with the spike and slab
+model (Mitchell & Beauchamp, 1988) and zero-inﬂated re-
+gression models (Lambert, 1992).
+
+2. Zero-Inﬂated Embeddings
+
+We ﬁrst review exponential family embeddings. We then
+develop zero-inﬂated embeddings.
+
+2.1. Exponential Family Embedding
+
+An Exponential Family Embedding (EFE) generalizes
+word embedding to other types of data.
+It uses vector
+representations to capture conditional probabilities of data
+given a context. Speciﬁcally, an EFE aims to learn vec-
+tor representation of items, that is, to represent each item
+j ∈ {1, . . . , J} with an embedding vector ρj ∈ RK and a
+context vector αj ∈ RK. Vectors ρj and αj for all j are
+denoted as ρ and α, respectively.
+
+An EFE model learns from observation-context pairs. In
+each pair i ∈ {1, . . . , N }, the observation xi = {xij : j ∈
+si} contains values observed from one or multiple items in
+si, and the context yi = {yij : j ∈ ci} contains the values
+of related items in a context set ci.
+
+An EFE is deﬁned by three elements: the context, the con-
+ditional distribution, and the embedding structure. We
+have deﬁned the context. The conditional distribution of
+xi given its context yi is from the exponential family,
+xi ∼ ExpFam(cid:0)η(yi, si), T (xi)(cid:1),
+
+(1)
+
+where the context yi provides the natural parameter
+through η(yi, si), and T (xi) is the sufﬁcient statistics.
+
+The embeddings come into play in the natural parameter,
+
+η(yi, si) = f
+
+(cid:16)
+
+ρ(cid:62)
+si
+
+(cid:88)
+
+j∈ci
+
+(cid:17)
+
+,
+
+yijαj
+
+(2)
+
+where the columns of ρsi are embedding vectors of items
+in si and f (·) is a link function. The EFE conditional prob-
+ability p(xi|yi; ρsi, αci) speciﬁes the distribution of the
+values of items in si in their context. When there is no
+ambiguity, we write the probability as p(xi|yi). By ﬁtting
+the conditional probability, the embedding model captures
+the interaction between items in si and items in ci.
+
+The embedding structure of EFE decides how the vectors
+of items are shared by different observation-context pairs.
+It is essentially the deﬁnition of ci and si, which indicate
+how to attach item indices j-s to pair indices i-s.
+
+Finally, an EFE puts Gaussian prior over α and ρ. For all
+j,
+
+αj ∼ Gaussian(0, σ2
+ρj ∼ Gaussian(0, σ2
+
+αI)
+ρI)
+
+(3)
+
+(4)
+
+Zero-Inﬂated Exponential Family Embeddings
+
+where I is a K-identity matrix and σ2
+ρ are hyper-
+parameters controlling the variance of the context and em-
+bedding vectors.
+
+α and σ2
+
+An EFE infers α and ρ by maximizing the conditional log
+likelihood of observations given their contexts. The learned
+vectors α and ρ are able to capture the correlation between
+items and their contexts.
+
+We give two examples. In movie ratings, we can extract
+observation-context pairs from a person’s ratings: the ob-
+servation xi is the rating of a single movie in si, |si| = 1,
+and the context is the ratings yi of all other movies rated by
+the same person. In language, the observation at a text po-
+sition is a one-hot vector xi indicating which word is there
+and the context yi is the vector representation of words in
+the context. In this case si and ci are both the entire vo-
+cabulary, {1, . . . , J}. The original word embedding model
+(Bengio et al., 2003; Mnih & Hinton, 2007) assumes the
+conditional distribution to be the multinomial distribution
+with 1 trial. The word2vec model optimized by negative
+sampling (NEG) (Mikolov et al., 2013b) uses a product of
+Bernoulli distributions as the conditional distribution.
+
+2.2. Exposure modeling with zero-inﬂation
+
+An EFE explains every observation xi by an item’s inter-
+action with its context. However, as we described in Sec-
+tion 1, we may not want the embeddings to explain every
+observation, especially when they are dominated by zeros.
+
+A Zero-Inﬂated Embedding (ZIE) places extra probability
+mass at zero in the embedding distribution. This mass can
+be thought of as the probability that the corresponding item
+is not “exposed” to its interaction with other items. In a
+ZIE, the embeddings vectors need not capture the (zero)
+data that are explained by the extra mass.
+
+In more detail, for each observed value xij we explicitly
+deﬁne an exposure indicator bij to indicate whether the cor-
+responding item j is exposed to the interaction with context
+items (bij = 1) or not (bij = 0). Each bij is a random vari-
+able from Bernoulli distribution with probability uij,
+
+bij ∼ Bernoulli(uij).
+
+(5)
+
+The exposure indicators and exposure probabilities of the
+items in the observation xi are collectively denoted as bi =
+{bij : j ∈ si} and ui = {uij : j ∈ si} respectively.
+
+In many applications, we have the information about the
+exposure probability uij. Suppose we have a set of covari-
+ates vi ∈ Rd for each i related to the exposure probability.
+We ﬁt uij with a logistic regression,
+
+uij = logistic(w(cid:62)
+
+j vi + w0
+where wj are the coefﬁcients and w0
+j is the intercept. (If
+there is no such covariates, then only the intercept term is
+
+j ),
+
+(6)
+
+used, which means that the exposure probabilities of items
+are shared by observation-context pairs.)
+
+Next, we incorporate the exposure indicator into the em-
+bedding model. When xi = {xij} is an observation with
+only one item j, the indicator bij decides whether xij is
+zero or from the embedding distribution,
+
+(cid:26) δ0
+
+xij ∼
+
+ExpFam(cid:0)η(yi, si), T (xij)(cid:1)
+
+if bij = 0
+if bij = 1
+
+. (7)
+
+The distribution δ0 has probability mass 1 at 0.
+
+When xi has multiple entries, the indicator vector bi de-
+cides the exposure of each item separately. The items not
+exposed have zero values,
+
+xij ∼ δ0,
+
+∀j ∈ si, bij = 0.
+
+(8)
+
+Let the items exposed be s+
+their values are x+
+from a smaller embedding model restricted to s+
+i .
+
+i = {j : j ∈ si, bij = 1}, and
+is
+
+i = {xij : j ∈ si, bij = 1}. Then x+
+
+i
+
+i ∼ ExpFam(cid:0)η(yi, s+
+x+
+
+i ), T (x+
+
+i )(cid:1).
+
+(9)
+
+We have p(xi|yi, bi) = p(x+
+single or multiple items.
+
+i |yi, bi) when si has either
+
+Finally, if the exposure probabilities are ﬁt by covariates
+then each weight vector wj is also given a Gaussian prior,
+
+wj ∼ Gaussian(0, σ2
+
+wI), j = {1, . . . , J}.
+
+(10)
+
+The identity matrix I has size d here, and σ2
+parameter.
+
+w is the hyper-
+
+2.3. Inference
+
+In this subsection, we derive the method of inferring α
+and ρ from ZIE. The approach is to maximize the log-
+likelihood (cid:80)
+i log p(xi|yi, ui) with all hidden variables bi
+marginalized.
+
+In this subsection, we derive the solution with ui-s instead
+of (wj, w0
+j )-s for notational simplicity. Once we can calcu-
+late the gradient of each ui, the gradient calculation of each
+j ) is straightforward. The probability p(x+
+(wj, w0
+i |yi, bi)
+is indeed from the basic embedding model, and we denote
+it as ˆp(x+
+i |yi) to explicitly show how the basic embedding
+model is positioned in the solution.
+
+The inference is easy when the observation xi is about one
+item. We can either use EM to maximize its exact varia-
+tional lower bound or directly marginalize out the hidden
+variable. We brieﬂy give both solutions here, as they have
+different indications of zero inﬂation.
+
+We ﬁrst give the EM solution. In E step, we calculate the
+posterior distribution p(bij|xij, yi, uij) of each exposure
+
+Zero-Inﬂated Exponential Family Embeddings
+
+indicator bij. This distribution is a Bernoulli distribution,
+and its parameter is denoted as µij. Applying the Bayesian
+rule, we have
+
+(cid:40)
+
+µij =
+
+uij ˆp(xij =0|yi)
+1−uij +uij ˆp(xij =0|yi)
+1
+
+if xij = 0
+if xij (cid:54)= 0
+
+.
+
+(11)
+
+The lower bound of the log-likelihood of pair i is
+
+E(cid:2) log p(xij|yi, bij)(cid:3) − KL(µij, uij) =
+
+(cid:26) µij log ˆp(xij|yi) − KL(µij, uij)
+
+log ˆp(xij|yi) + log uij
+
+if xij = 0
+if xij (cid:54)= 0
+
+.
+
+(12)
+
+The expectation is taken with respect to p(bij|xij, yi, uij),
+and KL(µij, uij) is the KL-divergence from the prior to
+posterior of bij. In M step, the lower bound is maximized
+with respect to α and ρ. Note that, there is no need to take
+derivative with respect to µij when taking gradient steps
+even though it is a function of α and ρ, because µij already
+maximizes the lower bound (Hoffman et al., 2013).
+
+Eq. (12) shows that zero-inﬂation downweights zero en-
+tries by µij when learning α and ρ. This method of down-
+weighting zeros is derived in a systematic way instead of a
+hack.
+
+We can also marginalize bij directly.
+
+p(xij|yi, uij) =
+(cid:26) uij ˆp(xij = 0|yi) + (1 − uij)
+
+uij ˆp(xij|yi)
+
+if xij = 0
+if xij (cid:54)= 0
+
+.
+
+(13)
+
+This equation makes the zero-inﬂation clearer.
+
+Now let’s work on the inference problem when xi has val-
+ues of multiple items. In this case, we need to consider an
+embedding model ˆp(x+
+i |yi) for each conﬁguration of bi,
+so there are potentially exponential number of embedding
+models to consider. We have to exploit the structure of the
+embedding model to give a tractable MLE problem. In this
+paper, we consider two special cases, that the embedding
+models are independent for items in si, and that the obser-
+vation xi is from a multinomial distribution.
+
+In the ﬁrst case, the embedding model is the product of
+the embedding models with the same context. Word2vec
+with NEG training is a special case with single models as
+Bernoulli embedding (Mikolov et al., 2013b).
+
+p(xi|yi, bi; ρsi, αci) =
+
+p(xij|yi, bij; ρj, αci).
+
+(14)
+
+(cid:89)
+
+j∈si
+
+The exposure indicators are independent of each other, so
+the entire model can be decomposed over items in si and
+solved as single models. We omit the detail here.
+
+Now we consider the case when the embedding distribution
+is multinomial with 1 trial, which is the model assumption
+of word embedding prior to the proposal of NEG training
+(Bengio et al., 2003; Mikolov et al., 2013a). The link func-
+tion f (·) is the identity function, so the vector products
+in η(·) directly give logits of the multinomial distribution.
+Denote the natural parameter as ηi = ρ(cid:62)
+yijαj.
+si
+The probability vector of the multinomial distribution is
+πi = softmax(ηi).
+
+j∈ci
+
+(cid:80)
+
+The logarithm of the joint probability of the model for one
+pair is
+
+log p(xi, bi|yi) = log ˆp(x+
+
+i |yi) + log p(bi).
+
+(15)
+
+Note that the probability ˆp(x+
+i |yi) is from the embedding
+model decided by bi. To learn the model, we need to maxi-
+mize the log-likelihood of the data with the hidden variable
+bi marginalized.
+
+To avoid considering exponentially large number of mod-
+els, we use the following relation between the full embed-
+ding model and the one with items exposed only in s+
+i .
+
+log ˆp(x+
+
+i |yi) = log ˆp(xi|yi) − log(b(cid:62)
+
+i πi).
+
+(16)
+
+Here the last term re-normalizes the probability of ˆp(xi|yi)
+to get the probability of picking one from these items that
+are exposed.
+
+Expand ˆp(xi|yi) and cancel the normalizer, then we have
+
+log ˆp(x+
+
+i |yi) = ηij∗ − log(b(cid:62)
+
+i exp(ηi)).
+
+(17)
+
+Here j∗ is the index such that xij∗ = 1.
+
+Now we consider the problem of marginalizing bi via vari-
+ational inference. Let q(bi) be the variational distribu-
+tion. Combine Eq. (15) and (17), then the variational lower
+bound is,
+
+Lq = Eq(bi)
+
+(cid:2) log ˆp(x+
+
+= ηij∗ − Eq
+
+(cid:2) log(b(cid:62)
+
+i |yi)(cid:3) − KL(q(bi), p(bi))
+i exp(ηi))(cid:3) − KL(q(bi), p(bi)).
+(18)
+
+KL(q(bi), p(bi)) is the KL-divergence of p(bi) from the
+posterior q(bi).
+
+This lower bound often needs to be maximized in the online
+manner due the large quantity of data, but the expectation
+of the logarithm is challenging to estimate even with mod-
+erate size of si. In this work, we ﬁnd a data-related lower
+bound of the expectation term.
+
+Let γ be any subset of si such that j∗ ∈ γ and |γ| = r, and
+biγ be the sub-vector of bi indexed by γ. If
+
+exp(ηij∗ )
+
+(cid:80)
+
+exp(ηij)
+
+j∈si
+
+≥
+
+r
+|si|
+
+,
+
+(19)
+
+Zero-Inﬂated Exponential Family Embeddings
+
+i exp(ηi) ≤ |si|
+then b(cid:62)
+we have another lower bound
+
+r b(cid:62)
+
+iγ exp(ηiγ) for any bi, and then
+
+max
+q
+
+Lq ≥ max
+q(biγ )
+
+ηij∗ − Eq(biγ )
+
+(cid:2) log(b(cid:62)
+
+iγ exp(ηiγ))(cid:3)
+
++ log
+
+− KL(q(biγ), p(biγ)).
+
+(20)
+
+r
+|si|
+
+Here q(biγ) is the marginal of some q(bi).
+
+We maximize the objective on the r.h.s. of Eq. (20) with re-
+spect to q(biγ) and model parameters. In each iteration of
+calculation, we randomly sample a subset γ, maximize the
+lower bound with respect to q(biγ), and calculate the gra-
+dient of model parameters. The maximization with respect
+to q(biγ) is tractable for small r. For larger r, we restrict
+the form of q(biγ). In our experiment, we set r = 5, and let
+q(biγ) assign zero probability to any bi that has more than
+one zero entry. Then we only need to consider r conﬁgura-
+tions of bi: the case that all items in γ are exposed and the
+cases that only one item, j ∈ γ, j (cid:54)= j∗, is not exposed, so
+the maximization with respect to q(biγ) can be calculated
+efﬁciently.
+
+The lower bound in Eq. (20) essentially uses r − 1 “neg-
+ative” items in the random set γ to contrast the item j∗ in
+a smaller multinomial distribution. Since the set γ is ran-
+domly selected, every j (cid:54)= j∗ has the chance to be used as a
+negative sample. The maximization procedure encourages
+the model to get larger value of ηij∗ , and empirically the
+condition (19) often holds.
+
+2.4. Computation with Subgradient
+
+The data for embedding is often in large amount, so op-
+timization with stochastic gradients is critically important.
+In problems where si has only one item, a pair with non-
+zero observation often provides more informative gradients
+than a pair with zero observation. In our optimization, we
+keep all pairs with non-zero observations and sub-sample
+zero observations to estimate an unbiased stochastic gra-
+dient. The resultant optimization is much faster than that
+with full gradient.
+
+3. Empirical Study
+
+In this section, we empirically evaluate the Zero-Inﬂated
+Embeddings. We compare four models, two baselines and
+two variants of our model, in the following subsections:
+1) EFE is the basic exponential family embedding model;
+2) EFE-dz assigns weight 0.1 to zero entries in the train-
+ing data (same as (Rudolph et al., 2016)); 3) ZIE-0 is the
+zero-inﬂated embedding model and ﬁts the exposure prob-
+abilities with the intercept term only; and 4) ZIE-cov ﬁts
+exposure probabilities with covariates.
+
+Table 1. Information about datasets.
+
+# item # nonzero
+
+dataset
+eBird-PA
+MovieLens-100K
+Market
+Wiki-S
+
+213
+811
+7903
+10000
+
+410k
+78.5k
+737k
+365m
+
+sparsity
+0.08
+0.1
+10−3
+10−4
+
+range
+N
+0-3
+N
+0/1
+
+# covar
+13
+6
+20
+11
+
+MovieLens-100K, Market, and Wiki-S, which will be in-
+troduced in detail in the following subsections. Their gen-
+eral information is tabulated in Table 1. The last column
+lists the number of exposure covariates, which is used by
+ZIE-cov to ﬁt the exposure probability.
+
+All four models are optimized by AdaGrad (Duchi et al.,
+2011) implemented in TensorFlow1, and the AdaGrad pa-
+rameter η for step length is set to 0.1. One tenth of the
+training set is separated out as the validation set, whose
+log-likelihood is used to check whether the optimization
+procedure converges. The variance parameters of α, ρ, and
+w are set to 1 for all experiments.
+
+We report two types of predictive log-likelihood on the test
+set, the log-likelihood of all observations (denoted as “all”)
+and that of non-zero entries only (denoted as “pos”). For
+non-zero entries, the predictive log-likelihood is calculated
+as log p(xi|yi, xi > 0) = log p(xi|yi) − log(1 − p(xi =
+0|yi)). The predictive log-likelihood is also estimated
+through sub-sampling in the same way as in training. We
+use α vectors as embeddings of items.
+
+3.1. Bird embedding from bird observations
+
+In this experiment, we embed bird species into the vector
+space by studying their co-occurance pattern in bird obser-
+vations(Munson et al., 2015). The data subset eBird-PA
+consists of bird observations from a rectangular area that
+mostly overlaps Pennsylvania and the period from day 180
+to day 210 of years from 2002 to 2014. Each datum in the
+subset is a checklist of counts of 213 bird species reported
+from one observation event. The values of these counts
+range from zero to hundreds. Some extraordinarily large
+counts are treated as outliers and set to the mean of posi-
+tive counts of that species. Associated with each checklist
+there are 13 observation covariates, such as effort time, ef-
+fort distance, and observation time of the day. The dataset
+is randomly split into two thirds as the training set and one
+third as the test set.
+
+The embedding model use Poisson distribution to ﬁt the
+count of each species j given the counts of all other species
+for each checklist, so si = {j} and ci = {1, . . . J}\j.
+The link function is log softplus(·), which means the Pois-
+son parameter λ is the softplus function of the linear prod-
+uct. The embedding dimension K iterates over the set
+
+All models are evluated with four datasets, eBird-PA,
+
+1https://www.tensorﬂow.org/
+
+Zero-Inﬂated Exponential Family Embeddings
+
+Table 2. ZIE models improve predictive log-likelihood on bird
+data.
+K
+
+ZIE-cov
+
+ZIE-0
+
+EFE
+
+32
+
+64
+
+128
+
+all −0.416(.002)
+−0.324(.001) −0.314(.001)
+pos −2.407(.017) −1.855(.012) −1.844(.011) −1.840(.011)
+all −0.374(.002)
+−0.308(.001) −0.298(.001)
+pos −2.140(.016) −1.727(.013) −1.736(.012) −1.739(.012)
+all −0.348(.002)
+−0.300(.001) −0.291(.001)
+pos −1.992(.019) −1.681(.015) −1.705(.015) −1.708(.015)
+
+−0.490(.001)
+
+−0.459(.001)
+
+EFE-dz
+−0.555(.001)
+
+Table 3. The measures (∆p / ∆λ) of embedded vectors calculated
+at 4 levels of downsampling (smaller is better). Embedded vectors
+learned by ZIE models are more resistant to down-sampling.
+EFE-dz
+0.628/0.172
+0.649/0.306
+0.313/0.078
+0.287/0.067
+
+ZIE-0
+0.463/0.024
+0.384/0.007
+0.217/0.023
+0.212/0.022
+
+ZIE-cov
+0.460/0.032
+0.351/0.052
+0.245/0.018
+0.263/0.017
+
+EFE
+0.870/0.123
+1.099/0.947
+0.373/0.084
+0.404/0.085
+
+d.s. ratio
+0.005
+0.01
+0.05
+0.1
+
+{32, 64, 128}.
+
+Performance comparison: Table 2 shows the predictive
+log-likelihoods of the four models with different values of
+K. The two models with zero-inﬂation get much better pre-
+dictive log-likelihood on the entire test set. On positive ob-
+servations, ZIE models get similar results with the model
+downweighting zero entries. ZIE-cov performs slightly
+better than ZIE-0 on all observations and has similar per-
+formance with ZIE-0 on positive observations. We have
+also tried other negative weights (0.05, 0.2) for EFE-dz and
+found a similar trend: smaller weight gives slightly bet-
+ter predictive log-likelihood on positive observations but
+worse overall predictive log-likelihood.
+
+Sensitiveness to data sparsity: We down-sample pos-
+itive observations of one common species, American
+Robin (Figure 1, left), and test how the embedded vec-
+Speciﬁcally, we randomly set positive
+tors changes.
+counts of American Robin to zero and keep only r =
+{0.005, 0.01, 0.05, 0.1} of positive counts. For each r,
+we compared the embedded vectors learned from down-
+sampled data with those learned from the original data.
+
+The vectors are compared by their respectively induced
+Poisson parameter λ. Let j∗ be the index of American
+Robin, then for each species j (cid:54)= j∗, the distribution of
+the count of j given one American Robin has parameter
+λj = softplus(ρ(cid:62)
+
+j αj∗ ).
+
+From the original and down-sampled data, we get two em-
+beded vectors and then have two Poisson parameters λorig
+and λdown
+. The ﬁrst measure of difference is the symmet-
+j
+ric KL divergence (sKL) of the predictive probabilities of
+presence calculated from the two λ values with Poisson dis-
+tribution,
+
+j
+
+∆p = sKL(cid:0)p(xj > 0; λorig
+
+j
+
+), p(xj > 0; λdown
+
+j
+
+)(cid:1).
+
+The second measure is the absolute difference of λ values,
+∆λ = |λorig
+|. These two measures are averaged
+over all species.
+
+j − λdown
+
+j
+
+Table 3 shows these measures calculated from different
+models with K = 64. We can see that the embedding
+model with exposure explanation is less sensitive to miss-
+ing observations.
+
+Exposure explanation: We also explore what the exposure
+
+Figure 1. Three bird species in study. Left: American Robin, mid-
+dle: Bald Eagle, right: Eastern Screech-Owl.
+
+probability captures about zero observations. We check the
+learned coefﬁcients w of the species Bald Eagle (Figure 1,
+middle). Its coefﬁcient corresponding to the effort hours
+of the observation is large, at the percentage of 0.83 of all
+birds. It agrees with bird watching, since eagles are usu-
+ally rare and need long time to be spotted. Another exam-
+ple is Eastern Screech-Owl (Figure 1, right), which is only
+Its two coefﬁcients corresponding to the
+active at night.
+observation time at hours 7-12 and hours 12-18 of the day
+are the smallest among all species. With the learned coef-
+ﬁcients, the exposure probabilites are able distinguish the
+generative process of zeros according to their observation
+conditions and thus downweight zeros more correctly.
+
+3.2. Movie embedding from movie ratings
+
+In this experiment, we study movie ratings and embed
+movies as vectors. The MovieLens-100K dataset (Harper
+& Konstan, 2015) consists of movie ratings from different
+users. It is preprocessed in the same way as Rudolph et al.
+translating ratings above 2 to the range 1-3 and
+(2016):
+treating absent ratings and ratings no greater than 2 as ze-
+ros. We remove all movies with less than 20 ratings. Six
+covariates, the age, the gender, and four profession cate-
+gories, are extracted from each user and used as exposure
+covariates.
+
+For the ratings from the same person, the embedding model
+ﬁt the rating of one movie given the ratings of all other
+movies. The embedding distribution is the binomial dis-
+tribution with 3 trials. The parameter K ranges over
+{8, 16, 32}. We run 10 fold cross validation on this dataset.
+
+Performance comparison: In this result, ZIE-0 and ZIE-
+cov performs much better than the two baselines in predic-
+tive performance on all entries. With zero-entries down-
+weighted, EFE-dz is able to predict non-zeros better than
+
+Zero-Inﬂated Exponential Family Embeddings
+
+Table 4. ZIE models improves predictive log-likelihood values on
+movie rating data.
+
+Table 5. ZIE models improves the predictive log-likelihood on
+Market data
+
+K
+
+8
+
+16
+
+32
+
+EFE
+
+EFE-dz
+
+all −0.461(.001)
+pos −1.870(.007) −1.145(.003)
+all −0.450(.001)
+pos −1.795(.007) −1.146(.003)
+all −0.450(.001)
+pos −1.758(.007) −1.152(.004)
+
+ZIE-0
+−0.740(.001) −0.350(.001) −0.349(.001)
+−1.163(.004)
+−1.170(.004)
+−0.706(.001) −0.348(.001) −0.348(.001)
+−1.207(.004)
+−1.214(.004)
+−0.669(.001) −0.348(.001) −0.349(.001)
+−1.265(.005)
+−1.267(.005)
+
+ZIE-cov
+
+K
+
+32
+
+64
+
+128
+
+EFE
+
+EFE-dz
+
+ZIE-0
+
+ZIE-cov
+
+all −0.014(.000) −0.024(.000) −0.009(.000) −0.007(.000)
+pos −4.719(.024) −2.169(.012) −2.195(.012) −1.060(.004)
+all −0.014(.000) −0.022(.000) −0.009(.000) −0.008(.000)
+pos −4.581(.023) −2.030(.011) −2.190(.012) −1.127(.005)
+all −0.015(.000) −0.023(.000) −0.009(.000) −0.008(.000)
+pos −4.746(.023) −2.041(.011) −2.290(.012) −1.295(.005)
+
+ing status, to describe each user.
+
+The embedding model ﬁts the count of one item given
+counts of other items in the same shopping trip. All
+embedding models use Poisson distribution as the con-
+ditional distribution and log softplus(·) as the link func-
+tion. The covariates of each item-context pair are the co-
+variates of the customer making the shopping trip. This
+dataset is randomly split into a training set and a test set by
+2:1. The number K of embedding dimensions ranges over
+{16, 32, 64}.
+
+Performance comparison: On this dataset, we compare
+the performances by the predictive log-likelihood on the
+test set. Table 5 shows the predictive log-likelihood of dif-
+ferent models. ZIE-cov gives the largest values of predic-
+tive log-likelihood of both type. The exposure covariates of
+this dataset is informative, so the improvement of ZIE-cov
+is signiﬁcant.
+
+3.4. Word embedding
+
+In this subsection, we test word embedding with Wikipedia
+documents. We take the ﬁrst million documents of the
+Wikipedia corpus prepared by Reese et al. (2010). The
+words in these documents have been tagged by FreeLing
+with part-of-speech (POS) tags. We keep the top 10,000
+frequent words as our vocabulary and remove all words not
+in the vocabulary. The covariates of each word is from
+the POS tag of the preceding word no matter the word is
+removed or not. The original FreeLing POS tags has 64
+types, and we combine them into 11 larger types, such as
+noun, verb, and adverb. The covariates are indicators of
+these 11 types. The subset is further split into a training set
+and a test set by 2:1.
+
+On this dataset, we test embedding models with Bernoulli
+distribution (ZIE) and our relaxed multinomial distribution
+( ZIE-m). ZIE-cov and ZIE-m-cov use the tag type as the
+exposure covariates. For Bernoulli distributions, zero en-
+tries are downweighted by weight 0.0005 (the target word
+versus 5 negative words). For multinomial distribution, we
+randomly sample 5 words as the set r for each word-context
+pair. We use a context window size of 1, so the context of
+a word position is the two words before and after the po-
+sition. Note that word2vec with CBOW and NEG training
+
+Figure 2. Exposure probability versus rating frequency. Movies
+with high rating frequency and movies with low ratings tend to
+get high exposure probability.
+
+ZIE-0 and ZIE-cov, but it is much less capable to predict
+which entries are zero. ZIE-cov slightly improves over
+ZIE-0 in predictive log-likelihood of both types.
+
+Exposure probability versus rating frequency: We in-
+vestigate the exposure probability learned without covari-
+ates. We plot the exposure probability of movie versus its
+frequency of ratings in Fig.2. Each dot represents a movie,
+its position indicating its exposure probability and rating
+frequency, and its color being the average of its positive
+ratings. The exposure probability is from the vector u.
+
+This ﬁgure shows that the exposure probability generally
+correlates with the popularity of the movie. However, some
+movies with low rating frequency are given high exposure
+probabilities. These movies have low ratings, which can
+and should be explained by the embedding component. For
+example, the movie “Money Train”, whose average rat-
+ing is at the percentage of 0.08 among all movies, has the
+largest ratio of exposure probability over rating frequency.
+The movies with high rating frequency get high exposure
+probabilities no matter their average rating is high or not.
+
+3.3. Product embedding from market baskets
+
+In this experiment, we embed products in grocery stores
+into the vector space. The Market dataset (Bronnenberg
+et al., 2008) consists of purchase records of anonymous
+households in grocery stores. Each record is for a sin-
+gle shopping trip and contains the costumer ID, respective
+counts of items purchased, and other information. From
+the dataset, we take 20 related covariates, such as income
+range, working hours, age group, marital status, and smok-
+
+0.0000.0020.0040.0060.008Rating frequency0.00.20.40.60.81.0Exposure probabilityExposure probability versus rating frequency of movies123Zero-Inﬂated Exponential Family Embeddings
+
+Table 6. Predictive log-likelihood per document.
+
+EFE
+
+ZIE-0
+
+K
+32 −50.1(0.5) −48.0(0.5) −43.5(0.4)
+64 −51.1(0.6) −47.2(0.4) −43.1(0.4)
+128 −58.5(2.1) −50.0(0.5) −45.5(0.4)
+
+ZIE-cov
+
+Table 7. Performance of different models on word similarity tasks.
+ZIE-cov
+0.592
+0.543
+0.276
+
+ZIE-m-cov GloVe
+0.737
+0.522
+0.371
+
+ZIE-m-0
+0.608
+0.557
+0.268
+
+EFE
+0.610
+0.537
+0.290
+
+ZIE-0
+0.616
+0.533
+0.281
+
+MEN
+WS353
+SIMLEX999
+
+0.611
+0.562
+0.264
+
+Table 8. Nearest words ﬁnd by three embedding models.
+
+battle
+combat (0.75)
+defeat (0.73)
+invasion (0.73)
+ﬁre (0.62)
+battles (0.62)
+assault (0.61)
+battles (0.61)
+assault (0.60)
+attack (0.59)
+
+philosophy
+sociology (0.81)
+theology (0.79)
+tradition (0.77)
+religion (0.69)
+society (0.68)
+theology (0.67)
+principles (0.69)
+religion (0.68)
+theology (0.67)
+
+novel
+book (0.85)
+novels (0.80)
+poem (0.79)
+story (0.72)
+book (0.71)
+novels (0.70)
+novels (0.76)
+story (0.74)
+fantasy (0.71)
+
+class
+division (0.67)
+k (0.66)
+ﬁeld (0.63)
+division (0.56)
+family (0.55)
+classes (0.54)
+classes (0.56)
+rank (0.54)
+grade (0.53)
+
+english
+welsh (0.88)
+french (0.87)
+spanish (0.86)
+french (0.85)
+swedish (0.81)
+irish (0.79)
+french (0.84)
+spanish (0.83)
+swedish (0.75)
+
+bible
+hebrew (0.75)
+study (0.73)
+biblical (0.73)
+poetry (0.63)
+hebrew (0.61)
+dictionary (0.60)
+biblical (0.64)
+hebrew (0.63)
+texts (0.61)
+
+EFE
+
+ZIE-0
+
+ZIE-cov
+
+(Mikolov et al., 2013b) is generally the same as EFE when
+it takes some settings related to implementation details.
+
+Performance comparison:
+
+Tab. 6 shows the average predictive log-likelihood per doc-
+ument on the test set by Bernoulli embedding models.
+The embedding model gets the best predictive performance
+when it uses POS tags to ﬁt the exposure probability.
+
+We also compare all models on three benchmark datasets
+of word similarities, MEN (Baroni et al., 2014), WS353
+(Finkelstein et al., 2002), and SIMLEX999 (Hill et al.,
+2014), and show the results in Table 7, with each entry be-
+ing Spearman’s correlation of embedding similarities and
+human-rated similarities. The code is from the repository 2
+constructed by Jastrzebski et al. (2017). The last column as
+a reference shows the performance of GloVe (Pennington
+et al., 2014) word vectors with dimension 300 trained on
+6 billion documents. The results on the three tasks shows
+that ZIE models perform slightly better than the baseline
+model.
+
+Word relation learned with exposure explanation: To
+better understand how the exposure model affects the em-
+bedded vectors of words, we check cosine similarities of
+word vectors α learned by different models. Table 8 shows
+examples of similar words discovered by Bernoulli embed-
+ding models.
+
+We have two interesting observations. First, word embed-
+ding with zero-inﬂation often gives lower similarity scores
+than the one without. This means the embedded word vec-
+tors of ZIE models are more spread out in the space. Sec-
+ond, the distance between a noun word and its plural form
+often have shorter distance with the vectors learned by ZIE-
+
+2https://github.com/kudkudak/word-embeddings-benchmarks
+
+cov. The difference of a word and its plural form are more
+in grammar than semantics. The POS tags can partially
+explain the grammatical difference. For example, numbers
+(tagged as number) often go before a plural instead of a sin-
+gular word. In such cases, the singular word as a negative
+example will be downweighted, and thus the embedding
+component is more likely to treat the singular word and its
+plural as similar words.
+
+4. Summary
+
+In this work, we have proposed zero-inﬂated exponential
+family embedding. With the exposure indicator explaining
+unrelated zero observations, the real embedding component
+is able to focus more on observations from item interac-
+tions, so the embedded vectors can better represent items in
+terms of item relations. We have investigated ZIE for two
+types of embedding models:
+the observation being from
+one and multiple items. We have also developed the infer-
+ence algorithms for different embedding models with zero
+inﬂation. Experiment results indicate that ZIE improves
+the predictive log-likelihood of the data. Qualitative anal-
+ysis shows that the embedded vectors from the ZIE model
+have better quality than the vectors learned with the basic
+embedding model.
+
+Acknowledgements
+
+This work is supported by NSF IIS-1247664, ONR
+N00014-11-1-0651, DARPA PPAML FA8750-14-2-0009,
+DARPA SIMPLEX N66001-15-C-4032, and the Alfred
+P. Sloan Foundation. Thank all reviewers of the paper
+for their feedback. Thank Francisco J. R. Ruiz, Maja R.
+Rudolph, Kriste Krstovski, and Aonan Zhang for helpful
+comments and discussion.
+
+Zero-Inﬂated Exponential Family Embeddings
+
+References
+
+Baroni, M., Dinu, G., and Kruszewski, G. Don’t count, pre-
+dict! A systematic comparison of context-counting vs.
+context-predicting semantic vectors. In Proceedings of
+the 52nd Annual Meeting of the Association for Compu-
+tational Linguistics, pp. 238–247. Association for Com-
+putational Linguistics, 2014.
+
+Bengio, Y., Ducharme, R., Vincent, P., and Janvin, C. A
+neural probabilistic language model. Journal of Machine
+Learning Research, 3:1137–1155, March 2003.
+
+Bronnenberg, B. J., Kruger, M. W., and Mela, C. F.
+Database paper—the IRI marketing data set. Marketing
+Science, 27(4):745–748, 2008.
+
+Duchi, J., Hazan, E., and Singer, Y. Adaptive subgradient
+methods for online learning and stochastic optimization.
+Journal of Machine Learning Research, 12:21212159,
+July 2011.
+
+Finkelstein, L., Gabrilovich, E., Matias, Y., Rivlin, E.,
+Solan, Z., Wolfman, G., and Ruppin, E. Placing search
+in context: the concept revisited. ACM Transactions on
+Information Systems, 20(1):116–131, 2002.
+
+Harper, F. M. and Konstan, J. A. The MovieLens datasets:
+history and context. ACM Transactions on Interactive
+Intelligent Systems (TiiS), 5(4):19:1–19:19, 2015.
+
+Harris, Z. Distributional structure. Word, 10(23):146–162,
+
+1954.
+
+Hill, F., Reichart, R., and Korhonen, A. SimLex-999: eval-
+uating semantic models with (genuine) similarity estima-
+tion. arXiv preprint arXiv:1408.3456 [cs.CL], 2014.
+
+Hoffman, M. D., Blei, D. M., Wang, C., and Paisley, J.
+Journal of Machine
+
+Stochastic variational inference.
+Learning Research, 14(1):1303–1347, 2013.
+
+Hu, Y., Koren, Y., and Volinsky, C. Collaborative ﬁltering
+for implicit feedback datasets. In The 8th IEEE Interna-
+tional Conference on Data Mining, pp. 263–272, 2008.
+
+Jastrzebski, S., Le´sniak, D., and Czarnecki, W. M. How
+to evaluate word embeddings? On importance of data
+efﬁciency and simple supervised tasks. arXiv preprint
+arXiv:1702.02170 [cs.CL], 2017.
+
+Lambert, D. Zero-inﬂated poisson regression, with an ap-
+plication to defects in manufacturing. Technometrics, 34
+(1):1–14, 1992.
+
+Liang, D., Charlin, L., McInerney, J., and Blei, D. M. Mod-
+In Proceed-
+eling user exposure in recommendation.
+ings of the 25th International Conference on World Wide
+Web, pp. 951–961, 2016.
+
+Mikolov, T., Chen, K., Corrado, G., and Dean, J. Efﬁcient
+estimation of word representations in vector space. arXiv
+preprint arXiv:1301.3781[cs.CL], 2013a.
+
+Mikolov, T., Sutskever, I., Chen, K., Corrado, G., and
+Dean, J. Distributed representations of words and
+phrases and their compositionality. In Burges, C. J. C.,
+Bottou, L., Welling, M., Ghahramani, Z., and Wein-
+berger, K. Q. (eds.), Advances in Neural Information
+Processing Systems 26, pp. 3111–3119. Curran Asso-
+ciates, Inc., 2013b.
+
+Mitchell, T. J. and Beauchamp, J. J. Bayesian variable se-
+lection in linear regression. Journal of the American Sta-
+tistical Association, 83(404):1023–1032, 1988.
+
+Mnih, A. and Hinton, G. T. Three new graphical models
+for statistical language modelling. In Proceedings of the
+24th International Conference on Machine Learning, pp.
+641–648, 2007.
+
+Munson, M. A., Webb, K., Sheldon, D., Fink, D.,
+Hochachka, W. M., Iliff, M., Riedewald, M., Sorokina,
+D., Sullivan, B., Wood, C., and Kelling, S. The eBird
+reference dataset, version 2014, 2015.
+
+Pennington, J., Socher, R., and Manning, C. D. GloVe:
+In Empirical
+global vectors for word representation.
+Methods in Natural Language Processing (EMNLP), pp.
+1532–1543, 2014.
+
+Reese, S., Boleda, G., Cuadros, M., Padr´o, L., and Rigau,
+G. Wikicorpus: A word-sense disambiguated multilin-
+gual wikipedia corpus. In Proceedings of the 7th Lan-
+guage Resources and Evaluation Conference, pp. 1418–
+1421, 2010.
+
+Rendle, S., Freudenthaler, C., Gantner, Z., and Schmidt-
+Thieme, L. BPR: Bayesian personalized ranking from
+In Proceedings of the Twenty-Fifth
+implicit feedback.
+Conference on Uncertainty in Artiﬁcial Intelligence, pp.
+452–461, 2009.
+
+Rudolph, M., Ruiz, F., Mandt, S., and Blei, D. M. Expo-
+nential family embeddings.
+In Lee, D. D., Sugiyama,
+M., Luxburg, U. V., Guyon, I., and Garnett, R. (eds.),
+Advances in Neural Information Processing Systems 29,
+pp. 478–486. Curran Associates, Inc., 2016.
+
+Rumelhart, D. E., Hinton, G. E., and Williams, R. J. Learn-
+ing representations by back-propagating errors. In An-
+derson, J. A. and Rosenfeld, E. (eds.), Neurocomputing:
+Foundations of Research, pp. 696–699. MIT Press, Cam-
+bridge, MA, USA, 1988.
+
+

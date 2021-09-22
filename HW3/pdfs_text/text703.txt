@@ -1,0 +1,1001 @@
+Learning Hierarchical Features from Deep Generative Models
+
+Shengjia Zhao 1 Jiaming Song 1 Stefano Ermon 1
+
+Abstract
+
+Deep neural networks have been shown to be
+very successful at learning feature hierarchies in
+supervised learning tasks. Generative models, on
+the other hand, have beneﬁted less from hierar-
+chical models with multiple layers of latent vari-
+ables. In this paper, we prove that hierarchical
+latent variable models do not take advantage of
+the hierarchical structure when trained with some
+existing variational methods, and provide some
+limitations on the kind of features existing mod-
+els can learn. Finally we propose an alternative
+architecture that does not suffer from these lim-
+itations. Our model is able to learn highly in-
+terpretable and disentangled hierarchical features
+on several natural image datasets with no task-
+speciﬁc regularization.
+
+1. Introduction
+
+A key property of deep feed-forward networks is that they
+tend to learn learn increasingly abstract and invariant repre-
+sentations at higher levels in the hierarchy (Bengio, 2009;
+Zeiler & Fergus, 2014) In the context of image data, low
+levels may learn features corresponding to edges or basic
+shapes, while higher levels learn more abstract features,
+such as object detectors (Zeiler & Fergus, 2014).
+
+Generative models with a hierarchical structure, where
+there are multiple layers of latent variables, have been
+less successful compared to their supervised counter-
+parts (Sønderby et al., 2016).
+In fact, the most success-
+ful generative models often use only a single layer of la-
+tent variables (Radford et al., 2015; van den Oord et al.,
+2016), and those that use multiple layers only show modest
+performance increases in quantitative metrics such as log-
+likelihood (Sønderby et al., 2016; Bachman, 2016). Be-
+cause of the difﬁculties in evaluating generative models
+
+1Stanford University.
+
+Correspondence to:
+
+Zhao
+<tsong@stanford.edu>.
+
+<zhaosj12@stanford.edu>,
+
+Jiaming
+
+Shengjia
+Song
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Figure 1. Left: Body parts feature detectors only carry a small
+amount of information about an underlying image, yet, it is sufﬁ-
+cient for a conﬁdent classiﬁcation as a face. Right: if a hierarchi-
+cal generative model attempts to reconstruct an image based on
+these high-level features, it could generate inconsistent images,
+even when each part can be perfectly generated. Even though this
+”face” is clearly absurd, Google cloud platform classiﬁcation API
+can identify with 93% conﬁdence that this is a face.
+
+(Theis et al., 2015), and the fact that adding network layers
+increases the number of parameters, it is not always clear
+whether the improvements truly come from the choice of
+a hierarchical architecture. Furthermore, the capability of
+learning a hierarchy of increasingly complex and abstract
+features has only been demonstrated to a limited extent,
+with feature hierarchies that are not nearly as rich as the
+ones learned by feed-forward networks (Gulrajani et al.,
+2016).
+
+Part of the problem is inherent and unavoidable for any
+generative model. The heart of the matter is that while
+highly invariant and local features are often sufﬁcient for
+classiﬁcation, generative modeling requires preservation of
+details (as illustrated in Figure 1). In fact, most latent fea-
+tures in a generative model of images cannot even demon-
+strate scale and translation invariance. The size and loca-
+tion of a sub-part often has to be dependent on the other
+sub-parts. For example, an eye should only be generated
+with the same size as the other eye, at symmetric locations
+with respect to the center of the face, with appropriate dis-
+tance between them. The inductive biases that are directly
+encoded into the architecture of convolutional networks is
+
+insufficient for generationsufficient for classificationLearning Hierarchical Features from Deep Generative Models
+
+not sufﬁcient in the context of generative models.
+
+On the other hand, other problems are associated with spe-
+ciﬁc models or design choices, and may be avoided with
+alternative training criteria and architectures. The goal of
+this paper is to provide a deeper understanding of the de-
+sign and performance of common hierarchical latent vari-
+able models. We focus on variational models, though it
+should be possible to generalize most of the conclusions
+to adversarially trained models that support inference (Du-
+moulin et al., 2016; Donahue et al., 2016). In particular, we
+study two classes of models with a hierarchical structure:
+
+1) Stacked hierarchy: The ﬁrst type we study is charac-
+terized by recursively stacking generative models on top
+of each other. Most existing models (Sønderby et al.,
+2016; Gulrajani et al., 2016; Bachman, 2016; Kingma et al.,
+2016), belong to this class. We show that these models have
+two limitations. First, we show that if these models can
+be trained to optimality, then the bottom layer alone con-
+tains enough information to reconstruct the data distribu-
+tion, and the layers above the ﬁrst one can be ignored. This
+result holds under fairly general conditions, and does not
+depend on the speciﬁc family of distributions used to de-
+ﬁne the hierarchy (e.g., Gaussian). Second, we argue that
+many of the building blocks commonly used to construct
+hierarchical generative models are unlikely to help us learn
+disentangled features.
+
+2) Architectural hierarchy: Motivated by these limita-
+tions, we turn our attention to single layer latent variable
+models. We propose an alternative way to learn disentan-
+gled hierarchical features by crafting a network architec-
+ture that prefers to place high-level features on certain parts
+of the latent code, and low-level features in others. We
+show that this approach, called Variational Ladder Au-
+toencoder, allows us to learn very rich feature hierarchies
+on natural image datasets such as MNIST, SVHN (Netzer
+et al., 2011) and CelebA (Liu et al., 2015); in contrast,
+generative models with a stacked hierarchical structure fail
+to learn such features.
+
+2. Problem Setting
+
+We consider a family of latent variable models speciﬁed
+by a joint probability distribution pθ(x, z) over a set of
+observed variables x and latent variables z. The fam-
+ily of models is assumed to be parametrized by θ. Let
+pθ(x) denote the marginal distribution of x. We wish to
+maximize the marginal log-likelihood p(x) over a dataset
+X = {x(1), . . . , x(N )} drawn from some unknown un-
+derlying distribution pdata(x). Formally we would like to
+maximize
+
+log pθ(X) =
+
+log pθ(x(i))
+
+(1)
+
+N
+(cid:88)
+
+n=1
+
+which is non-convex and often intractable for complex gen-
+erative models, as it involves marginalization over the la-
+tent variables z.
+
+We are especially interested in unsupervised feature learn-
+ing applications, where by maximizing (1) we hope to dis-
+cover a meaningful representation for the data x in terms
+of latent features given by pθ(z|x).
+
+2.1. Variational Autoencoders
+
+A popular solution (Kingma & Welling, 2013; Jimenez
+Rezende et al., 2014)
+for optimizing the intractable
+marginal likelihood (1) is to optimize the evidence lower
+bound (ELBO) by introducing an inference model qφ(z|x)
+parametrized by φ 1:
+
+log p(x) ≥ Eq(z|x)[log p(x, z) − log q(z|x)]
+
+= Eq(z|x)[log p(x|z)] − KL(q(z|x)(cid:107)p(z))
+= L(x; θ, φ)
+
+(2)
+
+where KL is the Kullback-Leibler divergence.
+
+2.2. Hierarchical Variational Autoencoders
+
+A hierarchical VAE (HVAE) can be thought of as a series
+of VAEs stacked on top of each other. It has the following
+hierarchy of latent variables z = {z1, . . . , zL}, in addition
+to the observed variables x. We use the conventional nota-
+tion where z1 represents the lowest layer (closest to x) and
+zL the top layer. Using chain rule, the joint distribution
+p(x, z1, . . . , zL) can be factored as follows
+
+L−1
+(cid:89)
+
+(cid:96)=1
+
+p(x, z1, . . . , zL) = p(x|z>0)
+
+p(z(cid:96)|z>(cid:96))p(zL)
+
+(3)
+
+where z>(cid:96) indicates (z(cid:96)+1, · · · , zL), and z>0 = z =
+(z1, . . . , zL). Note that this factorization via chain-rule is
+fully general. In particular it accounts for recent models
+that use shortcut connections (Kingma et al., 2016; Bach-
+man, 2016), where each hidden layer z(cid:96) directly depends
+on all layers above it (z>(cid:96)). We shall refer to this fully
+general formulation as autoregressive HVAE.
+
+Several models assume a Markov independence structure
+on the hidden variables,
+leading to the following sim-
+pler factorization (Jimenez Rezende et al., 2014; Gulrajani
+et al., 2016; Kaae Sønderby et al., 2016)
+
+p(x, z) = p(x|z(cid:96))
+
+p(z(cid:96)|z(cid:96)+1)p(zL)
+
+(4)
+
+L−1
+(cid:89)
+
+l=1
+
+1We omit the dependency on θ and φ for the remainder of the
+
+paper.
+
+Learning Hierarchical Features from Deep Generative Models
+
+We refer to this common but more restrictive formulation
+as Markov HVAE.
+
+For the inference distribution q(z|x) we do not assume
+any factorized structure to account for complex infer-
+ence techniques used in recent work (Kaae Sønderby
+et al., 2016; Bachman, 2016). We also denote q(x, z) =
+pdata(x)q(z|x).
+
+Both p(x|z) and q(z|x) are jointly optimized, as before in
+Equation (2), to maximize the ELBO objective
+
+LELBO = Epdata(x)Eq(z|x)[log p(x|z)]−
+
+Epdata(x)[KL(q(z|x)||p(z))]
+
+=
+
+Eq(z,x)[log p(zl|z>l)] + H(q(z|x))
+
+(5)
+
+This also implies that ∀x
+
+L
+(cid:88)
+
+l=0
+
+where we deﬁne z0 ≡ x, zL+1 ≡ 0, H denotes the entropy
+of a distribution, and the expectation over pdata(x) is esti-
+mated by the samples in the training dataset. This can be
+interpreted as stacking VAEs on top of each other.
+
+3. Limitations of Hierarchical VAEs
+
+3.1. Representational Efﬁciency
+
+One of the main reasons deep hierarchical networks are
+widely used as function approximators is their represen-
+tational power. It is well known that certain functions can
+be represented much more compactly with deep networks,
+requiring exponentially less parameters compared to shal-
+low networks (Bengio et al., 2009). However, we show
+that under ideal optimization of LELBO, HVAE models do
+not lead to improved representational power. This is be-
+cause for a well trained HVAE, a Gibbs chain on the bottom
+layer, which is a single layer model, can be used to recover
+pdata(x) exactly.
+
+We ﬁrst show this formally for Markov HVAE with the fol-
+lowing proposition
+
+Proposition 1. LELBO in Eq.(5) is globally maximized
+as a function of q(z|x) and p(x|z) when LELBO =
+−H(pdata(x)).
+If LELBO is globally maximized for a
+Markov HVAE, the following Gibbs sampling chain con-
+verges to pdata(x) if it is ergodic
+
+Proof of Proposition 1. We notice that
+
+LELBO = Epdata(x)q(z|x)
+
+log
+
+(cid:20)
+
+(cid:20)
+
+(cid:21)
+
+p(x, z)
+q(z|x)
+(cid:21)
+
+p(z|x)
+q(z|x)
+
+= Epdata(x)q(z|x)
+
+log
+
++ Epdata(x)[log p(x)]
+
+= −Epdata(x)[KL(q(z|x)||p(z|x))]
+
+− KL(pdata(x)||p(x)) − H(pdata(x))
+
+By non-negativity of KL-divergence, and the fact that KL
+divergence is zero if an only if the two distributions are
+identical, it can be seen that this is uniquely optimized
+when p(x) = (cid:82)
+z p(x, z)dz = pdata(x) and ∀x, q(z|x) =
+p(z|x) and the optimum is
+
+L∗
+
+ELBO = −H(pdata(x))
+
+q(x|z1) =
+
+q(z1|x)pdata(x)
+q(z1)
+
+= p(x|z1)
+
+(7)
+
+Because the following Gibbs chain converges to pdata(x)
+when it is ergodic
+
+z(t)
+1 ∼ q(z1|x(t))
+x(t+1) ∼ q(x|z(t)
+1 )
+1 ) with p(x|z(t)
+
+We can replace q(x|z(t)
+chain still converges to pdata(x).
+
+1 ) using (7) and the
+
+Therefore under the assumptions of Proposition 1 we
+can sample from pdata(x) without using the latent code
+(z2, · · · , zL) at all. Hence, optimization of the LELBO
+objective and efﬁcient representation are conﬂicting, in the
+sense that optimality implies some level of redundancy in
+the representation.
+
+We demonstrate that this phenomenon occurs in practice,
+even though the conditions of Proposition 1 might not be
+met exactly (e.g., the objective is not globally optimized).
+We train a factorized three layer VAE in Equation (4) on
+MNIST by optimizing the ELBO criteria from Equation
+(5). We use a model where each conditional distribution is a
+factorized Gaussian p(z(cid:96)|z(cid:96)+1) = N (µ(cid:96)(z(cid:96)+1), σ(cid:96)(z(cid:96)+1))
+where µ(cid:96) and σ(cid:96) are deep neural networks. We compare:
+the samples generated by the Gibbs chain in Equation (6)
+with samples generated by ancestral sampling with the en-
+tire model in Figure 2. We observe that the Gibbs chain
+generates samples (left panel) with similar visual quality
+as ancestral sampling with the entire model (right panel),
+even though the Gibbs chain only used the bottom layer of
+the model.
+
+z(t)
+1 ∼ q(z1|x(t))
+x(t+1) ∼ p(x|z(t)
+1 )
+
+This problem can be generalized to autoregressive HVAEs.
+One can sample from pdata(x) without using p(z(cid:96)|z>(cid:96)) for
+1 ≤ (cid:96) < L, at all. We prove this in the Appendix.
+
+(6)
+
+Learning Hierarchical Features from Deep Generative Models
+
+3.2. Feature learning
+
+Another signiﬁcant advantage of hierarchical models for
+supervised learning is that they learn rich and disentangled
+hierarchies of features. This has been demonstrated for ex-
+ample using various visualization techniques (Zeiler & Fer-
+gus, 2014). However, we show in this section that typical
+HVAEs do not enjoy this property.
+
+Recall that we think of p(z|x) as a (probabilistic) fea-
+ture detector, and q(z|x) as an approximation to p(z|x).
+It might therefore be natural to think that q might learn
+hierarchical features similarly to a feed-forward network
+x → z(cid:96) → · · · → zL, where higher layers correspond
+to higher level features that become increasingly abstract
+and invariant to nuisance variations. However, if q(z>(cid:96)|z(cid:96))
+maps low level features to high level features, then the re-
+verse mapping q(z(cid:96)|z>(cid:96)) maps high level features to likely
+low level sub-features. For example, if zL correspond to
+object classes, then q(zL−1|zL) could represent the distri-
+bution over object subparts given the object class.
+
+Suppose we train LELBO in Equation (5) to optimality, we
+would have
+
+p(x) = pdata(x), q(z|x) = p(z|x)
+
+Recall that
+
+q(x, z) := pdata(x)q(z|x)
+p(x, z) := p(z)p(x|z) = p(x)p(z|x)
+
+Comparing the two we see that
+
+p(x, z) = q(x, z)
+
+if the joint distributions are identical, then any conditional
+distribution would also be identical, which implies that for
+any z>(cid:96), q(z(cid:96)|z>(cid:96)) = p(z(cid:96)|z>(cid:96)).
+
+For the majority of models the conditional distributions
+p(z(cid:96)|z>(cid:96)) belong to a very simple distribution family such
+as parameterized Gaussians (Kingma & Welling, 2013)
+(Jimenez Rezende et al., 2014) (Kaae Sønderby et al.,
+2016) (Kingma et al., 2016). Therefore for a perfectly
+optimized LELBO in the Gaussian case, the only type of
+feature hierarchy we can hope to learn is one under which
+q(z(cid:96)|z>(cid:96)) is also Gaussian. This limits the hierarchical rep-
+resentation we can learn. In fact, the hierarchies we observe
+for feed-forward models (Zeiler & Fergus, 2014) require
+complex multimodal distributions to be captured. For ex-
+ample, the distribution over object subparts for an object
+category is unlikely to be unimodal and cannot be well ap-
+proximated with a Gaussian distribution.
+
+More generally, as shown in (Zhao et al., 2017), even when
+LELBO is not globally optimized, optimizing LELBO
+encourages q(z(cid:96)|z>(cid:96)) and p(z(cid:96)|z>(cid:96)) to match.
+Since
+
+p(z(cid:96)|z>(cid:96)) typically belongs to some parameterized distri-
+bution family such as Gaussians, this encourages q(z(cid:96)|z>(cid:96))
+to belong to that distribution family as well.
+
+We experimentally validate these intuitions in Figure 3,
+where we train a three layer Markov HVAE with factorized
+Gaussian conditionals p(z(cid:96)|z(cid:96)+1) on MNIST and SVHN.
+Details about the experimental setup are explained in the
+Appendix. As suggested in (Kingma & Welling, 2013), we
+reparameterize the stochasticity in p(z(cid:96)|z(cid:96)+1) using a sep-
+arate noise variable (cid:15)(cid:96) ∼ N (0, I), and implicitly rewrite
+the original conditional distribution as
+
+z(cid:96) = µ(cid:96)(z(cid:96)+1) + σ(cid:96)(z(cid:96)+1) (cid:12) (cid:15)(cid:96)
+
+where (cid:12) indicates element-wise product. We ﬁx the value
+of (cid:15)k to a random sample from N (0, I) at all layers k =
+1, · · · , (cid:96) − 1, (cid:96) + 1, · · · , L except for one, and observe the
+variations in x generated by randomly sampling (cid:15)(cid:96). We
+observe in Figure 3 that only very minor variations cor-
+respond to lower layers (Left and center panels), and al-
+most all the variation is represented by the top layer (Right
+panel). More importantly, no notable hierarchical relation-
+ship between features is observed.
+
+4. Variational Ladder Autoencoders
+
+Given the limitations of hierarchical architectures de-
+scribed in the previous section, we focus on an alternative
+approach to learn a hierarchy of disentangled features.
+
+Our approach is to deﬁne a simple distribution with no
+hierarchical structure over the latent variables p(z) =
+p(z1, · · · , zL). For example, the joint distribution p(z) can
+be a white Gaussian. Instead we encourage the latent code
+z1, · · · , zL to learn features with different levels of abstrac-
+tion by carefully choosing the mappings p(x|z) and q(z|x)
+between input x and latent code z. Our approach is based
+on the following intuition:
+
+Assumption: If zi is more abstract than zj, then the infer-
+ence mapping q(zi|x) and generative mapping when other
+layers (denoted as z¬i) are ﬁxed p(x|zi, z¬i = z0
+¬i) re-
+quires a more expressive network to be captured.
+
+This informal assumption suggests that we should use neu-
+ral networks of different level of expressiveness to generate
+the corresponding features; the more abstract features re-
+quire more expressive networks, and vice versa. We loosely
+quantify expressiveness with depth of the network. Based
+on these assumptions we are able to design an architecture
+that disentangles hierarchical features for many natural im-
+age datasets.
+
+Learning Hierarchical Features from Deep Generative Models
+
+Figure 2. Left: Samples obtained by running the Gibbs sampling chain in Proposition 1, using only the bottom layer of a 3-layer recursive
+hierarchical VAE. Right: samples generated by ancestral sampling from the same model. The quality of the samples is comparable,
+indicating that the bottom layer contains enough information to reconstruct the data distribution.
+
+Figure 3. A hierarchical three layer VAE with Gaussian conditional distributions p(zl|zl+1) does not learn a meaningful feature hierarchy
+on MNIST and SVHN when trained with the ELBO objective. Left panel: Samples generated by sampling noise (cid:15)1 at the bottom layer,
+while holding (cid:15)2 and (cid:15)3 constant. Center panel: Samples generated by sampling noise (cid:15)2 at the middle layer, while holding (cid:15)1 and (cid:15)3
+constant. Right panel: Samples generated by sampling noise (cid:15)3 at the top layer, while holding (cid:15)1 and (cid:15)2 constant. For both MNIST
+and SVHN we observe that the top layer represents essentially all the variation in the data (right panel), leaving only very minor local
+variations for the lower layers (left and center panels). Compare this with the rich hierarchy learned by our VLAE model, shown in
+Figures 5 and 6.
+
+4.1. Model Deﬁnition
+
+p(x|z1, z2, . . . , zL) is deﬁned implicitly as:
+
+We decompose the latent code into subparts z =
+{z1, z2, . . .}, where z1 is related to x via a shallow net-
+work, and increase the depth of the network depth up to
+level L, so that zL is related to x via a deep network. In
+particular, we share parameters with a ladder-like architec-
+ture (Valpola, 2015; Pezeshki et al., 2015). Because of this
+similarity we denote this architecture as Variational Lad-
+der Autoencoder (VLAE). Formally, our model, shown in
+Figure 4 is deﬁned as follows
+
+1) Generative Network: p(z) = p(z1, · · · , zL) is a
+simple prior on all latent variables. We choose it as a
+standard Gaussian N (0, I). The conditional distribution
+
+˜zL = fL(zL)
+˜z(cid:96) = f(cid:96)(˜z(cid:96)+1, z(cid:96)) (cid:96) = 1, · · · , L − 1
+x ∼ r(x; f0(˜z1))
+
+(8)
+(9)
+(10)
+
+where f(cid:96) is parametrized as a neural network, and ˜z(cid:96) is an
+auxiliary variable we use to simplify the notation. r is a
+distribution family parameterized by f0(˜z1). In our experi-
+ments we use the following choice for f(cid:96):
+
+˜z(cid:96) = u(cid:96)([˜z(cid:96)+1; v(cid:96)(z(cid:96))])
+
+(11)
+
+where [·; ·] denotes concatenation of two vectors, and
+v(cid:96), u(cid:96) are neural networks. We choose r as a ﬁxed vari-
+ance factored Gaussian with mean given by µr = f0(˜z1).
+
+Learning Hierarchical Features from Deep Generative Models
+
+subparts of the latent code. Meanwhile, because it is essen-
+tially a single-layer ﬂat model, our VLAE does not exhibit
+the problems we have identiﬁed with traditional hierarchi-
+cal VAE described in Section 3.
+
+Ladder Variational Autoencoders (LVAE) on the other
+hand, utilize the ladder architecture from the infer-
+ence/encoding side;
+its generative model is a standard
+HVAE. While the ladder inference network performs better
+than the one used in the original HVAE, ladder variational
+autoencoders still suffer from the problems we discussed
+in Section 3. The difference is between our model (VLAE)
+and LVAE is illustrated in Figure 4
+
+An additional advantage over ladder variational autoen-
+coders (and more generally HVAEs) is that our deﬁnition
+of the generative network Equ.(10) allows us to select a
+much richer family of generative models p. Because for
+HVAE the LELBO optimization requires the evaluation of
+log p(z(cid:96)|z(cid:96)+1) shown in Equ.(5), a reparameterized HVAE
+has to inject noise into the network in a way that corre-
+sponds to a conditional distribution with a tractable log-
+likelihood. For example, a HVAE can inject noise (cid:15)(cid:96) by
+
+z(cid:96) = µ(cid:96)(z(cid:96)+1) + σ(cid:96)(z(cid:96)+1) (cid:12) (cid:15)(cid:96)
+
+(15)
+
+only because this corresponds to Gaussian conditional dis-
+tributions p(zl|zl+1). In comparison, for VLAE we only
+require evaluation of log p(x|z1, · · · , zL), so except for the
+bottom layer r we can combine noise using arbitrary black
+box functions f(cid:96).
+
+5. Experiments
+
+We train VLAE over several datasets and visualize the se-
+mantic meaning of the latent code. 2 According to our as-
+sumptions, complex, high-level information will be learned
+by latent codes at higher layers, whereas simple, low-level
+features will be represented by lower layers.
+
+In Figure 5, we visualize generation results from MNIST,
+where the model is a 3-layer VLAE with 2 dimensional
+latent code (z) at each layer. The visualizations are gen-
+erated by systematically exploring the 2D latent code for
+one layer, while randomly sampling other layers. From
+the visualization, we see that the three layers encode stroke
+width, digit width and tilt and digit identity respectively.
+Remarkably, the semantic meaning of a particular latent
+code is stable with respect to the sampled latent codes from
+other layers. For example, in the second layer, the left side
+represents narrow digits whereas the right side represents
+wide digits. Sampling latent codes at other layers will con-
+trol the digit identity, but this will have no inﬂuence on
+
+2Code is available at https://github.com/ermongroup/Variational-
+
+Ladder-Autoencoder
+
+Figure 4. Inference and generative models for VLAE (left) and
+LVAE (right). Circles indicate stochastic nodes, and squares are
+deterministically computed nodes. Solid lines with arrows denote
+conditional probabilities; solid lines without arrows denote deter-
+ministic mappings; dash lines indicates regularization to match
+the prior p(z). Note that in VLAE, we do not attempt to regular-
+ize the distance between h and ˜z.
+
+2) Inference Network: For the inference network, we
+choose q(z|x) as
+
+h(cid:96) = g(cid:96)(h(cid:96)−1)
+z(cid:96) ∼ N (µ(cid:96)(h(cid:96)), σ(cid:96)(h(cid:96)))
+
+(12)
+(13)
+
+where (cid:96) = 1, · · · , L, g(cid:96), µ(cid:96), σ(cid:96) are neural networks, and
+h0 ≡ x.
+
+3) Learning: For learning we use the ELBO criterion as in
+Equation (2):
+
+L(x) = Eq(z|x)[log p(x|z)] − KL(q(z|x)(cid:107)p(z)) (14)
+
+where p(z) = N (0, I) denotes the prior for z. This is
+tractable if r has tractable log likelihood, i.e., when r is
+a Gaussian.
+
+This is essentially the inference and learning framework for
+a one-layer VAE; the hierarchy is only implicitly deﬁned by
+the network architecture, therefore we call this a ﬂat hier-
+archy model. Motivated by our earlier theoretical results,
+we do not use additional layers of latent variables.
+
+4.2. Comparison with Ladder Variational
+
+Autoencoders
+
+Our architecture resembles the ladder variational autoen-
+coder (LVAE) (Sønderby et al., 2016). However the two
+models are very different. The purpose of our architecture
+is to connect subparts of the latent code with networks of
+different expressive power (depth); the model is encour-
+aged to place high-level, complex features at the top, and
+low-level, simple features at the bottom, in order to reach
+lower reconstruction error with latent codes of the same
+capacity. Empirically, this allows the network to learn dis-
+entangled factors of variation, corresponding to different
+
+˜z2˜z1xh1h2z1z2xz1z2z2z1xh1h2xz2z1Learning Hierarchical Features from Deep Generative Models
+
+Figure 5. VLAE on MNIST. Generated digits obtained by systematically exploring the 2D latent code from one layer, and randomly
+sampling from other layers. Left panel: The ﬁrst (bottom) layer encodes stroke width, Center panel: the second layer encodes digit
+width and tilt, Right panel: the third layer encodes (mostly) digit identity. Note that the samples are not of state-of-the-art quality only
+because of the restricted 2-dimensional latent code used to enable visualization.
+
+Figure 6. VLAE on SVHN. Each sub-ﬁgure corresponds to images generated when ﬁxing latent code on all layers except for one,
+which we randomly sample from the prior distribution. From left to right the random sampled layer go from bottom layer to top layer.
+Left panel: The bottom layer represents color schemes; Center-left panel: the second layer represents shape variations of the same
+digit; Center-right panel: the third layer represents digit identity (interestingly these digits have similar style although having different
+identities); Right panel: the top layer represents the general structure of the image.
+
+Figure 7. VLAE on CelebA. Each sub-ﬁgure corresponds to images generated when ﬁxing latent code on all layers except for one,
+which we randomly sample from the prior distribution. From left to right the random sampled layer go from bottom layer to top layer.
+Left panel: The bottom layer represents ambient color; Center-left panel: the second bottom layer represents skin and hair color;
+Center-right panel: the second top layer represents face identity; Right panel: the top layer presents pose and general structure.
+
+Learning Hierarchical Features from Deep Generative Models
+
+the width. This is interesting given that width is actually
+correlated with the digit identity; for example, digit 1 is
+typically thin while digit 0 is mostly wide. Therefore, the
+model will generate more zeros than ones if the latent code
+at the second layer corresponds to a wide digit, as shown in
+the visualization.
+
+Next we evaluate VLAE on the Street View House Num-
+ber (SVHN, Netzer et al. (2011)) dataset, where it is sig-
+niﬁcantly more challenging to learn interpretable represen-
+tations since it is relatively noisy, containing certain digits
+which do not appear in the center. However, as is shown in
+Figure 6, our model is able to learn highly disentangled fea-
+tures through a 4-layer ladder, which includes color, digit
+shape, digit context, and general structure. These features
+are highly disentangled: since the latent code at the bottom
+layer controls color, modifying the code from other three
+layers while keeping the bottom layer ﬁxed will generate
+a set of images with the same general tone. Moreover, the
+latent code learned at the top layer is the most complex
+one, which captures rich variations lower layers cannot ac-
+curately represent.
+
+Finally, we display compelling results from another chal-
+lenging dataset, CelebA (Liu et al., 2015), which includes
+200,000 celebrity images. These images are highly varied
+in terms of environment and facial expressions. We visu-
+alize the generation results in Figure 7. As in the SVHN
+model, the latent code at the bottom layer learns the am-
+bient color of the environment while keeping the personal
+details intact. Controlling other latent codes will change
+the other details of the individual, such as skin color, hair
+color, identity, pose (azimuth); more complicated features
+are placed at higher levels of the hierarchy.
+
+6. Discussions
+
+Training hierarchical deep generative models is a very chal-
+lenging task, and there are two main successful families
+of methods. One family deﬁnes the “destruction” and re-
+construction of data using a pre-deﬁned process. Among
+them, LapGANs (Denton et al., 2015) deﬁne the process
+as repeatedly downsampling, and Diffusion Nets (Sohl-
+Dickstein et al., 2015) deﬁnes a forward Markov chain that
+converts a complex data distribution to a simple, tractable
+one. Without having to perform inference, this makes train-
+ing much easier, but it does not provide latent variables for
+other downstream tasks (unsupervised learning).
+
+Another line of work focuses on learning a hierarchy of
+latent variables by stacking single layer models on top of
+each other. Many models also use more ﬂexible inference
+techniques to improve performance (Sønderby et al., 2016;
+Dinh et al., 2014; Salimans et al., 2015; Rezende & Mo-
+hamed, 2015; Li et al., 2016; Kingma et al., 2016). How-
+
+ever we show that there are limitations to stacked VAEs.
+
+Our work distinguishes itself from prior work by explicitly
+discussing the purpose of learning such models: the advan-
+tage of learning a hierarchy is not in better representation
+efﬁciency, or better samples, but rather in the introduction
+of structure in the features, such as hierarchy or disentan-
+glement. This motivates our method, VLAE, which jus-
+tiﬁes our intuition that a reasonable network structure can
+be, by itself, highly effective at learning structured (disen-
+tangled) representations. Contrary to previous efforts on
+hierarchical models, we do not stack VAEs on top of each
+other, instead we use a “ﬂat” approach.
+
+Our experimental results resemble those obtained with In-
+foGAN (Chen et al., 2016); both frameworks learn disen-
+tangled representations from the data in an unsupervised
+manner. The InfoGAN objective, however, explicitly max-
+imizes the mutual information between the latent variables
+and the observation; whereas in VLAE, this is achieved
+through the reconstruction error objective which encour-
+ages the use of the latent code. Furthermore we are able
+to explicitly disentangle features with different level of ab-
+stractness.
+
+7. Conclusions
+
+In this paper, we discussed the potential practical value
+of learning a hierarchical generative model over a non-
+hierarchical one. We show that under some assumptions
+little can be gained in terms of representation efﬁciency or
+sample quality. We further show that traditional HVAE
+models have trouble learning structured features. Based
+on these insights, we consider an alternative to learning
+structured features by leveraging the expressive power of
+a neural network. Empirical results show that we can learn
+highly disentangled features.
+
+One limitation of VLAE is the inability to learn struc-
+tures other than hierarchical disentanglement. Future work
+should consider more principled ways of designing archi-
+tectures that allow for learning features with more complex
+structures.
+
+8. Acknowledgement
+
+This research was supported by Intel Corporation, NSF
+(#1649208, #1651565, #1522054) and Future of Life In-
+stitute (#2016-158687).
+
+References
+
+Bachman, Philip. An architecture for deep, hierarchical gener-
+ative models. In Advances In Neural Information Processing
+Systems, pp. 4826–4834, 2016.
+
+Bengio, Yoshua. Learning deep architectures for ai. Found.
+
+Learning Hierarchical Features from Deep Generative Models
+
+Trends Mach. Learn., 2(1):1–127, January 2009. ISSN 1935-
+8237. doi: 10.1561/2200000006. URL http://dx.doi.
+org/10.1561/2200000006.
+
+Pezeshki, Mohammad, Fan, Linxi, Brakel, Philemon, Courville,
+Aaron, and Bengio, Yoshua. Deconstructing the ladder net-
+work architecture. arXiv preprint arXiv:1511.06430, 2015.
+
+Bengio, Yoshua et al. Learning deep architectures for ai. Founda-
+tions and trends R(cid:13) in Machine Learning, 2(1):1–127, 2009.
+
+Chen, X., Duan, Y., Houthooft, R., Schulman, J., Sutskever, I.,
+and Abbeel, P. Infogan: Interpretable representation learning
+by information maximizing generative adversarial nets. In Ad-
+vances in Neural Information Processing Systems, pp. 2172–
+2180, 2016.
+
+Denton, E. L., Chintala, S., Fergus, R., et al. Deep generative
+image models using a laplacian pyramid of adversarial net-
+works. In Advances in neural information processing systems,
+pp. 1486–1494, 2015.
+
+Dinh, L., Krueger, D., and Bengio, Y. Nice: Non-linear indepen-
+dent components estimation. arXiv preprint arXiv:1410.8516,
+2014.
+
+Donahue, Jeff, Kr¨ahenb¨uhl, Philipp, and Darrell, Trevor. Adver-
+sarial feature learning. arXiv preprint arXiv:1605.09782, 2016.
+
+Dumoulin, Vincent, Belghazi,
+
+Ishmael, Poole, Ben, Lamb,
+Alex, Arjovsky, Martin, Mastropietro, Olivier, and Courville,
+arXiv preprint
+Aaron. Adversarially learned inference.
+arXiv:1606.00704, 2016.
+
+Gulrajani,
+
+Ishaan, Kumar, Kundan, Ahmed, Faruk, Taiga,
+Adrien Ali, Visin, Francesco, V´azquez, David, and Courville,
+Aaron C. Pixelvae: A latent variable model for natural images.
+CoRR, abs/1611.05013, 2016. URL http://arxiv.org/
+abs/1611.05013.
+
+Radford, Alec, Metz, Luke, and Chintala, Soumith. Unsupervised
+representation learning with deep convolutional generative ad-
+versarial networks. arXiv preprint arXiv:1511.06434, 2015.
+
+Rezende, D. J. and Mohamed, S. Variational inference with nor-
+
+malizing ﬂows. arXiv preprint arXiv:1505.05770, 2015.
+
+Salimans, T., Kingma, D. P., Welling, M., et al. Markov chain
+monte carlo and variational inference: Bridging the gap. In In-
+ternational Conference on Machine Learning, pp. 1218–1226,
+2015.
+
+Sohl-Dickstein, J., Weiss, E. A., Maheswaranathan, N., and Gan-
+guli, S. Deep unsupervised learning using nonequilibrium ther-
+modynamics. arXiv preprint arXiv:1503.03585, 2015.
+
+Sønderby, C. K., Raiko, T., Maaløe, L., Sønderby, S. K., and
+Winther, O. Ladder variational autoencoders. In Advances In
+Neural Information Processing Systems, pp. 3738–3746, 2016.
+
+Theis, Lucas, Oord, A¨aron van den, and Bethge, Matthias. A
+note on the evaluation of generative models. arXiv preprint
+arXiv:1511.01844, 2015.
+
+Valpola, Harri. From neural pca to deep unsupervised learning.
+Adv. in Independent Component Analysis and Learning Ma-
+chines, pp. 143–171, 2015.
+
+van den Oord, Aaron, Kalchbrenner, Nal, Espeholt, Lasse,
+Vinyals, Oriol, Graves, Alex, et al. Conditional image gen-
+eration with pixelcnn decoders. In Advances in Neural Infor-
+mation Processing Systems, pp. 4790–4798, 2016.
+
+Jimenez Rezende, D., Mohamed, S., and Wierstra, D. Stochastic
+Backpropagation and Approximate Inference in Deep Genera-
+tive Models. ArXiv e-prints, January 2014.
+
+Zeiler, Matthew D and Fergus, Rob. Visualizing and understand-
+ing convolutional networks. In Computer vision–ECCV 2014,
+pp. 818–833. Springer, 2014.
+
+Zhao, S., Song, J., and Ermon, S. Towards Deeper Understanding
+of Variational Autoencoding Models. ArXiv e-prints, February
+2017.
+
+Kaae Sønderby, C., Raiko, T., Maaløe, L., Kaae Sønderby, S., and
+Winther, O. Ladder Variational Autoencoders. ArXiv e-prints,
+February 2016.
+
+Kingma, D. P and Welling, M. Auto-Encoding Variational Bayes.
+
+ArXiv e-prints, December 2013.
+
+Kingma, Diederik and Ba, Jimmy. Adam: A method for stochas-
+
+tic optimization. arXiv preprint arXiv:1412.6980, 2014.
+
+Kingma, Diederik P, Salimans, Tim, and Welling, Max.
+
+Im-
+proving variational inference with inverse autoregressive ﬂow.
+arXiv preprint arXiv:1606.04934, 2016.
+
+Li, C., Zhu, J., and Zhang, B. Learning to generate with memory.
+
+arXiv preprint arXiv:1602.07416, 2016.
+
+Liu, Ziwei, Luo, Ping, Wang, Xiaogang, and Tang, Xiaoou. Deep
+learning face attributes in the wild. In Proceedings of Interna-
+tional Conference on Computer Vision (ICCV), 2015.
+
+Netzer, Yuval, Wang, Tao, Coates, Adam, Bissacco, Alessandro,
+Wu, Bo, and Ng, Andrew Y. Reading digits in natural images
+with unsupervised feature learning. In NIPS workshop on deep
+learning and unsupervised feature learning, volume 2011, pp.
+5, 2011.
+
+Learning Hierarchical Features from Deep Generative Models
+
+A. Additional Results
+
+Proposition 2. LELBO for HVAE in Eq.(5) is optimized
+when LELBO = −H(pdata(x)). If LELBO is optimized
+the following Gibbs sampling chain converges to pdata(x)
+if it is ergodic
+
+z(t) ∼ q(z|x(t))
+x(t+1) ∼ p(x|z(t))
+
+(16)
+
+Proof of Proposition 2. As in the proof of Proposition 1
+when LELBO is optimized, q(z|x) = p(z|x). Because the
+following Gibbs chain converges to pdata(x)
+
+z(t) ∼ q(z|x(t))
+x(t+1) ∼ q(x|z(t))
+
+We can replace q(x|z(t)) with p(x|z(t)) and the chain still
+converges to pdata(x).
+
+B. Experimental Details
+
+B.1. Gaussian HVAE
+
+Architecture: For l = 1, 2
+
+zl ∼ N (W1fl(zl+1), sigm(W2fl(zl+1))2)
+
+where W1, W2 are trainable linear transformation matrices,
+and sigm is sigmoid activation function. fl is a two layer
+dense network. For l = 0, we let
+
+x ∼ N (f0(z1), σ2I)
+
+where σ is a hyper-parameter that can be speciﬁed apriori
+or trained. f0 is a two layer convolutional network with
+1/2 stride for spatial up-sampling. For inference we use
+the same architecture as the generator.
+
+Learning: During training we use the Adam (Kingma &
+Ba, 2014) optimizer with learning rate 10−4. We also an-
+neal the scale the KL-regularization from 0 to 1 to encour-
+age use of latent feature during early stages of training.
+
+B.2. VLAE
+
+For VLAE, we use varying layers of convolution depending
+on size of input image. However, for the ladder connections
+we do not use convolution. Because of our argument in in-
+troduction and Figure 1, generative models do not beneﬁt
+from convolutional latent features. Therefore we always
+ﬂatten convolutional layers and apply linear transformation
+to reduce dimension for each ladder connection. For im-
+plementation details please refer to our code.
+
+

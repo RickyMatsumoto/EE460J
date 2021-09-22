@@ -1,0 +1,1270 @@
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+Christos Louizos 1 2 Max Welling 1 3
+
+Abstract
+We reinterpret multiplicative noise in neural net-
+works as auxiliary random variables that aug-
+ment the approximate posterior in a variational
+setting for Bayesian neural networks. We show
+that through this interpretation it is both efﬁcient
+and straightforward to improve the approxima-
+tion by employing normalizing ﬂows (Rezende
+& Mohamed, 2015) while still allowing for lo-
+cal reparametrizations (Kingma et al., 2015) and
+a tractable lower bound (Ranganath et al., 2015;
+Maaløe et al., 2016).
+In experiments we show
+that with this new approximation we can sig-
+niﬁcantly improve upon classical mean ﬁeld for
+Bayesian neural networks on both predictive ac-
+curacy as well as predictive uncertainty.
+
+1. Introduction
+
+Neural networks have been the driving force behind the
+success of deep learning applications. Given enough train-
+ing data they are able to robustly model input-output rela-
+tionships and as a result provide high predictive accuracy.
+However, they do have some drawbacks. In the absence of
+enough data they tend to overﬁt considerably; this restricts
+them from being applied in scenarios were labeled data are
+scarce, e.g. in medical applications such as MRI classiﬁca-
+tion. Even more importantly, deep neural networks trained
+with maximum likelihood or MAP procedures tend to be
+overconﬁdent and as a result do not provide accurate conﬁ-
+dence intervals, particularly for inputs that are far from the
+training data distribution. A simple example can be seen at
+Figure 1a; the predictive distribution becomes overly over-
+conﬁdent, i.e. assigns a high softmax probability, towards
+the wrong class for things it hasn’t seen before (e.g. an
+MNIST 3 rotated by 90 degrees). This in effect makes them
+unsuitable for applications where decisions are made, e.g.
+
+1University of Amsterdam, Netherlands 2TNO Intelli-
+gent Imaging, Netherlands 3Canadian Institute For Advanced
+Research (CIFAR). Correspondence to:
+Christos Louizos
+<c.louizos@uva.nl>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+when a doctor determines the disease of a patient based on
+the output of such a network.
+
+A principled approach to address both of the aforemen-
+tioned shortcomings is through a Bayesian inference pro-
+cedure. Under this framework instead of doing a point es-
+timate for the network parameters we infer a posterior dis-
+tribution. These distributions capture the parameter uncer-
+tainty of the network, and by subsequently integrating over
+them we can obtain better uncertainties about the predic-
+tions of the model. We can see that this is indeed the case
+at Figure 1b; the conﬁdence of the network for the unseen
+digits is drastically reduced when we are using a Bayesian
+model, thus resulting into more realistic predictive distri-
+butions. Obtaining the posterior distributions is however
+no easy task, as the nonlinear nature of neural networks
+makes the problem intractable. For this reason approxima-
+tions have to be made.
+
+Many works have considered the task of approximate
+Bayesian inference for neural networks using either
+Markov Chain Monte Carlo (MCMC) with Hamiltonian
+Dynamics (Neal, 1995), distilling SGD with Langevin
+Dynamics (Welling & Teh, 2011; Korattikara et al.,
+2015) or deterministic techniques such as the Laplace
+Approximation (MacKay, 1992), Expectation Propaga-
+tion (Hern´andez-Lobato & Adams, 2015; Hern´andez-
+Lobato et al., 2015) and variational inference (Graves,
+2011; Blundell et al., 2015; Kingma et al., 2015; Gal &
+Ghahramani, 2015b; Louizos & Welling, 2016).
+
+In this paper we will also tackle the problem of Bayesian
+inference in neural networks. We will adopt a stochastic
+gradient variational inference (Kingma & Welling, 2014;
+Rezende et al., 2014) procedure in order to estimate the
+posterior distribution over the weight matrices of the net-
+work. Arguably one of the most important ingredients of
+variational inference is the ﬂexibility of the approximate
+posterior distribution; it determines how well we are able
+to capture the true posterior distribution and thus the true
+uncertainty of our models. In Section 2 we will show how
+we can produce very ﬂexible distributions in an efﬁcient
+way by employing auxiliary random variables (Agakov &
+Barber, 2004; Salimans et al., 2013; Ranganath et al., 2015;
+Maaløe et al., 2016) and normalizing ﬂows (Rezende &
+In Section 3 we will discuss related
+Mohamed, 2015).
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+(a) LeNet with weight decay
+
+(b) LeNet with multiplicative formalizing ﬂows
+
+Figure 1. Predictive distribution for a continuously rotated version of a 3 from MNIST. Each colour corresponds to a different class
+and the height of the bar denotes the probability assigned to that particular class by the network. Visualization inspired by (Gal &
+Ghahramani, 2015b).
+
+work, whereas in Section 4 we will evaluate and discuss
+the proposed framework. Finally we will conclude with
+Section 5, where we will provide some ﬁnal thoughts along
+with promising directions for future research.
+
+2. Multiplicative normalizing ﬂows
+
+2.1. Variational inference for Bayesian Neural
+
+Networks
+
+Let D be a dataset consisting of input output pairs
+{(x1, y1), . . . , (xn, yn)} and let W1:L denote the weight
+matrices of L layers. Assuming that p(Wi), qφ(Wi) are
+the prior and approximate posterior over the parameters of
+the i’th layer we can derive the following lower bound on
+the marginal log-likelihood of the dataset D using varia-
+tional Bayes (Peterson, 1987; Hinton & Van Camp, 1993;
+Graves, 2011; Blundell et al., 2015; Kingma et al., 2015;
+Gal & Ghahramani, 2015b; Louizos & Welling, 2016):
+
+L(φ) = Eqφ(W1:L)
+
+(cid:2) log p(y|x, W1:L)+
++ log p(W1:L) − log qφ(W1:L)(cid:3),
+
+(1)
+
+where ˜p(x, y) denotes the training data distribution and φ
+the parameters of the variational posterior. For continu-
+ous q(·) distributions that allow for the reparametrization
+trick (Kingma & Welling, 2014) or stochastic backpropa-
+gation (Rezende et al., 2014) we can reparametrize the ran-
+dom sampling from q(·) of the lower bound in terms of
+noise variables (cid:15) and deterministic functions f (φ, (cid:15)):
+
+L = Ep((cid:15))
+
+(cid:2) log p(y|x, f (φ, (cid:15)))+
++ log p(f (φ, (cid:15))) − log qφ(f (φ, (cid:15)))(cid:3).
+This reparametrization allow us to treat approximate pa-
+rameter posterior inference as a straightforward optimiza-
+
+(2)
+
+tion problem that can be optimized with off-the-shelf
+(stochastic) gradient ascent techniques.
+
+2.2. Improving the variational approximation
+
+For Bayesian neural networks the most common family for
+the approximate posterior is that of mean ﬁeld with inde-
+pendent Gaussian distributions for each weight. Despite
+the fact that this leads to a straightforward lower bound
+for optimization, the approximation capability is quite lim-
+iting; it corresponds to just a unimodal “bump” on the
+very high dimensional space of the parameters of the neu-
+ral network. There have been attempts to improve upon
+this approximation with works such as (Gal & Ghahra-
+mani, 2015b) with mixtures of delta peaks and (Louizos &
+Welling, 2016) with matrix Gaussians that allow for non-
+trivial covariances among the weights. Nevertheless, both
+of the aforementioned methods are still, in a sense, limited;
+the true parameter posterior is more complex than delta
+peaks or correlated Gaussians.
+
+There has been a lot of recent work on ways to improve
+the posterior approximation in latent variable models with
+normalizing ﬂows (Rezende & Mohamed, 2015) and aux-
+iliary random variables (Agakov & Barber, 2004; Salimans
+et al., 2013; Ranganath et al., 2015; Maaløe et al., 2016)
+being the most prominent. Brieﬂy, a normalizing ﬂow is
+constructed by introducing parametrized bijective transfor-
+mations, with easy to compute Jacobians, to random vari-
+ables with simple initial densities. By subsequently opti-
+mizing the parameters of the ﬂow according to the lower
+bound they can signiﬁcantly improve the posterior approxi-
+mation. Auxiliary random variables instead construct more
+ﬂexible distributions by introducing latent variables in the
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+posterior itself, thus deﬁning the approximate posterior as
+a mixture of simple distributions.
+
+Nevertheless, applying these ideas to the parameters in a
+neural network has not yet been explored. While it is
+straightforward to apply normalizing ﬂows to a sample of
+the weight matrix from q(W), this quickly becomes very
+expensive; for example with planar ﬂows (Rezende & Mo-
+hamed, 2015) we will need two extra matrices for each step
+of the ﬂow. Furthermore, by utilizing this procedure we
+also lose the beneﬁts of local reparametrizations (Kingma
+et al., 2015; Louizos & Welling, 2016) which are possible
+with Gaussian approximate posteriors.
+
+In order to simultaneously maintain the beneﬁts of lo-
+cal reparametrizations and increase the ﬂexibility of the
+approximate posteriors in a Bayesian neural network we
+will rely on auxiliary random variables (Agakov & Bar-
+ber, 2004; Salimans et al., 2013; 2015; Ranganath et al.,
+2015; Maaløe et al., 2016); more speciﬁcally we will ex-
+ploit the well known “multiplicative noise” concept, e.g. as
+in (Gaussian) Dropout (Srivastava et al., 2014), in neural
+networks and we will parametrize the approximate poste-
+rior with the following process:
+
+z ∼ qφ(z); W ∼ qφ(W|z),
+
+(3)
+
+where now the approximate posterior becomes a compound
+distribution, q(W) = (cid:82) q(W|z)q(z)dz, with z being a
+vector of random variables distributed according to the
+mixing density q(z). To allow for local reparametriza-
+tions we will parametrize the conditional distribution for
+the weights to be a fully factorized Gaussian. Therefore we
+assume the following form for the fully connected layers:
+
+qφ(W|z) =
+
+N (ziµij, σ2
+
+ij),
+
+(4)
+
+Din(cid:89)
+
+Dout(cid:89)
+
+i=1
+
+j=1
+
+where Din, Dout is the input and output dimensionality,
+and the following form for the kernels in convolutional net-
+works:
+
+qφ(W|z) =
+
+N (zkµijk, σ2
+
+ijk),
+
+(5)
+
+Dh(cid:89)
+
+Dw(cid:89)
+
+Df
+(cid:89)
+
+i=1
+
+j=1
+
+k=1
+
+where Dh, Dw, Df are the height, width and number of
+ﬁlters for each kernel. Note that we did not let z affect the
+variance of the Gaussian approximation; in a pilot study we
+found that this parametrization was prone to local optima
+due to large variance gradients, an effect also observed with
+the multiplicative parametrization of the Gaussian poste-
+rior (Kingma et al., 2015; Molchanov et al., 2017). We
+have now reduced the problem of increasing the ﬂexibility
+of the approximate posterior over the weights W to that of
+increasing the ﬂexibility of the mixing density q(z). Since
+
+z is of much lower dimension, compared to W, it is now
+straightforward to apply normalizing ﬂows to q(z); in this
+way we can signiﬁcantly enhance our approximation and
+allow for e.g. multimodality and nonlinear dependencies
+between the elements of the weight matrix. This will in
+turn better capture the properties of the true posterior dis-
+tribution, thus leading to better performance and predictive
+uncertainties. We will coin the term multiplicative normal-
+izing ﬂows (MNFs) for this family of approximate posteri-
+ors. Algorithms 1, 2 describe the forward pass using local
+reparametrizations for fully connected and convolutional
+layers with this type of approximate posterior.
+
+Algorithm 1 Forward propagation for each fully connected
+layer h. Mw, Σw are the means and variances of each
+layer, H is a minibatch of activations and NF(·) is the nor-
+malizing ﬂow described at eq. 6. For the ﬁrst layer we have
+that H = X where X is the minibatch of inputs.
+Require: H, Mw, Σw
+1: Z0 ∼ q(z0)
+2: ZTf = NF(Z0)
+3: Mh = (H (cid:12) ZTf )Mw
+4: Vh = H2Σw
+5: E ∼ N (0, 1)
+6: return Mh +
+
+Vh (cid:12) E
+
+√
+
+Algorithm 2 Forward propagation for each convolutional
+layer h. Nf are the number of convolutional ﬁlters, ∗ is
+the convolution operator and we assume the [batch, height,
+width, feature maps] convention.
+Require: H, Mw, Σw
+1: z0 ∼ q(z0)
+2: zTf = NF(z0)
+3: Mh = H ∗ (Mw (cid:12) reshape(zTf , [1, 1, Df ]))
+4: Vh = H2 ∗ Σw
+5: E ∼ N (0, 1)
+√
+6: return Mh +
+
+Vh (cid:12) E
+
+For the normalizing ﬂow of q(z) we will use the masked
+RealNVP (Dinh et al., 2016) using the numerically sta-
+ble updates introduced in Inverse Autoregressive Flow
+(IAF) (Kingma et al., 2016):
+
+m ∼ Bern(0.5);
+µ = g(h);
+
+h = tanh(f (m (cid:12) zt))
+σ = σ(k(h))
+
+zt+1 = m (cid:12) zt+(1 − m) (cid:12) (zt (cid:12) σ + (1 − σ) (cid:12) µ)
+
+(6)
+
+log
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+∂zt+1
+∂zt
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+= (1 − m)T log σ,
+
+where (cid:12) corresponds to element-wise multiplication, σ(·)
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+is the sigmoid function1 and f (·), g(·), k(·) are linear map-
+pings. We resampled the mask m every time in order to
+avoid a speciﬁc splitting over the dimensions of z. For the
+starting point of the ﬂow q(z0) we used a simple fully fac-
+torized Gaussian and we will refer to the ﬁnal iterate as
+zTf .
+
+2.3. Bounding the entropy
+
+Unfortunately, parametrizing the posterior distribution as
+eq. 3 makes the lower bound intractable as generally we do
+not have a closed form density function for q(W). This
+makes the calculation of the entropy − Eq(W)[log q(W)]
+challenging. Fortunately we can make the lower bound
+tractable again by further lower bounding the entropy in
+terms of an auxiliary distribution r(z|W) (Agakov & Bar-
+ber, 2004; Salimans et al., 2013; 2015; Ranganath et al.,
+2015; Maaløe et al., 2016). This can be seen as if we are
+performing variational inference on the augmented proba-
+bility space p(D, W1:L, z1:L), that maintains the same true
+posterior distribution p(W|D) (as we can always marginal-
+ize out r(z|W) to obtain the original model). The lower
+bound in this case becomes:
+
+L(φ, θ) = Eqφ(z1:L,W1:L)
+
+(cid:2) log p(y|x, W1:L, z1:L)+
+
++ log p(W1:L) + log rθ(z1:L|W1:L)−
+− log qφ(W1:L|z1:L) − log qφ(z1:L)(cid:3),
+
+(7)
+
+where θ are the parameters of the auxiliary distribution r(·).
+This bound is looser than the previous bound, however the
+extra ﬂexibility of q(W) can compensate and allow for a
+tighter bound. Furthermore, the tightness of the bound also
+depends on the ability of r(z|W) to approximate the “aux-
+iliary” posterior distribution q(z|W) = q(W|z)q(z)
+. There-
+fore, to allow for a ﬂexible r(z|W) we will follow (Ran-
+ganath et al., 2015) and we will parametrize it with inverse
+normalizing ﬂows as follows:
+
+q(W)
+
+r(zTb |W) =
+
+N (˜µi, ˜σ2
+
+i ),
+
+Dz(cid:89)
+
+i=1
+
+where for fully connected layers we have that:
+˜µi = (cid:0)b1 ⊗ tanh(cT W)(cid:1)(1 (cid:12) D−1
+out)
+
+(cid:18)
+
+˜σi = σ
+
+(cid:0)b2 ⊗ tanh(cT W)(cid:1)(1 (cid:12) D−1
+out)
+
+(cid:19)
+
+,
+
+and for convolutional:
+
+˜µi = (cid:0)tanh(mat(W)c) ⊗ b1
+
+(cid:18)
+(cid:0)tanh(mat(W)c) ⊗ b2
+
+˜σi = σ
+
+(cid:1)(1 (cid:12) (DhDw)−1)
+
+(11)
+(cid:19)
+(cid:1)(1 (cid:12) (DhDw)−1)
+
+,
+
+(8)
+
+(9)
+
+(10)
+
+(12)
+
+1f (x) =
+
+1
+1+exp(−x)
+
+where b1, b2, c are trainable vectors that have the same
+dimensionality as z, Dz, 1 corresponds to a vector of
+1s, ⊗ corresponds to the outer product and mat(·) corre-
+sponds to the matricization2 operator. The zTb variable
+corresponds to the fully factorized variable that is trans-
+formed by a normalizing ﬂow to zTf or else the variable ob-
+tained by the inverse normalizing ﬂow, zTb = NF−1(zTf ).
+We will parametrize this inverse directly with the proce-
+dure described at eq. 6. Notice that we can employ local
+reparametrizations also in eq. 9,10,11,12, so as to avoid
+sampling the, potentially big, matrix W. With the standard
+normal prior and the fully factorized Gaussian posterior of
+eq. 4 the KL-divergence between the prior and the posterior
+can be computed as follows:
+
+− KL(q(W)||p(W)) =
+
+= Eq(W,zT )[−KL(q(W|zTf )||p(W))+
++ log r(zTf |W) − log q(zTf )],
+
+(13)
+
+where each of the terms corresponds to:
+
+− KL(q(W|zTf )||p(W)) =
+
+=
+
+1
+2
+
+(cid:88)
+
+i,j
+
+(− log σ2
+
+i,j + σ2
+
+i,j + z2
+Tfi
+
+µ2
+
+i,j − 1)
+
+(14)
+
+log r(zTf |W) = log r(zTb |W) +
+
+Tf +Tb
+(cid:88)
+
+t=Tf
+
+log
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+∂zt+1
+∂zt
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+log q(zTf ) = log q(z0) −
+
+log
+
+Tf
+(cid:88)
+
+t=1
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+∂zt+1
+∂zt
+
+(cid:12)
+(cid:12)
+.
+(cid:12)
+(cid:12)
+
+(15)
+
+(16)
+
+It should be noted that this bound is a generalization of the
+bound proposed by (Gal & Ghahramani, 2015b). We can
+arrive at the bound of (Gal & Ghahramani, 2015b) if we
+trivially parametrize the auxiliary model r(z|W) = q(z)
+(which provides a less tight bound (Ranganath et al., 2015))
+use a standard normal prior for W, a Bernoulli q(z) with
+probability of success π and then let the variance of our
+conditional Gaussian q(W|z) go to zero. This will result
+into the lower bound being inﬁnite due to the log of the
+variances; nevertheless since we are not optimizing over σ
+we can simply disregard those terms. After a little bit of al-
+gebra we can show that the only term that will remain in the
+KL-divergence between q(W) and p(W) will be the ex-
+pectation of the trace of the square of the mean matrix3, i.e.
+Eq(z)[ 1
+2, with
+1 − π being the dropout rate.
+
+2 tr((diag(z)M))T (diag(z)M))] = π
+
+2 (cid:107)M(cid:107)2
+
+We also found that in general it is beneﬁcial to “constrain”
+the standard deviations σij of the conditional Gaussian pos-
+terior q(W|z) during the forward pass for the computation
+
+2Converting the multidimensional tensor to a matrix.
+3The matrix that has M[i, j] = µij
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+of the likelihood to a lower than the true range, e.g. [0, α]
+instead of the [0, 1] we have with a standard normal prior.
+This results into a small bias and a looser lower bound,
+however it helps in avoiding bad local minima in the vari-
+ational objective. This is akin to the free bits objective de-
+scribed at (Kingma et al., 2016).
+
+2015).
+
+3. Related work
+
+Approximate inference for Bayesian neural networks has
+been pioneered by (MacKay, 1992) and (Neal, 1995).
+Laplace approximation (MacKay, 1992) provides a deter-
+ministic approximation to the posterior that is easy to ob-
+tain; it is a Gaussian centered at the MAP estimate of the
+parameters with a covariance determined by the inverse of
+the Hessian of the log-likelihood. Despite the fact that it
+is straightforward to implement, its scalability is limited
+unless approximations are made, which generally reduces
+performance. Hamiltonian Monte Carlo (Neal, 1995) is
+so far the golden standard for approximate Bayesian in-
+ference; nevertheless it is also not scalable to large net-
+works and datasets due to the fact that we have to explicitly
+store the samples from the posterior. Furthermore as it is
+an MCMC method, assessing convergence is non trivial.
+Nevertheless there is interesting work that tries to improve
+upon those issues with stochastic gradient MCMC (Chen
+et al.) and distillation methods (Korattikara et al., 2015).
+
+Deterministic methods
+for approximate inference in
+Bayesian neural networks have recently attained much at-
+tention. One of the ﬁrst applications of variational infer-
+ence in neural networks was in (Peterson, 1987) and (Hin-
+ton & Van Camp, 1993). More recently (Graves, 2011)
+proposed a practical method for variational inference in
+this setting with a simple (but biased) estimator for a
+fully factorized posterior distribution. (Blundell et al.,
+2015) improved upon this work with the unbiased esti-
+mator from (Kingma & Welling, 2014) and a scale mix-
+ture prior. (Hern´andez-Lobato & Adams, 2015) proposed
+to use Expectation Propagation (Minka, 2001) with fully
+factorized posteriors and showed good results on regression
+tasks. (Kingma et al., 2015) showed how Gaussian dropout
+can be interpreted as performing approximate inference
+with log-uniform priors, multiplicative Gaussian posteri-
+ors and local reparametrizations, thus allowing straight-
+forward learning of the dropout rates. Similarly (Gal &
+Ghahramani, 2015b) showed interesting connections be-
+tween Bernoulli Dropout (Srivastava et al., 2014) networks
+and approximate Bayesian inference in deep Gaussian Pro-
+cesses (Damianou & Lawrence, 2013) thus allowing the
+extraction of uncertainties in a principled way.
+Simi-
+larly (Louizos & Welling, 2016) arrived at the same re-
+sult through structured posterior approximations via ma-
+trix Gaussians and local reparametrizations (Kingma et al.,
+
+It should also be mentioned that uncertainty estimation
+in neural networks can also be performed without the
+Bayesian paradigm; frequentist methods such as Boot-
+strap (Osband et al., 2016) and ensembles (Lakshmi-
+narayanan et al., 2016) have shown that in certain scenarios
+they can provide reasonable conﬁdence intervals.
+
+4. Experiments
+
+of
+
+the
+
+coded
+
+experiments were
+
+All
+in Tensor-
+ﬂow (Abadi et al., 2016) and optimization was done
+with Adam (Kingma & Ba, 2015) using the default hyper-
+parameters. We used the LeNet 54 (LeCun et al., 1998)
+convolutional architecture with ReLU (Nair & Hinton,
+2010) nonlinearities. The means M of the conditional
+Gaussian q(W|z) were initialized with the scheme pro-
+posed in (He et al., 2015), whereas the log of the variances
+were initialized by sampling from N (−9, 0.001). Unless
+explicitly mentioned otherwise we use ﬂows of length two
+for q(z) and r(z|W) with 50 hidden units for each step
+of the ﬂow of q(z) and 100 hidden units for each step of
+the ﬂow of r(z|W). We used 100 posterior samples to
+estimate the predictive distribution for all of the models
+during testing and 1 posterior sample during training.
+
+Table 1. Models considered in this paper. Dropout corresponds
+to the model used in (Gal & Ghahramani, 2015a), Deep Ensem-
+ble to the model used in (Lakshminarayanan et al., 2016), FFG to
+the Bayesian neural network employed in (Blundell et al., 2015),
+FFLU to the Bayesian neural network used in (Kingma et al.,
+2015; Molchanov et al., 2017) with the additive parametrization
+of (Molchanov et al., 2017) and MNFG corresponds to the pro-
+posed variational approximation.
+It should be noted that Deep
+Ensembles use adversarial training (Goodfellow et al., 2014).
+
+Name
+L2
+Dropout
+D. Ensem.
+FFG
+FFLU
+MNFG
+
+Prior
+N (0, I)
+N (0, I)
+-
+N (0, I)
+log(|W|) = c
+N (0, I)
+
+Posterior
+delta peak
+mixture of zero and delta peaks
+mixture of peaks
+fully factorized additive Gaussian
+fully factorized additive Gaussian
+multiplicative normalizing ﬂows
+
+4.1. Predictive performance and uncertainty
+
+MNIST We trained on MNIST LeNet architectures using
+the priors and posteriors described at Table 1. We trained
+Dropout with the way described at (Gal & Ghahramani,
+2015a) using 0.5 for the dropout rate and for Deep Ensem-
+bles (Lakshminarayanan et al., 2016) we used 10 mem-
+bers and (cid:15) = .25 for the adversarial example generation.
+For the models with the Gaussian prior we constrained the
+standard deviation of the conditional posterior to be ≤ .5
+
+4The version from Caffe.
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+during the forward pass. The classiﬁcation performance of
+each model can be seen at Table 2; while our overall fo-
+cus is not classiﬁcation accuracy per se, we see that with
+the MNF posteriors we improve upon mean ﬁeld reaching
+similar accuracies with Deep Ensembles.
+
+notMNIST To evaluate the predictive uncertainties of
+each model we performed the task described at (Lakshmi-
+narayanan et al., 2016); we estimated the entropy of the
+predictive distributions on notMNIST5 from the LeNet ar-
+chitectures trained on MNIST. Since we a-priori know that
+none of the notMNIST classes correspond to a trained class
+(since they are letters and not digits) the ideal predictive
+distribution is uniform over the MNIST digits, i.e. a maxi-
+mum entropy distribution. Contrary to (Lakshminarayanan
+et al., 2016) we do not plot the histogram of the entropies
+across the images but we instead use the empirical CDF,
+which we think is more informative. Curves that are closer
+to the bottom right part of the plot are preferable, as it de-
+notes that the probability of observing a high conﬁdence
+prediction is low. At Figure 2 we show the empirical CDF
+over the range of possible entropies, [0, 2.5], for all of the
+models.
+
+Figure 2. Empirical CDF for the entropy of the predictive distri-
+butions on notMNIST.
+
+It is clear from the plot that the uncertainty estimates from
+MNFs are better than the other approaches, since the prob-
+ability of a low entropy prediction is overall lower. The
+network trained with just weight decay was, as expected,
+the most overconﬁdent with an almost zero median en-
+tropy while Dropout seems to be in the middle ground. The
+Bayesian neural net with the log-uniform prior also showed
+overconﬁdence in this task; we hypothesize that this is due
+to the induced sparsity (Molchanov et al., 2017) which re-
+sults into the pruning of almost all irrelevant sources of
+variation in the parameters thus not providing enough vari-
+
+5Can be found at http://yaroslavvb.blogspot.
+
+co.uk/2011/09/notmnist-dataset.html
+
+ability to allow for uncertainty in the predictions. The spar-
+sity levels6 are 62%, 95.2% for the two convolutional lay-
+ers and 99.5%, 93.3% for the two fully connected. Similar
+effects would probably be also observed if we optimized
+the dropout rates for Dropout. The only source of random-
+ness in the neural network is from the Bernoulli random
+variables (r.v.) z. By employing the Central Limit Theo-
+rem7 we can express the distribution of the activations as a
+Gaussian (Wang & Manning, 2013) with variance affected
+by the variance of the Bernoulli r.v., V(z) = π(1 − π). The
+maximum variance of the Bernoulli r.v. is when π = 0.5,
+therefore any tuning of the Dropout rate will result into a
+decrease in the variance of the r.v. and therefore a decrease
+in the variance of the Gaussian at the hidden units. This will
+subsequently lead into less predictive variance and more
+conﬁdence.
+
+Finally, whereas it was shown at (Lakshminarayanan et al.,
+2016) that Deep Ensembles provide good uncertainty es-
+timates (better than Dropout) on this task using fully con-
+nected networks, this result did not seem to apply for the
+LeNet architecture we considered. We hypothesize that
+they are sensitive to the hyperparameters (e.g. adversarial
+noise, number of members in the ensemble) and it requires
+more tuning in order to improve upon Dropout on this ar-
+chitecture.
+
+CIFAR 10 We performed a similar experiment on CIFAR
+10. To artiﬁcially create the ”unobserved class” scenario,
+we hid 5 of the labels (dog, frog, horse, ship, truck) and
+trained on the rest (airplane, automobile, bird, cat, deer).
+For this task we used the larger LeNet architecture8 de-
+scribed at (Gal & Ghahramani, 2015a). For the models
+with the Gaussian prior we similarly constrained the stan-
+dard deviation during the forward pass to be ≤ .4. For Deep
+Ensembles we used ﬁve members with (cid:15) = .1 for the adver-
+sarial example generation. The predictive performance on
+these ﬁve classes can be seen in Table 2, with Dropout and
+MNFs achieving the overall better accuracies. We subse-
+quently measured the entropy of the predictive distribution
+on the classes that were hidden, with the resulting empirical
+CDFs visualized in Figure 3.
+
+We similarly observe that the network with just weight de-
+cay was the most overconﬁdent. Furthermore, Deep En-
+sembles and Dropout had similar uncertainties, with Deep
+Ensembles having lower accuracy on the observed classes.
+The networks with the Gaussian priors also had similar un-
+certainty with the network with the log uniform prior, nev-
+ertheless the MNF posterior had much better accuracy on
+
+6Computed by pruning weights where log σ2 − log µ2 ≥
+
+5 (Molchanov et al., 2017).
+
+7Assuming that the network is wide enough.
+8192 ﬁlters at each convolutional layer and 1000 hidden units
+
+for the fully connected layer.
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+sarial examples at least it “knows that it doesn’t know”.
+
+Figure 3. Empirical CDF for the entropy of the predictive distri-
+butions on the 5 hidden classes from CIFAR 10.
+
+the observed classes. The sparsity levels for the network
+with the log-uniform prior now were 94.9%, 99.8% for the
+convolutional layers and 99.9%, 92.7% for the fully con-
+nected. Overall, the network with the MNF posteriors seem
+to provide the better trade-off in uncertainty and accuracy
+on the observed classes.
+
+Table 2. Test errors (%) with the LeNet architecture on MNIST
+and the ﬁrst ﬁve classes of CIFAR 10.
+
+Dataset
+MNIST
+CIFAR 5
+
+L2 Dropout D.Ensem. FFG FFLU MNFG
+0.6
+24
+
+0.7
+21
+
+0.9
+23
+
+0.5
+16
+
+0.9
+22
+
+0.7
+16
+
+4.2. Accuracy and uncertainty on adversarial examples
+
+We also measure how robust our models and uncertain-
+ties are against adversarial examples (Szegedy et al., 2013;
+Goodfellow et al., 2014) by generating examples using the
+fast sign method (Goodfellow et al., 2014) for each of the
+previously trained architectures using Cleverhans (Paper-
+not et al., 2016). For this task we do not include Deep
+Ensembles as they are trained on adversarial examples.
+
+MNIST On this scenario we observe interesting results
+if we plot the change in accuracy and entropy by varying
+the magnitude of the adversarial perturbation. The result-
+ing plot can be seen in Figure 4. Overall Dropout seems
+to have better accuracies on adversarial examples; never-
+theless, those come at an ”overconﬁdent” price since the
+entropy of the predictive distributions is quite low thus re-
+sulting into predictions that have, on average, above 0.7
+probability for the dominant class. This is in contrast with
+MNFs; while the accuracy almost immediately drops close
+to random, the uncertainty simultaneously increases to al-
+most maximum entropy. This implies that the predictive
+distribution is more or less uniform over those examples.
+So despite the fact that our model cannot overcome adver-
+
+Figure 4. Accuracy (solid) vs entropy (dashed) as a function of
+the adversarial perturbation (cid:15) on MNIST.
+
+CIFAR We performed the same experiment also on the
+ﬁve class subset of CIFAR 10. The results can be seen
+in Figure 5. Here we however observe a different picture,
+compared to MNIST, since all of the methods experienced
+overconﬁdence. We hypothesize that adversarial examples
+are harder to escape and be uncertain about in this dataset,
+due to the higher dimensionality, and therefore further in-
+vestigation is needed.
+
+Figure 5. Accuracy (solid) vs entropy (dashed) as a function of the
+adversarial perturbation (cid:15) on CIFAR 10 (on the ﬁrst 5 classes).
+
+4.3. Regression on toy dataset
+
+For the ﬁnal experiment we visualize the predictive distri-
+butions obtained with the different models on the toy re-
+gression task introduced at (Hern´andez-Lobato & Adams,
+2015). We generated 20 training inputs from U[−4, 4] and
+then obtained the corresponding targets via y = x3 + (cid:15),
+where (cid:15) ∼ N (0, 9). We ﬁxed the likelihood noise to its
+true value and then ﬁtted a Dropout network with π = 0.5
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+(a) Dropout π = 0.5
+
+(b) Dropout learned π
+
+(c) FFLU
+
+(d) MNFG
+
+Figure 6. Predictive distributions for the toy dataset. Blue areas correspond to ±3 standard deviations around the mean.
+
+for the hidden layer9, an FFLU network and an MNFG. We
+also ﬁtted a Dropout network where we also learned the
+dropout probability π of the hidden layer according to the
+bound described at section 2.3 (which is equivalent to the
+one described at (Gal & Ghahramani, 2015b)) using RE-
+INFORCE (Williams, 1992) and a global baseline (Mnih
+& Gregor, 2014). The resulting predictive distributions can
+be seen at Figure 6.
+
+As we can observe, MNF posteriors provide more realistic
+predictive distributions, closer to the true posterior (which
+can be seen at (Hern´andez-Lobato & Adams, 2015)) and
+with the network being more uncertain on areas where we
+do not observed any data. The uncertainties obtained by
+Dropout with ﬁxed π = 0.5 did not diverge as much in
+those areas but overall they were better compared to the
+uncertainties obtained with FFLU. We could probably at-
+tribute the latter to the sparsiﬁcation of the network since
+95% and 44% of the parameters were pruned for each layer
+respectively.
+
+Interestingly the uncertainties obtained with the network
+with the learned Dropout probability were the most “over-
+ﬁtted”. This might suggest that Dropout uncertainty is
+probably not a good posterior approximation since by opti-
+mizing the dropout rates we do not seem to move closer to
+the true posterior predictive distribution. This is in contrast
+with MNFs; they are ﬂexible enough to allow for optimiz-
+ing all of their parameters in a way that does better approxi-
+mate the true posterior distribution. This result also empiri-
+cally veriﬁes the claim we previously made; by learning the
+dropout rates the entropy of the posterior predictive will de-
+crease thus resulting into more overconﬁdent predictions.
+
+5. Conclusion
+
+We introduce multiplicative normalizing ﬂows (MNFs);
+a family of approximate posteriors for the parameters of
+a variational Bayesian neural network. We have shown
+that through this approximation we can signiﬁcantly im-
+prove upon mean ﬁeld on both predictive performance as
+
+9No Dropout was used for the input layer since it is 1-
+
+dimensional.
+
+well as predictive uncertainty. We compared our uncer-
+tainty on notMNIST and CIFAR with Dropout (Srivastava
+et al., 2014; Gal & Ghahramani, 2015b) and Deep Ensem-
+bles (Lakshminarayanan et al., 2016) using convolutional
+architectures and found that MNFs achieve more realistic
+uncertainties while providing predictive capabilities on par
+with Dropout. We suspect that the predictive capabilities
+of MNFs can be further improved through more appropri-
+ate optimizers that avoid the bad local minima in the vari-
+ational objective. Finally, we also highlighted limitations
+of Dropout approximations and empirically showed that
+MNFs can overcome them.
+
+There are a couple of promising directions for future re-
+search. One avenue would be to explore how much
+can MNFs sparsify and compress neural networks under
+either sparsity inducing priors, such as the log-uniform
+prior (Kingma et al., 2015; Molchanov et al., 2017), or em-
+pirical priors (Ullrich et al., 2017). Another promising di-
+rection is that of designing better priors for Bayesian neural
+networks. For example (Neal, 1995) has identiﬁed limi-
+tations of Gaussian priors and proposes alternative priors
+such as the Cauchy. Furthermore, the prior over the pa-
+rameters also affects the type of uncertainty we get in our
+predictions; for instance we observed in our experiments a
+signiﬁcant difference in uncertainty between Gaussian and
+log-uniform priors. Since different problems require differ-
+ent types of uncertainty it makes sense to choose the prior
+accordingly, e.g. use an informative prior so as to alleviate
+adversarial examples.
+
+Acknowledgements
+
+We would like to thank Klamer Schutte, Matthias Reisser
+and Karen Ullrich for valuable feedback. This research is
+supported by TNO, NWO and Google.
+
+References
+
+Abadi, Mart´ın, Agarwal, Ashish, Barham, Paul, Brevdo,
+Eugene, Chen, Zhifeng, Citro, Craig, Corrado, Greg S,
+Davis, Andy, Dean, Jeffrey, Devin, Matthieu, et al. Ten-
+sorﬂow: Large-scale machine learning on heterogeneous
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+distributed systems. arXiv preprint arXiv:1603.04467,
+2016.
+
+Richard E.
+arXiv preprint arXiv:1511.03243, 2015.
+
+Black-box α-divergence minimization.
+
+Agakov, Felix V and Barber, David. An auxiliary varia-
+In International Conference on Neural
+
+tional method.
+Information Processing, pp. 561–566. Springer, 2004.
+
+Blundell, Charles, Cornebise, Julien, Kavukcuoglu, Koray,
+and Wierstra, Daan. Weight uncertainty in neural net-
+works. Proceedings of the 32nd International Confer-
+ence on Machine Learning, ICML 2015, Lille, France,
+6-11 July 2015, 2015.
+
+Chen, Tianqi, Fox, Emily B, and Guestrin, Carlos. Stochas-
+
+tic gradient hamiltonian monte carlo.
+
+Damianou, Andreas C. and Lawrence, Neil D. Deep gaus-
+sian processes. In Proceedings of the Sixteenth Interna-
+tional Conference on Artiﬁcial Intelligence and Statis-
+tics, AISTATS 2013, Scottsdale, AZ, USA, April 29 - May
+1, 2013, pp. 207–215, 2013.
+
+Dinh, Laurent, Sohl-Dickstein, Jascha, and Bengio, Samy.
+arXiv preprint
+
+Density estimation using real nvp.
+arXiv:1605.08803, 2016.
+
+Gal, Yarin and Ghahramani, Zoubin. Bayesian convolu-
+tional neural networks with bernoulli approximate vari-
+arXiv preprint arXiv:1506.02158,
+ational inference.
+2015a.
+
+Gal, Yarin and Ghahramani, Zoubin. Dropout as a bayesian
+approximation: Representing model uncertainty in deep
+learning. arXiv preprint arXiv:1506.02142, 2015b.
+
+Goodfellow, Ian J, Shlens, Jonathon, and Szegedy, Chris-
+tian. Explaining and harnessing adversarial examples.
+arXiv preprint arXiv:1412.6572, 2014.
+
+Graves, Alex. Practical variational inference for neural net-
+In Advances in Neural Information Processing
+
+works.
+Systems, pp. 2348–2356, 2011.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun,
+Jian. Delving deep into rectiﬁers: Surpassing human-
+In Pro-
+level performance on imagenet classiﬁcation.
+ceedings of the IEEE International Conference on Com-
+puter Vision, pp. 1026–1034, 2015.
+
+Hern´andez-Lobato,
+
+Jos´e Miguel and Adams, Ryan.
+Probabilistic backpropagation for scalable learning of
+In Proceedings of the 32nd
+bayesian neural networks.
+International Conference on Machine Learning, ICML
+2015, Lille, France, 6-11 July 2015, pp. 1861–1869,
+2015.
+
+Hern´andez-Lobato,
+
+Jos´e Miguel,
+Yingzhen,
+Hern´andez-Lobato, Daniel, Bui, Thang, and Turner,
+
+Li,
+
+Hinton, Geoffrey E and Van Camp, Drew. Keeping the
+neural networks simple by minimizing the description
+length of the weights. In Proceedings of the sixth annual
+conference on Computational learning theory, pp. 5–13.
+ACM, 1993.
+
+Kingma, Diederik and Ba, Jimmy. Adam: A method for
+International Conference on
+
+stochastic optimization.
+Learning Representations (ICLR), San Diego, 2015.
+
+Kingma, Diederik P and Welling, Max. Auto-encoding
+International Conference on Learn-
+
+variational bayes.
+ing Representations (ICLR), 2014.
+
+Kingma, Diederik P, Salimans, Tim, and Welling, Max.
+Variational dropout and the local reparametrization trick.
+Advances in Neural Information Processing Systems,
+2015.
+
+Kingma, Diederik P, Salimans, Tim, and Welling, Max. Im-
+proving variational inference with inverse autoregressive
+ﬂow. arXiv preprint arXiv:1606.04934, 2016.
+
+Korattikara, Anoop, Rathod, Vivek, Murphy, Kevin, and
+Welling, Max. Bayesian dark knowledge. arXiv preprint
+arXiv:1506.04416, 2015.
+
+Lakshminarayanan, Balaji, Pritzel, Alexander, and Blun-
+dell, Charles. Simple and scalable predictive uncer-
+tainty estimation using deep ensembles. arXiv preprint
+arXiv:1612.01474, 2016.
+
+LeCun, Yann, Bottou, L´eon, Bengio, Yoshua, and Haffner,
+Patrick. Gradient-based learning applied to document
+recognition. Proceedings of the IEEE, 86(11):2278–
+2324, 1998.
+
+Louizos, Christos and Welling, Max. Structured and efﬁ-
+cient variational deep learning with matrix gaussian pos-
+teriors. arXiv preprint arXiv:1603.04733, 2016.
+
+Maaløe, Lars, Sønderby, Casper Kaae, Sønderby,
+Søren Kaae, and Winther, Ole. Auxiliary deep gener-
+ative models. arXiv preprint arXiv:1602.05473, 2016.
+
+MacKay, David JC. A practical bayesian framework for
+backpropagation networks. Neural computation, 4(3):
+448–472, 1992.
+
+Minka, Thomas P. Expectation propagation for approx-
+In Proceedings of the Sev-
+imate bayesian inference.
+enteenth conference on Uncertainty in artiﬁcial intelli-
+gence, pp. 362–369. Morgan Kaufmann Publishers Inc.,
+2001.
+
+Multiplicative Normalizing Flows for Variational Bayesian Neural Networks
+
+Szegedy, Christian, Zaremba, Wojciech, Sutskever, Ilya,
+Bruna, Joan, Erhan, Dumitru, Goodfellow, Ian, and Fer-
+gus, Rob. Intriguing properties of neural networks. arXiv
+preprint arXiv:1312.6199, 2013.
+
+Ullrich, Karen, Meeds, Edward, and Welling, Max. Soft
+weight-sharing for neural network compression. arXiv
+preprint arXiv:1702.04008, 2017.
+
+Wang, Sida and Manning, Christopher. Fast dropout train-
+In Proceedings of The 30th International Confer-
+
+ing.
+ence on Machine Learning, pp. 118–126, 2013.
+
+Welling, Max and Teh, Yee W. Bayesian learning via
+stochastic gradient langevin dynamics. In Proceedings
+of the 28th International Conference on Machine Learn-
+ing (ICML-11), pp. 681–688, 2011.
+
+Williams, Ronald J. Simple statistical gradient-following
+learning.
+
+algorithms for connectionist reinforcement
+Machine learning, 8(3-4):229–256, 1992.
+
+Zhang, Chiyuan, Bengio, Samy, Hardt, Moritz, Recht, Ben-
+jamin, and Vinyals, Oriol. Understanding deep learn-
+ing requires rethinking generalization. arXiv preprint
+arXiv:1611.03530, 2016.
+
+Mnih, Andriy and Gregor, Karol. Neural variational in-
+ference and learning in belief networks. arXiv preprint
+arXiv:1402.0030, 2014.
+
+Molchanov, D., Ashukha, A., and Vetrov, D. Variational
+Dropout Sparsiﬁes Deep Neural Networks. ArXiv e-
+prints, January 2017.
+
+Nair, Vinod and Hinton, Geoffrey E. Rectiﬁed linear units
+improve restricted boltzmann machines. In Proceedings
+of the 27th International Conference on Machine Learn-
+ing (ICML-10), pp. 807–814, 2010.
+
+Neal, Radford M. Bayesian learning for neural networks.
+
+PhD thesis, Citeseer, 1995.
+
+Osband, Ian, Blundell, Charles, Pritzel, Alexander, and
+Van Roy, Benjamin. Deep exploration via bootstrapped
+dqn. arXiv preprint arXiv:1602.04621, 2016.
+
+Papernot, Nicolas, Goodfellow, Ian, Sheatsley, Ryan, Fein-
+man, Reuben, and McDaniel, Patrick. cleverhans v1.0.0:
+an adversarial machine learning library. arXiv preprint
+arXiv:1610.00768, 2016.
+
+Peterson, Carsten. A mean ﬁeld theory learning algorithm
+for neural networks. Complex systems, 1:995–1019,
+1987.
+
+Ranganath, Rajesh, Tran, Dustin, and Blei, David M.
+arXiv preprint
+
+Hierarchical variational models.
+arXiv:1511.02386, 2015.
+
+Rezende, Danilo Jimenez and Mohamed, Shakir. Varia-
+tional inference with normalizing ﬂows. arXiv preprint
+arXiv:1505.05770, 2015.
+
+Rezende, Danilo Jimenez, Mohamed, Shakir, and Wierstra,
+Daan. Stochastic backpropagation and approximate in-
+In Proceedings of
+ference in deep generative models.
+the 31th International Conference on Machine Learn-
+ing, ICML 2014, Beijing, China, 21-26 June 2014, pp.
+1278–1286, 2014.
+
+Salimans, Tim, Knowles, David A, et al. Fixed-form varia-
+tional posterior approximation through stochastic linear
+regression. Bayesian Analysis, 8(4):837–882, 2013.
+
+Salimans, Tim, Kingma, Diederik P, Welling, Max, et al.
+Markov chain monte carlo and variational inference:
+Bridging the gap. In International Conference on Ma-
+chine Learning, pp. 1218–1226, 2015.
+
+Srivastava, Nitish, Hinton, Geoffrey, Krizhevsky, Alex,
+Sutskever, Ilya, and Salakhutdinov, Ruslan. Dropout:
+A simple way to prevent neural networks from overﬁt-
+ting. The Journal of Machine Learning Research, 15(1):
+1929–1958, 2014.
+
+

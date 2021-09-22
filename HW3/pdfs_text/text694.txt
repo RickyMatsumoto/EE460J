@@ -1,0 +1,1207 @@
+ZipML: Training Linear Models with End-to-End Low Precision,
+and a Little Bit of Deep Learning
+
+Hantian Zhang 1 Jerry Li 2 Kaan Kara 1 Dan Alistarh 1 3 Ji Liu 4 Ce Zhang 1
+
+Abstract
+
+Recently there has been signiﬁcant interest in
+training machine-learning models at low preci-
+sion: by reducing precision, one can reduce com-
+putation and communication by one order of
+magnitude. We examine training at reduced pre-
+cision, both from a theoretical and practical per-
+spective, and ask: is it possible to train models
+at end-to-end low precision with provable guar-
+antees? Can this lead to consistent order-of-
+magnitude speedups? We mainly focus on linear
+models, and the answer is yes for linear models.
+We develop a simple framework called ZipML
+based on one simple but novel strategy called
+double sampling. Our ZipML framework is able
+to execute training at low precision with no bias,
+guaranteeing convergence, whereas naive quanti-
+zation would introduce signiﬁcant bias. We val-
+idate our framework across a range of applica-
+tions, and show that it enables an FPGA proto-
+type that is up to 6.5× faster than an implemen-
+tation using full 32-bit precision. We further de-
+velop a variance-optimal stochastic quantization
+strategy and show that it can make a signiﬁcant
+difference in a variety of settings. When applied
+to linear models together with double sampling,
+we save up to another 1.7× in data movement
+compared with uniform quantization. When
+training deep networks with quantized models,
+we achieve higher accuracy than the state-of-the-
+art XNOR-Net.
+
+1ETH Zurich, Switzerland 2Massachusetts Institute of
+Technology, USA 3IST Austria, Austria
+4University of
+Rochester, USA. Correspondence to: Hantian Zhang <han-
+tian.zhang@inf.ethz.ch>, Ce Zhang <ce.zhang@inf.ethz.ch>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Figure 1. Overview of theoretical results and highlights of empir-
+ical results. See Introduction for details.
+
+1. Introduction
+
+The computational cost and power consumption of today’s
+machine learning systems are often driven by data move-
+ment, and by the precision of computation.
+In our ex-
+perience, in applications such as tomographic reconstruc-
+tion, anomaly detection in mobile sensor networks, and
+compressive sensing, the overhead of transmitting the data
+samples can be massive, and hence performance can hinge
+on reducing the precision of data representation and asso-
+ciated computation. A similar trend is observed in deep
+learning, where impressive progress has been reported
+with systems using end-to-end reduced-precision represen-
+tations (Hubara et al., 2016; Rastegari et al., 2016; Zhou
+et al., 2016; Miyashita et al., 2016). The empirical suc-
+cess of these works inspired this paper, in which we try
+to provide a theoretical understanding of end-to-end low-
+precision training for machine learning models.
+In this
+context, the motivating question behind our work is: When
+
+(a) Linear Regression(c) 3D Reconstruction32Bit12Bit(b) FPGA Speed Up(d) Deep LearningMachine  Learning  ModelsData Movement ChannelsSpeed up because of our techniquesGradientInput SamplesModelLinear ModelsDe Sa et la., Alistarh et al., …1. Double Sampling 2. Data-Optimal EncodingStochastic RoundingVery Signiﬁcant  Speed up (Up to 10x)Deep LearningCourbariaux et al., Rastegari et al., …Data-Optimal EncodingSigniﬁcant Speed up025507510032-bit Full PrecisionDouble Sampling 4-bit#EpochsTraining Loss#Epochs(a) Linear Regression(b) LS-SVM0255075100.30x0.01.120.06x0.132-bit Full PrecisionDouble Sampling 3-bit.180.010.111000.011Hogwild!FPGA 2-bitTime (seconds)Training LossTime (seconds)(a) Linear Regression(b) LS-SVM.750x0.01.20.1x0.1FPGA 32-bitFPGA 2-bitHogwild!FPGA 32-bit00.61.21.82.401020304032-bit Full PrecisionXNOR5Optimal5#Epochs03060901201500612182430Uniform 3-bitTraining Loss#Epochs32-bit Full PrecisionOptimal 3-bit, Uniform 5-bit overlap w/ 32-bit Full Precision(a) Linear Model(b) Deep LearningTime (seconds)(b) Logistic Regression025507510000.050.10.150.20255075100Training LossTime (seconds)(a) SVM0.1x0.1Chebyshev 8-bit32-bit Full Precision.05Chebyshev 8-bit32-bit Full PrecisionDeterministic Rounding 8-bit overlap w/ 32-bit Full PrecisionDeterministic Rounding 8-bit overlap w/ 32-bit Full PrecisionZipML: Training Linear Models with End-to-End Low Precision
+
+training general machine learning models, can we lower
+the precision of data representation, communication, and
+computation, while maintaining provable guarantees?
+
+In this paper, we develop ZipML, a general framework to
+answer this question, and present results obtained in the
+context of this ZipML framework. Figure 1 encapsulates
+our results: (a) for linear models, we are able to lower
+the precision of both computation and communication, in-
+cluding input samples, gradients, and model, by up to 16
+times, while still providing rigorous theoretical guarantees;
+(b) our FPGA implementation of this framework achieves
+up to 6.5× speedup compared with a 32-bit FPGA imple-
+mentation, or with a 10-core CPU running Hogwild!; (c)
+we are able to decrease data movement by 2.7× for tomo-
+graphic reconstruction, while obtaining a negligible qual-
+ity decrease. Elements of our framework generalize to (d)
+model compression for training deep learning models. In
+the following, we describe our technical contributions in
+more detail.
+
+1.1. Summary of Technical Contributions
+
+We consider the following problem in training generalized
+linear models:
+
+min
+x
+
+:
+
+1
+2K
+
+K
+(cid:88)
+
+k=1
+
+l(a(cid:62)
+
+k x, bk)2 + R(x),
+
+(1)
+
+where l(·, ·) is a loss function and R is a regularization term
+that could be (cid:96)1 norm, (cid:96)2 norm, or even an indicator func-
+tion representing the constraint. The gradient at the sample
+(ak, bk) is:
+
+gk := ak
+
+∂l(a(cid:62)
+∂a(cid:62)
+
+k x, bk)
+k x
+
+.
+
+We denote the problem dimension by n. We consider
+the properties of the algorithm when a lossy compres-
+sion scheme is applied to the data (samples), gradient,
+to reduce the communication cost of the
+and model,
+algorithm—that is, we consider quantization functions Qg,
+Qm, and Qs for gradient, model, and samples, respectively,
+in the gradient update:
+
+xt+1 ← proxγR(·) (xt − γQg(gk(Qm(xt), Qs(at)))) ,
+
+samples (i.e., Qs) introduces bias of the gradient estimator
+and therefore SGD would converge to a different solution.
+We propose a simple solution to this problem by introduc-
+ing a double sampling strategy ˜Qs that uses multiple sam-
+ples to eliminate the correlation of samples introduced by
+the non-linearity of the gradient. We analyze the additional
+variance introduced by double sampling, and ﬁnd that its
+impact is negligible in terms of convergence time as long
+as the number of bits used to store a quantized sample is at
+least Θ(log n/σ), where σ2 is the variance of the standard
+stochastic gradient. This implies that the 32-bit precision
+may be excessive for many practical scenarios.
+
+We build on this result to obtain an end-to-end quantiza-
+tion strategy for linear models, which compresses all data
+movements. For certain settings of parameters, end-to-end
+quantization adds as little as a constant factor to the vari-
+ance of the entire process.
+
+Optimal Quantization and Extension to Deep Learning.
+We then focus on reducing the variance of stochastic quan-
+tization. We notice that different methods for setting the
+quantization points have different variances—the standard
+uniformly-distributed quantization strategy is far from op-
+timal in many settings. We formulate this as an indepen-
+dent optimization problem, and solve it optimally with an
+efﬁcient dynamic programming algorithm that only needs
+to scan the data in a single pass. When applied to linear
+models, this optimal strategy can save up to 1.6× commu-
+nication compared with the uniform strategy.
+
+We perform an analysis of the optimal quantizations for
+various settings, and observe that the uniform quantiza-
+tion approach popularly used by state-of-the-art end-to-end
+low-precision deep learning training systems when more
+than 1 bit is used is suboptimal. We apply optimal quan-
+tization to models and show that, with one standard neural
+network, we outperform the uniform quantization used by
+XNOR-Net and a range of other recent approaches. This
+is related, but different, to recent work on model compres-
+sion for inference (Han et al., 2016). To the best of our
+knowledge, this is the ﬁrst time such optimal quantization
+strategies have been applied to training.
+
+(2)
+
+2. Linear Models
+
+where the proximal operator is deﬁned as
+
+proxγR(·)(y) = argmin
+
+(cid:107)x − y(cid:107)2 + γR(x).
+
+1
+2
+
+x
+
+In this section, we focus on linear models with possibly
+non-smooth regularization. We have labeled data points
+(a1, b1), (a2, b2), . . . , (aK, bK) ∈ Rn × R, and our goal
+is to minimize the function
+
+Our Results. We summarize our results as follows.
+
+Linear Models. When l(·, ·) is the least squares loss, we
+ﬁrst notice that simply doing stochastic quantization of data
+
+F (x) =
+
+(cid:107)a(cid:62)
+
+k x − bk(cid:107)2
+2
+
++R(x) ,
+
+(3)
+
+K
+(cid:88)
+
+k=1
+
+1
+K
+(cid:124)
+
+(cid:123)(cid:122)
+=:f (x)
+
+(cid:125)
+
+ZipML: Training Linear Models with End-to-End Low Precision
+
+in sensor networks) and the associated computation (e.g.,
+each register can hold more numbers). This motivates us
+to use low-precision sample points to train the model. The
+following will introduce the proposed low-precision SGD
+framework by meeting all three factors for SGD.
+
+2.1. Bandwidth-Efﬁcient Stochastic Quantization
+
+We propose to use stochastic quantization to generate a
+low-precision version of an arbitrary vector v in the fol-
+lowing way. Given a vector v, let M (v) be a scaling factor
+such that −1 ≤ v/M (v) ≤ 1. Without loss of generality,
+let M (v) = ||v||2. We partition the interval [−1, 1] using
+s + 1 separators: −1 = l0 ≤ l1... ≤ ls = 1; for each
+number v in v/M (v), we quantize it to one of two nearest
+separators: li ≤ v ≤ li+1. We denote the stochastic quan-
+tization function by Q(v, s) and choose the probability of
+quantizing to different separators such that E[Q(v, s)] = v.
+We use Q(v) when s is not relevant.
+
+2.2. Double Sampling for Unbiased Stochastic Gradient
+
+The naive way to use low-
+precision samples ˆat
+:=
+Q(at) is
+
+ˆgt := ˆatˆa(cid:62)
+
+t x − ˆatbt.
+
+the naive ap-
+However,
+proach does not work
+(that is, it does not guaran-
+tee convergence), because
+it is biased:
+
+Figure 2. A schematic representation of the computational model.
+
+i.e., minimize the empirical least squares loss plus a non-
+smooth regularization R(·) (e.g., (cid:96)1 norm, (cid:96)2 norm, and
+constraint indicator function). SGD is a popular approach
+for solving large-scale machine learning problems.
+It
+works as follows: at step xt, given an unbiased gradient
+estimator gt, that is, E(gt) = ∇f (xt), we update xt+1 by
+
+xt+1 = proxγtR(·) (xt − γtgt) ,
+
+where γt is the predeﬁned step length. SGD guarantees the
+following convergence property:
+
+Theorem 1. [e.g., (Bubeck, 2015), Theorem 6.3] Let the
+sequence {xt}T
+t=1 be bounded. Appropriately choosing the
+steplength, we have the following convergence rate for (3):
+
+(cid:33)
+
+(cid:32)
+
+F
+
+1
+T
+
+T
+(cid:88)
+
+t=0
+
+xt
+
+− min
+x
+
+F (x) ≤ Θ
+
+(cid:19)
+
+(cid:18) 1
+T
+
++
+
+σ
+√
+T
+
+(4)
+
+where σ is the upper bound of the mean variance
+
+σ2 ≥
+
+E(cid:107)gt − ∇f (xt)(cid:107)2.
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+E[ˆgt] := ata(cid:62)
+
+t x − atbt + Dax,
+
+where Da is diagonal and its ith diagonal element is
+
+There are three key requirements for SGD to converge:
+
+E[Q(ai)2] − a2
+i .
+
+1. Computing stochastic gradient gt is cheap;
+2. The stochastic gradient gt should be unbiased;
+3. The stochastic gradient variance σ dominates the con-
+vergence efﬁciency, so it needs to be controlled appro-
+priately.
+
+The common choice is to uniformly select one sample:
+
+gt = g(f ull)
+t
+
+:= aπ(t)(a(cid:62)
+
+π(t)x − bπ(t)).
+
+(5)
+
+(π(t) is a uniformly random integer from 1 to K). We
+abuse the notation and let at = aπ(t). Note that g(f ull)
+is an unbiased estimator E[g(f ull)
+] = ∇f (xt). Although it
+t
+has received success in many applications, if the precision
+of sample at can be further decreased, we can save poten-
+tially one order of magnitude bandwidth of reading at (e.g.,
+
+t
+
+Since Da is non-zero, we obtain a biased estimator of the
+gradient, so the iteration is unlikely to converge. The ﬁgure
+on the right illustrates the bias caused by a non-zero Da. In
+fact, it is easy to see that in instances where the minimizer
+x is large and gradients become small, we will simply di-
+verge.
+
+We now present a simple method to ﬁx the biased gradient
+estimator. We generate two independent random quantiza-
+tions and revise the gradient:
+
+gt := Q1(at)(Q2(at)(cid:62)x − bt) .
+
+(6)
+
+This gives us an unbiased estimator of the gradient.
+
+Overhead of Storing Samples. The reader may have no-
+ticed that one implication of double sampling is the over-
+head of sending two samples instead of one. We note that
+
+ComputationStorageSampleStoreModelStoreGradientDeviceUpdateDeviceSampleModelGradientComputationStorageSampleStoreModelStoreGradientDeviceUpdateDevice(Hard Drive)(DRAM)CPU(a) Computation Model(b) One Example Realisation of the Computation Model* For single-processor systems, GradientDevice and UpdateDevice are often the same device.  12307515022530032-bit Full PrecisionDeterministic RoundingNaive Stochastic Sampling7%Our Approach#Epochs.0013.0012.0014Training LossZipML: Training Linear Models with End-to-End Low Precision
+
+this will not introduce 2× overhead in terms of data com-
+munication. Instead, we start from the observation that the
+two samples can differ by at most one bit. For example,
+to quantize the number 0.7 to either 0 or 1. Our strategy
+is to ﬁrst store the smallest number of the interval (here
+0), and then for each sample, send out 1 bit to represent
+whether this sample is at the lower marker (0) or the up-
+per marker (1). Under this procedure, once we store the
+base quantization level, we will need one extra bit for each
+additional sample. More generally, since samples are used
+symmetrically, we only need to send a number represent-
+ing the number of times the lower quantization level has
+been chosen among all the sampling trials. Thus, sending
+k samples only requires log2 k more bits.
+
+2.3. Variance Reduction
+
+the mean variance
+
+E(cid:107)gt −
+From Theorem 1,
+∇f (x)(cid:107)2 will dominate the convergence efﬁciency. It is
+not hard to see that the variance of the double sampling
+based stochastic gradient in (6) can be decomposed into
+
+1
+T
+
+(cid:80)
+t
+
+E(cid:107)gt − ∇f (xt)(cid:107)2 ≤ E(cid:107)g(f ull)
+
+t
++ E(cid:107)gt − g(f ull)
+
+− ∇f (xt)(cid:107)2
+(cid:107)2.
+
+t
+
+(7)
+
+The ﬁrst term is from the full stochastic gradient, which can
+be reduced by using strategies such as mini-batch, weight
+sampling, and so on. Thus, reducing the ﬁrst term is an
+orthogonal issue for this paper. Rather, we are interested in
+the second term, which is the additional cost of using low-
+precision samples. All strategies for reducing the variance
+of the ﬁrst term can seamlessly combine with the approach
+of this paper. The additional cost can be bounded by the
+following lemma.
+
+Lemma 1. The stochastic gradient variance using double
+sampling in (6) E(cid:107)gt − g(f ull)
+
+(cid:107)2 can be bounded by
+
+t
+
+Θ (cid:0)T V(at)(T V(at)(cid:107)x (cid:12) x(cid:107) + (cid:107)a(cid:62)
+
+t x(cid:107)2 + (cid:107)x (cid:12) x(cid:107)(cid:107)at(cid:107)2)(cid:1) ,
+
+where T V(at) := E(cid:107)Q(at) − at(cid:107)2 and (cid:12) denotes the ele-
+ment product.
+
+Thus, minimizing T V(at) is key to reducing variance.
+
+Uniform quantization.
+It makes intuitive sense that, the
+more levels of quantization, the lower the variance. The
+following makes this quantitative dependence precise.
+
+Lemma 2. [(Alistarh et al., 2016)] Assume that quanti-
+zation levels are uniformly distributed. For any vector
+v ∈ Rn, we have that E[Q(v, s)] = v. Further, the vari-
+ance of uniform quantization with s levels is bounded by
+
+T V s(v) := E[(cid:107)Q(v, s)−v(cid:107)2
+
+2] ≤ min(n/s2,
+
+n/s))(cid:107)v(cid:107)2
+
+2. .
+
+√
+
+Together with other results, it suggests the stochastic gra-
+dient variance of using double sampling is bounded by
+
+E(cid:107)gt − ∇f (xt)(cid:107)2 ≤ σ2
+
+(f ull) + Θ (cid:0)n/s2(cid:1) ,
+
+t
+
+(f ull) ≥ E(cid:107)g(f ull)
+
+− ∇f (x)(cid:107)2 is the upper bound
+where σ2
+of using the full stochastic gradient, assuming that x and
+all ak’s are bounded. Because the number of quantiza-
+tion levels s is exponential to the number of bits we use
+to quantize, to ensure that these two terms are comparable
+(using a low-precision sample does not degrade the conver-
+gence rate), the number of bits only needs to be greater than
+Θ(log n/σ(f ull)). Even for linear models with millions of
+features, 32 bits is likely to be “overkill.”
+
+3. Optimal Quantization Strategy for
+
+Reducing Variance
+
+In the previous section, we have assumed uniformly dis-
+tributed quantization points. We now investigate the choice
+of quantization points and present an optimal strategy to
+minimize the quantization variance term T V(at).
+
+Problem Setting. Assume a set of real numbers Ω =
+{x1, . . . , xN } with cardinality N . WLOG, assume that all
+numbers are in [0, 1] and that x1 ≤ . . . ≤ xN .
+The goal is to partition I = {Ij}s
+j=1 of [0, 1] into s disjoint
+intervals, so that if we randomly quantize every x ∈ Ij to
+an endpoint of Ij, the variance is minimal over all possible
+partitions of [0, 1] into s intervals. Formally:
+
+min
+I:|I|=s
+
+MV(I) :=
+
+1
+N
+
+s
+(cid:88)
+
+(cid:88)
+
+j=1
+
+xi∈Ij
+
+err(xi, Ij)
+
+s.t.
+
+Ij = [0, 1],
+
+Ij ∩ lk = ∅ for k (cid:54)= j,
+
+(8)
+
+s
+(cid:91)
+
+j=1
+
+where err(x, I) = (b − x)(x − a) is the variance for point
+x ∈ I if we quantize x to an endpoint of I = [a, b]. That
+is, err(x, I) is the variance of the (unique) distribution D
+supported on a, b so that EX∼D[X] = x.
+
+Given an interval I ⊆ [0, 1], we let ΩI be the set of
+xj ∈ Ω contained in I. We also deﬁne err(Ω, I) =
+(cid:80)
+xj ∈I err(xj, I). Given a partition I of [0, 1], we let
+err(Ω, I) = (cid:80)
+I∈I err(Ω, I). We let the optimum solution
+be I ∗ = argmin|I|=k err(Ω, I), breaking ties randomly.
+
+3.1. Dynamic Programming
+
+We ﬁrst present a dynamic programming algorithm that
+solves the above problem in an exact way. In the next sub-
+section, we present a more practical approximation algo-
+rithm that only needs to scan all data points once.
+
+ZipML: Training Linear Models with End-to-End Low Precision
+
+Figure 3. Optimal quantization points calculated with dynamic
+programming given a data distribution.
+
+This optimization problem is non-convex and non-smooth.
+We start from the observation that there exists an optimal
+solution that places endpoints at input points.
+Lemma 3. There is a I ∗ so that all endpoints of any I ∈
+I ∗ are in Ω ∪ {0, 1}.
+
+Therefore, to solve the problem in an exact way, we just
+need to select a subset of data points in Ω as quantiza-
+tion points. Deﬁne T (k, m) be the optimal total variance
+for points in [0, dm] with k quantization levels choosing
+dm = xm for all m = 1, 2, · · · , N . Our goal is to cal-
+culate T (s, N ). This problem can be solved by dynamic
+programing using the following recursion
+
+T (k, m) =
+
+min
+j∈{k−1,k,··· ,m−1}
+
+T (k − 1, j) + V (j, m),
+
+where V (j, m) denotes the total variance of points falling
+in the interval [dj, dm]. The complexity of calculating the
+matrix V (·, ·) is O(N 2 + N ) and the complexity of calcu-
+lating the matrix T (·, ·) is O(kN 2). The memory cost is
+O(kN + N 2).
+
+3.2. Heuristics
+
+The exact algorithm has a complexity that is quadratic in
+the number of data points, which may be impractical. To
+make our algorithm practical, we develop an approximation
+algorithm that only needs to scan all data points once and
+has linear complexity to N .
+
+Discretization. We can discretize the range [0, 1] into
+M intervals, i.e., [0, d1), [d1, d2), · · · , [dM −1, 1] with 0 <
+d1 < d2 < · · · < dM −1 < 1. We then restrict our algo-
+rithms to only choose k quantization points within these M
+points, instead of all N points in the exact algorithm. The
+following result bounds the quality of this approximation.
+Theorem 2. Let the maximal number of data points in each
+“small interval” (deﬁned by {dm}M −1
+m=1 ) and the maximal
+length of small intervals be bounded by bN/M and a/M ,
+j }k−1
+respectively. Let I ∗ := {l∗
+k=1 be the
+optimal quantization to (8) and the solution with discretiza-
+tion. Let cM/k be the upper bound of the number of small
+intervals crossed by any “large interval” (deﬁned by I ∗).
+Then we have the discretization error bounded by
+
+k=1 and ˆI ∗ := {ˆl∗
+
+k}k−1
+
+MV(ˆI ∗) − MV(I ∗) ≤
+
+a2bk
+4M 3 +
+
+a2bc2
+M k
+
+.
+
+Theorem 2 suggests that the mean variance using the dis-
+crete variance-optimal quantization will converge to the op-
+timal with the rate O(1/M k).
+
+Dynamic Programming with Candidate Points. Notice
+that we can apply the same dynamic programming ap-
+proach given M candidate points.
+In this case, the total
+computational complexity becomes O((k + 1)M 2 + N ),
+with memory cost O(kM + M 2). Also, to ﬁnd the optimal
+quantization, we only need to scan all N numbers once.
+Figure 3 illustrates an example output for our algorithm.
+
+2-Approximation in Almost-Linear Time.
+In the full
+version of this paper (Zhang et al., 2016), we present an
+algorithm which, given Ω and k, provides a split using
+at most 4k intervals, which guarantees a 2-approximation
+of the optimal variance for k intervals, using O(N log N )
+time. This is a new variant of the algorithm by (Acharya
+et al., 2015) for the histogram recovery problem. We can
+use the 4k intervals given by this algorithm as candidates
+for the DP solution, to get a general 2-approximation using
+k intervals in time O(N log N + k3).
+
+3.3. Applications to Deep Learning
+
+In this section, we show that it is possible to apply optimal
+quantization to training deep neural networks.
+
+State-of-the-art. We focus on training deep neural net-
+works with a quantized model. Let W be the model and
+l(W) be the loss function. State-of-the-art quantized net-
+works, such as XNOR-Net and QNN, replace W with the
+quantized version Q(W), and optimize for
+
+min
+W
+
+l(Q(W)).
+
+With a properly deﬁned ∂Q
+∂W , we can apply the standard
+backprop algorithm. Choosing the quantization function
+Q is an important design decision. For 1-bit quantization,
+XNOR-Net searches the optimal quantization point. How-
+ever, for multiple bits, XNOR-Net, as well as other ap-
+proaches such as QNN, resort to uniform quantization.
+
+Optimal Model Quantization for Deep Learning. We
+can apply our optimal quantization strategy and use it as the
+quantization function Q in XNOR-Net. Empirically, this
+results in quality improvement over the default multi-bits
+quantizer in XNOR-Net. In spirit, our approach is similar
+to the 1-bit quantizer of XNOR-Net, which is equivalent
+to our approach when the data distribution is symmetric—
+we extend this to multiple bits in a principled way. An-
+other related work is the uniform quantization strategy in
+log domain (Miyashita et al., 2016), which is similar to our
+approach when the data distribution is “log uniform.” How-
+ever, our approach does not rely on any speciﬁc assumption
+
+Optimal Quantization PointsZipML: Training Linear Models with End-to-End Low Precision
+
+Dataset
+Synthetic 10
+Synthetic 100
+Synthetic 1000
+YearPrediction
+cadata
+cpusmall
+
+Dataset
+cod-rna
+gisette
+
+Dataset
+CIFAR-10
+
+Dataset
+
+Regression
+
+Training Set
+10,000
+10,000
+10,000
+463,715
+10,000
+6,000
+Classiﬁcation
+
+Testing Set
+10,000
+10,000
+10,000
+51,630
+10,640
+2,192
+
+Training Set
+59,535
+6,000
+
+Testing Set
+271,617
+1,000
+
+# Features
+10
+100
+1,000
+90
+8
+12
+
+# Features
+8
+5,000
+
+Deep Learning
+
+Training Set
+50,000
+
+Testing Set
+10,000
+Tomographic Reconstruction
+# Projections Volumn Size
+1283
+
+128
+
+# Features
+32 × 32 × 3
+
+Proj. Size
+1283
+
+Table 1. Dataset statistics.
+
+of the data distribution. Han et al. (2016) use k-means to
+compress the model for inference —k-means optimizes for
+a similar, but different, objective function than ours. In this
+paper, we develop a dynamic programming algorithm to do
+optimal stochastic quantization efﬁciently.
+
+4. Experiments
+
+We now provide an empirical validation of our ZipML
+framework.
+
+Experimental Setup. Table 1 shows the datasets we use.
+Unless otherwise noted, we always use diminishing step-
+sizes α/k, where k is the current number of epoch. We
+tune α for the full precision implementation, and use the
+same initial step size for our low-precision implementation.
+(Theory and experiments imply that the low-precision im-
+plementation often favors smaller step size. Thus we do
+not tune step sizes for the low-precision implementation,
+as this can only improve the accuracy of our approach.)
+
+Summary of Experiments. Due to space limitations, we
+only report on Synthetic 100 for regression, and on gisette
+for classiﬁcation. The full version of this paper (Zhang
+et al., 2016) contains (1) several other datasets, and dis-
+cusses (2) different factors such as impact of the number
+of features, and (3) refetching heuristics. The FPGA im-
+plementation and design decisions can be found in (Kara
+et al., 2017).
+
+4.1. Convergence on Linear Models
+
+We validate that (1) with double sampling, SGD with
+low precision converges—in comparable empirical conver-
+gence rates—to the same solution as SGD with full pre-
+
+Figure 4. Linear models with end-to-end low precision.
+
+cision; and (2) implemented on FPGA, our low-precision
+prototype achieves signiﬁcant speedup because of the de-
+crease in bandwidth consumption.
+
+Convergence. Figure 4 illustrates the result of training
+linear models: (a) linear regression and (b) least squares
+SVMs, with end-to-end low-precision and full precision.
+For low precision, we pick the smallest number of bits that
+results in a smooth convergence curve. We compare the
+ﬁnal training loss in both settings and the convergence rate.
+
+We see that, for both linear regression and least squares
+SVM, using 5- or 6-bit is always enough to converge to
+the same solution with comparable convergence rate. This
+validates our prediction that double-sampling provides an
+unbiased estimator of the gradient. Considering the size of
+input samples that we need to read, we could potentially
+save 6–8× memory bandwidth compared to using 32-bit.
+
+Speedup. We implemented our low-precision framework
+on a state-of-the-art FPGA platform. The detailed imple-
+mentation is described in (Kara et al., 2017). This imple-
+mentation assumes the input data is already quantized and
+stored in memory (data can be quantized during the ﬁrst
+epoch).
+
+Figure 5 illustrates the result of (1) our FPGA implemen-
+tation with quantized data, (2) FPGA implementation with
+32-bit data, and (3) Hogwild! running with 10 CPU cores.
+Observe that all approaches converge to the same solu-
+tion. FPGA with quantized data converges 6-7× faster than
+FPGA with full precision or Hogwild!. The FPGA imple-
+mentation with full precision is memory-bandwidth bound,
+and by using our framework on quantized data, we save up
+to 8× memory-bandwidth, which explains the speedup.
+
+now
+
+of Mini-Batching. We
+
+Impact
+validate
+the“sensitivity” of the algorithm to the precision un-
+der batching. Equation 7 suggests that, as we increase
+batch size,
+the variance term corresponding to input
+quantization may start to dominate the variance of the
+stochastic gradient. However, in practice and for reason-
+able parameter settings, we found this does not occur:
+convergence trends for small batch size, e.g. 1, are the
+
+025507510032-bit Full PrecisionDouble Sampling 4-bit#EpochsTraining Loss#Epochs(a) Linear Regression(b) LS-SVM0255075100.30x0.01.120.06x0.132-bit Full PrecisionDouble Sampling 3-bit.18ZipML: Training Linear Models with End-to-End Low Precision
+
+Figure 5. FPGA implementation of linear models.
+
+Figure 7. Optimal quantization strategy.
+
+Figure 6. Impact of Using Mini-Batch. BS=Batch Size.
+
+same as for larger sizes, e.g. 256. Figure 6 shows that, if
+we use larger mini-batch size (256), we need more epochs
+than using smaller mini-batch size (16) to converge, but
+for the quantized version, actually the one with larger
+mini-batch size converges faster.
+
+4.2. Data-Optimal Quantization Strategy
+
+We validate that, with our data-optimal quantization strat-
+egy, we can signiﬁcantly decrease the number of bits that
+double-sampling requires to achieve the same convergence.
+Figure 7(a) illustrates the result of using 3-bit and 5-bit
+for uniform quantization and optimal quantization on the
+YearPrediction dataset. Here, we only consider quantiza-
+tion on data, but not on gradient or model, because to com-
+pute the data-optimal quantization, we need to have access
+to all data and assume the data doesn’t change too much,
+which is not the case for gradient or model. The quantiza-
+tion points are calculated for each feature for both uniform
+quantization and optimal quantization. We see that, while
+uniform quantization needs 5-bit to converge smoothly, op-
+timal quantization only needs 3-bit. We save almost 1.7×
+number of bits by just allocating quantization points care-
+fully.
+
+Comparision with uniform quantization. We validate
+that, with our data-optimal quantization strategy, we can
+signiﬁcantly increase the convergence speed.
+
+Figure 8 illustrates the result of training linear regres-
+sion models: with uniform quantization points and opti-
+mal quantization points. Here, notice that we only quan-
+
+Figure 8. Linear regression with quantized data on multiple
+datasets.
+
+tize data, but not gradient or model. We see that, if we
+use same number of bits, optimal quantization always con-
+verges faster than uniform quantization and the loss curve is
+more stable, because the variance induced by quantization
+is smaller. As a result, with our data-optimal quantization
+strategy, we can either (1) get up to 4× faster convergence
+speed with the same number of bits; or (2) save up to 1.7×
+bits while getting the same convergence speed.
+
+We also see from Figure 8 (a) to (c) that if the dataset
+has more features, usually we need more bits for quantiza-
+tion, because the variance induced by quantization is higher
+when the dimensionality is higher.
+
+4.3. Extensions to Deep Learning
+
+We validate that our data-optimal quantization strategy
+can be used in training deep neural networks. We take
+Caffe’s CIFAR-10 tutorial (Caf) and compare three differ-
+ent quantization strategies: (1) Full Precision, (2) XNOR5,
+a XNOR-Net implementation that, following the multi-bits
+strategy in the original paper, quantizes data into ﬁve uni-
+form levels, and (3) Optimal5, our quantization strategy
+with ﬁve optimal quantization levels. As shown in Fig-
+ure 7(b), Optimal5 converges to a signiﬁcantly lower train-
+
+0.010.111000.011Hogwild!FPGA 2-bitTime (seconds)Training LossTime (seconds)(a) Linear Regression(b) LS-SVM.750x0.01.20.1x0.1FPGA 32-bitFPGA 2-bitHogwild!FPGA 32-bitTraining Loss00.30.601020304050#EpochsBS=256 32-bitBS=256 3-bitBS=16 32-bitBS=16 3-bit00.61.21.82.401020304032-bit Full PrecisionXNOR5Optimal5#Epochs03060901201500612182430Uniform 3-bitTraining Loss#Epochs32-bit Full PrecisionOptimal 3-bit, Uniform 5-bit overlap w/ 32-bit Full Precision(a) Linear Model(b) Deep Learning0255075100Optimal 2-bitUniform 2-bit#EpochsTraining Loss#Epochs(a) synthetic 10(b) synthetic 10002550751000.300Optimal 4-bitUniform 4-bit#Epochs(c) synthetic 100002550751000Optimal 5-bitUniform 5-bit0255075100Optimal 3-bitUniform 3-bit#EpochsTraining Loss#Epochs(d) YearPredictionMSD(e) cadata025507510075030020x109Optimal 2-bitUniform 2-bit#Epochs(f) cpusmall025507510030060Optimal 2-bitUniform 2-bit0.30.30.60.60.6ZipML: Training Linear Models with End-to-End Low Precision
+
+ing loss compared with XNOR5. Also, Optimal5 achieves
+>5 points higher testing accuracy over XNOR5. This il-
+lustrates the improvement obtainable by training a neural
+network with a carefully chosen quantization strategy.
+
+FPGA. There have been attempts to lower the precision
+when training on such hardware (Kim et al., 2011). These
+results are mostly empirical; we aim at providing a theoret-
+ical understanding, which enables new algorithms.
+
+5. Related Work
+
+6. Discussion and Future Work
+
+There has been signiﬁcant work on “low-precision
+SGD” (De Sa et al., 2015; Alistarh et al., 2016). These re-
+sults provide theoretical guarantees only for quantized gra-
+dients. The model and input samples, on the other hand, are
+much more difﬁcult to analyze because of the non-linearity.
+We focus on end-to-end quantization, for all components.
+
+Low-Precision Deep Learning. Low-precision training
+of deep neural networks has been studied intensively and
+many heuristics work well for a subset of networks. OneBit
+SGD (Seide et al., 2014) provides a gradient compres-
+sion heuristic developed in the context of deep neural net-
+works for speech recognition. There are successful appli-
+cations of end-to-end quantization to training neural net-
+works that result in little to no quality loss (Hubara et al.,
+2016; Rastegari et al., 2016; Zhou et al., 2016; Miyashita
+et al., 2016; Li et al., 2016; Gupta et al., 2015). They
+quantize weights, activations, and gradients to low preci-
+sion (e.g., 1-bit) and revise the back-propagation algorithm
+to be aware of the quantization function. The empirical
+success of these works inspired this paper, in which we try
+to provide a theoretical understanding of end-to-end low-
+precision training for machine learning models. Another
+line of research concerns inference and model compression
+of a pre-trained model (Vanhoucke et al., 2011; Gong et al.,
+2014; Han et al., 2016; Lin et al., 2016; Kim & Smaragdis,
+2016; Kim et al., 2015; Wu et al., 2016). In this paper, we
+focus on training and leave the study of inference for future
+work.
+
+Low-Precision Linear Models. Quantization is a funda-
+mental topic studied by the DSP community, and there has
+been research on linear regression models in the presence
+of quantization error or other types of noise. For exam-
+ple, Gopi et al. (2013) studied compressive sensing with
+binary quantized measurement, and a two-stage algorithm
+was proposed to recover the sparse high-precision solution
+up to a scale factor. Also, the classic errors-in-variable
+model (Hall, 2008) could also be relevant if quantization
+is treated as a source of “error.” In this paper, we scope
+ourselves to the context of stochastic gradient descent, and
+our insights go beyond simple linear models. For SVM the
+straw man approach can also be seen as a very simple case
+of kernel approximation (Cortes et al., 2010).
+
+Other Related Work. Precision of data representation is
+a key design decision for conﬁgurable hardwares such as
+
+Our motivating question was whether end-to-end low-
+precision data representation can enable efﬁcient compu-
+tation with convergence guarantees. We show that ZipML,
+a relatively simple stochastic quantization framework can
+achieve this for linear models. With this setting, as little as
+two bits per model dimension are sufﬁcient for good accu-
+racy, and can enable a fast FPGA implementation.
+
+Non-Linear Models. We mainly discussed linear mod-
+els (e.g. linear regression) in this paper. The natural ques-
+tion is that can we extend our ZipML framework to non-
+linear models (e.g. logistic regression or SVM) which are
+arguably more commonly used. In the full version on this
+paper, we examine this problem, and ﬁnd that our frame-
+work can be generalized to non-linear settings, and that in
+practice 8-bit is sufﬁcient to achieve good accuracy on a va-
+riety of tasks, such as SVM and logistic regression. How-
+ever, we notice that a strawman approach, which applies
+naive stochastic rounding over the input data to just 8-bit
+precision, converges to similar results, without the added
+complexity. It is interesting to consider the rationale be-
+hind these results. Our framework is based on the idea of
+unbiased approximation of the original SGD process. For
+linear models, this is easy to achieve. For non-linear mod-
+els, this is harder, and we focus on guaranteeing arbitrarily
+low bias. However, for a variety of interesting functions
+such as hinge loss, guaranteeing low bias requires complex
+approximations. In turn, these increase the variance. The
+complexity of the approximation and the resulting variance
+increase force us to increase the density of the quantization,
+in order to achieve good approximation guarantees.
+
+Hardware Selection. We choose to realize our imple-
+mentation using FPGA because of its ﬂexibility in deal-
+ing with low-precision arithmetic, while CPU or GPU can
+only do at least 8-bit computation efﬁciently. However,
+we do observe speed up in other environments – for exam-
+ple, the double sampling techniques are currently being ap-
+plied to sensor networks with embedded GPUs and CPUs
+to achieve similar speedup. We are currently conducting an
+architecture exploration study which aims at understanding
+the system trade-off between FPGA, CPU, and GPU. This
+requires us to push the implementation on all three archi-
+tectures to the extreme. We expect this study will soon pro-
+vide a full systematic answer to the question that on which
+hardware can we get the most from the ZipML framework.
+
+ZipML: Training Linear Models with End-to-End Low Precision
+
+Acknowledgements
+
+CZ gratefully acknowledges the support from the Swiss
+National Science Foundation NRP 75 407540 167266,
+NVIDIA Corporation for its GPU donation, and Microsoft
+Azure for Research award program.
+
+References
+
+Caffe CIFAR-10
+
+http://caffe.
+berkeleyvision.org/gathered/examples/
+cifar10.html.
+
+tutorial.
+
+Acharya, Jayadev, Diakonikolas, Ilias, Hegde, Chinmay,
+Li, Jerry Zheng, and Schmidt, Ludwig. Fast and near-
+optimal algorithms for approximating distributions by
+histograms. In PODS, 2015.
+
+Alistarh, Dan, Li,
+
+Jerry, Tomioka, Ryota, and Vo-
+jnovic, Milan. QSGD: Randomized Quantization for
+Communication-Optimal Stochastic Gradient Descent.
+arXiv:1610.02132, 2016.
+
+Bubeck, S´ebastien. Convex optimization: Algorithms
+and complexity. Foundations and Trends R(cid:13) in Machine
+Learning, 2015.
+
+Cortes, Corinna, Mohri, Mehryar, and Talwalkar, Ameet.
+On the impact of kernel approximation on learning ac-
+curacy. In AISTATS, 2010.
+
+De Sa, Christopher M, Zhang, Ce, Olukotun, Kunle, and
+R´e, Christopher. Taming the wild: A uniﬁed analysis of
+hogwild-style algorithms. In NIPS, 2015.
+
+Gong, Yunchao, Liu, Liu, Yang, Ming, and Bourdev,
+Lubomir. Compressing deep convolutional networks us-
+ing vector quantization. arXiv:1412.6115, 2014.
+
+Gopi, Sivakant, Netrapalli, Praneeth, Jain, Prateek, and
+Nori, Aditya. One-bit compressed sensing: Provable
+support and vector recovery. In ICML, 2013.
+
+Gupta, Suyog, Agrawal, Ankur, Gopalakrishnan, Kailash,
+and Narayanan, Pritish. Deep learning with limited nu-
+merical precision. In ICML, 2015.
+
+Hall, Daniel B. Measurement error in nonlinear models: A
+modern perspective (2nd ed.). Journal of the American
+Statistical Association, 2008.
+
+Han, Song, Mao, Huizi, and Dally, William J. Deep com-
+pression: Compressing deep neural networks with prun-
+ing, trained quantization and huffman coding. In ICLR,
+2016.
+
+Hubara, Itay, Courbariaux, Matthieu, Soudry, Daniel, El-
+Yaniv, Ran, and Bengio, Yoshua. Quantized neural
+networks: Training neural networks with low precision
+weights and activations. arXiv:1609.07061, 2016.
+
+Kara, Kaan, Alistarh, Dan, Zhang, Ce, Mutlu, Onur, and
+Alonso, Gustavo. Fpga accelerated dense linear machine
+learning: A precision-convergence trade-off. In FCCM,
+2017.
+
+Kim, Jung Kuk, Zhang, Zhengya, and Fessler, Jeffrey A.
+Hardware acceleration of iterative image reconstruction
+for x-ray computed tomography. In ICASSP, 2011.
+
+Kim, Minje and Smaragdis, Paris. Bitwise neural networks.
+
+arXiv:1601.06071, 2016.
+
+Kim, Yong-Deok, Park, Eunhyeok, Yoo, Sungjoo, Choi,
+Taelim, Yang, Lu, and Shin, Dongjun. Compression
+of deep convolutional neural networks for fast and low
+power mobile applications. arXiv:1511.06530, 2015.
+
+Li, Fengfu, Zhang, Bo, and Liu, Bin. Ternary weight net-
+
+works. arXiv:1605.04711, 2016.
+
+Lin, Darryl, Talathi, Sachin, and Annapureddy, Sreekanth.
+Fixed point quantization of deep convolutional networks.
+In ICML, 2016.
+
+Miyashita, Daisuke, Lee, Edward H, and Murmann, Boris.
+Convolutional neural networks using logarithmic data
+representation. arXiv:1603.01025, 2016.
+
+Rastegari, Mohammad, Ordonez, Vicente, Redmon,
+Joseph, and Farhadi, Ali. Xnor-net: Imagenet classiﬁ-
+cation using binary convolutional neural networks.
+In
+ECCV, 2016.
+
+Seide, Frank, Fu, Hao, Droppo, Jasha, Li, Gang, and Yu,
+Dong. 1-bit stochastic gradient descent and application
+to data-parallel distributed training of speech dnns.
+In
+Interspeech, 2014.
+
+Vanhoucke, Vincent, Senior, Andrew, and Mao, Mark Z.
+Improving the speed of neural networks on cpus. In NIPS
+Workshop on Deep Learning and Unsupervised Feature
+Learning, 2011.
+
+Wu, Jiaxiang, Leng, Cong, Wang, Yuhang, Hu, Qinghao,
+and Cheng, Jian. Quantized convolutional neural net-
+works for mobile devices. In CVPR, 2016.
+
+Zhang, Hantian, Li, Jerry, Kara, Kaan, Alistarh, Dan,
+Liu, Ji, and Zhang, Ce. The zipml framework for
+training models with end-to-end low precision: The
+the cannots, and a little bit of deep learning.
+cans,
+arXiv:1611.05402, 2016.
+
+Zhou, Shuchang, Wu, Yuxin, Ni, Zekun, Zhou, Xinyu,
+Wen, He, and Zou, Yuheng. Dorefa-net: Training
+low bitwidth convolutional neural networks with low
+bitwidth gradients. arXiv:1606.06160, 2016.
+
+

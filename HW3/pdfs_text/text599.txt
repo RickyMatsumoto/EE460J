@@ -1,0 +1,1723 @@
+Magnetic Hamiltonian Monte Carlo
+
+Nilesh Tripuraneni 1 Mark Rowland 2 Zoubin Ghahramani 2 3 Richard Turner 2
+
+(asymptotically) exact inference (Neal, 1996; Hoffman &
+Gelman, 2014; Carpenter et al., 2016).
+
+Abstract
+
+Hamiltonian Monte Carlo (HMC)
+exploits
+Hamiltonian dynamics to construct efﬁcient pro-
+posals for Markov chain Monte Carlo (MCMC).
+In this paper, we present a generalization of
+HMC which exploits non-canonical Hamiltonian
+dynamics. We refer to this algorithm as magnetic
+HMC, since in 3 dimensions a subset of the dy-
+namics map onto the mechanics of a charged par-
+ticle coupled to a magnetic ﬁeld. We establish
+a theoretical basis for the use of non-canonical
+Hamiltonian dynamics in MCMC, and construct
+a symplectic, leapfrog-like integrator allowing
+for the implementation of magnetic HMC. Fi-
+nally, we exhibit several examples where these
+non-canonical dynamics can lead to improved
+mixing of magnetic HMC relative to ordinary
+HMC.
+
+1. Introduction
+
+Probabilistic inference in complex models generally re-
+quires the evaluation of intractable, high-dimensional inte-
+grals. One powerful and generic approach to inference is to
+use Markov chain Monte Carlo (MCMC) methods to gen-
+erate asymptotically exact (but correlated) samples from a
+posterior distribution for inference and learning. Hamilto-
+nian Monte Carlo (HMC) (Duane et al., 1987; Neal, 2011)
+is a state-of-the-art MCMC method which uses gradient in-
+formation from an absolutely continuous target density to
+encourage efﬁcient sampling and exploration. Crucially,
+HMC utilizes proposals inspired by Hamiltonian dynamics
+(corresponding to the classical mechanics of a point parti-
+cle) which can traverse long distances in parameter space.
+HMC, and variants like NUTS (which eliminates the need
+to hand-tune the algorithm’s hyperparameters), have been
+successfully applied to a large class of probabilistic infer-
+ence problems where they are often the gold standard for
+
+1UC Berkeley, USA 2University of Cambridge, UK
+3Uber AI Labs, USA. Correspondence to: Nilesh Tripuraneni
+<nileshtrip@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Figure 1. Example sample paths for standard HMC (left) and
+MHMC (right) for an isotropic Gaussian target distribution.
+
+In this paper, we ﬁrst review important properties of Hamil-
+tonian dynamics, namely energy-preservation, symplectic-
+ity, and time-reversibility, and derive a more general class
+of dynamics with these properties which we refer to as non-
+canonical Hamiltonian dynamics. We then discuss the re-
+lationship of non-canonical Hamiltonian dynamics to well-
+known variants of HMC and propose a novel extension of
+HMC. We refer to this method as magnetic HMC (see Al-
+gorithm 1) since it corresponds to a particular subset of the
+non-canonical dynamics that in 3 dimensions map onto to
+the mechanics of a charged particle coupled to a magnetic
+ﬁeld – see Figure 1 for an example of these dynamics. Fur-
+thermore, we construct an explicit, symplectic, leapfrog-
+like integrator for magnetic HMC which allows for an efﬁ-
+cient numerical integration scheme comparable to that of
+ordinary HMC. Finally, we evaluate the performance of
+magnetic HMC on several sampling problems where we
+show how its non-canonical dynamics can lead to improved
+mixing. The proofs of all results in this paper are presented
+in the corresponding sections of the Appendix.
+
+2. Markov chain Monte Carlo
+
+Given an unnormalized target density ρ(θ) deﬁned on Rd,
+an MCMC algorithm constructs an ergodic Markov chain
+(Θn)n∈N such that the distribution of Θn converges to ρ
+(e.g. in total variation) (Robert & Casella, 2004). Often, the
+transition kernel of such a Markov chain is speciﬁed by the
+Metropolis-Hastings (MH) algorithm which (i) given the
+
+Magnetic Hamiltonian Monte Carlo
+
+(cid:16)
+
+current state Θn = θ, proposes a new state (cid:101)θ by sampling
+θ), and (ii) sets Θn+1 = (cid:101)θ
+from a proposal distribution Q(
+·|
+1, ρ((cid:101)θ)Q(θ|(cid:101)θ)
+with probability min
+and Θn+1 = θ oth-
+ρ(θ)Q((cid:101)θ|θ)
+erwise. The role of the acceptance step is to enforce re-
+versibility (or detailed balance) of the Markov chain with
+respect to ρ – which implies ρ is a stationary distribution of
+the transition kernel.
+
+(cid:17)
+
+Heuristically, a good MH algorithm should have low inter-
+sample correlation while maintaining a high acceptance ra-
+tio. Hamiltonian Monte Carlo provides an elegant mecha-
+nism to do this by simulating a particle moving along the
+contour lines of a dynamical system, constructed from the
+target density, to use as a MCMC proposal.
+
+2.1. Hamiltonian Monte Carlo
+
+In Hamiltonian Monte Carlo, the target distribution is aug-
+mented with “momentum” variables p which are indepen-
+dent of the θ variables but of equal dimension. For the
+remainder of the paper, we take the distribution over the
+momentum variables to be Gaussian, as is common in the
+literature (indeed, there is evidence that in many cases, the
+choice of a Gaussian distribution may be optimal (Betan-
+court, 2017)). The joint target distribution is therefore:
+
+ρ(θ, p)
+
+e−U (θ)−p(cid:62)p/2
+
+e−H(θ,p).
+
+(1)
+
+∝
+
+≡
+
+Crucially, this augmentation allows Hamiltonian dynamics
+to be used as a proposal for an MCMC algorithm over the
+space (θ, p), where we interpret θ (resp., p) as position
+(resp., momentum) coordinates of a physical particle with
+total energy H(θ, p), given by the sum of its potential en-
+ergy U (θ) and kinetic energy p(cid:62)p/2. We brieﬂy review
+the Markov chain construction below; see (Neal, 2011) or
+(Duane et al., 1987) for a more detailed description. Given
+the Markov chain state (θn, pn) at time n, the new state
+for time n + 1 is obtained by ﬁrst resampling momentum
+pn
+(0, I), and then proposing a new state according to
+the following steps: (i) Simulate the deterministic Hamil-
+tonian ﬂow deﬁned by the differential equation
+
+∼ N
+
+(cid:21)
+
+(cid:20)θ(t)
+p(t)
+
+d
+dt
+
+=
+
+(cid:21)
+
+θH(p(t), θ(t))
+pH(p(t), θ(t))
+
+(cid:21)
+
+(cid:20)
+
+I
+I 0
+(cid:123)(cid:122)
+A
+
+(cid:125)
+
+∇
+∇
+
+(cid:20) 0
+
+−
+
+(cid:124)
+(cid:20)
+
+p(t)
+θU (θ(t))
+
+(cid:21)
+
+.
+
+≡
+
+−∇
+
+for time τ , with initial condition (θn, pn),
+(θ(cid:48)
+tum component with the map Φp(θ, p) = (θ,
+
+to obtain
+n) = Φτ,H (θn, pn)1; (ii) Flip the resulting momen-
+p) to ob-
+
+n, p(cid:48)
+
+−
+
+1Throughout this paper, we use Φτ,H to denote the map that
+takes a given position-momentum pair as initial conditions for the
+
+n, p(cid:48)
+tain ((cid:101)θn+1, (cid:101)pn+1) = Φp(θ(cid:48)
+n) = (cid:101)Φτ,H (θn, pn); (iii)
+Apply a MH-type accept/reject step to enforce detailed bal-
+ance with respect to the target distribution; (iv) Flip the mo-
+mentum again with Φp so it points in the original direction.
+
+Note that because the map Φτ,H is time-reversible (in
+the sense that if the path (θ(t), p(t)) is a solution to (2)
+then the path with negated momentum traversed in reverse
+(θ(
+t)) is also a solution), the map (cid:101)Φτ,H is self-
+inverse. From this, the acceptance ratio in step (iii) enforc-
+ing detailed balance can be shown (see e.g. (Green, 1995))
+to have the form:
+
+t),
+
+p(
+
+−
+
+−
+
+−
+
+(cid:32)
+
+min
+
+1,
+
+exp(−H((cid:101)θn+1, (cid:101)pn+1))
+exp(−H(θn, pn))
+
+(cid:33)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)det ∇θ,p (cid:101)Φτ,H (θn, pn)
+(cid:12)
+
+.
+
+(3)
+
+Note that the Hamiltonian ﬂow & momentum ﬂip op-
+erator (cid:101)Φτ,H is volume-preserving2, which immediately
+yields that the Jacobian term in the acceptance ratio (3)
+is simply 1. The acceptance probability therefore reduces
+to min(1, exp(H(θn, pn)
+H((cid:101)θn+1, (cid:101)pn+1))). Further-
+more, since the Hamiltonian ﬂow deﬁned in (2) is energy-
+preserving (i.e. H((cid:101)θn+1, (cid:101)pn+1) = H(θn, pn)) – the ac-
+ceptance ratio is identically 1. Moreover, the momentum
+resampling in (i) and momentum ﬂip in (iv) both leave the
+joint distribution invariant.
+
+−
+
+While the momentum resampling ensures the Markov
+chain explores the joint (θ, p) space, the proposals inspired
+by Hamiltonian dynamics can traverse long distances in
+parameter space θ, reducing the random-walk behavior of
+MH that often results in highly correlated samples (Neal,
+2011).
+
+2.2. Symplectic Numerical Integration
+
+Unfortunately, it is rarely possible to integrate the ﬂow
+deﬁned in (2) analytically; instead an efﬁcient numerical
+integration scheme must be used to generate a proposal
+for the MH-type accept/reject test. Typically, the leapfrog
+(St¨ormer-Verlet) integrator is used since it is an explicit
+method that is both symplectic and time-reversible (Neal,
+2011). One elegant way to motivate this integrator is by
+decomposing the Hamiltonian into a symmetric splitting:
+
+H(θ, p) = U (θ)/2
+(cid:124) (cid:123)(cid:122) (cid:125)
+H1(θ)
+
++ p(cid:62)p/2
+(cid:124) (cid:123)(cid:122) (cid:125)
+H2(p)
+
++ U (θ)/2
+(cid:124) (cid:123)(cid:122) (cid:125)
+H1(θ)
+
+(4)
+
+and then deﬁning Φ(cid:15),H1(θ) and Φ(cid:15),H2(p) to be the exactly-
+integrated ﬂows for the sub-Hamiltonians H1(θ) and
+
+(2)
+
+Hamiltonian ﬂow associated with H for time τ . In addition, (cid:101)Φτ,H
+denotes the composition of Φτ,H with the momentum ﬂip map
+Φp.
+
+2In fact
+
+the Hamiltonian ﬂow satisﬁes
+
+stronger
+to the A matrix
+condition of symplecticity with respect
+([∇θ,pΦτ,H (θ, p)](cid:62)A−1[∇θ,pΦτ,H (θ, p)] = A−1) which im-
+mediately implies it is volume-preserving by taking determinants
+of this relation.
+
+the
+
+H2(p), respectively. These updates (which are equivalent
+to Euler translations) can be written:
+
+θ,pΦτ,H (θ, p)](cid:62)A−1[
+respect to A ([
+θ,pΦτ,H (θ, p)] =
+A−1) which also implies volume-preservation of the ﬂow.
+
+∇
+
+∇
+
+Magnetic Hamiltonian Monte Carlo
+
+Φ(cid:15),H1(θ)
+
+Φ(cid:15),H2(p)
+
+(cid:20)
+
+(cid:21)
+
+(cid:21)
+
+(cid:20)θ
+p
+(cid:20)θ
+p
+
+=
+
+=
+
+θ
+
+(cid:21)
+
+(cid:15)
+θU (θ)
+p
+2 ∇
+−
+(cid:20)θ + (cid:15)p
+(cid:21)
+p
+
+(5)
+
+since the Hamilton equations (2) for the sub-Hamiltonians
+H1(θ) and H2(p) are linear, and hence analytically inte-
+grable. One leapfrog step is then deﬁned as:
+
+Φfrog
+(cid:15),H(θ,p) = Φ(cid:15),H1(θ) ◦
+
+Φ(cid:15),H2(p) ◦
+
+Φ(cid:15),H1(θ)
+
+(6)
+
+with the overall proposal given by L leapfrog steps, fol-
+lowed by the momentum ﬂip operator Φp as before:
+
+(cid:101)Φfrog
+
+L,(cid:15),H = Φp
+
+(cid:16)
+
+Φfrog
+
+(cid:15),H(θ,p)
+
+(cid:17)L
+
+.
+
+◦
+As each of the ﬂows Φ(cid:15),H1(θ), Φ(cid:15),H2(p) exactly integrates
+a sub-Hamiltonian, they inherit the symplecticity, volume-
+preservation, and time-reversibility of the exact dynamics.
+Moreover, since the composition of symplectic ﬂows is also
+symplectic and the splitting scheme is symmetric (imply-
+ing the composition of time-reversible ﬂows is also time-
+reversible), the Jacobian term in the acceptance probability
+(3) is exactly 1 as in the case of perfect simulation.
+
+The leapfrog scheme will not exactly preserve the
+Hamiltonian H,
+so the remaining acceptance ratio
+H((cid:101)θn+1, (cid:101)pn+1)) must be calculated.
+exp(H(θn, pn)
+((cid:15)3) in one
+However, the leapfrog integrator has error
+leapfrog step (Hairer et al., 2006). This error scaling will
+lead to good energy conservation properties (and thus high
+acceptance rates in the MH step), even when simulating
+over long trajectories.
+
+O
+
+−
+
+3. Non-Canonical Hamiltonian Monte Carlo
+
+In Section 2, we noted the role time-reversibility, volume-
+preservation, and energy conservation of canonical Hamil-
+tonian dynamics play in making them useful candidates for
+MCMC. In this section, we develop the properties of a gen-
+eral class of ﬂows we refer to as non-canonical Hamilto-
+nian systems that parallel these properties, we use to con-
+struct our method magnetic HMC (see Algorithm 1):
+Lemma 1. The map ΦA
+non-canonical Hamiltonian system
+(cid:20)θ(t)
+p(t)
+
+τ,H (θ, p) deﬁned by integrating the
+
+θ,pH(θ(t), p(t))
+
+= A
+
+(7)
+
+(cid:21)
+
+d
+dt
+
+∇
+
+with initial conditions (θ, p) for time τ , where A
+
+∈
+2n×2n is any invertible, antisymmetric matrix induces
+is still energy-
+τ,H (θ, p)) = 0) and symplectic with
+
+M
+a ﬂow on the coordinates (θ, p) that
+conserving (∂τ H(ΦA
+
+Within the formal construction of classical mechanics, it
+is known that any Hamiltonian ﬂow deﬁned on the cotan-
+gent bundle (θ, p) of a conﬁguration manifold, which is
+equipped with an arbitrary symplectic 2-form, will pre-
+serve its symplectic structure and admit the correspond-
+ing Hamiltonian as a ﬁrst integral invariant (Arnold, 1989).
+The statement of Lemma 1 is simply a restatement of
+this fact grounded in a coordinate system. Similar arbi-
+trary, antisymmetric terms have also appeared in the study
+of MCMC algorithms based on diffusion processes; such
+samplers often do not enforce detailed balance with re-
+spect to the target density and are often implemented as dis-
+cretizations of stochastic differential equations (Rey-Bellet
+& Spiliopoulos, 2015; Ma et al., 2015), in contrast to the
+approach taken here.
+
+Our second observation is that the dynamics in (7) are not
+time-reversible in the traditional sense. Instead, if we con-
+sider the parametrization of A as:
+
+A =
+
+(cid:20) E
+
+(cid:21)
+F
+F(cid:62) G
+
+−
+
+(8)
+
+where E, G are antisymmetric and F is taken to be general
+such that A is invertible, then the non-canonical dynamics
+have a (pseudo) time-reversibility symmetry:
+
+Lemma 2. If (θ(t), p(t)) is a solution to the non-canonical
+dynamics:
+
+(cid:21)
+
+(cid:20)θ(t)
+p(t)
+
+d
+dt
+
+=
+
+(cid:20) E
+
+(cid:21)
+F
+F(cid:62) G
+(cid:123)(cid:122)
+A
+
+(cid:125)
+
+(cid:20)
+
+∇
+∇
+
+−
+
+(cid:124)
+
+(cid:21)
+
+θH(θ(t), p(t))
+pH(θ(t), p(t))
+
+(9)
+
+then ((cid:101)θ(t), (cid:101)p(t)) = (θ(
+p(
+−
+modiﬁed non-canonical dynamics:
+
+t),
+
+−
+
+−
+
+t)) is a solution to the
+
+d
+dt
+
+(cid:20)
+
+(cid:21)
+(cid:101)θ(t)
+(cid:101)p(t)
+
+=
+
+(cid:20)
+
+(cid:124)
+
+E
+−
+F(cid:62)
+−
+
+(cid:123)(cid:122)
+(cid:101)A
+
+(cid:34)
+
+(cid:21)
+
+F
+G
+
+−
+
+(cid:125)
+
+∇(cid:101)θH((cid:101)θ(t), p(t))
+∇(cid:101)pH((cid:101)θ(t), (cid:101)p(t))
+
+(cid:35)
+
+(10)
+
+In particular if E = G = 0
+if H(θ, p) = H(θ,
+then A = (cid:101)A, which reduces to the traditional time-reversal
+symmetry of canonical Hamiltonian dynamics.
+
+p).
+
+−
+
+Lemma 1 suggests a generalization of HMC that can uti-
+lize an arbitrary invertible antisymmetric A matrix in its
+dynamics; however Lemma 2 indicates the non-canonical
+dynamics lack a traditional time-reversibility symmetry
+which poses a potential difﬁculty to satisfying detailed
+In particular, we cannot compose Φp with an
+balance.
+exact/approximate simulation of ΦA
+τ,H =
+Φp
+
+τ,H to make (cid:101)ΦA
+
+τ,H self-inverse.
+
+ΦA
+
+◦
+
+Magnetic Hamiltonian Monte Carlo
+
+and:
+
+Our solution to obtaining a time-reversible proposal is sim-
+ply to ﬂip the elements of the E and G matrices just as
+ordinary HMC ﬂips the auxiliary variable p i) at the end of
+Hamiltonian ﬂow in the proposal and ii) once again after
+the MH acceptance step to return p to its original direction.
+In this vein, we view the parameters E and G as auxiliary
+variables in the state space, and simultaneously ﬂip p, E,
+and G after having simulated the dynamics, rendering the
+proposal time-reversible according to Lemma 2 – see Sec-
+tion 2 in the Appendix for full details of this construction.
+This ensures that detailed balance is satisﬁed for this entire
+proposal. To avoid “random walk” behaviour in the result-
+ing Markov chain, we can apply a sign ﬂip to E and G,
+in addition to p, to return them to their original directions
+after the MH acceptance step.
+
+The validity of this construction relies on equipping E and
+G with symmetric auxiliary distributions. For the remain-
+der of this paper, we further restrict to binary symmetric
+auxiliary distributions supported on a given antisymmetric
+matrix V0 and its sign ﬂip
+V0 – see Appendix 1.1 for
+−
+full details. This restriction is not necessary, but gives rise
+to a simple and interpretable class of algorithms, which is
+in spirit closest to using ﬁxed parameters E and G, whilst
+ensuring the proposal satisﬁes detailed balance. This con-
+struction is also reminiscent of lifting constructions preva-
+lent in the discrete Markov chain literature (Chen et al.,
+1999); heuristically, the signed variables E and G favour
+proposals in opposing directions.
+
+3.1. Symplectic Numerical Integration for
+
+Non-Canonical Dynamics
+
+As with standard HMC, exactly simulating the ﬂow ΦA
+τ,H
+is rarely tractable, and a numerical integrator is required
+It is not absolutely necessary
+to approximate the ﬂow.
+to use an explicit, symplectic integration scheme;
+in-
+deed implicit integrators are used in Riemannian HMC to
+maintain symplecticity of the proposal which comes at a
+greater complexity and computational cost (Girolami et al.,
+2009). However explicit, symplectic integrators are simple,
+have good energy-conservation properties, and are volume-
+preserving/time-reversible (Hairer et al., 2006), so for the
+present discussion we restrict our attention to investigating
+leapfrog-like schemes.
+
+We begin, as in Section 2.2, by considering the symmet-
+ric splitting (4), yielding the sub-Hamiltonians H1(θ) =
+U (θ)/2, H2(p) = p(cid:62)p/2. The corresponding non-
+canonical dynamics for the sub-Hamiltonians H1(θ) and
+H2(p) are:
+
+(cid:21)
+
+(cid:20)θ
+p
+
+d
+dt
+
+=
+
+(cid:20) E
+
+(cid:21)
+F
+F(cid:62) G
+(cid:123)(cid:122)
+A
+
+(cid:125)
+
+−
+
+(cid:124)
+
+(cid:20)
+
+(cid:21)
+θU (θ)/2
+0
+
+∇
+
+=
+
+(cid:21)
+
+(cid:20) E
+∇
+F(cid:62)
+
+−
+
+∇
+
+θU (θ)/2
+
+θU (θ)/2
+
+(cid:21)
+
+(cid:20)θ
+p
+
+d
+dt
+
+=
+
+(cid:20) E
+
+(cid:21)
+F
+F(cid:62) G
+(cid:123)(cid:122)
+A
+
+(cid:125)
+
+−
+
+(cid:124)
+
+(cid:21)
+
+(cid:20)0
+p
+
+=
+
+(cid:21)
+
+(cid:20)Fp
+Gp
+
+.
+
+(cid:15),H2(p) respectively. The ﬂow ΦA
+
+We denote the corresponding ﬂows by ΦA
+(cid:15),H1(θ) and
+ΦA
+(cid:15),H1(θ) is generally not
+explicitly tractable unless we take E = 0 – in which case
+it is solved by an Euler translation as before. Crucially, the
+ﬂow in ΦA
+(cid:15),H2(p) is a linear differential equation and hence
+analytically integrable. If G is invertible (and F = I) then:
+
+Φ(cid:15),H2(p)
+
+(cid:21)
+
+(cid:20)θ
+p
+
+(cid:20)θ + G−1(exp(G(cid:15))
+exp(G(cid:15))p
+
+−
+
+=
+
+(cid:21)
+
+I)p
+
+.
+
+(11)
+
+See the Appendix for a detailed derivation which also han-
+dles the general case where G is not invertible. Thus when
+(cid:15),H1(θ) and ΦA
+E = 0, the ﬂows ΦA
+(cid:15),H2(p) are analytically
+tractable and will inherit the generalized symplecticity and
+(pseudo) time-reversibility of the exact dynamics in (7).
+Therefore if we use the symmetric splitting (4) to construct
+a leapfrog-like step:
+
+Φfrog,A
+
+(cid:15),H(θ,p) = ΦA
+
+ΦA
+
+(cid:15),H1(θ) ◦
+
+(cid:15),H2(p) ◦
+
+ΦA
+
+(cid:15),H1(θ)
+
+(12)
+
+we can construct a total proposal that consists of several
+leapfrog steps, followed by a ﬂip of the momentum and G,
+Φp
+ΦG, which will be a volume-preserving, self-inverse
+◦
+map:
+
+(cid:101)Φfrog,A
+
+(cid:15),H(θ,p) = Φp ◦ ΦG ◦ (ΦA
+
+(cid:15),H1 (θ) ◦ ΦA
+
+(cid:15),H2(p) ◦ ΦA
+
+(cid:15),H1(θ))L.
+
+(13)
+
+Henceforth we will always take E = 0 when we use
+Φfrog,A
+(cid:15),H(θ,p) to generate leapfrog proposals, which interest-
+ingly corresponds to a magnetic dynamics as discussed in
+Lemma 4. A full description of the magnetic HMC algo-
+rithm using this numerical integrator is described in Section
+5.
+
+4. Special Cases
+
+Here, we describe several tractable subcases of the general
+formulation of non-canonical Hamiltonian dynamics since
+these they have interesting physical interpretations.
+
+4.1. Mass Preconditioned Dynamics
+
+∼ N
+
+One simple variant of HMC is preconditioned HMC where
+p
+(0, M) (Neal, 2011), and can be implemented
+nearly identically to ordinary HMC. We note that precon-
+ditioning can be recovered within our framework using a
+simple form for the non-canonical A matrix:
+
+Lemma 3. i) Preconditioned HMC with momentum vari-
+able p
+(0, M) in the (θ, p) coordinates is exactly
+equivalent to simulating non-canonical HMC with p(cid:48) =
+M−1/2p
+(0, I) and the non-canonical matrix A =
+
+∼ N
+
+∼ N
+
+Magnetic Hamiltonian Monte Carlo
+
+(cid:20)
+
+0
+(M1/2)(cid:62)
+
+(cid:21)
+
+M1/2
+0
+
+, and then transforming back to
+
+5. The Magnetic HMC (MHMC) Algorithm
+
+−
+(θ, p) coordinates using p = M1/2p(cid:48). Here M1/2 is a
+Cholesky factor for M.
+
+Using the results discussed in Section 3 and Section 3.1 we
+can now propose Magnetic HMC – see Algorithm 1.
+
+ii) On the other hand if we apply a change of basis (via an
+invertible matrix F) to our coordinates θ(cid:48) = F−1θ, sim-
+ulate HMC in the (θ(cid:48), p) coordinates, and transform back
+to the original basis using F, this is exactly equivalent to
+
+non-canonical HMC with A =
+
+(cid:20) 0
+
+F
+F(cid:62) 0
+
+(cid:21)
+
+.
+
+−
+
+Lemma 3 illustrates a fact alluded to in (Neal, 2011); using
+a mass preconditioning matrix M and a change of basis
+(M−1/2)(cid:62) acting on θ leaves the HMC
+given by matrix
+−
+algorithm invariant.
+
+4.2. Magnetic Dynamics
+
+The primary focus of this paper is to investigate the subcase
+of the dynamics where:
+
+A =
+
+(cid:18) 0
+
+(cid:19)
+
+I
+I G
+
+−
+for two important reasons3. Firstly for this choice of A we
+can construct an explicit, symplectic, leapfrog-like integra-
+tion scheme which is important for developing an efﬁcient
+HMC sampler as discussed in Section 3.1. Secondly, the
+dynamics have an interesting physical interpretation quite
+distinct from mass preconditioning and other HMC variants
+like Riemannian HMC (Girolami et al., 2009):
+
+Lemma 4. In 3 dimensions the non-canonical Hamiltonian
+dynamics corresponding to the Hamiltonian H(θ, p) =
+U (θ) + 1
+2 p(cid:62)p and A matrix as in (14) are equivalent to
+the Newtonian mechanics of a charged particle (with unit
+mass and charge) coupled to a magnetic ﬁeld (cid:126)B (given
+by a particular function of G - see Appendix): d2θ
+dt2 =
+
+θU (θ) + dθ
+
+(cid:126)B.
+
+dt ×
+
+−∇
+This interpretation is perhaps surprising since Hamiltonian
+formulations of classical magnetism are uncommon, al-
+though the quantum mechanical treatment naturally incor-
+porates a Hamiltonian framework. However, in light of
+Lemma 3 we might wonder if by a clever rewriting of the
+Hamiltonian we can reproduce this system of ODEs using
+the canonical A matrix (i.e. E = G = 0, F = I). This is
+not the case:
+
+Lemma 5. The non-canonical Hamiltonian dynamics with
+magnetic A and Hamiltonian H(θ, p) = U (θ) + 1
+2 p(cid:62)p
+cannot be obtained using canonical Hamiltonian dynamics
+for any choice of smooth Hamiltonian. (See Appendix).
+
+3Note that the effect of a non-identity F matrix can be
+achieved by simply composing these magnetic dynamics with a
+coordinate-transformation as suggested in Lemma 3.
+
+Algorithm 1 Magnetic HMC (MHMC)
+Input: H, G, L, (cid:15)
+
+G
+
+←
+
+N (0, I)
+
+∼
+LF(H, L, (cid:15), (θn−1, pn−1, Gn−1))
+
+←
+(cid:15),H2(p) as in (11)
+
+Initialize (θ0, p0), and set G0
+for n = 1, . . . , N do
+Resample pn−1
+Set ((cid:101)θn, (cid:101)pn)
+with ΦA
+Flip momentum ((cid:101)θn, (cid:101)pn)
+Gn−1
+(cid:101)Gn
+if Unif([0, 1]) < min(1, exp(H(θn−1, pn−1)
+H((cid:101)θn, (cid:101)pn))) then
+Set (θn, pn, Gn)
+
+−(cid:101)pn) and set
+
+← −
+
+((cid:101)θn,
+
+←
+
+((cid:101)θn, (cid:101)pn, (cid:101)Gn)
+
+−
+
+else
+
+Set (θn, pn, Gn)
+
+(θn−1, pn−1, Gn−1)
+
+←
+
+←
+
+end if
+Flip momentum pn
+
+pn and ﬂip Gn
+
+Gn
+
+← −
+
+← −
+
+(14)
+
+end for
+Output: (θn)N
+
+n=0
+
+One further remark is that by construction the integrator for
+magnetic HMC is expected to have similarly good energy
+conservation properties to the integrator of standard HMC:
+
+∼ O
+
+((cid:15)2)) error scaling (over τ
+
+Lemma 6. The symplectic leapfrog-like integrator for
+((cid:15)3)) and
+magnetic HMC will have the same local (
+∼ O
+L
+global (
+(cid:15) steps), as
+∼
+the canonical leapfrog integrator of standard HMC if the
+Hamiltonian is separable. (See Appendix).
+It is worthwhile to contrast the algorithmic differences be-
+tween magnetic HMC and ordinary HMC. Intuitively, the
+role of the ﬂow ΦA
+(cid:15),H2(p) – which reduces to the standard
+Euler translation update of ordinary HMC when G = 0
+– is to introduce a rotation into the momentum space of
+the ﬂow. In particular, a non-zero element Gij will allow
+momentum to periodically ﬂow between pi and pj. If we
+regard G as an element in the Lie algebra of antisymmet-
+ric matrices, which can be thought of as inﬁnitesimal rota-
+tions, then the exponential map exp(G(cid:15)) will project this
+transformation into the Lie group of real orthogonal linear
+maps.
+
+With respect to computational cost, although magnetic
+HMC requires matrix exponentiation/diagonalization to
+simulate ΦA
+(cid:15),H2(p), this only needs to be computed once up-
+G is diagonaliz-
+G and cached; moreover, as
+front for
+(d3) time.
+able, the exact exponential can be calculated in
+(d2) cost for the matrix-vector
+Additionally, there is an
+products needed to implement the ﬂow ΦA
+(cid:15),H2(p) as with
+preconditioning. However, it is possible to design sparsi-
+
+O
+
+O
+
+±
+
+±
+
+Magnetic Hamiltonian Monte Carlo
+
+(d3
+
+ﬁed matrix representations of A which will translate into
+sparsiﬁed rotations if we only wish to ”curl” in a speciﬁc
+subspace of dimension d0 – which will translate into a com-
+putational cost of
+
+O
+An important problem to address is the selection of the G
+matrix, which affords a great deal of ﬂexibility to MHMC
+relative to HMC; this point is further discussed in the Ex-
+periments section, where we argue that in certain cases in-
+tuitive heuristics can be used to select the G matrix.
+
+0) respectively.
+
+0) and
+
+(d2
+
+O
+
+6. Experiments
+
+Here we investigate the performance of magnetic HMC
+against standard HMC in several examples; in each case
+commenting on our choice of the magnetic ﬁeld term G.
+Step sizes ((cid:15)) and number of leapfrog steps (L) were tuned
+.8, after which
+to achieve an acceptance rate between .7
+.2
+the norm of the non-zero elements in G was set to
+which was found to work well.
+
+−
+
+∼
+
+−
+
+.1
+
+In the Appendix we also display illustrations of different
+MHMC proposals across several targets in order to provide
+more intuition for MHMC’s dynamics. Further experimen-
+tal details and an additional experiment on a Gaussian fun-
+nel target are also provided in the Appendix.
+
+6.1. Multiscale Gaussians
+
+We consider two highly ill-conditioned Gaussians similar
+to as in (Sohl-Dickstein et al., 2014) to illustrate a heuristic
+for G matrix selection and demonstrate properties of the
+magnetic dynamics. In particular we consider a centered,
+uncorrelated 2D Gaussian with covariance eigenvalues of
+106 and 1 as well as a centered, uncorrelated 10D Gaus-
+sian with two large covariance eigenvalues of 106 and re-
+maining eigenvalues of 1. We denote their coordinates as
+R10 respec-
+R2 and x = (x1, . . . , x10)
+x = (x1, x2)
+tively. HMC will have difﬁculty exploring the directions of
+
+∈
+
+∈
+
+Figure 2. Averaged Autocorrelation of HMC vs MHMC on a 10D
+ill-conditioned Gaussian (left) and Averaged Autocorrelation of
+HMC vs MHMC on a 2D ill-conditioned Gaussian.
+
+large marginal variance since its exploration will often be
+limited by the smaller variance directions. Accordingly, in
+order to induce a periodic momentum ﬂow between the di-
+rections of small and large variance, we introduce nonzero
+components Gij into the subspaces spanned directly be-
+tween the large and small eigenvalues. Indeed, we ﬁnd that
+magnetic G term is encouraging more efﬁcient exploration
+as we can see from the averaged autocorrelation of samples
+generated from the HMC/MHMC chains – see Figure 2.
+Further, by running the 50 parallel chains for 107 timesteps,
+we computed both the bias and Monte Carlo standard errors
+(MCSE) of the estimators of the target moments as shown
+in Table 1 and Table 2.
+
+Table 1. Absolute Bias ± MCSE for 2D ill-conditioned Gaussian
+moments for HMC vs. MHMC. Note that E[x2
+1] = 106 and
+E[x2
+
+2] = 1.
+
+algorithm x2
+
+MCSE)
+
+HMC
+
+MHMC
+
+.657
+
+1 (Bias
+.947
+
+±
+
+±
+
+±
+
+41.7
+
+22.5
+
+x2
+2 (Bias
+.00108
+
+MCSE)
+
+.0247
+
+.000280
+
+.00438
+
+±
+
+±
+
+±
+
+Table 2. Absolute Bias ± MCSE for 10D ill-conditioned Gaus-
+sian moments for HMC vs. MHMC. Note that E[x2
+1] = 106 and
+E[x2
+
+10] = 1.
+
+HMC
+
+algorithm x2
+
+MCSE)
+
+1 (Bias
+24.7
+
+±
+
+±
+
+±
+
+46.6
+
+32.7
+
+x2
+10 (Bias
+0.00376
+
+MCSE)
+
+0.0249
+
+±
+
+±
+
+±
+
+MHMC
+
+9.68
+
+0.00127
+
+0.0132
+
+6.2. Mixture of Gaussians
+
+−
+
+2 N
+
+2 N
+−
+
+x = σ2
+
+(x; µ, Σ) + 1
+
+∈
+µ, Σ) for σ2
+
+We compare MHMC vs. HMC on a simple, but inter-
+R2 comprised
+esting, 2D density over x = (x, y)
+of an evenly weighted mixture of isotropic Gaussians:
+p(x) = 1
+y = 1,
+(x;
+ρxy = 0 and µ = (2.5,
+2.5). This problem is challeng-
+ing for HMC because the gradients in canonical Hamil-
+tonian dynamics force it to one of the two modes. We
+.75 and
+tuned HMC to achieve an acceptance rate of
+used the same (cid:15), L for MHMC, generating 15000 samples
+from both HMC and MHMC with these settings. The ad-
+dition of the magnetic ﬁeld term G – which has one de-
+gree of freedom in this case – introduces an asymmetric
+“curl” into the dynamics that pushes the sampler across
+the saddlepoint to the other mode allowing it to efﬁciently
+mix around both modes and between them – see Figure
+3. The maximum mean discrepancy between exact sam-
+ples generated from the target density and samples gen-
+erated from both HMC and MHMC chains was also esti-
+mated for various magnitudes of G, using a quadratic ker-
+
+∼
+
+05×104Lag01AutocorrelationHMCMHMC05×104Lag01AutocorrelationHMCMHMCMagnetic Hamiltonian Monte Carlo
+
+Figure 3. Left: 500 samples from HMC; Middle: 500 samples from MHMC; Right: MMD between HMC/MHMC samples for various
+magnitudes of the non-zero component of the magnetic ﬁeld – denoted g. Note g = 0 corresponds to standard HMC.
+
+x, x(cid:48)
+(cid:104)
+
+nel k(x, x(cid:48)) = (1 +
+)2 and averaged over 100 runs
+(cid:105)
+of the Markov chains (Borgwardt et al., 2006). Here, we
+clearly see that for various values of the nonzero compo-
+nent of G, denoted g, the samples generated by MHMC
+more faithfully reﬂect the structure of the posterior. As be-
+fore, we ran 50 parallel chains for 107 timesteps to compute
+both the bias and Monte Carlo standard errors (MCSE) of
+the estimators of the target moments as shown in Table 3.
+Additional experiments over a range of (cid:15), L (and corre-
+
+Table 3. Bias ± MCSE for 2D Mixture of Gaussians for HMC vs.
+MHMC with g = 0.1. Note that E[x] = 0 and E[x2] = 7.25.
+
+algorithm x (Bias
+
+MCSE)
+
+x2 (Bias
+
+MCSE)
+
+HMC
+
+.0132
+
+.0644
+
+0.00264
+
+0.0114
+
+MHMC
+
+.00239
+
+.012
+
+0.000596
+
+0.00365
+
+±
+
+±
+
+±
+
+±
+
+±
+
+±
+
+6.3. FitzHugh-Nagumo model
+
+Finally, we consider the problem of Bayesian inference
+over the parameters of the FitzHugh-Nagumo model (a set
+of nonlinear ordinary differential equations, originally de-
+veloped to model the behavior of axial spiking potentials
+in neurons) as in (Ramsay et al., 2007; Girolami & Calder-
+head, 2011). The FitzHugh-Nagumo model is a dynamical
+system (V (t), R(t)) deﬁned by the following coupled dif-
+ferential equations:
+
+˙V (t) = c(V (t)
+˙R(t) =
+
+−
+(V (t)
+
+−
+
+−
+
+V (t)3/3 + R(t))
+
+a + bR(t))/c
+
+(15)
+
+We consider the problem where the initial conditions
+
+n )N
+
+n , Ra,b,c(tn)+εR
+
+(V (0), R(0)) of the system (15) are known, and a set
+of noise-corrupted observations ( (cid:101)V (tn), (cid:101)R(tn))N
+n=0 =
+(Va,b,c(tn)+εV
+n=0 at discrete time points
+< tN , are available - note that we il-
+0 = t0 < t1 <
+lustrate dependence of the trajectories on the model param-
+eters explicitly via subscripts. It is not possible to recover
+the true parameter values of the model from these observa-
+tions, but we can obtain a posterior distribution over them
+by specifying a model for the observation noise and a prior
+distribution over the model parameters.
+
+· · ·
+
+Similar to (Ramsay et al., 2007; Girolami & Calderhead,
+2011), we assume that the observation noise variables
+(εV
+(0, 0.12), and take an in-
+n )N
+(0, 1) prior over each parameter a, b, and c.
+dependent
+This yields a posterior distribution of the form
+
+n=0 and (εV
+
+n=0 are iid
+
+n )N
+
+N
+
+N
+
+p(a, b, c)
+
+(a; 0, 1)
+
+(b; 0, 1)
+
+(c; 0, 1)
+
+∝ N
+
+N
+
+N
+
+×
+
+( (cid:101)V (tn); Va,b,c(tn), 0.12)
+
+(16)
+
+Importantly, the highly non-linear dependence of the tra-
+jectory on the parameters a, b and c yields a complex pos-
+terior distribution - see Figure 4. Full details of the model
+set-up can be found in (Ramsay et al., 2007; Girolami &
+Calderhead, 2011).
+
+For our experiments, we used ﬁxed parameter settings of
+a = 0.2, b = 0.2, c = 3.0 to generate 200 evenly-
+spaced noise-corrupted observations over the time interval
+t = [0, 20] (as in (Ramsay et al., 2007; Girolami & Calder-
+head, 2011)). We performed inference over the posterior
+distribution of parameters (a, b, c) with this set of observa-
+tions using both the HMC and MHMC algorithms, which
+was perturbed with a magnetic ﬁeld in each of the 3 ax-
+ial planes of parameters – along the ab, ac, and bc axes
+with magnitude g = 0.1. The chains were run to gener-
+
+sponding acceptance rates) and details are included in the
+Appendix for this example, demonstrating similar behav-
+ior.
+
+N
+(cid:89)
+n=0 N
+
+2000400060008000100001200014000NumberofSamples051015202530MaximumMeanDiscrepancyg=0.0g=0.05g=0.1g=0.15ate 1000 samples over 100 repetitions with settings of (cid:15) =
+0.015, L = 10, which resulted in an average acceptance
+.8. The effective sample size of each of the chains
+rate of
+normalized per unit time was then computed for each chain.
+
+∼
+
+Magnetic Hamiltonian Monte Carlo
+
+Acknowledgements
+
+Since each query to the
+posterior log-likelihood
+or posterior gradient
+log-likelihood requires
+solving an augmented
+set
+differential
+equations as in (15),
+the computation time
+238s) of all
+the
+(
+∼
+methods was
+nearly
+identical. Moreover,
+
+of
+
+Figure 4. Marginal posterior den-
+sity contour plot over a, b, with
+c = 3.
+
+Table 4. HMC vs. MHMC performance targeting the Fitzhugh-
+Nagumo posterior parameters
+
+algorithm
+
+ESS
+
+ESS(a, b, c)/time (s)
+
+HMC
+
+1000 318 606
+
+4.20, 1.33, 2.55
+
+MHMC ab
+
+1000 349 658
+
+4.20, 1.47, 2.77
+
+MHMC ac
+
+1000 336 628
+
+4.20, 1.42, 2.64
+
+MHMC bc
+
+1000 326 649
+
+4.20, 1.37, 2.73
+
+note that all methods achieved nearly perfect mixing over
+the ﬁrst coordinate so their effective sample size were
+truncated at 1000 for the a coordinate.
+In this example,
+we can see that all magnetic perturbations slightly increase
+the mixing rate of the sampler over each of the (b, c)
+coordinates with the ab perturbation performing best.
+
+7. Discussion and Conclusion
+
+We have investigated a framework for MCMC algorithms
+based on non-canonical Hamiltonian dynamics and have
+given a construction for an explicit, symplectic integrator
+that is used to implement a generalization of HMC we re-
+fer to as magnetic HMC. We have also shown several ex-
+amples where the non-canonical dynamics of MHMC can
+improve upon the sampling performance of standard HMC.
+Important directions for further research include ﬁnding
+more automated, adaptive mechanisms to set the matrix G,
+as well as investigating positionally-dependent magnetic
+ﬁeld components, similar to how Riemannian HMC corre-
+sponds to local preconditioning. We believe that exploiting
+more general deterministic ﬂows (such as also maintaining
+a non-zero E in the top left-block of a general A matrix)
+could form a fruitful area for further research on MCMC
+methods.
+
+The authors thank John Aston, Adrian Weller, Maria
+Lomeli, Yarin Gal and the anonymous reviewers for help-
+ful comments. MR acknowledges support by the UK En-
+gineering and Physical Sciences Research Council (EP-
+SRC) grant EP/L016516/1 for the University of Cambridge
+Centre for Doctoral Training, the Cambridge Centre for
+Analysis. RET thanks EPSRC grants EP/M0269571 and
+EP/L000776/1 as well as Google for funding.
+
+References
+
+Arnold, Vladimir. Mathematical Methods of Classical Me-
+
+chanics. 1989. ISBN 0387968903.
+
+Betancourt, Michael. A Conceptual Introduction to Hamil-
+
+tonian Monte Carlo. arXiv:1701.02434, 2017.
+
+Borgwardt, Karsten M., Gretton, Arthur, Rasch, Malte J.,
+Kriegel, Hans Peter, Scholkopf, Bernhard, and Smola,
+Alex J. Integrating structured biological data by Kernel
+In Bioinformatics, vol-
+Maximum Mean Discrepancy.
+ume 22, 2006.
+
+Carpenter, Bob, Gelman, Andrew, Hoffman, Matt, Lee,
+Daniel, Goodrich, Ben, Betancourt, Michael, Brubaker,
+Marcus A, Li, Peter, and Riddell, Allen. Journal of Sta-
+tistical Software Stan : A Probabilistic Programming
+Language. Journal of Statistical Software, VV(Ii), 2016.
+
+Chen, Fang, Lov´asz, L´aszl´o, and Pak, Igor. Lifting markov
+chains to speed up mixing. In Proceedings of the Thirty-
+ﬁrst Annual ACM Symposium on Theory of Computing,
+STOC ’99, pp. 275–281, New York, NY, USA, 1999.
+ACM.
+ISBN 1-58113-067-8. doi: 10.1145/301250.
+301315.
+
+Duane, Simon, Kennedy, A. D., Pendleton, Brian J., and
+Roweth, Duncan. Hybrid Monte Carlo. Physics Letters
+B, 195(2):216 – 222, 1987.
+
+Girolami, Mark and Calderhead, Ben. Riemann manifold
+Langevin and Hamiltonian Monte Carlo methods. Jour-
+nal of the Royal Statistical Society: Series B (Statistical
+Methodology), 73(2):123–214, March 2011.
+
+Girolami, Mark, Calderhead, Ben, and Chin, Siu A. Rie-
+mannian Manifold Hamiltonian Monte Carlo. Physics,
+73(2):35, 2009.
+
+Green, Peter J. Reversible Jump Markov Chain Monte
+Carlo Computation and Bayesian Model Determination.
+Biometrika, 82(4):711–732, 1995.
+
+Hairer, Ernst, Hochbruck, Marlis, Iserles, Arieh, and Lu-
+bich, Christian. Geometric Numerical Integration. Ober-
+wolfach Reports, pp. 805–882, 2006.
+
+Magnetic Hamiltonian Monte Carlo
+
+Hoffman, Matt and Gelman, Andrew. The No-U-Turn
+sampler: Adaptively setting path lengths in Hamiltonian
+Monte Carlo. Journal of Machine Learning Research,
+15(2008):1–31, 2014.
+
+Ma, Yi-an, Chen, Tianqi, and Fox, Emily B. A Complete
+Recipe for Stochastic Gradient MCMC. NIPS, pp. 1–19,
+2015.
+
+Neal, Radford. Bayesian Learning for Neural Networks,
+
+volume 118. 1996.
+
+Neal, Radford M. MCMC using Hamiltonian Dynamics.
+Handbook of Markov Chain Monte Carlo, pp. 113–162,
+2011.
+
+Ramsay, J. O., Hooker, G., Campbell, D., and Cao, J. Pa-
+rameter estimation for differential equations: A general-
+ized smoothing approach. JOURNAL OF THE ROYAL
+STATISTICAL SOCIETY, SERIES B, 2007.
+
+Rey-Bellet, Luc and Spiliopoulos, Konstantinos.
+
+Irre-
+versible Langevin Samplers and Variance Reduction: a
+Large Deviations Approach. Nonlinearity, 28(7):2081,
+2015.
+
+Robert, Christian P and Casella, George. Monte Carlo Sta-
+
+tistical Methods, volume 95. 2004.
+
+Sohl-Dickstein, J, Mudigonda, Mayur, and DeWeese, M.
+Hamiltonian Monte Carlo Without Detailed Balance.
+Proceedings of The 31st International Conference on
+Machine Learning, 32:9, 2014.
+
+

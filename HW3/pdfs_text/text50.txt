@@ -1,0 +1,2392 @@
+Learning the Structure of Generative Models without Labeled Data
+
+Stephen H. Bach 1 Bryan He 1 Alexander Ratner 1 Christopher R´e 1
+
+Abstract
+
+Curating labeled training data has become the
+primary bottleneck in machine learning. Re-
+cent frameworks address this bottleneck with
+generative models to synthesize labels at scale
+from weak supervision sources. The generative
+model’s dependency structure directly affects the
+quality of the estimated labels, but selecting a
+structure automatically without any labeled data
+is a distinct challenge. We propose a struc-
+ture estimation method that maximizes the (cid:96)1-
+regularized marginal pseudolikelihood of the ob-
+served data. Our analysis shows that the amount
+of unlabeled data required to identify the true
+structure scales sublinearly in the number of pos-
+sible dependencies for a broad class of mod-
+els. Simulations show that our method is 100×
+faster than a maximum likelihood approach and
+selects 1/4 as many extraneous dependencies.
+We also show that our method provides an aver-
+age of 1.5 F1 points of improvement over exist-
+ing, user-developed information extraction appli-
+cations on real-world data such as PubMed jour-
+nal abstracts.
+
+1. Introduction
+
+Supervised machine learning traditionally depends on ac-
+cess to labeled training data, a major bottleneck in devel-
+oping new methods and applications. In particular, deep
+learning methods require tens of thousands or more labeled
+data points for each speciﬁc task. Collecting these labels is
+often prohibitively expensive, especially when specialized
+domain expertise is required, and major technology compa-
+nies are investing heavily in hand-curating labeled training
+data (Metz, 2016; Eadicicco, 2017). Aiming to overcome
+this bottleneck, there is growing interest in using genera-
+tive models to synthesize training data from weak super-
+
+1Stanford University, Stanford, California. Correspondence
+
+to: Stephen Bach <bach@cs.stanford.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+vision sources such as heuristics, knowledge bases, and
+weak classiﬁers trained directly on noisy sources. Rather
+than treating training labels as gold-standard inputs, such
+methods model training set creation as a process in order to
+generate training labels at scale. The true class label for a
+data point is modeled as a latent variable that generates the
+observed, noisy labels. After ﬁtting the parameters of this
+generative model on unlabeled data, a distribution over the
+latent, true labels can be inferred.
+
+The structure of such generative models directly affects the
+inferred labels, and prior work assumes that the structure
+is user-speciﬁed (Alfonseca et al., 2012; Takamatsu et al.,
+2012; Roth & Klakow, 2013b; Ratner et al., 2016). One
+option is to assume that the supervision sources are condi-
+tionally independent given the latent class label. However,
+statistical dependencies are common in practice, and not
+taking them into account leads to misjudging the accuracy
+of the supervision. We cannot rely in general on users to
+specify the structure of the generative model, because su-
+pervising heuristics and classiﬁers might be independent
+for some data sets but not others. We therefore seek an efﬁ-
+cient method for automatically learning the structure of the
+generative model from weak supervision sources alone.
+
+While structure learning in the supervised setting is well-
+studied (e.g., Meinshausen & B¨uhlmann, 2006; Zhao & Yu,
+2006; Ravikumar et al., 2010, see also Section 6), learn-
+ing the structure of generative models for weak supervi-
+sion is challenging because the true class labels are latent.
+Although we can learn the parameters of generative mod-
+els for a given structure using stochastic gradient descent
+and Gibbs sampling, modeling all possible dependencies
+does not scale as an alternative to model selection. For
+example, estimating all possible correlations for a mod-
+estly sized problem of 100 weak supervision sources takes
+over 40 minutes. (For comparison, our proposed approach
+solves the same problem in 15 seconds.) As users develop
+their supervision heuristics, rerunning parameter learning
+to identify dependencies becomes a prohibitive bottleneck.
+
+We propose an estimator to learn the dependency structure
+of a generative model without using any labeled training
+data. Our method maximizes the (cid:96)1-regularized marginal
+pseudolikelihood of each supervision source’s output inde-
+pendently, selecting those dependencies that have nonzero
+
+Learning the Structure of Generative Models without Labeled Data
+
+weights. This estimator is analogous to maximum like-
+lihood for logistic regression, except that we marginalize
+out our uncertainty about the latent class label. Since the
+pseudolikelihood is a function of one free variable and
+marginalizes over one other variable, we compute the gra-
+dient of the marginal pseudolikelihood exactly, avoiding
+the need for approximating the gradient with Gibbs sam-
+pling, as is done for maximum likelihood estimation.
+
+Our analysis shows that the amount of data required to
+identify the true structure scales sublinearly in the number
+of possible dependencies for a broad class of models. In-
+tuitively, this follows from the fact that learning the gener-
+ative model’s parameters is possible when there are a suf-
+ﬁcient number of better-than-random supervision sources
+available. With enough signal to estimate the latent class
+labels better than random guessing, those estimates can be
+reﬁned until the model is identiﬁed.
+
+We run experiments to conﬁrm these predictions. We also
+compare against the alternative approach of considering all
+possible dependencies during parameter learning. We ﬁnd
+that our method is 100× faster. In addition, our method
+returns 1/4 as many extraneous correlations on synthetic
+data when tuned for comparable recall. Finally, we demon-
+strate that on real-world applications of weak supervision,
+using generative models with automatically learned depen-
+dencies improves performance. We ﬁnd that our method
+provides on average 1.5 F1 points of improvement over ex-
+isting, user-developed information extraction applications
+on PubMed abstracts and hardware speciﬁcation sheets.
+
+2. Background
+
+When developing machine learning systems, the primary
+bottleneck is often curating a sufﬁcient amount of labeled
+training data. Hand labeling training data is expensive, time
+consuming, and often requires specialized knowledge. Re-
+cently researchers have proposed methods for synthesizing
+labels from noisy label sources using generative models.
+(See Section 6 for a summary.) We ground our work in one
+framework, data programming (Ratner et al., 2016), that
+generalizes many approaches in the literature.
+
+In data programming, weak supervision sources are en-
+coded as labeling functions, heuristics that label data points
+(or abstain). A generative probabilistic model is ﬁt to esti-
+mate the accuracy of the labeling functions and the strength
+of any user-speciﬁed statistical dependencies among their
+outputs. In this model, the true class label for a data point
+is a latent variable that generates the labeling function out-
+puts. After ﬁtting the parameters of the generative model,
+a distribution over the latent, true labels can be estimated
+and be used to train a discriminative model by minimizing
+the expected loss with respect to that distribution.
+
+We formally describe this setup by ﬁrst specifying for each
+data point xi a latent random variable yi ∈ {−1, 1} that
+is its true label. For example, in an information extraction
+task, xi might be a span of text. Then, yi can represent
+whether it is a mention of a company or not (entity tag-
+ging). Alternatively, xi might be a more complex structure,
+such as a tuple of canonical identiﬁers along with associ-
+ated mentions in a document, and then yi can represent
+whether a relation of interest over that tuple is expressed
+in the document (relation extraction).
+
+We do not have access to yi (even at training time), but
+we do have n user-provided labeling functions λ1, . . . , λn
+that can be applied to xi to produce outputs Λi1, . . . , Λin.
+For example, for the company-tagging task mentioned
+above, a labeling function might apply the regular expres-
+sion .+\sInc\. to a span of text and return whether it
+matched. The domain of each Λij is {−1, 0, 1}, corre-
+sponding to false, abstaining, and true. Generalizing to
+the multiclass case is straightforward.
+
+Our goal is to estimate a probabilistic model that gener-
+ates the labeling-function outputs Λ ∈ {−1, 0, 1}m×n. A
+common assumption is that the outputs are conditionally
+independent given the true label, and that the relationship
+between Λ and y is governed by n accuracy dependencies
+
+φAcc
+j
+
+(Λi, yi) := yiΛij
+
+with a parameter θAcc
+j modeling how accurate each labeling
+function λj is. We refer to this structure as the condition-
+ally independent model, and specify it as
+
+pθ(Λ, Y ) ∝ exp
+
+j φAcc
+θAcc
+j
+
+(Λi, yi)
+
+ ,
+
+(1)
+
+
+
+
+
+m
+(cid:88)
+
+n
+(cid:88)
+
+i=1
+
+j=1
+
+
+
+where Y := y1, . . . , ym.
+
+We estimate the parameters θ by minimizing the negative
+log marginal likelihood pθ(¯Λ) for an observed matrix of
+labeling function outputs ¯Λ:
+
+arg min
+θ
+
+− log
+
+(cid:88)
+
+Y
+
+pθ(¯Λ, Y ) .
+
+(2)
+
+Optimizing the likelihood is straightforward using stochas-
+tic gradient descent. The gradient of objective (2) with re-
+spect to parameter θAcc
+
+is
+
+j
+
+m
+(cid:88)
+
+i=1
+
+(cid:0)EΛ,Y ∼θ
+
+(cid:2)φAcc
+
+j
+
+(Λi, yi)(cid:3) − EY ∼θ| ¯Λ
+
+(cid:2)φAcc
+
+j
+
+(¯Λi, yi)(cid:3)(cid:1) ,
+
+the difference between the corresponding sufﬁcient statistic
+of the joint distribution pθ and the same distribution con-
+ditioned on ¯Λ. In practice, we can interleave samples to
+estimate the gradient and gradient steps very tightly, taking
+
+Learning the Structure of Generative Models without Labeled Data
+
+pθ(Λ, Y ) ∝ exp
+
+sφt
+θt
+
+s(Λi, yi)
+
+.
+
+(3)
+
+where
+
+(cid:32) m
+(cid:88)
+
+(cid:88)
+
+(cid:88)
+
+i=1
+
+t∈T
+
+s∈St
+
+(cid:33)
+
+a small step after each sample of each variable Λij or yi,
+similarly to contrastive divergence (Hinton, 2002).
+
+The conditionally independent model is a common as-
+sumption, and using a more sophisticated generative model
+currently requires users to specify its structure. In the rest
+of the paper, we address the question of automatically iden-
+tifying the dependency structure from the observations ¯Λ
+without observing Y .
+
+3. Structure Learning without Labels
+
+Statistical dependencies arise naturally among weak super-
+vision sources. In data programming, users often write la-
+beling functions with directly correlated outputs or even
+labeling functions deliberately designed to reinforce oth-
+ers with narrow, more precise heuristics. To address this
+issue, we generalize the conditionally independent model
+as a factor graph with additional dependencies, including
+higher-order factors that connect multiple labeling function
+outputs for each data point xi and label yi. We specify the
+general model as
+
+Here T is the set of dependency types of interest, and St is
+a set of index tuples, indicating the labeling functions that
+participate in each dependency of type t ∈ T . We start by
+deﬁning standard correlation dependencies of the form
+
+jk (Λi, yi) := 1{Λij = Λik} .
+φCor
+
+We refer to such dependencies as pairwise among labeling
+functions because they depend only on two labeling func-
+tion outputs. We can also consider higher-order dependen-
+cies that involve more variables, such as conjunction de-
+pendencies of the form
+
+jk (Λi, yi) := 1{Λij = yi ∧ Λik = yi} .
+φAnd
+
+Estimating the structure of the distribution pθ(Λ, Y ) is
+challenging because Y is latent; we never observe its value,
+even during training. We must therefore work with the
+marginal likelihood pθ(Λ). Learning the parameters of the
+generative model jointly requires Gibbs sampling to esti-
+mate gradients. As the number of possible dependencies
+increases at least quadratically in the number of labeling
+functions, this heavyweight approach to learning does not
+scale (see Section 5.2).
+
+3.1. Learning Objective
+
+marginal pseudolikelihood of the outputs of a single la-
+beling function λj, i.e., conditioned on the outputs of the
+others λ\j, using (cid:96)1 regularization to induce sparsity. The
+objective is
+
+arg min
+θ
+
+− log pθ(¯Λj | ¯Λ\j) + (cid:15)(cid:107)θ(cid:107)1
+
+(4)
+
+= arg min
+
+−
+
+θ
+
+m
+(cid:88)
+
+i=1
+
+(cid:88)
+
+log
+
+yi
+
+where (cid:15) > 0 is a hyperparameter.
+
+pθ(¯Λij, yi | ¯Λi\j) + (cid:15)(cid:107)θ(cid:107)1,
+
+yi
+
+By conditioning on all other labeling functions in each term
+log (cid:80)
+pθ(¯Λij, yi | ¯Λi\j), we ensure that the gradient can
+be computed in polynomial time with respect to the number
+of labeling functions, data points, and possible dependen-
+cies; without requiring any sampling or variational approxi-
+mations. The gradient of the log marginal pseudolikelihood
+is the difference between two expectations: the sufﬁcient
+statistics conditioned on all labeling functions but λj, and
+conditioned on all labeling functions:
+
+−
+
+∂ log p(¯Λj | ¯Λ\j)
+∂θt
+s
+
+= α − β,
+
+(5)
+
+pθ(Λij, yi | ¯Λi\j)φt
+
+s((Λij, ¯Λi\j), yi)
+
+α :=
+
+β :=
+
+m
+(cid:88)
+
+(cid:88)
+
+i=1
+
+Λij ,yi
+
+m
+(cid:88)
+
+(cid:88)
+
+i=1
+
+yi
+
+p(yi | ¯Λi)φt
+
+s(¯Λi, yi).
+
+Note that in the deﬁnition of α, φt
+s operates on the value of
+Λij set in the summation and the observed values of ¯Λi\j.
+We optimize for each labeling function λj in turn, selecting
+those dependencies with parameters that have a sufﬁciently
+large magnitude and adding them to the estimated structure.
+
+3.2. Implementation
+
+We implement our method as Algorithm 1, a stochastic gra-
+dient descent (SGD) routine. At each step of the descent,
+the gradient (5) is estimated for a single data point, which
+can be computed in closed form. Using SGD has two ad-
+vantages. First, it requires only ﬁrst-order gradient infor-
+mation. Other methods for (cid:96)1-regularized regression like
+interior-point methods (Koh et al., 2007) usually require
+computing second-order information. Second, the obser-
+vations ¯Λ can be processed incrementally. Since data pro-
+gramming operates on unlabeled data, which is often abun-
+dant, scalability is crucial. To implement (cid:96)1 regularization
+as part of SGD, we use an online truncated gradient method
+(Langford et al., 2009).
+
+We can scale up learning over many potentially irrelevant
+dependencies by optimizing a different objective: the log
+
+In practice, we ﬁnd that the only parameter that requires
+tuning is (cid:15), which controls the threshold and regularization
+
+s((Λij, ¯Λi\j), yi)
+
+where π∗ is the true distribution.
+
+Learning the Structure of Generative Models without Labeled Data
+
+Algorithm 1 Structure Learning for Data Programming
+
+proach the true model.
+
+Input: Observations ¯Λ ∈ {−1, 0, 1}m×n, threshold (cid:15),
+distribution p with parameters θ, initial parameters θ0,
+step size η, epoch count T , truncation frequency K
+
+D ← ∅
+for j = 1 to n do
+
+θ ← θ0
+for τ = 1 to T do
+
+for i = 1 to m do
+
+for θt
+
+s in θ do
+
+Λij ,yi
+
+α ← (cid:80)
+β ← (cid:80)
+p(yi | ¯Λi)φt
+yi
+s ← θt
+θt
+s − η(α − β)
+
+p(Λij, yi|¯Λi\j)φt
+s(¯Λi, yi)
+
+if τ m + i mod K is 0 then
+s in θ where θt
+for θt
+s ← max{0, θt
+θt
+s in θ where θt
+for θt
+s ← min{0, θt
+θt
+
+s > 0 do
+s − Kη(cid:15)}
+s < 0 do
+s + Kη(cid:15)}
+
+for θt
+
+s in θ where j ∈ s do
+
+if |θt
+
+s| > (cid:15) then
+
+D ← D ∪ {(s, t)}
+
+return D
+
+strength. Higher values induce more sparsity in the selected
+structure. For the other parameters, we use the same values
+in all of our experiments: step size η = m−1, epoch count
+T = 10, and truncation frequency K = 10.
+
+4. Analysis
+
+We provide guarantees on the probability that Algorithm 1
+successfully recovers the exact dependency structure. We
+ﬁrst provide a general recovery guarantee for all types of
+possible dependencies, including both pairwise and higher-
+order dependencies. However, in many cases, higher-order
+dependencies are not necessary to model the behavior of
+the labeling functions. In fact, as we demonstrate in Sec-
+tion 5.3, in many useful models there are only accuracy
+dependencies and pairwise correlations. In this case, we
+show as a corollary to our general result that the number
+of samples required is sublinear in the number of possible
+dependencies, speciﬁcally O(n log n).
+
+Previous analyses for the supervised case do not carry
+over to the unsupervised setting because the problem is
+no longer convex. For example, analysis of an analo-
+gous method for supervised Ising models (Ravikumar et al.,
+2010) relies on Lagrangian duality and a tight duality gap,
+which does not hold for our estimation problem. Instead,
+we reason about a region of the parameter space in which
+we can estimate Y well enough that we can eventually ap-
+
+We now state the conditions necessary for our guarantees.
+First are two standard conditions that are needed to guaran-
+tee that the dependency structure can be recovered with any
+number of samples. One, we must have some set Θ ⊂ RM
+of feasible parameters. Two, the true model is in Θ, i.e.,
+there exists some choice of θ∗ ∈ Θ such that
+π∗(Λ, Y ) = pθ∗ (Λ, Y ),
+∀Λ ∈ {−1, 0, 1}m×n, Y ∈ {−1, 1}m
+
+(6)
+
+Next, let Φj denote the set of dependencies that involve
+either labeling function λj or the true label y. For any fea-
+sible parameter θ ∈ Θ and j ∈ {1, . . . , n}, there must exist
+c > 0 such that
+
+cI +
+
+Cov(Λ,Y )∼pθ (Φj(Λ, Y ) | Λi = ¯Λi)
+
+(cid:22)
+
+Cov(Λ,Y )∼pθ (Φj(Λ, Y ) | Λi\j = ¯Λi\j).
+
+(7)
+
+m
+(cid:88)
+
+i=1
+m
+(cid:88)
+
+i=1
+
+This means that for each labeling function, we have a bet-
+ter estimate of the dependencies with the labeling function
+than without. It is analogous to assumptions made to ana-
+lyze parameter learning in data programming.
+
+Finally, we require that all non-zero parameters be bounded
+away from zero. That is, for all θi (cid:54)= 0, and some κ > 0,
+we have that
+
+|θi| ≥ κ.
+
+(8)
+
+Under these conditions, we are able to provide guarantees
+on the probability of ﬁnding the correct dependency struc-
+ture. First, we present guarantees for all types of possible
+dependencies in Theorem 1, proved in Appendix A.2. For
+this theorem, we deﬁne dj to be the number of possible de-
+pendencies involving either Λj or y, and we deﬁne d as the
+largest of d1, . . . , dn.
+Theorem 1. Suppose we run Algorithm 1 on a problem
+where conditions (6), (7), and (8) are satisﬁed. Then, for
+any δ > 0, an unlabeled input dataset of size
+
+m ≥
+
+32d
+c2κ2 log
+is sufﬁcient to recover the exact dependency structure with
+a probability of at least 1 − δ.
+
+(cid:18) 2nd
+δ
+
+(cid:19)
+
+For general dependencies, d can be as large as the number
+of possible dependencies due to the fact that higher-order
+dependencies can connect the true label and many labeling
+functions. The rate of Theorem 1 rate is therefore not di-
+rectly comparable to that of Ravikumar et al. (2010), which
+applies to Ising models with pairwise dependencies.
+
+Learning the Structure of Generative Models without Labeled Data
+
+As we demonstrate in Section 5.3, however, real-world ap-
+plications can be improved by modeling just pairwise cor-
+relations among labeling functions.
+If only considering
+these dependencies, then d will only be 2n − 1, rather
+than the number of potential dependencies. In Corollary
+2, we show that a number of samples needed in this case is
+O(n log n). Notice that this is sublinear in the number of
+possible dependencies, which is O(n2).
+
+Corollary 2. Suppose we run Algorithm 1 on a problem
+where conditions (6), (7), and (8) are satisﬁed. Addition-
+ally, assume that the only potential dependencies are accu-
+racy and correlation dependencies. Then, for any δ > 0,
+an unlabeled input dataset of size
+
+m ≥
+
+64n
+c2κ2 log
+
+(cid:19)
+
+(cid:18) 4n
+δ
+
+is sufﬁcient to recover the exact dependency structure with
+a probability of at least 1 − δ.
+
+In this case, we see the difference in analyses between the
+unsupervised and supervised settings. Whereas the rate of
+Corollary 2 depends on the maximum number of depen-
+dencies that could affect a variable in the model class, the
+rate of Ravikumar et al. (2010) depends cubically on the
+maximum number of dependencies that actually affect any
+variable in the true model and only logarithmically in the
+maximum possible degree. In the supervised setting, the
+guaranteed rate is therefore tighter for very sparse models.
+However, as we show in Section 5.1, the guaranteed rates
+in both settings are pessimistic, and in practice they appear
+to scale at the same rate.
+
+5. Experiments
+
+We implement our method as part of the open source frame-
+work Snorkel1 and evaluate it in three ways. First, we mea-
+sure how the probability of returning the exact correlation
+structure is affected by the problem parameters using syn-
+thetic data, conﬁrming our analysis that its sample com-
+plexity is sublinear in the number of possible dependencies.
+In fact, we ﬁnd that in practice the sample complexity is
+lower than the theoretically guaranteed rate, matching the
+rate seen in practice for fully supervised structure learning.
+Second, we compare our method to estimating structures
+via parameter learning over all possible dependencies. We
+demonstrate using synthetic data that our method is 100×
+faster and more accurate, selecting 1/4 as many extrane-
+ous correlations on average. Third, we apply our method to
+real-world applications built using data programming, such
+as information extraction from PubMed journal abstracts
+In these applications,
+and hardware speciﬁcation sheets.
+users did not specify any dependencies between the label-
+
+1snorkel.stanford.edu
+
+Figure 1. Algorithm 1 returns the true structure consistently when
+the control parameter γ reaches 1.0 for the number of samples
+deﬁned by (9). The number of samples required to identify a
+model in practice scales logarithmically in n, the number of la-
+beling functions.
+
+ing functions they authored; however, as we detail in Sec-
+tion 5.3, these dependencies naturally arise, for example
+due to explicit composing, relaxing, or tightening of label-
+ing function heuristics; related distant supervision sources;
+or multiple concurrent developers writing labeling func-
+tions. We show that learning this structure improves per-
+formance over the conditionally independent model, giving
+an average 1.5 F1 point boost.
+
+5.1. Sample Complexity
+
+We test how the probability that Algorithm 1 returns the
+correct correlation structure depends on the true distribu-
+tion. Our analysis in Section 4 guarantees that the sample
+complexity grows at worst on the order O(n log n) for n
+labeling functions. In practice, we ﬁnd that structure learn-
+ing performs better than this guaranteed rate, depending
+linearly on the number of true correlations and logarithmi-
+cally on the number of possible correlations. This matches
+the observed behavior for fully supervised structure learn-
+ing for Ising models (Ravikumar et al., 2010), which is also
+tighter than the best known theoretical guarantees.
+
+To demonstrate this behavior, we attempt to recover the true
+dependency structure using a number of samples deﬁned as
+
+m := 750 · γ · d∗ · log n
+
+(9)
+
+where d∗ is the maximum number of dependencies that af-
+fect any one labeling function. For example, in the condi-
+tionally independent model d∗ = 1 and in a model with one
+correlation d∗ = 2. We vary the control parameter γ from
+0.1 to 2.0 to determine the point at which m is sufﬁciently
+large for Algorithm 1 to recover the true dependency struc-
+(The constant 750 was selected so that it succeeds
+ture.
+with high probability around γ = 1.0.)
+
+We ﬁrst test the effect of varying n, the number of labeling
+functions. For n ∈ {25, 50, 75, 100}, we set two pairs of
+
+Learning the Structure of Generative Models without Labeled Data
+
+Figure 2. Algorithm 1 returns the true structure consistently when
+the control parameter γ reaches 1.0 for the number of samples de-
+ﬁned by (9). The number of samples required to identify a model
+in practice scales linearly in d∗, the maximum number of depen-
+dencies affecting any labeling function.
+
+Figure 3. Comparison of structure learning with using maximum
+likelihood parameter estimation to select a model structure. Struc-
+ture learning is two orders of magnitude faster.
+
+labeling functions to be correlated with θCor
+jk = 0.25. We set
+θAcc
+j = 1.0 for all j. We then generate m samples for each
+setting of γ over 100 trials. Figure 1 shows the fraction of
+times Algorithm 1 returns the correct correlation structure
+as a function of the control parameter γ. That the curves
+are aligned for different values of n shows that the sample
+complexity in practice scales logarithmically in n.
+
+We next test the effect of varying d∗, the maximum num-
+ber of dependencies that affect a labeling function in the
+true distribution. For 25 labeling functions, we add correla-
+tions to the true model to form cliques of increasing degree.
+All parameters are the same as in the previous experiment.
+Figure 2 shows that for increasing values of d∗, (9) again
+predicts the number of samples for Algorithm 1 to succeed.
+That the curves are aligned for different values of d∗ shows
+that the sample complexity in practice scales linearly in d∗.
+
+5.2. Comparison with Maximum Likelihood
+
+We next compare Algorithm 1 with an alternative approach.
+Without an efﬁcient structure learning method, one could
+maximize the marginal likelihood of the observations ¯Λ
+while considering all possible dependencies. To measure
+the beneﬁts of maximizing the marginal pseudolikelihood,
+we compare its performance against an analogous maxi-
+mum likelihood estimation routine that also uses stochastic
+gradient descent, but instead uses Gibbs sampling to esti-
+mate the intractable gradient of the objective.
+
+We create different distributions over n labeling functions
+by selecting with probability 0.05 pairs of labeling func-
+tions to make correlated. Again, the strength of correlation
+is set at θCor
+jk = 0.25 and accuracy is set at θAcc
+j = 1.0. We
+generate 100 distributions for n ∈ {25, 30, 35, . . . , 100}.
+For each distribution we generate 10,000 samples and at-
+tempt to recover the true correlation structure.
+
+We ﬁrst compare running time between the two methods.
+Our implementation of maximum likelihood estimation is
+designed for speed: for every sample taken to estimate the
+gradient, a small update to the parameters is performed.
+This approach is state-of-the-art for high-speed learning for
+factor graphs (Zhang & R´e, 2014). However, the need for
+sampling the variables Λ and Y is still computationally ex-
+pensive. Figure 3 shows that by avoiding variable sam-
+pling, using pseudolikelihood is 100× faster.
+
+We next compare the accuracy of the two methods, which
+depends on the regularization (cid:15). The ideal is to maximize
+the probability of perfect recall with few extraneous cor-
+relations, because subsequent parameter estimation can re-
+duce the inﬂuence of an extraneous correlation but cannot
+discover a missing correlation. We tune (cid:15) independently for
+each method. Figure 4 (top) shows that maximum pseudo-
+likelihood is able to maintain higher levels of recall than
+maximum likelihood as the problem size increases. Fig-
+ure 4 (bottom) shows that even tuned for better recall, max-
+imum pseudolikelihood is more precise, returning 1/4 as
+many extraneous correlations. We interpret this improved
+accuracy as a beneﬁt of computing the gradient for a data
+point exactly, as opposed to using Gibbs sampling to esti-
+mate it as in maximum likelihood estimation.
+
+5.3. Real-World Applications
+
+We evaluate our method on several real-world information
+extraction applications, comparing the performance of data
+programming using dependencies selected by our method
+with the conditionally independent model (Table 1). In the
+data programming method, users express a variety of weak
+supervision rules and sources such as regular expression
+patterns, distant supervision from dictionaries and existing
+knowledge bases, and other heuristics as labeling functions.
+Due to the noisy and overlapping nature of these label-
+ing functions, correlations arise. Learning this correlation
+structure gives an average improvement of 1.5 F1 points.
+
+Learning the Structure of Generative Models without Labeled Data
+
+functions, the majority of which check for membership in
+speciﬁc subtrees of a reference disease ontology using dif-
+ferent matching heuristics. There is overlap in the labeling
+functions which check identical subtrees of the ontology,
+and we see that our method increases end performance by
+a signiﬁcant 2.6 F1 points by modeling this structure.
+
+Examining the Chemical-Disease task, we see that our
+method identiﬁes correlations that are both obviously true
+and ones that are more subtle. For example, our method
+learns dependencies between labeling functions that are
+compositions of one another, such as one labeling function
+checking for the pattern [CHEM] induc.* [DIS], and
+a second labeling function checking for this pattern plus
+membership in an external knowledge base of known
+chemical-disease relations. Our method also learns more
+subtle correlations: for example, it selected a correlation
+between a labeling function that checks for the presence
+of a chemical mention in between the chemical and disease
+mentions comprising the candidate, and one that checks for
+the pattern .*-induced appearing in between.
+
+5.4. Accelerating Application Development
+
+Our method is in large part motivated by the new program-
+ming model introduced by weak supervision, and the novel
+hurdles that developers face. For example in the Disease
+Tagging application above, we observed developers signif-
+icantly slowed down in trying to to leverage the rich dis-
+ease ontologies and matching heuristics they had available
+without introducing too many dependencies between their
+labeling functions. In addition to being slowed down, we
+also observed developers running into signiﬁcant pitfalls
+due to unnoticed correlations between their weak supervi-
+sion sources. In one collaborator’s application, for every
+labeling function that referenced the words in a sentence,
+a corresponding labeling function referenced the lemmas,
+which were often identical, and this signiﬁcantly degraded
+performance. By automatically learning dependencies, we
+were able to signiﬁcantly mitigate the effects of such corre-
+lations. We therefore envision an accelerated development
+process enabled by our method.
+
+To further explore the way in which our method can protect
+against such types of failure modes, we consider adding
+correlated, random labeling functions to those used in the
+Chemical-Disease task. Figure 5 shows the average esti-
+mated accuracy of copies of a random labeling function.
+An independent model grows more conﬁdent that the ran-
+dom noise is accurate. However, with structure learning,
+we identify that the noisy sources are not independent and
+they therefore do not outvote the real labeling functions. In
+this way, structure learning can protect against failures as
+users experiment with sources of weak supervision.
+
+Figure 4. Comparison of structure learning with using maximum
+likelihood parameter estimation to select a model structure. Even
+when tuned for better recall (top), structure learning is also more
+precise, returning 1/4 as many extraneous correlations (bottom).
+
+Extracting structured information from unstructured text by
+identifying mentioned entities and relations is a challeng-
+ing task that is well studied in the context of weak supervi-
+sion (Bunescu & Mooney, 2007; Alfonseca et al., 2012;
+Ratner et al., 2016). We consider three tasks: extract-
+ing mentions of speciﬁc diseases from the scientiﬁc liter-
+ature (Disease Tagging); extracting mentions of chemicals
+inducing diseases from the scientiﬁc literature (Chemical-
+Disease); and extracting mentions of electronic device po-
+larity from PDF parts sheet tables (Device Polarity). In the
+ﬁrst two applications, we consider a training set of 500 un-
+labeled abstracts from PubMed, and in the third case 100
+PDF parts sheets consisting of mixed text and tabular data.
+We use hand-labeled test sets to evaluate on the candidate-
+mention-level performance, which is the accuracy of the
+classiﬁer in identifying correct mentions of speciﬁc enti-
+ties or relations, given a set of candidate mentions. For
+example, in Chemical-Disease, we consider as candidates
+all pairs of co-occurring chemical-disease mention pairs as
+identiﬁed by standard preprocessing tools2.
+
+We see that modeling the correlations between labeling
+functions gives gains in performance which appear to be
+correlated with the total number of sources. For example,
+in the disease tagging application, we have 233 labeling
+
+2
+
+ncbi.nlm.nih.gov/CBBresearch/Lu/Demo/PubTator/index.cgi
+
+Learning the Structure of Generative Models without Labeled Data
+
+Table 1. Candidate-mention scores of information extraction applications trained with data programming using generative models with
+no dependency structure (Independent) and learned dependency structure (Structure).
+
+APPLICATION
+
+DISEASE TAGGING
+
+CHEMICAL-DISEASE
+
+DEVICE POLARITY
+
+INDEPENDENT
+R
+
+P
+
+F1
+
+60.4
+
+45.1
+
+78.9
+
+73.3
+
+69.2
+
+99.6
+
+66.3
+
+54.6
+
+88.1
+
+STRUCTURE
+R
+
+P
+
+F1
+
+68.0
+
+46.8
+
+80.5
+
+69.8
+
+69.0
+
+98.6
+
+68.9
+
+55.9
+
+88.7
+
+F1 DIFF.
+
+# LFS
+
+# COR. % CORR.
+
+2.6
+
+1.3
+
+0.6
+
+233
+
+33
+
+12
+
+315
+
+21
+
+32
+
+1.17%
+
+3.98%
+
+48.49%
+
+networks with latent variables (Elidan & Friedman, 2005).
+
+Using heuristic sources of labels is increasingly common.
+Treating labels from a single heuristic source as gold la-
+bels is called distant supervision (Craven & Kumlien, 1999;
+Mintz et al., 2009). Some methods use multi-instance
+learning to reduce the noise in a distant supervision source
+(Riedel et al., 2010; Hoffmann et al., 2011). Others use hi-
+erarchical topic models to generate additional training data
+for weak supervision, but they do not support user-provided
+heuristics (Alfonseca et al., 2012; Takamatsu et al., 2012;
+Roth & Klakow, 2013a;b). Previous methods that support
+heuristics for weak supervision (e.g., Bunescu & Mooney,
+2007; Shin et al., 2015) do not model the noise inherent
+in these sources. Also, Downey & Etzioni (2008) showed
+that PAC learning is possible without hand-labeled data if
+the features monotonically order data by class probability.
+
+Estimating the accuracy of multiple label sources without a
+gold standard is a classic problem (Dawid & Skene, 1979),
+and many proposed approaches are generalized in the data
+programming framework. Parisi et al. (2014) proposed a
+spectral approach to estimating the accuracy of members
+of classiﬁer ensembles. Many methods for crowdsourcing
+estimate the accuracy of workers without hand-labeled data
+(e.g., Dalvi et al., 2013; Joglekar et al., 2015; Zhang et al.,
+2016). In data programming, the scaling of data to label
+sources is different from crowdsourcing; a relatively small
+number of sources label all the data. We can therefore learn
+rich dependency structures among the sources.
+
+7. Conclusion and Future Directions
+
+We showed that learning the structure of a generative model
+enables higher quality data programming results. Our
+method for structure learning is also 100× faster than a
+maximum likelihood approach. If data programming and
+other forms of weak supervision are to make machine
+learning tools easier to develop, selecting accurate struc-
+tures for generative models with minimal user intervention
+is a necessary capability. Interesting questions remain. Can
+the guarantee of Theorem 1 be tightened for higher-order
+dependencies to match the pairwise case of Corollary 2?
+Preliminary experiments show that they converge at simi-
+lar rates in practice.
+
+Figure 5. Structure learning identiﬁes and corrects correlated, ran-
+dom labeling functions added to the Chemical-Disease task.
+
+6. Related Work
+
+Structure learning is a well-studied problem, but most work
+has assumed access to hand-labeled training data. Some of
+the earliest work has focused on generalized linear mod-
+els. The lasso (Tibshirani, 1996), linear regression with (cid:96)1
+regularization, is a classic technique. Zhao & Yu (2006)
+showed that the lasso is a consistent structure estimator.
+The Dantzig selector (Candes & Tao, 2007) is another
+structure estimator for linear models that uses (cid:96)1, which can
+learn in the high-dimensional setting where there are more
+possible dependencies than samples. Ng (2004) showed
+that (cid:96)1-regularized logistic regression has sample complex-
+ity logarithmic in the number of features. (cid:96)1 regularization
+has also been used as a prior for compressed sensing (e.g.,
+Donoho & Elad, 2003; Tropp, 2006; Wainwright, 2009).
+
+Regularized estimators have also been used to select struc-
+tures for graphical models. Meinshausen & B¨uhlmann
+(2006) showed that parameter learning with (cid:96)1 regulariza-
+tion for Gaussian graphical models under similar assump-
+tions also consistently selects the correct structure. Most
+similar to our proposed estimator, Ravikumar et al. (2010)
+propose a fully supervised pseudolikelihood estimator for
+Ising models. Also related is the work of Chandrasekaran
+et al. (2012), which considers learning the structure of
+Gaussian graphical models with latent variables. Other
+techniques for learning the structure of graphical models
+include grafting (Perkins et al., 2003; Zhu et al., 2010) and
+the information bottleneck approach for learning Bayesian
+
+Learning the Structure of Generative Models without Labeled Data
+
+Acknowledgements
+
+Thanks to Christopher De Sa for helpful discussions, and
+Henry Ehrenberg and Sen Wu for assistance with exper-
+iments. We gratefully acknowledge the support of the
+Defense Advanced Research Projects Agency (DARPA)
+SIMPLEX program under No. N66001-15-C-4043, the
+DARPA D3M program under No. FA8750-17-2-0095,
+the National Science Foundation (NSF) CAREER Award
+IIS- 1353606, the Ofﬁce of Naval Research
+under No.
+(ONR) under awards No. N000141210041 and No.
+N000141310129, a Sloan Research Fellowship, the Moore
+Foundation, an Okawa Research Grant, Toshiba, and Intel.
+Any opinions, ﬁndings, and conclusions or recommenda-
+tions expressed in this material are those of the authors and
+do not necessarily reﬂect the views of DARPA, NSF, ONR,
+or the U.S. government.
+
+References
+
+Alfonseca, E., Filippova, K., Delort, J.-Y., and Garrido, G.
+Pattern learning for relation extraction with a hierarchi-
+cal topic model. In Annual Meeting of the Association
+for Computational Linguistics (ACL), 2012.
+
+Bunescu, R. C. and Mooney, R. J. Learning to extract re-
+lations from the Web using minimal supervision. In An-
+nual Meeting of the Association for Computational Lin-
+guistics (ACL), 2007.
+
+Candes, E. and Tao, T. The Dantzig selector: Statistical
+estimation when p is much larger than n. The Annals of
+Statistics, 35(6):2313–2351, 2007.
+
+Chandrasekaran, V., Parrilo, P. A., and Willsky, A. S. La-
+tent variable graphical model selection via convex op-
+timization. The Annals of Statistics, 40(4):1935–1967,
+2012.
+
+Craven, M. and Kumlien, J. Constructing biological knowl-
+edge bases by extracting information from text sources.
+In International Conference on Intelligent Systems for
+Molecular Biology (ISMB), 1999.
+
+Dalvi, N., Dasgupta, A., Kumar, R., and Rastogi, V. Ag-
+gregating crowdsourced binary ratings. In International
+World Wide Web Conference (WWW), 2013.
+
+Dawid, A. P. and Skene, A. M. Maximum likelihood esti-
+mation of observer error-rates using the EM algorithm.
+Journal of the Royal Statistical Society C, 28(1):20–28,
+1979.
+
+Downey, D. and Etzioni, O. Look ma, no hands: Analyzing
+the monotonic feature abstraction for text classiﬁcation.
+In Neural Information Processing Systems (NIPS), 2008.
+
+Eadicicco, L. Baidu’s Andrew Ng on the future of artiﬁcial
+intelligence, 2017. Time [Online; posted 11-January-
+2017].
+
+Elidan, G. and Friedman, N. Learning hidden variable net-
+works: The information bottleneck approach. Journal of
+Machine Learning Research, 6:81–127, 2005.
+
+Hinton, G. E. Training products of experts by minimiz-
+ing contrastive divergence. Neural Computation, 14(8):
+1771–1800, 2002.
+
+Hoffmann, R., Zhang, C., Ling, X., Zettlemoyer, L., and
+Weld, D. S. Knowledge-based weak supervision for in-
+formation extraction of overlapping relations. In Annual
+Meeting of the Association for Computational Linguis-
+tics (ACL), 2011.
+
+Joglekar, M., Garcia-Molina, H., and Parameswaran, A.
+Comprehensive and reliable crowd assessment algo-
+rithms. In International Conference on Data Engineer-
+ing (ICDE), 2015.
+
+Koh, K., Kim, S. J., and Boyd, S. An interior-point method
+for large-scale (cid:96)1-regularized logistic regression. Jour-
+nal of Machine Learning Research, 3:1519–1555, 2007.
+
+Langford, J., Li, L., and Zhang, T. Sparse online learn-
+ing via truncated gradient. Journal of Machine Learning
+Research, 10:777–801, 2009.
+
+Meinshausen, N. and B¨uhlmann, P. High-dimensional
+graphs and variable selection with the lasso. The Annals
+of Statistics, 34(3):1436–1462, 2006.
+
+Metz, C. Google’s hand-fed AI now gives answers, not
+just search results, 2016. Wired [Online; posted 29-
+November-2016].
+
+Mintz, M., Bills, S., Snow, R., and Jurafsky, D. Distant
+supervision for relation extraction without labeled data.
+In Annual Meeting of the Association for Computational
+Linguistics (ACL), 2009.
+
+Ng, A. Y. Feature selection, l1 vs. l2 regularization, and ro-
+tational invariance. In International Conference on Ma-
+chine Learning (ICML), 2004.
+
+Donoho, D. and Elad, M. Optimally sparse representation
+in general (nonorthogonal) dictionaries via (cid:96)1 minimiza-
+tion. Proceedings of the National Academy of Sciences
+of the USA, 100(5):2197–2202, 2003.
+
+Parisi, F., Strino, F., Nadler, B., and Kluger, Y. Ranking
+and combining multiple predictors without labeled data.
+Proceedings of the National Academy of Sciences of the
+USA, 111(4):1253–1258, 2014.
+
+Learning the Structure of Generative Models without Labeled Data
+
+crowdsourcing. Journal of Machine Learning Research,
+17:1–44, 2016.
+
+Zhao, P. and Yu, B. On model selection consistency of
+lasso. Journal of Machine Learning Research, 7:2541–
+2563, 2006.
+
+Zhu, J., Lao, N., and Xing, E. P. Grafting-Light: Fast,
+incremental feature selection and structure learning of
+Markov random ﬁelds. In International Conference on
+Knowledge Discovery and Data Mining (KDD), 2010.
+
+Perkins, S., Lacker, K., and Theiler, J. Grafting: Fast, in-
+cremental feature selection by gradient descent in func-
+tion space. Journal of Machine Learning Research, 3:
+1333–1356, 2003.
+
+Ratner, A., De Sa, C., Wu, S., Selsam, D., and R´e, C. Data
+programming: Creating large training sets, quickly. In
+Neural Information Processing Systems (NIPS), 2016.
+
+Ravikumar, P., Wainwright, M. J., and Lafferty, J. D. High-
+dimensional Ising model selection using (cid:96)1-regularized
+logistic regression. The Annals of Statistics, 38(3):1287–
+1319, 2010.
+
+Riedel, S., Yao, L., and McCallum, A. Modeling relations
+In European
+and their mentions without labeled text.
+Conference on Machine Learning and Knowledge Dis-
+covery in Databases (ECML PKDD), 2010.
+
+Roth, B. and Klakow, D. Feature-based models for im-
+proving the quality of noisy training data for relation ex-
+traction. In Conference on Information and Knowledge
+Management (CIKM), 2013a.
+
+Roth, B. and Klakow, D. Combining generative and dis-
+criminative model scores for distant supervision.
+In
+Conference on Empirical Methods on Natural Language
+Processing (EMNLP), 2013b.
+
+Shin, J., Wu, S., Wang, F., De Sa, C., Zhang, C., and
+R´e, C. Incremental knowledge base construction using
+DeepDive. Proceedings of the VLDB Endowment, 8(11):
+1310–1321, 2015.
+
+Takamatsu, S., Sato, I., and Nakagawa, H. Reducing wrong
+labels in distant supervision for relation extraction.
+In
+Annual Meeting of the Association for Computational
+Linguistics (ACL), 2012.
+
+Tibshirani, R. Regression shrinkage and selection via the
+lasso. Journal of the Royal Statistical Society B, 58(1):
+267–288, 1996.
+
+Tropp, J.
+
+Just relax: Convex programming methods for
+identifying sparse signals in noise. IEEE Transactions
+on Information Theory, 52(3):1030–1051, 2006.
+
+Wainwright, M. J. Sharp thresholds for high-dimensional
+and noisy sparsity recovery using (cid:96)1-constrained
+IEEE Transactions on
+quadratic programming (lasso).
+Information Theory, 55(5):2183–2202, 2009.
+
+Zhang, C. and R´e, C. DimmWitted: A study of main-
+memory statistical analytics. Proceedings of the VLDB
+Endowment, 7(12):1283–1294, 2014.
+
+Zhang, Y., Chen, X., Zhou, D., and Jordan, M. I. Spec-
+tral methods meet EM: A provably optimal algorithm for
+
+Learning the Structure of Generative Models without Labeled Data
+
+A. Proofs
+
+In this appendix, we provide proofs for Theorem 1 and Corollary 2 from the main text. In Section A.1, we provide an
+outline of the proof and state several lemmas. In Section A.2, we prove Theorem 1. In Section A.3, we prove Corollary 2,
+which follows directly from Theorem 1. In Section A.4, we prove the lemmas stated in Section A.1.
+
+A.1. Outline and Lemma Statements
+
+A.1.1. OUTLINE OF THEOREM 1 PROOF
+
+We ﬁrst show that the negative marginal log-pseudolikelihood is strongly convex under condition (7). In particular, in
+Lemma 1, we derive the gradient and Hessian of each term of the negative marginal log-pseudolikelihood, and in Lemma 2,
+we show that the negative marginal log-pseudolikelihood is strongly convex under condition (7).
+
+Next, in Lemma 3, we show that, under condition (6), the gradient of the negative marginal log-pseudolikelihood at the
+true parameter θ∗ is small with high probability.
+
+Finally, we show that if we run SGD until convergence and then truncate, we will recover the exact sparsity structure with
+high probability. In Lemma 4, we show that if the true parameter θ∗ has a small gradient, then the empirical minimum ˆθ
+will be close to it, and in Lemma 5, we show that the correct sparsity structure is recovered.
+
+A.1.2. LEMMA STATEMENTS
+
+We now formally state the lemmas used in our proof.
+Lemma 1. Given a family of maximum-entropy distributions
+
+for some function of sufﬁcient statistics h : Ω → RM , if we let J be the negative log-pseudolikelihood objective for some
+event A ⊆ Ω,
+
+pθ(x) =
+
+exp(θT φ(x)),
+
+1
+Zθ
+
+J(θ) = − log px∼pθ (x ∈ A | Λ\j),
+
+then its gradient is
+
+and its Hessian is
+
+∇J(θ) = −Ex∼pθ
+
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:3) + Ex∼pθ
+
+(cid:2)φ(x) | Λ\j
+
+(cid:3)
+
+∇2J(θ) = − Covx∼pθ
+
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:3) + Covx∼pθ
+
+(cid:2)φ(x) | Λ\j
+
+(cid:3)
+
+Lemma 2. Let J be the empirical negative log-pseudolikelihood objective for the event Λj = ¯Λj
+
+J(θ) = −
+
+(cid:2)log px∼pθ (Λij = ¯Λij | Λi\j = ¯Λi\j)(cid:3) .
+
+m
+(cid:88)
+
+i=1
+
+Let Θj denote the set of parameters corresponding to dependencies incident on either labeling function λj or the true label
+y, and let Θ\j denote all the set of all remaining parameters.
+
+Then, J(θ) is independent of the variables in Θ\j, and under condition (7), J(θ) is strongly convex on the variables in Θj
+with a parameter of strong convexity of c.
+
+Lemma 3. Let dj be the number of dependencies that involve either λj or y, and let θ∗ be the true parameter speciﬁed by
+condition (6). Deﬁne W as the gradient of the negative log-pseudolikelihood of λj at this point
+
+Then, for any δ.
+
+W = −∇J(θ∗; X).
+
+Pr((cid:107)W (cid:107)∞ ≥ δ) ≤ 2dj exp
+
+(cid:19)
+
+(cid:18) −mδ2
+8
+
+(cid:107)ˆθ − θ∗(cid:107)∞ ≤
+
+√
+
+d
+
+δ
+c
+
+2nd exp
+
+(cid:18) −mc2κ2
+32d
+
+(cid:19)
+
+.
+
+m ≥
+
+32d
+c2κ2 log
+
+(cid:19)
+
+(cid:18) 2nd
+δ
+
+2nd exp
+
+(cid:18) −mc2κ2
+32d
+
+(cid:19)
+
+.
+
+Learning the Structure of Generative Models without Labeled Data
+
+Lemma 4. Let J be a c-strongly convex function in d dimensions, and let ˆθ be the minimizer of J. Suppose (cid:107)J(θ∗)(cid:107)∞ ≤ δ.
+Then,
+
+Lemma 5. Suppose that conditions (6), (7), and (8) are satisﬁed. Suppose we run Algorithm 1 with m samples, a sufﬁ-
+ciently small step size η, a sufﬁciently large number of epochs T , and truncate once at the end with Kη(cid:15) = κ/2. Then, the
+probability that we fail to recover the exact sparsity structure is at most
+
+A.2. Proof of Theorem 1
+
+Theorem 1. Suppose we run Algorithm 1 on a problem where conditions (6), (7), and (8) are satisﬁed. Then, for any
+δ > 0, an unlabeled input dataset of size
+
+is sufﬁcient to recover the exact dependency structure with a probability of at least 1 − δ.
+
+Proof. If follows from Lemma 5 that the probability that we fail to recover the sparsity structure is at most
+
+By using the provided m, the probability of failure is at most
+
+(cid:32)
+
+− 32d
+
+c2κ2 log (cid:0) 2nd
+
+δ
+
+(cid:1) c2κ2
+
+(cid:33)
+
+2nd exp
+
+32d
+
+(cid:18)
+
+= 2nd exp
+
+− log
+
+(cid:19)(cid:19)
+
+(cid:18) 2nd
+δ
+
+= δ.
+
+Thus, we will succeed with probability at least 1 − δ.
+
+A.3. Proof of Corollary 2
+
+Corollary 3. Suppose we run Algorithm 1 on a problem where conditions (6), (7), and (8) are satisﬁed. Additionally,
+assume that the only potential dependencies are accuracy and correlation dependencies. Then, for any δ > 0, an unlabeled
+input dataset of size
+
+m ≥
+
+64n
+c2κ2 log
+
+(cid:19)
+
+(cid:18) 4n
+δ
+
+is sufﬁcient to recover the exact dependency structure with a probability of at least 1 − δ.
+
+Proof. In this case, each labeling function λj is involved in n − 1 with other labeling functions, and the true label y is
+involved in n dependencies. Thus, d = (n − 1) + n < 2n.
+
+We can then apply Theorem 1 to show that the probability of success is at least 1 − τ for the speciﬁed m.
+
+A.4. Proofs of Lemmas
+
+Lemma 1. Given a family of maximum-entropy distributions
+
+pθ(x) =
+
+exp(θT φ(x)),
+
+1
+Zθ
+
+Learning the Structure of Generative Models without Labeled Data
+
+for some function of sufﬁcient statistics h : Ω → RM , if we let J be the negative log-pseudolikelihood objective for some
+event A ⊆ Ω,
+
+J(θ) = − log px∼pθ (x ∈ A | Λ\j),
+
+∇J(θ) = −Ex∼pθ
+
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:3) + Ex∼pθ
+
+(cid:2)φ(x) | Λ\j
+
+(cid:3)
+
+then its gradient is
+
+and its Hessian is
+
+∇2J(θ) = − Covx∼pθ
+
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:3) + Covx∼pθ
+
+(cid:2)φ(x) | Λ\j
+
+(cid:3)
+
+Proof. We ﬁrst rewrite the netative log-pseudolikelihood as
+
+= − log
+
+(x ∈ A | Λ\j)
+
+J(θ) = − log Pr
+x∼πθ
+Prx∼πθ (x ∈ A, Λ\j)
+Prx∼πθ (Λ\j)
+pθ(x)
+pθ(x)
+
+= − log
+
+x∈A,Λ\j
+
+(cid:80)
+
+(cid:80)
+
+x∈Λ\j
+
+= − log
+
+exp(θT φ(x))
+
+exp(θT φ(x))
+
+(cid:80)
+
+(cid:80)
+
+x∈A,Λ\j
+
+x∈Λ\j
+
+(cid:88)
+
+x∈A,Λ\j
+
+(cid:88)
+
+x∈Λ\j
+
+= − log
+
+exp(θT φ(x)) + log
+
+exp(θT φ(x)).
+
+We now derive the gradient
+
+∇J(θ) = ∇
+
+− log
+
+exp(θT φ(x)) + log
+
+exp(θT φ(x))
+
+
+
+
+
+
+
+(cid:88)
+
+x∈A,Λ\j
+(cid:88)
+
+x∈A,Λ\j
+
+(cid:88)
+
+x∈Λ\j
+(cid:88)
+
+x∈Λ\j
+
+= −∇ log
+
+exp(θT φ(x)) + ∇ log
+
+exp(θT φ(x))
+
+φ(x) exp(θT φ(x))
+
+φ(x) exp(θT φ(x))
+
+(cid:80)
+
+= −
+
+x∈A,Λ\j
+(cid:80)
+
+exp(θT φ(x))
+x∈A,Λ\j
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:3) + Ex∼pθ
+
+= −Ex∼pθ
+
+(cid:80)
+
++
+
+x∈Λ\j
+(cid:80)
+x∈Λ\j
+(cid:2)φ(x) | Λ\j
+
+(cid:3)
+
+exp(θT φ(x))
+
+Learning the Structure of Generative Models without Labeled Data
+
+We now derive the Hessian
+(cid:34)
+
+(cid:80)
+
+∇2J(θ) = ∇
+
+−
+
+x∈A,Λ\j
+(cid:80)
+
+x∈A,Λ\j
+
+φ(x) exp(θT φ(x))
+
+exp(θT φ(x))
+
+φ(x) exp(θT φ(x))
+
+(cid:35)
+
+exp(θT φ(x))
+
++
+
+(cid:80)
+
+(cid:80)
+
+x∈Λ\j
+(cid:80)
+
+x∈Λ\j
+
++ ∇
+
+x∈Λ\j
+(cid:80)
+
+φ(x) exp(θT φ(x))
+
+φ(x) exp(θT φ(x))
+
+exp(θT φ(x))
+
+exp(θT φ(x))
+
+(cid:80)
+
+= −∇
+
+x∈A,Λ\j
+(cid:80)
+
+x∈A,Λ\j
+
+(cid:80)
+
+
+
+
+
+
+= −
+
+x∈A,Λ\j
+(cid:80)
+
+φ(x)φ(x)T exp(θT φ(x))
+
+x∈A,Λ\j
+
+exp(θT φ(x))
+
+x∈Λ\j
+(cid:16)(cid:80)
+
+x∈A,Λ\j
+
+−
+
+φ(x) exp(θT φ(x))
+(cid:16)(cid:80)
+
+x∈A,Λ\j
+
+(cid:17) (cid:16)(cid:80)
+
+x∈A,Λ\j
+
+exp(θT φ(x))
+
+(cid:17)2
+
+φ(x) exp(θT φ(x))
+
+(cid:17)T
+
+
+
+
+
+
+(cid:80)
+
+
+
+
+
+
++
+
+x∈Λ\j
+(cid:80)
+
+φ(x)φ(x)T exp(θT φ(x))
+
+exp(θT φ(x))
+
+x∈Λ\j
+
+(cid:16)(cid:80)
+
+x∈Λ\j
+
+−
+
+φ(x) exp(θT φ(x))
+(cid:16)(cid:80)
+
+(cid:17) (cid:16)(cid:80)
+
+x∈Λ\j
+
+exp(θT φ(x))
+
+(cid:17)2
+
+φ(x) exp(θT φ(x))
+
+(cid:17)T
+
+
+
+
+
+
+(cid:16)
+
+= −
+
+Ex∼pθ
+(cid:16)
+
+Ex∼pθ
+
++
+
+= − Covx∼pθ
+
+(cid:3) − Ex∼pθ
+
+(cid:2)φ(x)φ(x)T | x ∈ A, Λ\j
+(cid:2)φ(x)φ(x)T | x ∈ Λ\j
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:3) − Ex∼pθ
+(cid:3) + Covx∼pθ
+
+(cid:2)φ(x) | x ∈ Λ\j
+(cid:2)φ(x) | Λ\j
+
+(cid:3) .
+
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:2)φ(x) | x ∈ A, Λ\j
+
+(cid:3)T (cid:17)
+
+x∈Λ\j
+(cid:3) Ex∼pθ
+
+(cid:3) Ex∼pθ
+
+(cid:2)φ(x) | x ∈ Λ\j
+
+(cid:3)T (cid:17)
+
+Lemma 2. Let J be the empirical negative log-pseudolikelihood objective for the event Λj = ¯Λj
+
+J(θ) = −
+
+(cid:2)log px∼pθ (Λij = ¯Λij | Λi\j = ¯Λi\j)(cid:3) .
+
+m
+(cid:88)
+
+i=1
+
+Let Θj denote the set of parameters corresponding to dependencies incident on either labeling function λj or the true label
+y, and let Θ\j denote all the set of all remaining parameters.
+
+Then, J(θ) is independent of the variables in Θ\j, and under condition (7), J(θ) is strongly convex on the variables in Θj
+with a parameter of strong convexity of c.
+
+Proof. First, we show that J(θ) is independent of the variables in Θ\j. We simplify J(θ) as
+
+J(θ) =
+
+− log
+
+exp(θT φ(x)) + log
+
+exp(θT φ(x))
+
+(cid:88)
+
+x∈ ¯Λ\j
+
+=
+
+− log
+
+exp
+
+j φj(x) + θT
+θT
+
+\jφ\j(x)
+
++ log
+
+exp
+
+θT
+j φj(x) + θT
+
+\jφ\j(x)
+
+(cid:16)
+
+(cid:17)
+
+(cid:16)
+
+(cid:17)
+
+
+
+
+
+=
+
+− log
+
+(cid:88)
+
+(cid:16)
+
+exp (cid:0)θT
+
+j φj(x)(cid:1) exp
+
+θT
+\jφ\j(x)
+
+(cid:16)
+
+(cid:17)(cid:17)
+
++ log
+
+(cid:88)
+
+(cid:16)
+
+exp (cid:0)θT
+
+j φj(x)(cid:1) exp
+
+θT
+\jφ\j(x)
+
+(cid:16)
+
+=
+
+− log
+
+exp
+
+θT
+\jφ\j(x)
+
+(cid:16)
+
+exp (cid:0)θT
+
+j φj(x)(cid:1)
+
+ + log
+
+exp
+
+θT
+\jφ\j(x)
+
+exp (cid:0)θT
+
+j φj(x)(cid:1)
+
+
+
+
+
+=
+
+− log exp
+
+(cid:16)
+
+(cid:17)
+θT
+\jφ\j(x)
+
+− log
+
+exp (cid:0)θT
+
+j φj(x)(cid:1) + log exp
+
+θT
+\jφ\j(x)
+
++ log
+
+exp (cid:0)θT
+
+j φj(x)(cid:1)
+
+
+
+(cid:17)(cid:17)
+
+
+
+
+
+
+
+
+
+
+
+(cid:17) (cid:88)
+
+x∈ ¯Λ\j
+
+(cid:17)
+
+(cid:88)
+
+x∈ ¯Λ\j
+
+=
+
+− log
+
+exp (cid:0)θT
+
+j φj(x)(cid:1) + log
+
+exp (cid:0)θT
+
+j φj(x)(cid:1)
+
+ ,
+
+(cid:17) (cid:88)
+
+x∈ ¯Λ
+
+(cid:88)
+
+x∈ ¯Λ
+
+(cid:88)
+
+x∈ ¯Λ\j
+
+
+
+
+
+
+
+
+
+
+
+
+
+m
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+i=1
+
+(cid:88)
+
+x∈ ¯Λ
+
+(cid:88)
+
+x∈ ¯Λ
+
+x∈ ¯Λ
+
+
+(cid:88)
+
+x∈ ¯Λ
+
+
+
+
+
+(cid:88)
+
+x∈ ¯Λ\j
+
+x∈ ¯Λ\j
+
+
+
+
+(cid:16)
+
+(cid:16)
+
+
+
+Learning the Structure of Generative Models without Labeled Data
+
+which does not depend on any variables in Θ\j.
+
+Next, we prove that J(θ) is c-strongly convex in the variabes in Θj. By combining the previous result and Lemma 1, we
+can derive the Hessian
+
+∇2J(Θj) =
+
+(cid:2)− Cov(Λ,Y )∼pθ (Φj(Λ, Y ) | Λi = ¯Λi) + Cov(Λ,Y )∼pθ (Φj(Λ, Y ) | Λi\j = ¯Λi\j)(cid:3)
+
+= −
+
+Cov(Λ,Y )∼pθ (Φj(Λ, Y ) | Λi = ¯Λi) +
+
+Cov(Λ,Y )∼pθ (Φj(Λ, Y ) | Λi\j = ¯Λi\j).
+
+m
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+i=1
+
+It then follows from condition (7) that
+
+which implies that J is c-strongly convex on variables in Θj.
+
+Lemma 3. Let dj be the number of dependencies that involve either λj or y, and let θ∗ be the true parameter speciﬁed by
+condition (6). Deﬁne W as the gradient of the negative log-pseudolikelihood of λj at this point
+
+m
+(cid:88)
+
+i=1
+
+cI (cid:22) ∇2J(Θj),
+
+W = −∇J(θ∗; X).
+
+Then, for any δ.
+
+Pr((cid:107)W (cid:107)∞ ≥ δ) ≤ 2dj exp
+
+(cid:19)
+
+(cid:18) −mδ2
+8
+
+Proof. From Lemma 1, we know that each element of W can be written as the average of m i.i.d. terms. From condition (7),
+we know that the terms have zero mean, and we also know that the terms are bounded in absolute value by 2, due to the
+fact that the dependencies have values falling in the interval [−1, 1].
+
+We can alternatively think of the average of the terms as the sum of m i.i.d. zero-mean random variables that are bounded
+in absolute value by 2
+
+m . The two-sided Azuma’s inequality bounds the probability that any term in W is large.
+
+Pr(|Wj| ≥ δ) ≤ 2 exp
+
+(cid:32)
+
+−δ2
+
+(cid:33)
+
+2 (cid:80)m
+i=1
+
+(cid:0) 2
+m
+
+(cid:1)2
+
+≤ 2 exp
+
+(cid:19)
+
+(cid:18) −mδ2
+8
+
+The union bound then bounds the probability that any component of W is large.
+
+Pr((cid:107)W (cid:107)∞ ≥ δ) ≤ 2dj exp
+
+(cid:19)
+
+(cid:18) −mδ2
+8
+
+Lemma 4. Let J be a c-strongly convex function in d dimensions, and let ˆθ be the minimizer of J. Suppose (cid:107)J(θ∗)(cid:107)∞ ≤ δ.
+Then,
+
+(cid:107)ˆθ − θ∗(cid:107)∞ ≤
+
+√
+
+d
+
+δ
+c
+
+Proof. Because J is c-strongly convex,
+
+(cid:16)
+
+∇J(θ∗) − ∇J(ˆθ)
+
+(θ∗ − ˆθ) ≥ c(cid:107)θ∗ − ˆθ(cid:107)2
+2.
+
+(cid:17)T
+
+∇J(ˆθ) = 0, so
+
+∇J(θ∗)T (θ∗ − ˆθ) ≥ c(cid:107)θ∗ − ˆθ(cid:107)2
+2.
+
+Learning the Structure of Generative Models without Labeled Data
+
+Then, because (cid:107)J(θ∗)(cid:107)∞ ≤ δ,
+
+Then, we have that
+
+which implies that
+
+c(cid:107)θ∗ − ˆθ(cid:107)2
+
+(cid:107)θ∗ − ˆθ(cid:107)2
+
+2 ≤ δ(cid:107)θ∗ − ˆθ(cid:107)1
+(cid:107)θ∗ − ˆθ(cid:107)1.
+
+2 ≤
+
+δ
+c
+
+(cid:107)θ∗ − ˆθ(cid:107)2
+
+2 ≤
+
+δ2
+c2 d(cid:107)θ∗ − ˆθ(cid:107)2 ≤
+
+δ
+c
+
+√
+
+d,
+
+(cid:107)θ∗ − ˆθ(cid:107)∞ ≤
+
+√
+
+d.
+
+δ
+c
+
+2nd exp
+
+(cid:18) −mc2κ2
+32d
+
+(cid:19)
+
+.
+
+Lemma 5. Suppose that conditions (6), (7), and (8) are satisﬁed. Suppose we run Algorithm 1 with m samples, a sufﬁ-
+ciently small step size η, a sufﬁciently large number of epochs T , and truncate once at the end with Kη(cid:15) = κ/2. Then, the
+probability that we fail to recover the exact sparsity structure is at most
+
+Proof. First, we bound the probability that we fail to correctly recover the dependencies involving λj. By Lemma 3, we
+can bound the probability that the gradient is large at θ∗ by
+
+(cid:18)
+
+Pr
+
+(cid:107)W (cid:107)∞ ≥
+
+≤ 2d exp
+
+(cid:19)
+
+cκ
+√
+d
+2
+
+(cid:18) −mc2κ2
+32d
+
+(cid:19)
+
+.
+
+Notice that if (cid:107)W (cid:107)∞ ≥ cκ
+√
+d
+
+2
+
+, then (cid:107)θ∗ − ˆθ(cid:107)∞ ≤ κ/2. If then follows from Lemma 4 that
+
+(cid:16)
+
+(cid:17)
+(cid:107)θ∗ − ˆθ(cid:107)∞ ≥ κ/2
+
+Pr
+
+≤ 2d exp
+
+(cid:18) −mc2κ2
+32d
+
+(cid:19)
+
+.
+
+If this is the case, then upon truncation, the correct dependencies will be recovered for λj. We now use the union bound to
+show that we will fail to recover the exact sparsity structure with probability at most
+
+2nd exp
+
+(cid:18) −mc2κ2
+32d
+
+(cid:19)
+
+.
+
+

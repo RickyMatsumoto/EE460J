@@ -1,0 +1,3196 @@
+Measuring Sample Quality with Kernels
+
+Jackson Gorham 1 Lester Mackey 2
+
+Abstract
+
+Approximate Markov
+chain Monte Carlo
+(MCMC) offers the promise of more rapid sam-
+pling at the cost of more biased inference. Since
+standard MCMC diagnostics fail to detect these
+biases, researchers have developed computable
+Stein discrepancy measures that provably de-
+termine the convergence of a sample to its
+target distribution. This approach was recently
+combined with the theory of reproducing kernels
+to deﬁne a closed-form kernel Stein discrepancy
+(KSD) computable by summing kernel evalua-
+tions across pairs of sample points. We develop
+a theory of weak convergence for KSDs based
+on Stein’s method, demonstrate that commonly
+used KSDs fail to detect non-convergence even
+for Gaussian targets, and show that kernels with
+slowly decaying tails provably determine con-
+vergence for a large class of target distributions.
+The resulting convergence-determining KSDs
+are suitable for comparing biased, exact, and
+deterministic sample sequences and simpler to
+compute and parallelize than alternative Stein
+discrepancies. We use our tools to compare bi-
+ased samplers, select sampler hyperparameters,
+and improve upon existing KSD approaches
+to one-sample hypothesis testing and sample
+quality improvement.
+
+1. Introduction
+
+When Bayesian inference and maximum likelihood estima-
+tion (Geyer, 1991) demand the evaluation of intractable ex-
+pectations EP [h(Z)] = (cid:82) p(x)h(x)dx under a target dis-
+tribution P , Markov chain Monte Carlo (MCMC) methods
+(Brooks et al., 2011) are often employed to approximate
+these integrals with asymptotically correct sample aver-
+
+1Stanford University, Palo Alto, CA USA 2Microsoft Re-
+search New England, Cambridge, MA USA. Correspondence
+to: Jackson Gorham <jgorham@stanford.edu>, Lester Mackey
+<lmackey@microsoft.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+(cid:80)n
+
+ages EQn [h(X)] = 1
+i=1 h(xi). However, many exact
+n
+MCMC methods are computationally expensive, and recent
+years have seen the introduction of biased MCMC proce-
+dures (see, e.g., Welling & Teh, 2011; Ahn et al., 2012; Ko-
+rattikara et al., 2014) that exchange asymptotic correctness
+for increased sampling speed.
+
+Since standard MCMC diagnostics, like mean and trace
+plots, pooled and within-chain variance measures, effective
+sample size, and asymptotic variance (Brooks et al., 2011),
+do not account for asymptotic bias, Gorham & Mackey
+(2015) deﬁned a new family of sample quality measures
+– the Stein discrepancies – that measure how well EQn
+approximates EP while avoiding explicit integration under
+P . Gorham & Mackey (2015); Mackey & Gorham (2016);
+Gorham et al. (2016) further showed that speciﬁc mem-
+bers of this family – the graph Stein discrepancies – were
+(a) efﬁciently computable by solving a linear program and
+(b) convergence-determining for large classes of targets P .
+Building on the zero mean reproducing kernel theory of
+Oates et al. (2016b), Chwialkowski et al. (2016) and Liu
+et al. (2016) later showed that other members of the Stein
+discrepancy family had a closed-form solution involving
+the sum of kernel evaluations over pairs of sample points.
+
+This closed form represents a signiﬁcant practical advan-
+tage, as no linear program solvers are necessary, and the
+computation of the discrepancy can be easily parallelized.
+However, as we will see in Section 3.2, not all kernel Stein
+discrepancies are suitable for our setting. In particular, in
+dimension d ≥ 3, the kernel Stein discrepancies previously
+recommended in the literature fail to detect when a sam-
+ple is not converging to the target. To address this short-
+coming, we develop a theory of weak convergence for the
+kernel Stein discrepancies analogous to that of (Gorham &
+Mackey, 2015; Mackey & Gorham, 2016; Gorham et al.,
+2016) and design a class of kernel Stein discrepancies that
+provably control weak convergence for a large class of tar-
+get distributions.
+
+After formally describing our goals for measuring sam-
+ple quality in Section 2, we outline our strategy, based
+on Stein’s method, for constructing and analyzing practical
+quality measures at the start of Section 3. In Section 3.1,
+we deﬁne our family of closed-form quality measures – the
+kernel Stein discrepancies (KSDs) – and establish several
+
+Measuring Sample Quality with Kernels
+
+appealing practical properties of these measures. We an-
+alyze the convergence properties of KSDs in Sections 3.2
+and 3.3, showing that previously proposed KSDs fail to de-
+tect non-convergence and proposing practical convergence-
+determining alternatives. Section 4 illustrates the value
+of convergence-determining kernel Stein discrepancies in
+a variety of applications, including hyperparameter selec-
+tion, sampler selection, one-sample hypothesis testing, and
+sample quality improvement. Finally, in Section 5, we con-
+clude with a discussion of related and future work.
+
+Notation We will use µ to denote a generic probabil-
+ity measure and ⇒ to denote the weak convergence of a
+sequence of probability measures. We will use (cid:107)·(cid:107)r for
+r ∈ [1, ∞] to represent the (cid:96)r norm on Rd and occasion-
+ally refer to a generic norm (cid:107)·(cid:107) with associated dual norm
+(cid:107)a(cid:107)∗ (cid:44) supb∈Rd,(cid:107)b(cid:107)=1 (cid:104)a, b(cid:105) for vectors a ∈ Rd. We
+let ej be the j-th standard basis vector. For any function
+g : Rd → Rd(cid:48)
+, we deﬁne M0(g) (cid:44) supx∈Rd (cid:107)g(x)(cid:107)2,
+M1(g) (cid:44) supx(cid:54)=y(cid:107)g(x) − g(y)(cid:107)2/(cid:107)x − y(cid:107)2, and ∇g as
+the gradient with components (∇g(x))jk (cid:44) ∇xk gj(x). We
+further let g ∈ C m indicate that g is m times continu-
+ously differentiable and g ∈ C m
+indicate that g ∈ C m
+0
+and ∇lg is vanishing at inﬁnity for all l ∈ {0, . . . , m}.
+We deﬁne C (m,m) (respectively, C (m,m)
+and C (m,m)
+)
+0
+to be the set of functions k : Rd × Rd → R with
+(x, y) (cid:55)→ ∇l
+yk(x, y) continuous (respectively, contin-
+uous and uniformly bounded, continuous and vanishing at
+inﬁnity) for all l ∈ {0, . . . , m}.
+
+x∇l
+
+b
+
+2. Quality measures for samples
+
+Consider a target distribution P with continuously differ-
+entiable (Lebesgue) density p supported on all of Rd. We
+assume that the score function b (cid:44) ∇ log p can be eval-
+uated1 but that, for most functions of interest, direct inte-
+gration under P is infeasible. We will therefore approxi-
+mate integration under P using a weighted sample Qn =
+(cid:80)n
+i=1 qn(xi)δxi with sample points x1, . . . , xn ∈ Rd and
+qn a probability mass function. We will make no assump-
+tions about the origins of the sample points; they may be
+the output of a Markov chain or even deterministically gen-
+erated.
+Each Qn offers an approximation EQn [h(X)] =
+(cid:80)n
+expectation
+each
+EP [h(Z)], and our aim is to effectively compare the
+quality of the approximation offered by any two samples
+targeting P .
+In particular, we wish to produce a quality
+measure that (i) identiﬁes when a sequence of samples is
+converging to the target, (ii) determines when a sequence
+of samples is not converging to the target, and (iii) is
+efﬁciently computable. Since our interest is in approx-
+
+i=1 qn(xi)h(xi)
+
+intractable
+
+for
+
+1No knowledge of the normalizing constant is needed.
+
+imating expectations, we will consider discrepancies
+quantifying the maximum expectation error over a class of
+test functions H:
+
+dH(Qn, P ) (cid:44) sup
+h∈H
+
+|EP [h(Z)] − EQn [h(X)]|.
+
+(1)
+
+When H is large enough, for any sequence of probability
+measures (µm)m≥1, dH(µm, P ) → 0 only if µm ⇒ P . In
+this case, we call (1) an integral probability metric (IPM)
+(cid:44) {h :
+(M¨uller, 1997). For example, when H = BL(cid:107)·(cid:107)2
+Rd → R | M0(h) + M1(h) ≤ 1}, the IPM dBL(cid:107)·(cid:107)2
+is
+called the bounded Lipschitz or Dudley metric and exactly
+metrizes convergence in distribution. Alternatively, when
+(cid:44) {h : Rd → R | M1(h) ≤ 1} is the set of
+H = W(cid:107)·(cid:107)2
+1-Lipschitz functions, the IPM dW(cid:107)·(cid:107) in (1) is known as the
+Wasserstein metric.
+
+An apparent practical problem with using the IPM dH as a
+sample quality measure is that EP [h(Z)] may not be com-
+putable for h ∈ H. However, if H were chosen such that
+EP [h(Z)] = 0 for all h ∈ H, then no explicit integra-
+tion under P would be necessary. To generate such a class
+of test functions and to show that the resulting IPM still
+satisﬁes our desiderata, we follow the lead of Gorham &
+Mackey (2015) and consider Charles Stein’s method for
+characterizing distributional convergence.
+
+3. Stein’s method with kernels
+
+Stein’s method (Stein, 1972) provides a three-step recipe
+for assessing convergence in distribution:
+
+1. Identify a Stein operator T that maps functions g :
+Rd → Rd from a domain G to real-valued functions
+T g such that
+
+EP [(T g)(Z)] = 0 for all g ∈ G.
+
+For any such Stein operator and Stein set G, Gorham
+& Mackey (2015) deﬁned the Stein discrepancy as
+
+S(µ, T , G) (cid:44) sup
+g∈G
+
+|Eµ[(T g)(X)]| = dT G(µ, P ) (2)
+
+which, crucially, avoids explicit integration under P .
+
+2. Lower bound the Stein discrepancy by an IPM dH
+known to dominate weak convergence. This can be
+done once for a broad class of target distributions
+to ensure that µm ⇒ P whenever S(µm, T , G) →
+0 for a sequence of probability measures (µm)m≥1
+(Desideratum (ii)).
+
+3. Provide an upper bound on the Stein discrepancy en-
+suring that S(µm, T , G) → 0 under suitable conver-
+gence of µm to P (Desideratum (i)).
+
+Measuring Sample Quality with Kernels
+
+While Stein’s method is principally used as a mathemat-
+ical tool to prove convergence in distribution, we seek,
+in the spirit of (Gorham & Mackey, 2015; Gorham et al.,
+2016), to harness the Stein discrepancy as a practical tool
+for measuring sample quality. The subsections to follow
+develop a speciﬁc, practical instantiation of the abstract
+Stein’s method recipe based on reproducing kernel Hilbert
+spaces. An empirical analysis of the Stein discrepancies
+recommended by our theory follows in Section 4.
+
+3.1. Selecting a Stein operator and a Stein set
+
+A standard, widely applicable univariate Stein operator is
+the density method operator (see Stein et al., 2004; Chat-
+terjee & Shao, 2011; Chen et al., 2011; Ley et al., 2017),
+
+(T g)(x) (cid:44) 1
+p(x)
+
+d
+
+dx (p(x)g(x)) = g(x)b(x) + g(cid:48)(x).
+
+Inspired by the generator method of Barbour (1988; 1990)
+and G¨otze (1991), Gorham & Mackey (2015) general-
+ized this operator to multiple dimensions. The resulting
+Langevin Stein operator
+
+(TP g)(x) (cid:44) 1
+
+p(x) (cid:104)∇, p(x)g(x)(cid:105) = (cid:104)g(x), b(x)(cid:105) + (cid:104)∇, g(x)(cid:105)
+
+for functions g : Rd → Rd was independently devel-
+oped, without connection to Stein’s method, by Oates et al.
+(2016b) for the design of Monte Carlo control function-
+als. Notably, the Langevin Stein operator depends on P
+only through its score function b = ∇ log p and hence is
+computable even when the normalizing constant of p is not.
+While our work is compatible with other practical Stein op-
+erators, like the family of diffusion Stein operators deﬁned
+in (Gorham et al., 2016), we will focus on the Langevin
+operator for the sake of brevity.
+Hereafter, we will let k : Rd × Rd → R be the reproducing
+kernel of a reproducing kernel Hilbert space (RKHS) Kk
+of functions from Rd → R. That is, Kk is a Hilbert space
+of functions such that, for all x ∈ Rd, k(x, ·) ∈ Kk and
+f (x) = (cid:104)f, k(x, ·)(cid:105)Kk whenever f ∈ Kk. We let (cid:107)·(cid:107)Kk
+be
+the norm induced from the inner product on Kk.
+
+belongs to the (cid:107)·(cid:107)∗ unit ball:2
+
+With this deﬁnition, we deﬁne our kernel Stein set Gk,(cid:107)·(cid:107)
+as the set of vector-valued functions g = (g1, . . . , gd) such
+that each component function gj belongs to Kk and the vec-
+tor of their norms (cid:107)gj(cid:107)Kk
+Gk,(cid:107)·(cid:107) (cid:44) {g = (g1, . . . , gd) | (cid:107)v(cid:107)∗ ≤ 1 for vj (cid:44) (cid:107)gj(cid:107)Kk
+The following result, proved in Section B, establishes that
+this is an acceptable domain for TP .
+Proposition 1 (Zero mean test functions). If k ∈ C (1,1)
+and EP [(cid:107)∇ log p(Z)(cid:107)2] < ∞, then EP [(TP g)(Z)] = 0 for
+all g ∈ Gk,(cid:107)·(cid:107).
+
+}.
+
+b
+
+2Our analyses and algorithms support each gj belonging to a
+
+different RKHS Kkj , but we will not need that ﬂexibility here.
+
+The Langevin Stein operator and kernel Stein set together
+deﬁne our quality measure of interest, the kernel Stein dis-
+crepancy (KSD) S(µ, TP , Gk,(cid:107)·(cid:107)). When (cid:107)·(cid:107) = (cid:107)·(cid:107)2, this
+deﬁnition recovers the KSD proposed by Chwialkowski
+et al. (2016) and Liu et al. (2016). Our next result shows
+that, for any (cid:107)·(cid:107), the KSD admits a closed-form solution.
+Proposition 2 (KSD closed form). Suppose k ∈ C (1,1),
+and, for each j ∈ {1, . . . d}, deﬁne the Stein kernel
+
+kj
+0(x, y) (cid:44)
+
+1
+
+p(x)p(y) ∇xj ∇yj (p(x)k(x, y)p(y))
+= bj(x)bj(y)k(x, y) + bj(x)∇yj k(x, y)
++ bj(y)∇xj k(x, y) + ∇xj ∇yj k(x, y).
+
+(3)
+
+If (cid:80)d
+
+j=1
+
+(cid:104)
+
+Eµ
+
+1/2(cid:105)
+
+kj
+0(X, X)
+(cid:113)
+
+(cid:107)w(cid:107) where wj (cid:44)
+
+Eµ×µ[kj
+
+< ∞, then S(µ, TP , Gk,(cid:107)·(cid:107)) =
+0(X, ˜X)] with X, ˜X iid∼ µ.
+
+The proof is found in Section C. Notably, when µ is the
+discrete measure Qn = (cid:80)n
+i=1 qn(xi)δxi, the KSD reduces
+to evaluating each kj
+0 at pairs of support points as wj =
+(cid:113)(cid:80)n
+i,i(cid:48)=1 qn(xi)kj
+0(xi, xi(cid:48))qn(xi(cid:48)), a computation which
+is easily parallelized over sample pairs and coordinates j.
+
+j=1 kj
+
+Our Stein set choice was motivated by the work of Oates
+et al. (2016b) who used the sum of Stein kernels k0 =
+(cid:80)d
+0 to develop nonparametric control variates. Each
+term wj in Proposition 2 can also be viewed as an instance
+of the maximum mean discrepancy (MMD) (Gretton et al.,
+2012) between µ and P measured with respect to the Stein
+kernel kj
+0. In standard uses of MMD, an arbitrary kernel
+function is selected, and one must be able to compute ex-
+pectations of the kernel function under P . Here, this re-
+quirement is satisﬁed automatically, since our induced ker-
+nels are chosen to have mean zero under P .
+
+For clarity we will focus on the speciﬁc kernel Stein set
+choice Gk (cid:44) Gk,(cid:107)·(cid:107)2
+for the remainder of the paper, but our
+results extend directly to KSDs based on any (cid:107)·(cid:107), since all
+KSDs are equivalent in a strong sense:
+Proposition 3 (Kernel Stein set equivalence). Un-
+der the assumptions of Proposition 2,
+there are con-
+stants cd, c(cid:48)
+d > 0 depending only on d and (cid:107)·(cid:107)
+such that cdS(µ, TP , Gk,(cid:107)·(cid:107)) ≤ S(µ, TP , Gk,(cid:107)·(cid:107)2
+) ≤
+c(cid:48)
+dS(µ, TP , Gk,(cid:107)·(cid:107)).
+
+The short proof is found in Section D.
+
+3.2. Lower bounding the kernel Stein discrepancy
+
+We next aim to establish conditions under which the KSD
+S(µm, TP , Gk) → 0 only if µm ⇒ P (Desideratum (ii)).
+Recently, Gorham et al. (2016) showed that the Langevin
+graph Stein discrepancy dominates convergence in distri-
+bution whenever P belongs to the class P of distantly dis-
+sipative distributions with Lipschitz score function b:
+
+Measuring Sample Quality with Kernels
+
+Deﬁnition 4 (Distant dissipativity (Eberle, 2015; Gorham
+et al., 2016)). A distribution P is distantly dissipative if
+κ0 (cid:44) lim inf r→∞ κ(r) > 0 for
+
+κ(r) = inf{−2 (cid:104)b(x)−b(y),x−y(cid:105)
+
+(cid:107)x−y(cid:107)2
+2
+
+: (cid:107)x − y(cid:107)2 = r}.
+
+(4)
+
+Examples of distributions in P include ﬁnite Gaussian
+mixtures with common covariance and all distributions
+strongly log-concave outside of a compact set, including
+Bayesian linear, logistic, and Huber regression posteriors
+with Gaussian priors (see Gorham et al., 2016, Section 4).
+Moreover, when d = 1, membership in P is sufﬁcient
+to provide a lower bound on the KSD for most common
+kernels including the Gaussian, Mat´ern, and inverse multi-
+quadric kernels.
+Theorem 5 (Univariate KSD detects non-convergence).
+Suppose that P ∈ P and k(x, y) = Φ(x − y) for Φ ∈ C 2
+If
+with a non-vanishing generalized Fourier transform.
+d = 1, then S(µm, TP , Gk) → 0 only if µm ⇒ P .
+
+The proof in Section E provides a lower bound on the
+KSD in terms of an IPM known to dominate weak con-
+vergence. However, our next theorem shows that in higher
+dimensions S(Qn, TP , Gk) can converge to 0 without the
+sequence (Qn)n≥1 converging to any probability measure.
+This deﬁciency occurs even when the target is Gaussian.
+Theorem 6 (KSD fails with light kernel tails). Suppose
+k ∈ C (1,1)
+b
+
+and deﬁne the kernel decay rate
+
+γ(r) (cid:44) sup{max(|k(x, y)|, (cid:107)∇xk(x, y)(cid:107)2,
+
+|(cid:104)∇x, ∇yk(x, y)(cid:105)|) : (cid:107)x − y(cid:107)2 ≥ r}.
+
+If d ≥ 3, P = N (0, Id), and γ(r) = o(r−α) for α (cid:44) ( 1
+2 −
+1
+d )−1, then S(Qn, TP , Gk) → 0 does not imply Qn ⇒ P .
+
+Theorem 6 implies that KSDs based on the commonly used
+Gaussian kernel, Mat´ern kernel, and compactly supported
+kernels of Wendland (2004, Theorem 9.13) all fail to de-
+tect non-convergence when d ≥ 3.
+In addition, KSDs
+based on the inverse multiquadric kernel (k(x, y) = (c2 +
+(cid:107)x − y(cid:107)2
+2)β) for β < −1 fail to detect non-convergence
+for any d > 2β/(β + 1). The proof in Section F shows
+that the violating sample sequences (Qn)n≥1 are simple to
+construct, and we provide an empirical demonstration of
+this failure to detect non-convergence in Section 4.
+
+The failure of the KSDs in Theorem 6 can be traced to
+their inability to enforce uniform tightness. A sequence
+of probability measures (µm)m≥1 is uniformly tight if for
+every (cid:15) > 0, there is a ﬁnite number R((cid:15)) such that
+lim supm µm((cid:107)X(cid:107)2 > R((cid:15))) ≤ (cid:15). Uniform tightness
+implies that no mass in the sequence of probability mea-
+sures escapes to inﬁnity. When the kernel k decays more
+rapidly than the score function grows, the KSD ignores ex-
+cess mass in the tails and hence can be driven to zero by a
+
+non-tight sequence of increasingly diffuse probability mea-
+sures. The following theorem demonstrates uniform tight-
+ness is the missing piece to ensure weak convergence.
+Theorem 7 (KSD detects tight non-convergence). Suppose
+that P ∈ P and k(x, y) = Φ(x−y) for Φ ∈ C 2 with a non-
+If (µm)m≥1 is
+vanishing generalized Fourier transform.
+uniformly tight, then S(µm, TP , Gk) → 0 only if µm ⇒ P .
+
+Our proof in Section G explicitly lower bounds the KSD
+S(µ, TP , Gk) in terms of the bounded Lipschitz metric
+dBL(cid:107)·(cid:107) (µ, P ), which exactly metrizes weak convergence.
+
+Ideally, when a sequence of probability measures is not uni-
+formly tight, the KSD would reﬂect this divergence in its
+reported value. To achieve this, we consider the inverse
+multiquadric (IMQ) kernel k(x, y) = (c2 + (cid:107)x − y(cid:107)2
+2)β
+for some β < 0 and c > 0. While KSDs based on IMQ
+kernels fail to determine convergence when β < −1 (by
+Theorem 6), our next theorem shows that they automati-
+cally enforce tightness and detect non-convergence when-
+ever β ∈ (−1, 0).
+Theorem 8 (IMQ KSD detects non-convergence). Sup-
+pose P ∈ P and k(x, y) = (c2 + (cid:107)x − y(cid:107)2
+2)β for c > 0
+and β ∈ (−1, 0). If S(µm, TP , Gk) → 0, then µm ⇒ P .
+
+The proof in Section H provides a lower bound on the KSD
+in terms of the bounded Lipschitz metric dBL(cid:107)·(cid:107) (µ, P ).
+The success of the IMQ kernel over other common char-
+acteristic kernels can be attributed to its slow decay rate.
+When P ∈ P and the IMQ exponent β > −1, the func-
+tion class TP Gk contains unbounded (coercive) functions.
+These functions ensure that the IMQ KSD S(µm, TP , Gk)
+goes to 0 only if (µm)m≥1 is uniformly tight.
+
+3.3. Upper bounding the kernel Stein discrepancy
+
+The usual goal in upper bounding the Stein discrepancy
+is to provide a rate of convergence to P for particular
+approximating sequences (µm)∞
+m=1. Because we aim to
+directly compute the KSD for arbitrary samples Qn, our
+chief purpose in this section is to ensure that the KSD
+S(µm, TP , Gk) will converge to zero when µm is converg-
+ing to P (Desideratum (i)).
+Proposition 9 (KSD detects convergence). If k ∈ C (2,2)
+b
+and ∇ log p is Lipschitz with EP [(cid:107)∇ log p(Z)(cid:107)2
+2] < ∞,
+then S(µm, TP , Gk) → 0 whenever the Wasserstein dis-
+tance dW(cid:107)·(cid:107)2
+Proposition 9 applies to common kernels like the Gaussian,
+Mat´ern, and IMQ kernels, and its proof in Section I pro-
+vides an explicit upper bound on the KSD in terms of the
+i=1 δxi for
+Wasserstein distance dW(cid:107)·(cid:107)2
+iid∼ µ, (Liu et al., 2016, Thm. 4.1) further implies that
+xi
+S(Qn, TP , Gk) ⇒ S(µ, TP , Gk) at an O(n−1/2) rate under
+continuity and integrability assumptions on µ.
+
+. When Qn = 1
+n
+
+(µm, P ) → 0.
+
+(cid:80)n
+
+4. Experiments
+
+4.2. The importance of kernel choice
+
+Measuring Sample Quality with Kernels
+
+We next conduct an empirical evaluation of the KSD qual-
+ity measures recommended by our theory, recording all
+timings on an Intel Xeon CPU E5-2650 v2 @ 2.60GHz.
+Throughout, we will refer to the KSD with IMQ base ker-
+nel k(x, y) = (c2 + (cid:107)x − y(cid:107)2
+2)β, exponent β = − 1
+2 ,
+and c = 1 as the IMQ KSD. Code reproducing all ex-
+periments can be found on the Julia (Bezanson et al.,
+2014) package site https://jgorham.github.io/
+SteinDiscrepancy.jl/.
+
+4.1. Comparing discrepancies
+
+2 + e− 1
+
+2 (cid:107)x+∆e1(cid:107)2
+
+2 (cid:107)x−∆e1(cid:107)2
+
+Our ﬁrst, simple experiment is designed to illustrate sev-
+eral properties of the IMQ KSD and to compare its be-
+havior with that of two preexisting discrepancy measures,
+the Wasserstein distance dW(cid:107)·(cid:107)2
+, which can be computed
+for simple univariate targets (Vallender, 1974), and the
+spanner graph Stein discrepancy of Gorham & Mackey
+(2015). We adopt a bimodal Gaussian mixture with p(x) ∝
+e− 1
+2 and ∆ = 1.5 as our target
+P and generate a ﬁrst sample point sequence i.i.d. from the
+target and a second sequence i.i.d. from one component of
+the mixture, N (−∆e1, Id). As seen in the left panel of
+Figure 1 where d = 1, the IMQ KSD decays at an n−0.51
+rate when applied to the ﬁrst n points in the target sample
+and remains bounded away from zero when applied to the
+to the single component sample. This desirable behavior is
+closely mirrored by the Wasserstein distance and the graph
+Stein discrepancy.
+
+The middle panel of Figure 1 records the time consumed
+by the graph and kernel Stein discrepancies applied to the
+i.i.d. sample points from P . Each method is given access to
+d cores when working in d dimensions, and we use the re-
+leased code of Gorham & Mackey (2015) with the default
+Gurobi 6.0.4 linear program solver for the graph Stein dis-
+crepancy. We ﬁnd that the two methods have nearly iden-
+tical runtimes when d = 1 but that the KSD is 10 to 1000
+times faster when d = 4. In addition, the KSD is straight-
+forwardly parallelized and does not require access to a lin-
+ear program solver, making it an appealing practical choice
+for a quality measure.
+
+Finally, the right panel displays the optimal Stein func-
+EQn [bj (X)k(X,y)+∇xj k(X,y)]
+tions, gj(y) =
+, recovered by
+S(Qn,TP ,Gk)
+the IMQ KSD when d = 1 and n = 103. The associated
+test functions h(y) = (TP g)(y) =
+are
+the mean-zero functions under P that best discriminate the
+target P and the sample Qn. As might be expected, the
+optimal test function for the single component sample fea-
+tures large magnitude values in the oversampled region far
+from the missing mode.
+
+EQn [kj
+j=1
+S(Qn,TP ,Gk)
+
+0(X,y)]
+
+(cid:80)d
+
+Theorem 6 established that kernels with rapidly decay-
+ing tails yield KSDs that can be driven to zero by off-
+target sample sequences. Our next experiment provides
+an empirical demonstration of this issue for a multivari-
+ate Gaussian target P = N (0, Id) and KSDs based on
+the popular Gaussian (k(x, y) = e−(cid:107)x−y(cid:107)2
+2/2) and Mat´ern
+3(cid:107)x−y(cid:107)2) radial kernels.
+(k(x, y) = (1 +
+
+3(cid:107)x − y(cid:107)2)e−
+
+√
+
+√
+
+Following the proof Theorem 6 in Section F, we construct
+an off-target sequence (Qn)n≥1 that sends S(Qn, TP , Gk)
+to 0 for these kernel choices whenever d ≥ 3. Speciﬁcally,
+(cid:80)n
+for each n, we let Qn = 1
+i=1 δxi where, for all i and j,
+n
+(cid:107)xi(cid:107)2 ≤ 2n1/d log n and (cid:107)xi − xj(cid:107)2 ≥ 2 log n. To select
+these sample points, we independently sample candidate
+points uniformly from the ball {x : (cid:107)x(cid:107)2 ≤ 2n1/d log n},
+accept any points not within 2 log n Euclidean distance of
+any previously accepted point, and terminate when n points
+have been accepted.
+
+For various dimensions, Figure 2 displays the result of
+applying each KSD to the off-target sequence (Qn)n≥1
+and an “on-target” sequence of points sampled i.i.d. from
+P . For comparison, we also display the behavior of the
+IMQ KSD which provably controls tightness and domi-
+nates weak convergence for this target by Theorem 8. As
+predicted, the Gaussian and Mat´ern KSDs decay to 0 under
+the off-target sequence and decay more rapidly as the di-
+mension d increases; the IMQ KSD remains bounded away
+from 0.
+
+4.3. Selecting sampler hyperparameters
+
+The approximate slice sampler of DuBois et al. (2014)
+is a biased MCMC procedure designed to accelerate in-
+ference when the target density takes the form p(x) ∝
+π(x) (cid:81)L
+l=1 π(yl|x) for π(·) a prior distribution on Rd and
+π(yl|x) the likelihood of a datapoint yl. A standard slice
+sampler must evaluate the likelihood of all L datapoints to
+draw each new sample point xi. To reduce this cost, the
+approximate slice sampler introduces a tuning parameter (cid:15)
+which determines the number of datapoints that contribute
+to an approximation of the slice sampling step; an appropri-
+ate setting of this parameter is imperative for accurate infer-
+ence. When (cid:15) is too small, relatively few sample points will
+be generated in a given amount of sampling time, yield-
+ing sample expectations with high Monte Carlo variance.
+When (cid:15) is too large, the large approximation error will pro-
+duce biased samples that no longer resemble the target.
+
+To assess the suitability of the KSD for tolerance parame-
+ter selection, we take as our target P the bimodal Gaussian
+mixture model posterior of (Welling & Teh, 2011). For an
+array of (cid:15) values, we generated 50 independent approxi-
+mate slice sampling chains with batch size 5, each with a
+
+Measuring Sample Quality with Kernels
+
+Figure 1. Left: For d = 1, comparison of discrepancy measures for samples drawn i.i.d. from either the bimodal Gaussian mixture target
+P or a single mixture component (see Section 4.1). Middle: On-target discrepancy computation time using d cores in d dimensions.
+Right: For n = 103 and d = 1, the Stein functions g and discriminating test functions h = TP g which maximize the KSD.
+
+its small sample size. The sample produced by the KSD-
+selected chain best resembles the posterior target. Using 4
+cores, the longest KSD computation with n = 103 sample
+points took 0.16s.
+
+4.4. Selecting samplers
+
+Ahn et al. (2012) developed two biased MCMC samplers
+for accelerated posterior inference, both called Stochas-
+tic Gradient Fisher Scoring (SGFS). In the full version of
+SGFS (termed SGFS-f), a d × d matrix must be inverted to
+draw each new sample point. Since this can be costly for
+large d, the authors developed a second sampler (termed
+SGFS-d) in which only a diagonal matrix must be inverted
+to draw each new sample point. Both samplers can be
+viewed as discrete-time approximations to a continuous-
+time Markov process that has the target P as its station-
+ary distribution; however, because no Metropolis-Hastings
+correction is employed, neither sampler has the target as
+its stationary distribution. Hence we will use the KSD – a
+quality measure that accounts for asymptotic bias – to eval-
+uate and choose between these samplers.
+
+Speciﬁcally, we evaluate the SGFS-f and SGFS-d samples
+produced in (Ahn et al., 2012, Sec. 5.1). The target P is
+a Bayesian logistic regression with a ﬂat prior, conditioned
+on a dataset of 104 MNIST handwritten digit images. From
+each image, the authors extracted 50 random projections of
+the raw pixel values as covariates and a label indicating
+whether the image was a 7 or a 9. After discarding the ﬁrst
+half of sample points as burn-in, we obtained regression
+coefﬁcient samples with 5 × 104 points and d = 51 di-
+mensions (including the intercept term). Figure 4 displays
+the IMQ KSD applied to the ﬁrst n points in each sample.
+As external validation, we follow the protocol of Ahn et al.
+(2012) to ﬁnd the bivariate marginal means and 95% conﬁ-
+dence ellipses of each sample that align best and worst with
+those of a surrogate ground truth sample obtained from a
+
+Figure 2. Gaussian and Mat´ern KSDs are driven to 0 by an off-
+target sequence that does not converge to the target P = N (0, Id)
+(see Section 4.2). The IMQ KSD does not share this deﬁciency.
+
+budget of 148000 likelihood evaluations, and plotted the
+median IMQ KSD and effective sample size (ESS, a stan-
+dard sample quality measure based on asymptotic variance
+(Brooks et al., 2011)) in Figure 3. ESS, which does not
+detect Markov chain bias, is maximized at the largest hy-
+perparameter evaluated ((cid:15) = 10−1), while the KSD is mini-
+mized at an intermediate value ((cid:15) = 10−2). The right panel
+of Figure 3 shows representative samples produced by sev-
+eral settings of (cid:15). The sample produced by the ESS-selected
+chain is signiﬁcantly overdispersed, while the sample from
+(cid:15) = 0 has minimal coverage of the second mode due to
+
+lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllli.i.d. from mixturetarget Pi.i.d. from singlemixture component10110210310410110210310410−2.510−210−1.510−110−0.5100Number of sample points, nDiscrepancy valueDiscrepancylIMQ KSDGraph SteindiscrepancyWassersteinlllllllllllllllllllllllllllllllllllllllllllllllllllld = 1d = 410110210310410110210310410−310−210−1100101102103Number of sample points, nComputation time (sec)i.i.d. from mixturetarget Pi.i.d. from singlemixture componentgh=TP  g−303−3030.40.60.8−0.10.00.10.2xi.i.d. from target POff−target samplellllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll10−210−110010−110010−210−1100GaussianMatérnInverse Multiquadric102103104105102103104105Number of sample points, nKernel Stein discrepancyDimensionld = 5d = 8d = 20Measuring Sample Quality with Kernels
+
+Figure 3. Left: Median hyperparameter selection criteria across 50 independent approximate slice sampler sample sequences (see Sec-
+tion 4.3); IMQ KSD selects (cid:15) = 10−2; effective sample size selects (cid:15) = 10−1. Right: Representative approximate slice sampler
+samples requiring 148000 likelihood evaluations with posterior equidensity contours overlaid; n is the associated sample size.
+
+Hamiltonian Monte Carlo chain with 105 iterates. Both the
+KSD and the surrogate ground truth suggest that the moder-
+ate speed-up provided by SGFS-d (0.0017s per sample vs.
+0.0019s for SGFS-f) is outweighed by the signiﬁcant loss
+in inferential accuracy. However, the KSD assessment does
+not require access to an external trustworthy ground truth
+sample. The longest KSD computation took 400s using 16
+cores.
+
+4.5. Beyond sample quality comparison
+
+While our investigation of the KSD was motivated by the
+desire to develop practical, trustworthy tools for sample
+quality comparison, the kernels recommended by our the-
+ory can serve as drop-in replacements in other inferential
+tasks that make use of kernel Stein discrepancies.
+
+4.5.1. ONE-SAMPLE HYPOTHESIS TESTING
+
+(2016)
+
+Chwialkowski et al.
+recently used the KSD
+S(Qn, TP , Gk) to develop a hypothesis test of whether a
+given sample from a Markov chain was drawn from a tar-
+get distribution P (see also Liu et al., 2016). However, the
+authors noted that the KSD test with their default Gaussian
+base kernel k experienced a considerable loss of power as
+the dimension d increased. We recreate their experiment
+and show that this loss of power can be avoided by using
+our default IMQ kernel with β = − 1
+2 and c = 1. Fol-
+lowing (Chwialkowski et al., 2016, Section 4) we draw
+iid∼ Unif[0, 1] to generate a sample
+iid∼ N (0, Id) and ui
+zi
+(xi)n
+i=1 with xi = zi + ui e1 for n = 500 and various di-
+mensions d. Using the authors’ code (modiﬁed to include
+an IMQ kernel), we compare the power of the Gaussian
+KSD test, the IMQ KSD test, and the standard normal-
+ity test of Baringhaus & Henze (1988) (B&H) to discern
+whether the sample (xi)500
+i=1 came from the null distribution
+P = N (0, Id). The results, averaged over 400 simula-
+
+tions, are shown in Table 1. Notably, the IMQ KSD experi-
+ences no power degradation over this range of dimensions,
+thus improving on both the Gaussian KSD and the standard
+B&H normality tests.
+
+Table 1. Power of one sample tests for multivariate normality, av-
+eraged over 400 simulations (see Section 4.5.1)
+
+B&H
+Gaussian
+IMQ
+
+d=2
+1.0
+1.0
+1.0
+
+d=5
+1.0
+1.0
+1.0
+
+d=10
+1.0
+0.88
+1.0
+
+d=15
+0.91
+0.29
+1.0
+
+d=20
+0.57
+0.12
+1.0
+
+d=25
+0.26
+0.02
+1.0
+
+4.5.2. IMPROVING SAMPLE QUALITY
+
+h (cid:107)x−y(cid:107)2
+
+Liu & Lee (2016) recently used the KSD S(Qn, TP , Gk)
+as a means of improving the quality of a sample. Speciﬁ-
+cally, given an initial sample Qn supported on x1, . . . , xn,
+they minimize S( ˜Qn, TP , Gk) over all measures ˜Qn sup-
+ported on the same sample points to obtain a new sample
+that better approximates P over the class of test functions
+H = TP Gk. In all experiments, Liu & Lee (2016) employ
+a Gaussian kernel k(x, y) = e− 1
+2 with bandwidth
+h selected to be the median of the squared Euclidean dis-
+tance between pairs of sample points. Using the authors’
+code, we recreate the experiment from (Liu & Lee, 2016,
+Fig. 2b) and introduce a KSD objective with an IMQ ker-
+nel k(x, y) = (1 + 1
+2)−1/2 with bandwidth se-
+lected in the same fashion. The starting sample is given by
+Qn = 1
+i=1 δxi for n = 100, various dimensions d, and
+n
+each sample point drawn i.i.d. from P = N (0, Id). For
+the initial sample and the optimized samples produced by
+each KSD, Figure 5 displays the mean squared error (MSE)
+d (cid:107)EP [Z] − E ˜Qn
+1
+2 averaged across 500 independently
+generated initial samples. Out of the box, the IMQ kernel
+produces better mean estimates than the standard Gaussian.
+
+h (cid:107)x − y(cid:107)2
+
+[X](cid:107)2
+
+(cid:80)n
+
+lllllESS (higher is better)KSD (lower is better)2.02.53.03.5−0.50.00.5010-410-310-210-1Tolerance parameter, eLog median diagnostice=0 (n=230)e=10-2 (n=416)e=10-1 (n=1000)−3−2−10123−2−1012−2−1012−2−1012x1x2Measuring Sample Quality with Kernels
+
+Figure 4. Left: Quality comparison for Bayesian logistic regression with two SGFS samplers (see Section 4.4). Right: Scatter plots of
+n = 5 × 104 SGFS sample points with overlaid bivariate marginal means and 95% conﬁdence ellipses (dashed blue) that align best and
+worst with surrogate ground truth sample (solid red).
+
+where tightness is no longer an issue, the combined results
+of (Oates et al., 2016a, Lem. 4), (Fukumizu et al., 2007,
+Lem. 1), and (Simon-Gabriel & Sch¨olkopf, 2016, Thm. 55)
+give conditions for a KSD to dominate weak convergence.
+
+While assessing sample quality was our chief objective, our
+results may hold beneﬁts for other applications that make
+use of Stein discrepancies or Stein operators. In particu-
+lar, our kernel recommendations could be incorporated into
+the Monte Carlo control functionals framework of Oates
+et al. (2016b); Oates & Girolami (2015), the variational
+inference approaches of Liu & Wang (2016); Liu & Feng
+(2016); Ranganath et al. (2016), and the Stein generative
+adversarial network approach of Wang & Liu (2016).
+
+In the future, we aim to leverage stochastic, low-rank, and
+sparse approximations of the kernel matrix and score func-
+tion to produce KSDs that scale better with the number of
+sample and data points while still guaranteeing control over
+weak convergence. A reader may also wonder for which
+distributions outside of P the KSD dominates weak conver-
+gence. The following theorem, proved in Section J, shows
+that no KSD with a C0 kernel dominates weak convergence
+when the target has a bounded score function.
+Theorem 10 (KSD fails for bounded scores). If ∇ log p is
+bounded and k ∈ C (1,1)
+, then S(Qn, TP , Gk) → 0 does
+not imply Qn ⇒ P .
+
+0
+
+However, Gorham et al. (2016) developed convergence-
+determining graph Stein discrepancies for heavy-tailed
+targets by replacing the Langevin Stein operator TP
+with diffusion Stein operators of the form (T g)(x) =
+1
+p(x) (cid:104)∇, p(x)(a(x) + c(x))g(x)(cid:105). An analogous construc-
+tion should yield convergence-determining diffusion KSDs
+for P outside of P. Our results also extend to targets P
+supported on a convex subset X of Rd by choosing k to
+satisfy p(x)k(x, ·) ≡ 0 for all x on the boundary of X .
+
+Figure 5. Average quality of mean estimates (±2 standard errors)
+under optimized samples ˜Qn for target P = N (0, Id); MSE av-
+eraged over 500 independent initial samples (see Section 4.5.2).
+
+5. Related and future work
+
+The score statistic of Fan et al. (2006) and the Gibbs sam-
+pler convergence criteria of Zellner & Min (1995) detect
+certain forms of non-convergence but fail to detect others
+due to the ﬁnite number of test functions tested. For ex-
+ample, when P = N (0, 1), the score statistic (Fan et al.,
+2006) only monitors sample means and variances.
+
+For an approximation µ with continuously differentiable
+density r, Chwialkowski et al. (2016, Thm.
+2.1) and
+Liu et al. (2016, Prop. 3.3) established that if k is C0-
+universal (Carmeli et al., 2010, Defn. 4.1) or integrally
+strictly positive deﬁnite (ISPD, Stewart, 1976, Sec. 6) and
+Eµ[k0(X, X) + (cid:107)∇ log p(X)
+j=1 kj
+r(X) (cid:107)2
+0,
+then S(µ, TP , Gk) = 0 only if µ = P . However, this prop-
+erty is insufﬁcient to conclude that probability measures
+with small KSD are close to P in any traditional sense. In-
+deed, Gaussian and Mat´ern kernels are C0 universal and
+ISPD, but, by Theorem 6, their KSDs can be driven to zero
+by sequences not converging to P . On compact domains,
+
+2] < ∞ for k0 (cid:44) (cid:80)d
+
+lllllllllllllllllllllll17500180001850019000102102.5103103.5104104.5Number of sample points, nIMQ kernel Stein discrepancySamplerlSGFS−dSGFS−fSGFS−dll−0.4−0.3−0.2BEST−0.3−0.2−0.10.0x7x51SGFS−dll0.80.91.01.11.2WORST−0.5−0.4−0.3−0.2−0.10.0x8x42SGFS−fll−0.10.00.10.2BEST−0.10.00.10.2x32x34SGFS−fll−0.6−0.5−0.4−0.3WORST−1.5−1.4−1.3−1.2−1.1x2x25lllll10−4.510−410−3.510−310−2.510−22105075100Dimension, dAverage MSE, ||EP Z-EQn~ X||22dSamplelInitial QnGaussian KSDIMQ KSDMeasuring Sample Quality with Kernels
+
+References
+
+Ahn, S., Korattikara, A., and Welling, M. Bayesian poste-
+rior sampling via stochastic gradient Fisher scoring. In
+Proc. 29th ICML, ICML’12, 2012.
+
+Bachman, G. and Narici, L. Functional Analysis. Aca-
+demic Press textbooks in mathematics. Dover Publica-
+tions, 1966. ISBN 9780486402512.
+
+Baker, J. Integration of radial functions. Mathematics Mag-
+
+azine, 72(5):392–395, 1999.
+
+Barbour, A. D. Stein’s method and Poisson process con-
+vergence. J. Appl. Probab., (Special Vol. 25A):175–184,
+1988. ISSN 0021-9002. A celebration of applied proba-
+bility.
+
+Barbour, A. D. Stein’s method for diffusion approxima-
+tions. Probab. Theory Related Fields, 84(3):297–322,
+1990. ISSN 0178-8051. doi: 10.1007/BF01197887.
+
+Baringhaus, L. and Henze, N. A consistent test for mul-
+tivariate normality based on the empirical characteristic
+function. Metrika, 35(1):339–348, 1988.
+
+Bezanson, J., Edelman, A., Karpinski, S., and Shah, V.B.
+Julia: A fresh approach to numerical computing. arXiv
+preprint arXiv:1411.1607, 2014.
+
+Brooks, S., Gelman, A., Jones, G., and Meng, X.-L. Hand-
+book of Markov chain Monte Carlo. CRC press, 2011.
+
+Carmeli, C., De Vito, E., Toigo, A., and Umanit´a, V. Vector
+valued reproducing kernel hilbert spaces and universal-
+ity. Analysis and Applications, 8(01):19–61, 2010.
+
+Chatterjee, S. and Shao, Q. Nonnormal approximation by
+Stein’s method of exchangeable pairs with application to
+the Curie-Weiss model. Ann. Appl. Probab., 21(2):464–
+483, 2011. ISSN 1050-5164. doi: 10.1214/10-AAP712.
+
+Chen, L., Goldstein, L., and Shao, Q. Normal approxima-
+tion by Stein’s method. Probability and its Applications.
+Springer, Heidelberg, 2011. ISBN 978-3-642-15006-7.
+doi: 10.1007/978-3-642-15007-4.
+
+Fan, Y., Brooks, S. P., and Gelman, A. Output assessment
+for Monte Carlo simulations via the score statistic. J.
+Comp. Graph. Stat., 15(1), 2006.
+
+Fukumizu, K., Gretton, A., Sun, X., and Sch¨olkopf, B. Ker-
+nel measures of conditional dependence. In NIPS, vol-
+ume 20, pp. 489–496, 2007.
+
+Geyer, C. J. Markov chain Monte Carlo maximum like-
+lihood. Computer Science and Statistics: Proc. 23rd
+Symp. Interface, pp. 156–163, 1991.
+
+Gorham, J. and Mackey, L. Measuring sample quality with
+Stein’s method.
+In Cortes, C., Lawrence, N. D., Lee,
+D. D., Sugiyama, M., and Garnett, R. (eds.), Adv. NIPS
+28, pp. 226–234. Curran Associates, Inc., 2015.
+
+Gorham, J., Duncan, A., Vollmer, S., and Mackey,
+Measuring sample quality with diffusions.
+
+L.
+arXiv:1611.06972, Nov. 2016.
+
+G¨otze, F. On the rate of convergence in the multivariate
+
+CLT. Ann. Probab., 19(2):724–739, 1991.
+
+Gretton, A., Borgwardt, K., Rasch, M., Sch¨olkopf, B., and
+Smola, A. A kernel two-sample test. J. Mach. Learn.
+Res., 13(1):723–773, 2012.
+
+Herb, R. and Sally Jr., P.J. The Plancherel formula, the
+Plancherel theorem, and the Fourier transform of orbital
+In Representation Theory and Mathematical
+integrals.
+Physics: Conference in Honor of Gregg Zuckerman’s
+60th Birthday, October 24–27, 2009, Yale University,
+volume 557, pp. 1. American Mathematical Soc., 2011.
+
+Korattikara, A., Chen, Y., and Welling, M. Austerity in
+MCMC land: Cutting the Metropolis-Hastings budget.
+In Proc. of 31st ICML, ICML’14, 2014.
+
+Ley, C., Reinert, G., and Swan, Y. Stein’s method for com-
+parison of univariate distributions. Probab. Surveys, 14:
+1–52, 2017. doi: 10.1214/16-PS278.
+
+Liu, Q. and Feng, Y. Two methods for wild variational
+
+inference. arXiv preprint arXiv:1612.00081, 2016.
+
+Chwialkowski, K., Strathmann, H., and Gretton, A. A ker-
+nel test of goodness of ﬁt. In Proc. 33rd ICML, ICML,
+2016.
+
+Liu, Q. and Lee, J. Black-box importance sampling.
+arXiv:1610.05247, October 2016. To appear in AIS-
+TATS 2017.
+
+DuBois, C., Korattikara, A., Welling, M., and Smyth, P.
+Approximate slice sampling for Bayesian posterior in-
+ference. In Proc. 17th AISTATS, pp. 185–193, 2014.
+
+Liu, Q. and Wang, D. Stein Variational Gradient De-
+scent: A General Purpose Bayesian Inference Algo-
+rithm. arXiv:1608.04471, August 2016.
+
+Eberle, A. Reﬂection couplings and contraction rates for
+diffusions. Probab. Theory Related Fields, pp. 1–36,
+2015. doi: 10.1007/s00440-015-0673-1.
+
+Liu, Q., Lee, J., and Jordan, M. A kernelized Stein discrep-
+In Proc. of 33rd ICML,
+
+ancy for goodness-of-ﬁt tests.
+volume 48 of ICML, pp. 276–284, 2016.
+
+Measuring Sample Quality with Kernels
+
+Vallender, S. Calculation of the Wasserstein distance
+between probability distributions on the line. Theory
+Probab. Appl., 18(4):784–786, 1974.
+
+Wainwright, M.
+
+High-dimensional
+
+non-asymptotic viewpoint.
+//www.stat.berkeley.edu/˜wainwrig/
+nachdiplom/Chap5_Sep10_2015.pdf.
+
+2017.
+
+statistics:
+A
+URL http:
+
+Wang, D. and Liu, Q. Learning to Draw Samples: With Ap-
+plication to Amortized MLE for Generative Adversarial
+Learning. arXiv:1611.01722, November 2016.
+
+Welling, M. and Teh, Y. Bayesian learning via stochastic
+
+gradient Langevin dynamics. In ICML, 2011.
+
+Wendland, H. Scattered data approximation, volume 17.
+
+Cambridge university press, 2004.
+
+Zellner, A. and Min, C. Gibbs sampler convergence crite-
+
+ria. JASA, 90(431):921–927, 1995.
+
+Mackey, L. and Gorham, J. Multivariate Stein factors
+for a class of strongly log-concave distributions. Elec-
+tron. Commun. Probab., 21:14 pp., 2016. doi: 10.1214/
+16-ECP15.
+
+M¨uller, A. Integral probability metrics and their generating
+classes of functions. Ann. Appl. Probab., 29(2):pp. 429–
+443, 1997.
+
+Oates, C. and Girolami, M. Control functionals for Quasi-
+
+Monte Carlo integration. arXiv:1501.03379, 2015.
+
+Oates, C., Cockayne, J., Briol, F., and Girolami, M. Con-
+vergence rates for a class of estimators based on steins
+method. arXiv preprint arXiv:1603.03220, 2016a.
+
+Oates, C. J., Girolami, M., and Chopin, N. Control func-
+Journal of the
+tionals for Monte Carlo integration.
+Royal Statistical Society: Series B (Statistical Method-
+ology), pp. n/a–n/a, 2016b.
+doi:
+10.1111/rssb.12185.
+
+ISSN 1467-9868.
+
+Ranganath, R., Tran, D., Altosaar, J., and Blei, D. Operator
+variational inference. In Advances in Neural Information
+Processing Systems, pp. 496–504, 2016.
+
+Simon-Gabriel, C. and Sch¨olkopf, B. Kernel distribu-
+tion embeddings: Universal kernels, characteristic ker-
+nels and kernel metrics on distributions. arXiv preprint
+arXiv:1604.05251, 2016.
+
+Sriperumbudur, B. On the optimal estimation of probability
+measures in weak and strong topologies. Bernoulli, 22
+(3):1839–1893, 2016.
+
+Sriperumbudur, B., Gretton, A., Fukumizu, K., Sch¨olkopf,
+B., and Lanckriet, G. Hilbert space embeddings and met-
+rics on probability measures. J. Mach. Learn. Res., 11
+(Apr):1517–1561, 2010.
+
+Stein, C. A bound for the error in the normal approximation
+to the distribution of a sum of dependent random vari-
+ables. In Proc. 6th Berkeley Symposium on Mathemat-
+ical Statistics and Probability (Univ. California, Berke-
+ley, Calif., 1970/1971), Vol. II: Probability theory, pp.
+583–602. Univ. California Press, Berkeley, Calif., 1972.
+
+Stein, C., Diaconis, P., Holmes, S., and Reinert, G. Use
+of exchangeable pairs in the analysis of simulations. In
+Stein’s method: expository lectures and applications,
+volume 46 of IMS Lecture Notes Monogr. Ser., pp. 1–26.
+Inst. Math. Statist., Beachwood, OH, 2004.
+
+Steinwart, I. and Christmann, A. Support Vector Machines.
+
+Springer Science & Business Media, 2008.
+
+Stewart, J. Positive deﬁnite functions and generalizations,
+an historical survey. Rocky Mountain J. Math., 6(3):409–
+434, 09 1976. doi: 10.1216/RMJ-1976-6-3-409.
+
+A. Additional appendix notation
+
+Measuring Sample Quality with Kernels
+
+We use f ∗ h to denote the convolution between f and h, and, for absolutely integrable f : Rd → R, we say ˆf (ω) (cid:44)
+(2π)−d/2 (cid:82) f (x)e−i(cid:104)x,ω(cid:105)dx is the Fourier transform of f . For g ∈ Kd
+. Let L2
+denote the Banach space of real-valued functions f with (cid:107)f (cid:107)L2 (cid:44) (cid:82) f (x)2 dx < ∞. For Rd-valued g, we will overload
+L2 < ∞. We deﬁne the operator norm of a vector a ∈ Rd as (cid:107)a(cid:107)op
+(cid:44) (cid:107)a(cid:107)2
+g ∈ L2 to mean (cid:107)g(cid:107)L2 (cid:44)
+and of a matrix A ∈ Rd×d as (cid:107)A(cid:107)op
+(cid:44) supx∈Rd,(cid:107)x(cid:107)2=1(cid:107)Ax(cid:107)2. We further deﬁne the Lipschitz constant M2(g) (cid:44)
+supx(cid:54)=y(cid:107)∇g(x) − ∇g(y)(cid:107)op/(cid:107)x − y(cid:107)2 and the ball B(x, r) (cid:44) {y ∈ Rd | (cid:107)x − y(cid:107)2 ≤ r} for any x ∈ Rd and r ≥ 0.
+
+k we deﬁne (cid:107)g(cid:107)Kd
+
+j=1(cid:107)gj(cid:107)2
+Kk
+
+j=1(cid:107)gj(cid:107)2
+
+(cid:113)(cid:80)d
+
+(cid:113)(cid:80)d
+
+(cid:44)
+
+k
+
+B. Proof of Proposition 1: Zero mean test functions
+
+Fix any g ∈ G. Since k ∈ C (1,1), supx∈Rd k(x, x) < ∞, and supx∈Rd (cid:107)∇x∇yk(x, x)(cid:107)op < ∞, Cor. 4.36 of (Steinwart &
+Christmann, 2008) implies that M0(gj) < ∞ and M1(gj) < ∞ for each j ∈ {1, . . . , d}. As EP [(cid:107)b(Z)(cid:107)2] < ∞, the proof
+of (Gorham & Mackey, 2015, Prop. 1) now implies EP [(TP g)(Z)] = 0.
+
+C. Proof of Proposition 2: KSD closed form
+
+Our proof generalizes that of (Chwialkowski et al., 2016, Thm. 2.1). For each dimension j ∈ {1, . . . , d}, we deﬁne
+the operator T j
+p(x) ∇xj (p(x)g0(x)) = ∇xj g0(x) + bj(x)g0(x) for g0 : Rd → R. We further let
+Ψk : Rd → Kk denote the canonical feature map of Kk, given by Ψk(x) (cid:44) k(x, ·). Since k ∈ C (1,1), the argument of
+(Steinwart & Christmann, 2008, Cor. 4.36) implies that
+
+P g0)(x) (cid:44) 1
+
+P via (T j
+
+TP g(x) = (cid:80)d
+
+j=1(T j
+
+P gj)(x) = (cid:80)d
+
+j=1 T j
+
+P (cid:104)gj, Ψk(x)(cid:105)Kk = (cid:80)d
+
+j=1(cid:104)gj, T j
+
+P Ψk(x)(cid:105)Kk
+
+(5)
+
+for all g = (g1, . . . , gd) ∈ Gk,(cid:107)·(cid:107) and x ∈ Rd. Moreover, (Steinwart & Christmann, 2008, Lem. 4.34) gives
+
+(cid:104)T j
+
+P Ψk(x), T j
+
+P Ψk(y)(cid:105) = (cid:104)bj(x)Ψk(x) + ∇xj Ψk(x), bj(y)Ψk(y) + ∇yj Ψk(y)(cid:105)Kk
+
+= bj(x)bj(y)k(x, y) + bj(x)∇yj k(x, y) + bj(y)∇xj k(x, y) + ∇xj ∇yj k(x, y) = kj
+
+0(x, y)
+
+(6)
+
+for all x, y ∈ Rd and j ∈ {1, . . . , d}. The representation (6) and our µ-integrability assumption together imply that, for
+each j, T j
+
+P Ψk is Bochner µ-integrable (Steinwart & Christmann, 2008, Deﬁnition A.5.20), since
+
+Eµ
+
+(cid:20)(cid:13)
+(cid:13)T j
+(cid:13)
+
+(cid:13)
+(cid:13)
+P Ψk(X)
+(cid:13)Kk
+
+(cid:21)
+
+= Eµ
+
+(cid:20)(cid:113)
+
+(cid:21)
+kj
+0(X, X)
+
+< ∞.
+
+Hence, we may apply the representation (6) and exchange expectation and RKHS inner product to discover
+
+(cid:104)
+j = E
+
+w2
+
+(cid:105)
+0(X, ˜X)
+kj
+
+(cid:104)
+(cid:104)T j
+= E
+
+P Ψk(X), T j
+
+P Ψk( ˜X)(cid:105)Kk
+
+(cid:105)
+
+=
+
+(cid:104)
+
+(cid:13)
+Eµ
+(cid:13)
+(cid:13)
+
+T j
+P Ψk(X)
+
+(cid:105)(cid:13)
+2
+(cid:13)
+(cid:13)
+
+Kk
+
+.
+
+(7)
+
+for X, ˜X iid∼ µ. To conclude, we invoke the representation (5), Bochner µ-integrability, the representation (7), and the
+Fenchel-Young inequality for dual norms twice:
+
+S(µ, TP , Gk,(cid:107)·(cid:107)) = sup
+
+Eµ[(TP g)(X)] =
+
+g∈Gk,(cid:107)·(cid:107)
+
+= sup
+
+(cid:107)v(cid:107)∗≤1
+
+(cid:80)d
+
+j=1vj
+
+(cid:13)
+Eµ[T j
+(cid:13)
+(cid:13)
+
+sup
+=vj ,(cid:107)v(cid:107)∗≤1
+(cid:107)gj (cid:107)Kk
+(cid:13)
+(cid:13)
+P Ψk(X)]
+(cid:13)Kk
+
+= sup
+
+(cid:107)v(cid:107)∗≤1
+
+(cid:80)d
+
+j=1(cid:104)gj, Eµ[T j
+
+P Ψk(X)](cid:105)Kk
+
+(cid:80)d
+
+j=1vjwj = (cid:107)w(cid:107).
+
+D. Proof of Proposition 3: Stein set equivalence
+
+By Proposition 2, S(µ, TP , Gk,(cid:107)·(cid:107)) = (cid:107)w(cid:107) and S(µ, TP , Gk,(cid:107)·(cid:107)2
+1966, Thm. 8.7), there exist constants cd, c(cid:48)
+
+d > 0 depending only on d and (cid:107)·(cid:107) such that cd(cid:107)w(cid:107) ≤ (cid:107)w(cid:107)2 ≤ c(cid:48)
+
+d(cid:107)w(cid:107).
+
+) = (cid:107)w(cid:107)2 for some vector w, and by (Bachman & Narici,
+
+E. Proof of Theorem 5: Univariate KSD detects non-convergence
+
+Measuring Sample Quality with Kernels
+
+While the statement of Theorem 5 applies only to the univariate case d = 1, we will prove all steps for general d when
+possible. Our strategy is to deﬁne a reference IPM dH for which µm ⇒ P whenever dH(µm, P ) → 0 and then upper
+bound dH by a function of the KSD S(µm, TP , Gk). To construct the reference class of test functions H, we choose some
+integrally strictly positive deﬁnite (ISPD) kernel kb : Rd × Rd → R, that is, we select a kernel function kb such that
+
+(cid:90)
+
+Rd×Rd
+
+kb(x, y)dµ(x)dµ(y) > 0
+
+(cid:16)
+
+(cid:16)
+
+(cid:17)
+2/2
+
+−(cid:107)x − y(cid:107)2
+
+for all ﬁnite non-zero signed Borel measures µ on Rd (Sriperumbudur et al., 2010, Section 1.2). For this proof, we will
+(cid:17)
+2/2
+choose the Gaussian kernel kb(x, y) = exp
+, which is ISPD by (Sriperumbudur et al., 2010, Section 3.1).
+is bounded and continuous and never vanishes, the kernel ˜kb(x, y) = kb(x, y)r(x)r(y) is
+−(cid:107)x(cid:107)2
+Since r(x) (cid:44) exp
+≤ 1}. By (Sriperumbudur, 2016, Thm. 3.2), since ˜kb is ISPD with ˜kb(x, ·) ∈
+also ISPD. Let H (cid:44) {h ∈ K ˜kb
+| (cid:107)h(cid:107) ˜kb
+C0(Rd) for all x, we know that dH(µm, P ) → 0 only if µm ⇒ P . With H in hand, Theorem 5 will follow from our next
+theorem which upper bounds the IPM dH(µ, P ) in terms of the KSD S(µ, TP , Gk).
+Theorem 11 (Univariate KSD lower bound). Let d = 1, and consider the set of univariate functions H = {h ∈
+≤ 1}. Suppose P ∈ P and k(x, y) = Φ(x − y) for Φ ∈ C 2 with generalized Fourier transform ˆΦ and
+K ˜kb
+ˆΦ(ω)−1 ﬁnite for all t > 0. Then there exists a constant MP > 0 such that, for all probability
+F (t) (cid:44) sup(cid:107)ω(cid:107)∞≤t
+measures µ and (cid:15) > 0,
+
+| (cid:107)h(cid:107) ˜kb
+
+dH(µ, P ) ≤ (cid:15) + (cid:0) π
+
+(cid:1)1/4
+
+MP F
+
+2
+
+(cid:16) 12 log 2
+π
+
+(1 + M1(b)MP )(cid:15)−1(cid:17)1/2
+
+S(µ, TP , Gk).
+
+An explicit value for the Stein factor MP can be derived from the proof in Section E.1 and the results
+Remarks
+of Gorham et al. (2016). After optimizing the bound dH(µ, P ) over (cid:15) > 0, the Gaussian, inverse multiquadric, and
+S(µ,TP ,Gk) )), and O(S(µ, TP , Gk)1/(v+1/2))
+Mat´ern (v > 1) kernels achieve rates of O(1/
+respectively as S(µ, TP , Gk) → 0.
+
+S(µ,TP ,Gk) )), O(1/ log(
+
+log(
+
+(cid:113)
+
+1
+
+1
+
+In particular, since ˆΦ is non-vanishing, F (t) is ﬁnite for all t. If S(µm, TP , Gk) → 0, then, for any ﬁxed (cid:15) > 0, we have
+lim supm→∞ dH(µm, P ) ≤ (cid:15). Taking (cid:15) → 0 shows that limm→∞ dH(µm, P ) → 0, which implies that µm ⇒ P .
+
+E.1. Proof of Theorem 11: Univariate KSD lower bound
+Fix any probability measure µ and h ∈ H, and deﬁne the tilting function Ξ(x) (cid:44) (1 + (cid:107)x(cid:107)2
+in three steps.
+
+2)1/2. The proof will proceed
+
+Step 1: Uniform bounds on M0(h), M1(h) and supx∈Rd (cid:107)Ξ(x)∇h(x)(cid:107)2 We ﬁrst bound M0(h), M1(h) and
+supx∈Rd (cid:107)Ξ(x)∇h(x)(cid:107)2 uniformly over H. To this end, we deﬁne the ﬁnite value c0 (cid:44) supx∈Rd (1 + (cid:107)x(cid:107)2
+2)r(x) = 2e−1/2.
+For all x ∈ Rd, we have
+
+|h(x)| = |(cid:104)h, ˜kb(x, ·)(cid:105)K ˜kb
+
+| ≤ (cid:107)h(cid:107)K ˜kb
+
+˜kb(x, x)1/2 ≤ 1.
+
+Moreover, we have ∇xkb(x, y) = (y − x)kb(x, y) and ∇r(x) = −xr(x). Thus for any x, by (Steinwart & Christmann,
+2008, Corollary 4.36) we have
+
+(cid:107)∇h(x)(cid:107)2 ≤ (cid:107)h(cid:107)K ˜kb
+
+(cid:104)∇x, ∇y
+
+˜kb(x, x)(cid:105)1/2 ≤ [d r(x)2 + (cid:107)x(cid:107)2
+
+2 r(x)2]1/2kb(x, x)1/2 ≤ [(d − 1)1/2 + (1 + (cid:107)x(cid:107)2
+
+2)1/2)]r(x),
+
+where in the last inequality we used the triangle inequality. Hence (cid:107)∇h(x)(cid:107)2 ≤ (d − 1)1/2 + 1 and (cid:107)Ξ(x)∇h(x)(cid:107)2 ≤
+(d − 1)1/2 + c0 for all x, completing our bounding of M0(h), M1(h) and supx∈Rd (cid:107)Ξ(x)∇h(x)(cid:107)2 uniformly over H.
+
+Step 2: Uniform bound on (cid:107)gh(cid:107)L2 for Stein solution gh We next show that there is a solution to the P Stein equation
+
+(TP gh)(x) = h(x) − EP [h(Z)]
+
+(8)
+
+Measuring Sample Quality with Kernels
+
+with gh(x) ≤ MP /(1 + (cid:107)x(cid:107)2
+2)1/2 for every h ∈ H. When d = 1, this will imply that (cid:107)gh(cid:107)L2 is bounded uniformly over
+H. To proceed, we will deﬁne a tilted distribution ˜P ∈ P and a tilted function f , show that a solution ˜gf to the ˜P Stein
+equation is bounded, and construct a solution gh to the Stein equation of P based on ˜gf .
+Deﬁne ˜P via the tilted probability density ˜p(x) ∝ p(x)/Ξ(x) with score function ˜b(x) (cid:44) ∇ log ˜p(x) = b(x) − ξ(x)
+for ξ(x) (cid:44) ∇ log Ξ(x) = x/(1 + (cid:107)x(cid:107)2
+] has its
+operator norm uniformly bounded by 3, ˜b is also Lipschitz. To see that ˜P is also distantly dissipative, note ﬁrst that
+|(cid:104)ξ(x) − ξ(y), x − y(cid:105)| ≤ (cid:107)ξ(x) − ξ(y)(cid:107)2 · (cid:107)x − y(cid:107)2 ≤ (cid:107)x − y(cid:107)2 since supx(cid:107)ξ(x)(cid:107)2 ≤ 1/2. Because P is distantly dissi-
+pative, we know (cid:104)b(x) − b(y), x − y(cid:105) ≤ − 1
+2 for some κ0 > 0 and all (cid:107)x − y(cid:107)2 ≥ R for some R > 0. Thus
+for all (cid:107)x − y(cid:107)2 ≥ max(R, 4/κ0), we have
+
+2). Since b is Lipschitz and ∇ξ(x) = (1 + (cid:107)x(cid:107)2
+
+2)−1[I − 2 xx(cid:62)
+1+(cid:107)x(cid:107)2
+2
+
+2 κ0(cid:107)x − y(cid:107)2
+
+(cid:104)˜b(x) − ˜b(y), x − y(cid:105) = (cid:104)b(x) − b(y), x − y(cid:105) + (cid:104)ξ(x) − ξ(y), x − y(cid:105) ≤ −
+
+κ0(cid:107)x − y(cid:107)2
+
+2 + (cid:107)x − y(cid:107)2 ≤ −
+
+(cid:107)x − y(cid:107)2
+2,
+
+1
+2
+
+1
+2
+
+κ0
+2
+
+so ˜P is also distantly dissipative and hence in P.
+Let f (x) (cid:44) Ξ(x)(h(x) − EP [h(Z)]). Since E ˜P [f (Z)] = EP [h(Z) − EP [h(Z)]] = 0, Thm. 5 and Sec. 4.2 of (Gorham
+et al., 2016), imply that the ˜P Stein equation (T ˜P ˜gf )(x) = f (x) has a solution ˜gf with M0(gf ) ≤ M(cid:48)
+P a
+constant independent of f and h. Since ∇f (x) = ∇Ξ(x)(h(x) − EP [h(Z)]) + Ξ(x)∇h(x) and (cid:107)∇Ξ(x)(cid:107)2 =
+P (2 + (d − 1)1/2 + c0) (cid:44) MP , a constant independent of h.
+is bounded by 1, M0(gf ) ≤ M(cid:48)
+Finally, we note that gh(x) (cid:44) ˜gf (x)/Ξ(x) is a solution to the P Stein equation (8) satisfying gh(x) ≤ MP /Ξ(x) =
+MP /(1 + (cid:107)x(cid:107)2
+
+2)1/2. Hence, in the case d = 1, we have (cid:107)gh(cid:107)L2 ≤ MP
+
+P M1(f ) for M(cid:48)
+(cid:107)x(cid:107)2
+(1+(cid:107)x(cid:107)2
+
+2)1/2
+
+π.
+
+√
+
+Step 3: Approximate TP gh using TP Gk
+show that we can approximate TP gh arbitrarily well by a function in a scaled copy of TP Gk.
+Lemma 12 (Stein approximations with ﬁnite RKHS norm). Suppose that g : Rd → Rd is bounded and belongs to L2 ∩ C 1
+and that h = TP g is Lipschitz. Moreover, suppose k(x, y) = Φ(x − y) for Φ ∈ C 2 with generalized Fourier transform ˆΦ.
+Then for every (cid:15) > 0, there is a function g(cid:15) : Rd → Rd such that supx∈Rd |(TP g(cid:15))(x) − (TP g)(x)| ≤ (cid:15) and
+
+In our ﬁnal step, we will use the following lemma, proved in Section E.2, to
+
+(cid:107)g(cid:15)(cid:107)Kd
+
+k
+
+≤ (2π)−d/4F
+
+(cid:16) 12d log 2
+π
+
+(M1(h) + M1(b)M0(g))(cid:15)−1(cid:17)1/2
+
+(cid:107)g(cid:107)L2,
+
+where F (t) (cid:44) sup(cid:107)ω(cid:107)∞≤t
+
+ˆΦ(ω)−1.
+
+When d = 1, Lemma 12 implies that for every (cid:15) > 0 there is a function g(cid:15) : R → R such that M0(TP g(cid:15) − h) ≤ (cid:15) and
+(cid:107)g(cid:15)(cid:107)Kk
+
+(M1(h) + M1(b)MP )(cid:15)−1)1/2. Hence we have
+
+2 )1/4MP F ( 12 log 2
+
+≤ 3( π
+
+π
+
+|EP [h(Z)] − Eµ[h(X)]| ≤ |Eµ[h(X) − (TP g(cid:15))(X)]| + |Eµ[(TP g(cid:15))(X)]|
+
+≤ (cid:15) + (cid:107)g(cid:15)(cid:107)Kk
+
+S(µ, TP , Gk)
+√
+
+≤ (cid:15) + (2π)−1/4MP
+
+πF
+
+(cid:16) 12 log 2
+π
+
+(M1(h) + M1(b)MP )(cid:15)−1(cid:17)1/2
+
+S(µ, TP , Gk).
+
+Taking a supremum over h ∈ H yields the advertised result.
+
+E.2. Proof of Lemma 12: Stein approximations with ﬁnite RKHS norm
+Let us deﬁne the function S : Rd → R via the mapping S(x) (cid:44) (cid:81)d
+sin xj
+Rd (cid:107)x(cid:107)2S(x)4 < ∞.
+xj
+We will then deﬁne the density function ρ(x) (cid:44) Z −1S(x)4, where Z (cid:44) (cid:82)
+Rd S(x)4 dx = (2π/3)d is the normalization
+constant. One can check that ˆρ(ω)2 ≤ (2π)−dI[(cid:107)ω(cid:107)∞ ≤ 4].
+Let Y be a random variable with density ρ. For each δ > 0, let us deﬁne ρδ(x) = δ−dρ(x/δ) and for any func-
+tion f let us denote fδ(x) (cid:44) E[f (x + δY )]. Since h = TP g is assumed Lipschitz, this implies |hδ(x) − h(x)| =
+|Eρ[h(x + δY ) − h(x)]| ≤ δ M1(h) Eρ[(cid:107)Y (cid:107)2] for all x ∈ Rd.
+
+. Then S ∈ L2 and (cid:82)
+
+j=1
+
+Measuring Sample Quality with Kernels
+
+Next, notice that for any δ > 0 and x ∈ Rd,
+
+(TP gδ)(x) = Eρ[(cid:104)b(x), g(x + δY )(cid:105)] + E[(cid:104)∇, g(x + δY )(cid:105)],
+
+and
+hδ(x) = Eρ[(cid:104)b(x + δY ), g(x + δY )(cid:105)] + E[(cid:104)∇, g(x + δY )(cid:105)].
+
+Thus because we assume b is Lipschitz, we can deduce from above for any x ∈ Rd,
+
+|(TP gδ)(x) − hδ(x)| = |Eρ[(cid:104)b(x) − b(x + δY ), g(x + δY )(cid:105)]|
+
+≤ Eρ[(cid:107)b(x) − b(x + δY )(cid:107)2(cid:107)g(x + δY )(cid:107)2]
+≤ M0(g) M1(b) δ Eρ[(cid:107)Y (cid:107)2].
+
+Thus for any (cid:15) > 0, letting ˜(cid:15) = (cid:15)/((M1(h) + M1(b)M0(g))Eρ[(cid:107)Y (cid:107)2]), we have by the triangle inequality
+
+|(TP g˜(cid:15))(x) − (TP g)(x)| ≤ |(TP g˜(cid:15))(x) − h˜(cid:15)(x)| + |h˜(cid:15)(x) − h(x)| ≤ (cid:15).
+
+Thus it remains to bound the RKHS norm of gδ. By the Convolution Theorem (Wendland, 2004, Thm. 5.16), we have
+ˆgδ(ω) = (2π)d/2ˆg(ω) ˆρδ(ω), and so the squared norm of gδ in Kd
+
+k is equal to (Wendland, 2004, Thm. 10.21)
+
+(2π)−d/2
+
+dω = (2π)d/2
+
+(cid:90)
+
+Rd
+
+| ˆgδ(ω)|2
+ˆΦ(ω)
+
+(cid:90)
+
+Rd
+
+|ˆg(ω)|2 ˆρδ(ω)2
+ˆΦ(ω)
+
+dω ≤ (2π)−d/2
+
+ˆΦ(ω)−1
+
+|ˆg(ω)|2 dω,
+
+(cid:40)
+
+sup
+(cid:107)ω(cid:107)∞≤4δ−1
+
+(cid:41) (cid:90)
+
+Rd
+
+where in the inequality we used the fact that ˆρδ(ω) = ˆρ(δω). By Plancherel’s theorem (Herb & Sally Jr., 2011, Thm. 1.1),
+we know that f ∈ L2 implies that (cid:107)f (cid:107)L2 = (cid:107) ˆf (cid:107)L2 . Thus we have (cid:107)gδ(cid:107)Kd
+≤ (2π)−d/4F (4δ−1)1/2(cid:107)g(cid:107)L2. The ﬁnal result
+follows from noticing that (cid:82)
+
+R sin4(x)/x4 dx = 2π
+
+k
+
+3 and also
+
+(cid:90)
+
+(cid:107)x(cid:107)2
+
+Rd
+
+d
+(cid:89)
+
+j=1
+
+sin4 xj
+x4
+j
+
+(cid:90)
+
+dx ≤
+
+(cid:107)x(cid:107)1
+
+Rd
+
+d
+(cid:89)
+
+j=1
+
+sin4 xj
+x4
+j
+
+dx =
+
+d
+(cid:88)
+
+(cid:90)
+
+Rd
+
+j=1
+
+(sin xj)4
+|xj|3
+
+(cid:89)
+
+k(cid:54)=j
+
+sin4 xk
+x4
+k
+
+dx = 2d(log 2)
+
+(cid:18) 2π
+3
+
+(cid:19)d−1
+
+,
+
+which implies Eρ[(cid:107)Y (cid:107)2] ≤ 3d log 2
+
+.
+
+π
+
+F. Proof of Theorem 6: KSD fails with light kernel tails
+
+First, deﬁne the generalized inverse function γ−1(s) (cid:44) inf{r ≥ 0 | γ(r) ≤ s}. Next, ﬁx an n ≥ 1, let ∆n (cid:44)
+max(1, γ−1(1/n)), and deﬁne rn (cid:44) ∆nn1/d. Select n distinct points x1, . . . , xn ∈ Rd so that zi,i(cid:48) (cid:44) xi − xi(cid:48) satisﬁes
+(cid:107)zi,i(cid:48)(cid:107)2 > ∆n for all i (cid:54)= i(cid:48) and (cid:107)xi(cid:107)2 ≤ rn for all i. By (Wainwright, 2017, Lems. 5.1 and 5.2), such a point set always
+exists. Now deﬁne Qn = 1
+i=1 δxi. We will show that if ∆n grows at an appropriate rate then S(Qn, TP , Gk) → 0 as
+n
+n → ∞.
+
+(cid:80)n
+
+Since the target distribution P is N (0, Id), the associated gradient of the log density is b(x) = −x. Thus
+
+k0(x, y) (cid:44)
+
+kj
+0(x, y) = (cid:104)x, y(cid:105)k(x, y) − (cid:104)y, ∇xk(x, y)(cid:105) − (cid:104)x, ∇yk(x, y)(cid:105) + (cid:104)∇x, ∇yk(x, y)(cid:105).
+
+d
+(cid:88)
+
+j=1
+
+From Proposition 2, we have
+
+S(Qn, TP , Gk)2 =
+
+k0(xi, xi(cid:48)) =
+
+k0(xi, xi) +
+
+k0(xi, xi(cid:48)).
+
+(9)
+
+1
+n2
+
+n
+(cid:88)
+
+i,i(cid:48)=1
+
+1
+n2
+
+n
+(cid:88)
+
+i=1
+
+1
+n2
+
+(cid:88)
+
+i(cid:54)=i(cid:48)
+
+Since k ∈ C (2,2)
+
+b
+
+, γ(0) < ∞. Thus by Cauchy-Schwarz, the ﬁrst term of (9) is upper bounded by
+
+1
+n2
+
+n
+(cid:88)
+
+i=1
+
+1
+n2
+
+n
+(cid:88)
+
+i=1
+
+(cid:107)xi(cid:107)2
+
+k0(xi, xi) ≤
+
+2k(xi, xi) + (cid:107)xi(cid:107)2((cid:107)∇xk(xi, xi)(cid:107)2 + (cid:107)∇yk(xi, xi)(cid:107)2) + |(cid:104)∇x, ∇yk(xi, xi)(cid:105)|
+
+≤
+
+γ(0)
+n
+
+[r2
+
+n + 2rn + 1] ≤
+
+(n1/d∆n + 1)2.
+
+γ(0)
+n
+
+Measuring Sample Quality with Kernels
+
+To handle the second term of (9), we will use the assumed bound on k and its derivatives from γ. For any ﬁxed i (cid:54)= i(cid:48), by
+the triangle inequality, Cauchy-Schwarz, and fact γ is monotonically decreasing we have
+
+|k0(xi, xi(cid:48))| ≤ (cid:107)xi(cid:107)2(cid:107)xi(cid:48)(cid:107)2|k(xi, xi(cid:48))| + (cid:107)xi(cid:107)2(cid:107)∇yk(xi, xi(cid:48))(cid:107)2 + (cid:107)xi(cid:48)(cid:107)2(cid:107)∇xk(xi, xi(cid:48))(cid:107)2 + |(cid:104)∇x, ∇yk(xi, xi(cid:48))(cid:105)|
+
+nγ((cid:107)zi,i(cid:48)(cid:107)2) + rnγ((cid:107)zi,i(cid:48)(cid:107)2) + rnγ((cid:107)zi,i(cid:48)(cid:107)2) + γ((cid:107)zi,i(cid:48)(cid:107)2)
+
+≤ r2
+≤ (n1/d∆n + 1)2γ(∆n).
+
+Our upper bounds on the Stein discrepancy (9) and our choice of ∆n now imply that
+
+S(Qn, TP , Gk) = O(n1/d−1/2γ−1(1/n) + n−1/2).
+
+Moreover, since γ(r) = o(r−α), we have γ−1(1/n) = o(n1/α) = o(n1/2−1/d), and hence S(Qn, TP , Gk) → 0 as n → ∞.
+
+However, the sequence (Qn)n≥1 is not uniformly tight and hence converges to no probability measure. This follows as,
+for each r > 0,
+
+Qm((cid:107)X(cid:107)2 ≤ r) ≤
+
+(r + 4r/∆m)d
+m
+
+≤
+
+5drd
+m
+
+≤
+
+1
+5
+
+for m = (cid:100)5d+1rd(cid:101), since at most (r + 4r/∆m)d points with minimum pairwise Euclidean distance greater than ∆m can
+ﬁt into a ball of radius r (Wainwright, 2017, Lems. 5.1 and 5.2).
+
+G. Proof of Theorem 7: KSD detects tight non-convergence
+
+For any probability measure µ on Rd and (cid:15) > 0, we deﬁne its tightness rate as
+
+R(µ, (cid:15)) (cid:44) inf{r ≥ 0 | µ((cid:107)X(cid:107)2 > r) ≤ (cid:15)}.
+
+(10)
+
+Theorem 7 will follow from the following result which upper bounds the bounded Lipschitz metric dBL(cid:107)·(cid:107)2
+of the tightness rate R(µ, (cid:15)), the rate of decay of the generalized Fourier transform ˆΦ, and the KSD S(µ, TP , Gk).
+Theorem 13 (KSD tightness lower bound). Suppose P ∈ P and let µ be a probability measure with tightness rate R(µ, (cid:15))
+ˆΦ(ω)−1 ﬁnite for
+deﬁned in (10). Moreover, suppose the kernel k(x, y) = Φ(x − y) with Φ ∈ C 2 and F (t) (cid:44) sup(cid:107)ω(cid:107)∞≤t
+all t > 0. Then there exists a constant MP such that, for all (cid:15), δ > 0,
+
+(µ, P ) in terms
+
+dBL(cid:107)·(cid:107)2
+
+(µ, P ) ≤ (cid:15) + min((cid:15), 1)(1 + (cid:15) + δ−1dθd−1
+
+MP )
+
+θd
+
++ (2π)−d/4V 1/2
+
+d MP (R(µ, (cid:15)) + 2δ)d/2F
+
+(cid:16) 12d log 2
+π
+
+(1 + M1(b)MP )(cid:15)−1(cid:17)1/2
+
+S(µ, TP , Gk),
+
+where θd (cid:44) d (cid:82) 1
+dimension d.
+
+0 exp(cid:0)−1/(1 − r2)(cid:1)rd−1 dr for d > 0 (and θ0 (cid:44) e−1), and Vd is the volume of the unit Euclidean ball in
+
+An explicit value for the Stein factor MP can be derived from the proof in Section G.1 and the results of
+Remarks
+Gorham et al. (2016). When bounds on R and F are known, the ﬁnal expression can be optimized over (cid:15) and δ to produce
+rates of convergence in dBL(cid:107)·(cid:107)2
+
+.
+
+Consider now a sequence of probability measures (µm)m≥1 that is uniformly tight. This implies that lim supm R(µm, (cid:15)) <
+∞ for all (cid:15) > 0. Moreover, since ˆΦ is non-vanishing, F (t) is ﬁnite for all t. Thus if S(µm, TP , Gk) → 0, then for any ﬁxed
+(cid:15) < 1, lim supm dBL(cid:107)·(cid:107)2
+
+MP ). Taking (cid:15) → 0 yields dBL(cid:107)·(cid:107)2
+
+(µm, P ) ≤ (cid:15)(2 + (cid:15) + δ−1dθd−1
+
+(µm, P ) → 0.
+
+θd
+
+G.1. Proof of Theorem 13: KSD tightness lower bound
+
+. By Theorem 5 and Section 4.2 of (Gorham et al., 2016), there exists a g ∈ C 1 which solves the Stein
+Fix any h ∈ BL(cid:107)·(cid:107)2
+equation TP g = h − E[h(Z)] and satisﬁes M0(g) ≤ MP for MP a constant independent of h and g. To show that we
+can approximate TP g arbitrarily well by a function in a scaled copy of TP Gk, we will form a truncated version of g using
+a smoothed indicator function described in the next lemma.
+
+Measuring Sample Quality with Kernels
+
+Lemma 14 (Smoothed indicator function). For any compact set K ⊂ Rd and δ > 0, deﬁne the set inﬂation K 2δ (cid:44) {x ∈
+Rd | (cid:107)x − y(cid:107)2 ≤ 2δ, ∀y ∈ K}. There is a function vK,δ : Rd → [0, 1] such that
+
+vK,δ(x) = 1 for all x ∈ K and vK,δ(x) = 0 for all x /∈ K 2δ,
+(cid:107)∇vK,δ(x)(cid:107)2 ≤ δ−1dθd−1
+0 exp(cid:0)−1/(1 − r2)(cid:1)rd−1 dr for d > 0 and θ0 (cid:44) e−1.
+
+I(cid:2)x ∈ K 2δ \ K(cid:3),
+
+θd
+
+where θd (cid:44) d (cid:82) 1
+
+This lemma is proved in Section G.2.
+
+(11)
+
+(12)
+
+Fix any (cid:15), δ > 0, and let K = B(0, R(µ, (cid:15))) with R(µ, (cid:15)) deﬁned in (10). This set is compact since our sequence is
+uniformly tight. Hence, we may deﬁne gK,δ(x) (cid:44) g(x) vK,δ(x) as a smooth, truncated version of g based on Lemma 14.
+Since
+
+(TP g)(x) − (TP gK,δ)(x) = (1 − vK,δ(x))[(cid:104)b(x), g(x)(cid:105) + (cid:104)∇, g(cid:105)(x)] + (cid:104)∇vK,δ(x), g(x)(cid:105)
+
+= (1 − vK,δ(x))(TP g)(x) + (cid:104)∇vK,δ(x), g(x)(cid:105),
+
+properties (11) and (12) imply that (TP g)(x) = (TP gK,δ)(x) for all x ∈ K, (TP gK,δ)(x) = 0 when x /∈ K 2δ, and
+
+|(TP g)(x) − (TP gK,δ)(x)| ≤ |(TP g)(x)| + (cid:107)∇vK,δ(x)(cid:107)2 (cid:107)g(x)(cid:107)2
+
+≤ |(TP g)(x)| + δ−1dθd−1
+
+θd
+
+(cid:107)g(x)(cid:107)2 ≤ 1 + δ−1dθd−1
+
+θd
+
+MP
+
+for x ∈ K 2δ \ K by Cauchy-Schwarz.
+Moreover, since vK,δ has compact support and is in C 1 by (11), gK,δ ∈ C 1 with (cid:107)gK,δ(cid:107)L2 ≤ Vol(K 2δ)1/2M0(g) ≤
+Vol(K 2δ)1/2MP . Therefore, Lemma 12 implies that there is a function g(cid:15) ∈ Kd
+k such that |(TP g(cid:15))(x) − (TP gK,δ)(x)| ≤ (cid:15)
+for all x with norm
+
+(cid:107)g(cid:15)(cid:107)Kd
+
+k
+
+≤ (2π)−d/4F ( 12d log 2
+
+(1 + M1(b)MP (cid:15)−1))1/2Vol(K 2δ)1/2MP .
+
+π
+
+(13)
+
+Using the fact that TP gK,δ and TP g are identical on K, we have |(TP g(cid:15))(x) − (TP g)(x)| ≤ (cid:15) for all x ∈ K. Moreover,
+when x /∈ K, the triangle inequality gives
+
+|(TP g(cid:15))(x) − (TP g)(x)| ≤ |(TP g(cid:15))(x) − TP gK,δ| + |TP gK,δ − (TP g)(x)| ≤ 1 + (cid:15) + δ−1dθd−1
+
+MP .
+
+θd
+
+By the triangle inequality and the deﬁnition of the decay rate, we therefore have
+
+|Eµ[h(X)] − EP [h(Z)]| = |Eµ[(TP g)(X)]| ≤ |E[(TP g)(X) − (TP g(cid:15))(X)]| + |Eµ[(TP g(cid:15))(X)]|
+≤ |Eµ[((TP g)(X) − (TP g(cid:15))(X))I[X ∈ K]]| + |Eµ[((TP g)(X) − (TP g(cid:15))(X))I[X /∈ K]]| + |Eµ[(TP g(cid:15))(X)]|
+≤ (cid:15) + min((cid:15), 1)(1 + (cid:15) + δ−1dθd−1
+≤ (cid:15) + min((cid:15), 1)(1 + (cid:15) + δ−1dθd−1
+
+MP ) + (cid:107)g(cid:15)(cid:107)Kd
+
+S(µm, TP , Gk)
+
+θd
+
+k
+
+MP )
+
+θd
+
++ (2π)−d/4Vol(B(0, R(µ, (cid:15)) + 2δ))1/2F
+
+(cid:16) 12d log 2
+π
+
+(1 + M1(b)MP )(cid:15)−1(cid:17)1/2
+
+MP S(µ, TP , Gk).
+
+The advertised result follows by substituting Vol(B(0, r)) = Vdrd and taking the supremum over all h ∈ BL(cid:107)·(cid:107).
+
+G.2. Proof of Lemma 14: Smoothed indicator function
+
+For all x ∈ Rd, deﬁne the standard normalized bump function ψ ∈ C∞ as
+
+ψ(x) (cid:44) I −1
+
+exp
+
+d
+
+(cid:17)
+(cid:16)
+−1/(1 − (cid:107)x(cid:107)2
+2)
+
+I[(cid:107)x(cid:107)2 < 1],
+
+where the normalizing constant is given by
+(cid:90)
+
+Id =
+
+B(0,1)
+
+(cid:16)
+
+exp
+
+−1/(1 − (cid:107)x(cid:107)2
+2)
+
+dx = θd Vd
+
+(cid:17)
+
+Measuring Sample Quality with Kernels
+
+for Vd being the volume of the unit Euclidean ball in d dimensions (Baker, 1999).
+Letting W be a random variable with density ψ, deﬁne vK,δ(x) (cid:44) E(cid:2)I(cid:2)x + δW ∈ K δ(cid:3)(cid:3) as the smoothed approximation of
+x (cid:55)→ I[x ∈ K], where δ > 0 controls the amount of smoothing. Since supp(W ) = B(0, 1), we can immediately conclude
+(11) and also supp(∇vK,δ) ⊆ K 2δ \ K.
+Thus to prove (12), it remains to consider x ∈ K 2δ \ K. We see ∇vK,δ(x) = δ−d−1 (cid:82)
+Leibniz rule. Letting K δ
+x
+
+(cid:44) δ−1(K δ − x), then by Jensen’s inequality we have
+
+δ )I(cid:2)y ∈ K δ(cid:3) dy by
+
+B(x,δ) ∇ψ( x−y
+
+(cid:107)∇vK,δ(x)(cid:107)2 ≤ δ−d−1
+
+(cid:90)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+∇ψ
+
+(cid:18) x − y
+δ
+
+(cid:19)(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)2
+
+(cid:90)
+
+dy = δ−1
+
+B(x,δ)∩Kδ
+
+B(0,1)∩Kδ
+x
+
+(cid:107)∇ψ(z)(cid:107)2 dz ≤ δ−1
+
+(cid:107)∇ψ(z)(cid:107)2 dz
+
+(cid:90)
+
+B(0,1)
+
+where we used the substitution z (cid:44) (x − y)/δ. By differentiating ψ, using (Baker, 1999) with the substitution r = (cid:107)z(cid:107)2,
+and employing integration by parts we have
+
+(cid:90)
+
+B(0,1)
+
+(cid:107)∇ψ(z)(cid:107)2 dz = I −1
+(cid:34)
+
+d
+
+(dVdrd−1) dr
+
+(cid:90) 1
+
+0
+
+(cid:19)
+
+2r
+
+(1 − r2)2 exp
+(cid:18) −1
+1 − r2
+
+(cid:18) −1
+1 − r2
+(cid:19)(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+r=1
+
+r=0
+
+−rd−1 exp
+
+[e−1I[d = 1] + I[d (cid:54)= 1]θd−1] =
+
+=
+
+=
+
+d
+θd
+
+d
+θd
+
+0
+dθd−1
+θd
+
+(cid:90) 1
+
++
+
+(d − 1)rd−2 exp
+
+(cid:35)
+
+(cid:19)
+
+(cid:18) −1
+1 − r2
+
+dr
+
+yielding (12).
+
+H. Proof of Theorem 8: IMQ KSD detects non-convergence
+
+We ﬁrst use the following theorem to upper bound the bounded Lipschitz metric dBL(cid:107)·(cid:107) (µ, P ) in terms of the KSD
+S(µ, TP , Gk).
+Theorem 15 (IMQ KSD lower bound). Suppose P ∈ P and k(x, y) = (c2 + (cid:107)x(cid:107)2
+any α ∈ (0, 1
+
+2 c. Then there exist an (cid:15)0 > 0 and a constant MP such that, for all µ,
+
+2)β for c > 0, and β ∈ (−1, 0). Choose
+
+2 (β + 1)) and a > 1
+
+dBL(cid:107)·(cid:107) (µ, P ) ≤
+
+inf
+(cid:15)∈[0,(cid:15)0),δ>0
+
+(cid:16)
+
+2 + (cid:15) + δ−1dθd−1
+
+MP
+
+θd
+
+(cid:17)
+
+(cid:15) + (2π)−d/4MP V 1/2
+
+d ×
+
+(cid:20)(cid:16) D(a,c,α,β)1/2(S(µ,TP ,Gk)−ζ(a,c,α,β))
+
+(cid:17)1/α
+
+(cid:21)d/2(cid:113)
+
++ 2δ
+
+ακ0(cid:15)
+
+(cid:16)
+
+(cid:16)
+
+= O
+
+1/ log
+
+(cid:17)(cid:17)
+
+1
+S(µ,TP ,Gk)
+
+as
+
+S(µ, TP , Gk) → 0,
+
+FIM Q( 12d log 2
+
+π
+
+(1 + M1(b)MP )(cid:15)−1)S(µ, TP , Gk)
+
+where θd (cid:44) d (cid:82) 1
+d-dimensions, the function D is deﬁned in (20), the function ζ is deﬁned in (17), and ﬁnally
+
+0 exp(cid:0)−1/(1 − r2)(cid:1)rd−1 dr for d > 0 and θ0 (cid:44) e−1, Vd is the volume of the Euclidean unit ball in
+
+(14)
+
+(15)
+
+(16)
+
+FIM Q(t) (cid:44) Γ(−β)
+21+β
+
+(cid:17)β+d/2
+
+(cid:16) √
+d
+c
+
+tβ+d/2
+√
+Kβ+d/2(c
+
+dt)
+
+where Kv is the modiﬁed Bessel function of the third kind. Moreover, if lim supm S(µm, TP , Gk) < ∞ then (µm)m≥1 is
+uniformly tight.
+
+Remark
+results of Gorham et al. (2016).
+
+The Stein factor MP can be determined explicitly based on the proof of Theorem 15 in Section H.1 and the
+
+Note that FIM Q(t) is ﬁnite for all t > 0, so ﬁx any (cid:15) ∈ [0, (cid:15)0) and δ > 0.
+lim supm dBL(cid:107)·(cid:107) (µm, P ) ≤ (2 + (cid:15) + δ−1dθd−1
+dBL(cid:107)·(cid:107) (µm, P ) → 0 only if µm ⇒ P , the statement of Theorem 8 follows.
+
+If S(µm, TP , Gk) → 0, then
+MP )(cid:15). Thus taking (cid:15) → 0 yields dBL(cid:107)·(cid:107) (µm, P ) → 0. Since
+
+θd
+
+Measuring Sample Quality with Kernels
+
+H.1. Proof of Theorem 15: IMQ KSD lower bound
+
+Fix any α ∈ (0, 1
+ζ(a, c, α, β) and has a growth rate of (cid:107)x(cid:107)2α
+2
+Section H.2.
+
+2 (β + 1)) and a > 1
+
+2 c. Then there is some ˚g ∈ Gk such that TP˚g is bounded below by a constant
+as (cid:107)x(cid:107)2 → ∞. Such a function exists by the following lemma, proved in
+
+Lemma 16 (Generalized multiquadric Stein sets yield coercive functions). Suppose P ∈ P and k(x, y) = Φc,β(x − y)
+for Φc,β(x) (cid:44) (c2 + (cid:107)x(cid:107)2
+2 c, there exists a function
+˚g ∈ Gk such that TP˚g is bounded below by
+
+2)β, c > 0, and β ∈ R \ N0. Then, for any α ∈ (0, 1
+
+2 (β + 1)) and a > 1
+
+ζ(a, c, α, β) (cid:44) −
+
+D(a, c, α, β)1/2
+2α
+
+(cid:20) M1(b)R2
+
+0 + (cid:107)b(0)(cid:107)2R0 + d
+
+(cid:21)
+,
+
+a2(1−α)
+
+(17)
+
+where the function D is deﬁned in (20) and R0 (cid:44) inf{r > 0 | κ(r(cid:48)) ≥ 0, ∀r(cid:48) ≥ r}. Moreover, lim inf(cid:107)x(cid:107)−2α
+D(a,c,α,β)1/2 κ0 as (cid:107)x(cid:107)2 → ∞.
+
+α
+
+2
+
+(TP˚g)(x) ≥
+
+Our next lemma connects the growth rate of TP˚g to the tightness rate of a probability measure evaluated with the Stein
+discrepancy. Its proof is found in Section H.3.
+Lemma 17 (Coercive functions yield tightness). Suppose there is a g ∈ G such that TP g is bounded below by ζ ∈ R and
+lim inf (cid:107)x(cid:107)2→∞(cid:107)x(cid:107)−u
+2 (TP g)(x) > η for some η, u > 0. Then for all (cid:15) sufﬁciently small and any probability measure µ the
+tightness rate (10) satisﬁes
+
+R(µ, (cid:15)) ≤
+
+(S(µ, TP , G) − ζ)
+
+.
+
+(cid:21)1/u
+
+(cid:20) 1
+(cid:15)η
+
+In particular, if lim supm S(µm, TP , Gk) is ﬁnite, (µm)m≥1 is uniformly tight.
+
+We can thus plug the tightness rate estimate of Lemma 17 applied to the function ˚g into Theorem 13. Since (cid:107)w(cid:107)∞ ≤ t
+dt, we can use the formula for the generalized Fourier transform of the IMQ kernel in (18) to see ˆΦ(ω)
+implies (cid:107)w(cid:107)2 ≤
+is monotonically decreasing in (cid:107)w(cid:107)2 to establish (16). By taking η →
+
+D(a,c,α,β)1/2 κ0 we obtain (14).
+
+√
+
+α
+
+To prove (15), notice that FIM Q(t) = O(e(c
+√
+c
+conclusion follows from Lemma 17.
+
+d+λ)t) as t → ∞ for any λ > 0 by (19). Hence, by choosing (cid:15) =
+S(µ,TP ,Gk) ) and δ = 1/(cid:15)1/α we obtain the advertised decay rate as S(µ, TP , Gk) → 0. The uniform tightness
+
+d/ log(
+
+1
+
+√
+
+H.2. Proof of Lemma 16: Generalized multiquadric Stein sets yield coercive functions
+
+By (Wendland, 2004, Thm. 8.15), Φc,β has a generalized Fourier transform of order max(0, (cid:100)β(cid:101)) given by
+
+(cid:100)Φc,β(ω) =
+
+21+β
+Γ(−β)
+
+(cid:18) (cid:107)ω(cid:107)2
+c
+
+(cid:19)−β−d/2
+
+Kβ+d/2(c(cid:107)ω(cid:107)2),
+
+(18)
+
+where Kv(z) is the modiﬁed Bessel function of the third kind. Furthermore, by (Wendland, 2004, Cor. 5.12, Lem. 5.13,
+Lem. 5.14), we have the following bounds on Kv(z) for v, z ∈ R:
+
+Kv(z) ≥ τv
+
+for z ≥ 1 where τv =
+
+for |v| ≥
+
+and τv =
+
+for |v| <
+
+(19)
+
+√
+
+π3|v|−1/2
+2|v|+1Γ(|v| + 1/2)
+
+1
+2
+
+,
+
+Kv(z) ≥ e−1τvz−|v| for z ≤ 1, (since x (cid:55)→ xvK−v(x) is non-decreasing and Kv = K−v)
+
+(cid:114) π
+2
+
+1
+2
+
+(cid:33)
+
+Kv(z) ≤ min
+
+e−z+v2/z, 2|v|−1Γ(|v|)z−|v|
+
+for z > 0.
+
+e−z
+√
+z
+
+(cid:32)(cid:114) 2π
+z
+
+Now ﬁx any a > c/2 and α ∈ (0, 1
+We will show that g = (g1, . . . , gd) ∈ Kd
+
+2 (β + 1)), and consider the functions gj(x) = ∇xj Φa,α(x) = 2αxj(a2 + (cid:107)x(cid:107)2
+
+2)α−1.
+k. Note that ˆgj(ω) = (iωj) (cid:100)Φa,α(ω). Using (Wendland, 2004, Thm. 10.21), we
+
+know (cid:107)gj(cid:107)Kk
+
+=
+
+ˆgj/
+
+(cid:100)Φc,β
+
+, and thus (cid:107)g(cid:107)Kd
+
+=
+
+ˆg/
+
+(cid:100)Φc,β
+
+k
+
+. Hence
+
+(cid:113)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)L2
+
+(cid:113)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)L2
+
+Measuring Sample Quality with Kernels
+
+(cid:107)g(cid:107)2
+Kd
+k
+
+=
+
+ˆgj(ω) ˆgj(ω)/ (cid:100)Φc,β(ω) dω
+
+d
+(cid:88)
+
+(cid:90)
+
+j=1
+
+d
+(cid:88)
+
+(cid:90)
+
+Rd
+
+Rd
+
+=
+
+j=1
+(cid:90)
+
+= c0
+
+22(1+α)/Γ(−α)2
+21+β/Γ(−β)
+
+a2α+d
+cβ+d/2
+
+j (cid:107)ω(cid:107)β−2α−d/2
+ω2
+
+2
+
+Kα+d/2(a(cid:107)ω(cid:107)2)2
+Kβ+d/2(c(cid:107)ω(cid:107)2)
+
+dω
+
+(cid:107)ω(cid:107)β−2α−d/2+2
+
+2
+
+Rd
+
+Kα+d/2(a(cid:107)ω(cid:107)2)2
+Kβ+d/2(c(cid:107)ω(cid:107)2)
+
+dω,
+
+where c0 = 22(1+α)/Γ(−α)2
+21+β /Γ(−β)
+second integrating over B(0, 1)c = Rd \ B(0, 1). Thus using the inequalities from (19) with v0 (cid:44) β + d/2, we have
+
+a2α+d
+cβ+d/2 . We can split the integral above into two, with the ﬁrst integrating over B(0, 1) and the
+
+(cid:90)
+
+B(0,1)
+
+(cid:107)ω(cid:107)β−2α−d/2+2
+
+2
+
+Kα+d/2(a(cid:107)ω(cid:107)2)2
+Kβ+d/2(c(cid:107)ω(cid:107)2)
+
+(cid:90)
+
+dω ≤
+
+B(0,1)
+
+(cid:107)ω(cid:107)β−2α−d/2+2
+
+2
+
+22α+d−2Γ(α + d/2)2(a(cid:107)w(cid:107)2)−2α−d
+e−1τv0 · (cid:107)cω(cid:107)−β−d/2
+
+2
+
+dω
+
+= 22α+d−2Γ(α + d/2)2 e
+τv0
+
+(cid:90)
+
+cβ+d/2
+a2α+d
+
+= d Vd 22α+d−2Γ(α + d/2)2 e
+τv0
+
+B(0,1)
+
+cβ+d/2
+a2α+d
+
+(cid:90) 1
+
+0
+
+(cid:107)ω(cid:107)2β−4α−d+2
+
+ec(cid:107)ω(cid:107)2 dω
+
+2
+
+r2β−4α+1ecr dr,
+
+where Vd is the volume of the unit ball in d-dimensions and in the last step we used the substitution r = (cid:107)ω(cid:107)2 (Baker,
+1999). Since α < 1
+2 (β + 1) and the function r (cid:55)→ rt is integrable around the origin when t > −1, we can bound the
+integral above by
+
+(cid:90) 1
+
+0
+
+r2β−4α+1ecr dr ≤ ec
+
+r2β−4α+1 dr =
+
+(cid:90) 1
+
+0
+
+ec
+2β − 4α + 2
+
+.
+
+We can apply the technique to the other integral, yielding
+
+(cid:90)
+
+B(0,1)c
+
+(cid:107)ω(cid:107)β−2α−d/2+2
+
+2
+
+Kα+d/2(a(cid:107)ω(cid:107)2)2
+Kβ+d/2(c(cid:107)ω(cid:107)2)
+
+(cid:90)
+
+dω ≤
+
+(cid:107)ω(cid:107)β−2α−d/2+2
+
+2
+
+2π/(a(cid:107)ω(cid:107)2) · e−2a(cid:107)ω(cid:107)2+2(α+d/2)2/(a(cid:107)ω(cid:107)2)
+τv0e−c(cid:107)ω(cid:107)2/(cid:112)c(cid:107)ω(cid:107)2
+e(c−2a)(cid:107)ω(cid:107)2+2(α+d/2)2/(a(cid:107)ω(cid:107)2) dω
+
+dω
+
+(cid:107)ω(cid:107)β−2α−d/2+3/2
+
+2
+
+rβ−2α+d/2+1/2e(c−2a)r+2(α+d/2)2/(ar) dr
+
+B(0,1)c
+√
+(cid:90)
+2π
+c
+aτv0
+
+≤
+
+= d Vd
+
+(cid:90) ∞
+
+B(0,1)c
+√
+c
+2π
+aτv0
+
+1
+
+Since c − 2a < 0, we can upper bound the last integral above by the quantity
+
+(cid:90) ∞
+
+1
+
+rβ−2α+d/2+1/2e(c−2a)r+2(α+d/2)2/(ar) dr
+
+≤ e(c−2a)+2(α+d/2)2/a
+
+rβ−2α+d/2+1/2e(c−2a)r dr
+
+= e(c−2a)+2(α+d/2)2/a(2a − c)−β+2α−d/2−3/2Γ(β − 2α + d/2 + 3/2, 2a − c),
+
+where Γ(s, x) (cid:44) (cid:82) ∞
+upper bounded by D(a, b, α, β)1/2 where
+
+x ts−1e−t dt is the upper incomplete gamma function. Hence, the function g belongs to Kd
+
+k with norm
+
+D(a, c, α, β) (cid:44) d Vd 21+2α−β a2α+dΓ(−β)
+cβ+d/2Γ(−α)2
+
+22α+d−2Γ(α + d/2)2ec+1cβ+d/2
+τv0 (2β − 4α + 2)a2α+d
+
++
+
+√
+
+2π
+c
+aτv0
+
+e(c−2a)+2(α+d/2)2/a(2a − c)−β+2α−d/2−3/2Γ(β − 2α + d/2 + 3/2, 2a − c)
+
+(20)
+
+(cid:33)
+.
+
+(cid:90) ∞
+
+1
+
+(cid:32)
+
+Measuring Sample Quality with Kernels
+
+Now deﬁne ˚g = −D(a, c, α, β)−1/2g so that ˚g ∈ Gk. We will lower bound the growth rate of TP˚g and also construct a
+uniform lower bound. Note
+
+D(a, c, α, β)1/2
+2α
+
+(TP˚g)(x) = −
+
+(cid:104)b(x), x(cid:105)
+(a2 + (cid:107)x(cid:107)2
+
+d
+
+−
+
+(a2 + (cid:107)x(cid:107)2
+
+2)1−α
+The latter two terms are both uniformly bounded in x. By the distant dissipativity assumption, there is some κ > 0 such
+that lim sup(cid:107)x(cid:107)2→∞
+2 . This assures
+lim inf(cid:107)x(cid:107)−2α
+
+2 κ. Thus the ﬁrst term of (21) grows at least at the rate 1
+
+(cid:104)b(x), x(cid:105) ≤ − 1
+α
+
+2 κ(cid:107)x(cid:107)2α
+
+2)1−α
+
+1
+(cid:107)x(cid:107)2
+2
+
+(TP˚g)(x) ≥
+
+D(a,c,α,β)1/2 κ as (cid:107)x(cid:107)2 → ∞.
+
+2
+
++
+
+2(1 − α)(cid:107)x(cid:107)2
+2
+(a2 + (cid:107)x(cid:107)2
+2)2−α
+
+.
+
+(21)
+
+Moreover, because b is Lipschitz, we have
+
+|(cid:104)b(x), x(cid:105)| ≤ |(cid:104)b(x) − b(0), x − 0(cid:105)| + |(cid:104)b(0), x(cid:105)| ≤ M1(b)(cid:107)x(cid:107)2
+
+2 + (cid:107)b(0)(cid:107)(cid:107)x(cid:107)2,
+
+Hence for any x ∈ B(0, R0), we must have −(cid:104)b(x), x(cid:105) ≥ −M1(b)R2
+0 − (cid:107)b(0)(cid:107)2R0. By choice of R0, for all x /∈ B(0, R0),
+the distant dissipativity assumption implies −(cid:104)b(x), x(cid:105) ≥ 0. Hence applying this to (21) shows that TP˚g is uniformly lower
+bounded by ζ(a, c, α, β).
+
+H.3. Proof of Lemma 17: Coercive functions yield tightness
+Pick g ∈ Gk such that lim inf (cid:107)x(cid:107)2→∞(cid:107)x(cid:107)−u
+2 (TP g)(x) > η and inf x∈Rd (TP g)(x) ≥ ζ. Let us deﬁne γ(r) (cid:44)
+inf{(TP g)(x) − ζ | (cid:107)x(cid:107)2 ≥ r} ≥ 0 for all r > 0. Thus for sufﬁciently large r, we have γ(r) ≥ ηru. Then, for any
+measure µ by Markov’s inequality,
+
+Thus we see that µ((cid:107)X(cid:107)2 ≥ r(cid:15)) ≤ (cid:15) whenever (cid:15) ≥ (S(µ, TP , Gk) − ζ)/γ(r(cid:15)). This implies that for sufﬁciently small (cid:15), if
+
+µ((cid:107)X(cid:107)2 ≥ r) ≤
+
+Eµ[γ((cid:107)X(cid:107)2)]
+γ(r)
+
+≤
+
+Eµ[(TP g)(X) − ζ]
+γ(r)
+
+.
+
+r(cid:15) ≥
+
+(S(µ, TP , Gk) − ζ)
+
+,
+
+(cid:21)1/u
+
+(cid:20) 1
+η(cid:15)
+
+we must have µ((cid:107)X(cid:107)2 ≥ r(cid:15)) ≤ (cid:15). Hence whenever lim supm S(µm, TP , Gk) is bounded, we must have (µm)m≥1 is
+uniformly tight as lim supm R(µm, (cid:15)) is ﬁnite.
+
+I. Proof of Proposition 9: KSD detects convergence
+
+We will ﬁrst state and prove a useful lemma.
+Lemma 18 (Stein output upper bound). Let Z ∼ P and X ∼ µ. If the score function b = ∇ log p is Lipschitz with
+EP [(cid:107)b(Z)(cid:107)2
+
+2] < ∞, then, for any g : Rd → Rd with max(M0(g), M1(g), M2(g)) < ∞,
+
+|Eµ[(TP g)(X)]| ≤ (M0(g)M1(b) + M2(g)d)dW(cid:107)·(cid:107)2
+
+(µ, P ) +
+
+2M0(g) M1(g) EP [(cid:107)b(Z)(cid:107)2
+
+2] dW(cid:107)·(cid:107)2
+
+(µ, P ),
+
+(cid:113)
+
+where the Wasserstein distance dW(cid:107)·(cid:107)2
+
+(µ, P ) = inf X∼µ,Z∼P E[(cid:107)X − Z(cid:107)2].
+
+2] < ∞, which implies that EP [(TP g)(Z)] = 0
+Proof By Jensen’s inequality, we have EP [(cid:107)b(Z)(cid:107)2] ≤
+(Gorham & Mackey, 2015, Prop. 1). Thus, using the triangle inequality, Jensen’s inequality, and the Fenchel-Young
+inequality for dual norms,
+
+EP [(cid:107)b(Z)(cid:107)2
+
+(cid:113)
+
+|Eµ[(TP g)(X)]| = |E[(TP g)(Z) − (TP g)(X)]|
+
+= |E[(cid:104)b(Z), g(Z) − g(X)(cid:105) + (cid:104)b(Z) − b(X), g(X)(cid:105) + (cid:104)I, ∇g(Z) − ∇g(X)(cid:105)]|
+≤ E[|(cid:104)b(Z), g(Z) − g(X)(cid:105)|] + (M0(g)M1(b) + M2(g)d)E[(cid:107)X − Z(cid:107)2],
+
+√
+
+To handle the other term above, notice that by Cauchy-Schwarz and the fact that min(a, b) ≤
+
+ab for a, b ≥ 0,
+
+E[|(cid:104)b(Z), g(Z) − g(X)(cid:105)|] ≤ E[min(2M0(g), M1(g)(cid:107)X − Z(cid:107)2)(cid:107)b(Z)(cid:107)2]
+(cid:105)
+2 (cid:107)b(Z)(cid:107)2
+
+(cid:104)
+≤ (2M0(g)M1(g))1/2E
+
+(cid:107)X − Z(cid:107)1/2
+
+(cid:113)
+
+≤
+
+2M0(g)M1(g)E[(cid:107)X − Z(cid:107)2] EP [(cid:107)b(Z)(cid:107)2
+2].
+
+Measuring Sample Quality with Kernels
+
+The stated inequality now follows by taking the inﬁmum of these bounds over all joint distributions (X, Z) with X ∼ µ
+and Z ∼ P .
+
+Now we are ready to prove Proposition 9. In the statement below, let us use α ∈ Nd as a multi-index for the differentiation
+operator Dα, that is, for a differentiable function f : Rd → R we have for all x ∈ Rd,
+
+Dαf (x) (cid:44)
+
+d|α|
+(dx1)α1 . . . (dxd)αd
+
+f (x)
+
+where |α| = (cid:80)d
+and (Steinwart & Christmann, 2008, Lem. 4.34), we have
+
+j=1 αj. Pick any g ∈ Gk, and choose any multi-index α ∈ Nd such that |α| ≤ 2. Then by Cauchy-Schwarz
+
+sup
+x∈Rd
+
+|Dαgj(x)| = sup
+x∈Rd
+
+|Dα(cid:104)gj, k(x, ·)(cid:105)Kk | ≤ sup
+x∈Rd
+
+(cid:107)gj(cid:107)Kk
+
+(cid:107)Dαk(x, ·)(cid:107)Kk
+
+= (cid:107)gj(cid:107)Kk
+
+(Dα
+
+x Dα
+
+y k(x, x))1/2.
+
+sup
+x∈Rd
+
+j=1(cid:107)gj(cid:107)2
+Kk
+
+Since (cid:80)d
+y k(x, x) is uniformly bounded in x for all |α| ≤ 2, the elements of
+the vector g(x), matrix ∇g(x), and tensor ∇2g(x) are uniformly bounded in x ∈ Rd and g ∈ Gk. Hence, for some λk,
+supg∈Gk
+
+max(M0(g), M1(g), M2(g)) ≤ λk < ∞, so the advertised result follows from Lemma 18 as
+
+≤ 1 for all g ∈ Gk and Dα
+
+x Dα
+
+S(µ, TP , Gk) ≤ λk
+
+(M1(b) + d)dW(cid:107)·(cid:107)2
+
+(µ, P ) +
+
+2EP [(cid:107)b(Z)(cid:107)2
+
+2] dW(cid:107)·(cid:107)2
+
+(µ, P )
+
+.
+
+(cid:113)
+
+(cid:19)
+
+(cid:18)
+
+J. Proof of Theorem 10: KSD fails for bounded scores
+
+Fix some n ≥ 1, and let Qn = 1
+n
+all i (cid:54)= i(cid:48). We will show that when M0(b) is ﬁnite, S(Qn, TP , Gk) → 0 as n → ∞.
+We can express k0(x, y) (cid:44) (cid:80)d
+
+0(x, y) as
+
+j=1 kj
+
+(cid:80)n
+
+i=1 δxi where xi (cid:44) ine1 ∈ Rd for i ∈ {1, . . . , n}. This implies (cid:107)xi − xi(cid:48)(cid:107)2 ≥ n for
+
+k0(x, y) = (cid:104)b(x), b(y)(cid:105)k(x, y) + (cid:104)b(x), ∇yk(x, y)(cid:105) + (cid:104)b(y), ∇xk(x, y)(cid:105) + (cid:104)∇x, ∇yk(x, y)(cid:105).
+
+From Proposition 2, we have
+
+S(Qn, TP , Gk)2 =
+
+k0(xi, xi(cid:48)) =
+
+k0(xi, xi) +
+
+k0(xi, xi(cid:48)).
+
+(22)
+
+1
+n2
+
+n
+(cid:88)
+
+i,i(cid:48)=1
+
+1
+n2
+
+n
+(cid:88)
+
+i=1
+
+1
+n2
+
+(cid:88)
+
+i(cid:54)=i(cid:48)
+
+Let γ be the kernel decay rate deﬁned in the statement of Theorem 6. Then as k ∈ C (1,1)
+limr→∞ γ(r) = 0. By the triangle inequality
+
+0
+
+, we must have γ(0) < ∞ and
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+1
+n2
+
+n
+(cid:88)
+
+i=1
+
+(cid:12)
+(cid:12)
+(cid:12)
+k0(xi, xi)
+(cid:12)
+(cid:12)
+
+lim
+n→∞
+
+≤ lim
+n→∞
+
+|k0(xi, xi)| ≤ lim
+n→∞
+
+γ(0)
+n
+
+(M0(b) + 1)2 = 0.
+
+1
+n2
+
+n
+(cid:88)
+
+i=1
+
+We now handle the second term of (22). By repeated use of Cauchy-Schwarz we have
+
+|k0(xi, xi(cid:48))| ≤ |(cid:104)b(xi), b(xi(cid:48))(cid:105)k(xi, xi(cid:48))| + |(cid:104)b(xi), ∇yk(xi, xi(cid:48))(cid:105)| + |(cid:104)b(xi(cid:48)), ∇xk(xi, xi(cid:48))(cid:105)| + |(cid:104)∇x, ∇yk(xi, xi(cid:48))(cid:105)|
+≤ (cid:107)b(xi)(cid:107)2(cid:107)b(xi(cid:48))(cid:107)2|k(xi, xi(cid:48))| + (cid:107)b(xi)(cid:107)2(cid:107)∇yk(xi, xi(cid:48))(cid:107)2 + (cid:107)b(xi(cid:48))(cid:107)2(cid:107)∇xk(xi, xi(cid:48))(cid:107)2
+
++ |(cid:104)∇x, ∇yk(xi, xi(cid:48))(cid:105)|
+
+≤ γ(n)(M0(b) + 1)2.
+
+By assumption, γ(r) → 0 as r → ∞. Furthermore, since the second term of (22) is upper bounded by the average of the
+terms k0(xi, x(cid:48)
+i) for i (cid:54)= i(cid:48), we have S(Qn, TP , Gk) → 0 as n → ∞. However, (Qn)n≥1 is not uniformly tight and hence
+does not converge to the probability measure P .
+
+

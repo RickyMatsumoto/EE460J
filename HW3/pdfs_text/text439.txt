@@ -1,0 +1,2808 @@
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+Jonas Mueller 1 David Gifford 1 Tommi Jaakkola 1
+
+Abstract
+We present a model that, after learning on ob-
+servations of (sequence, outcome) pairs, can be
+efﬁciently used to revise a new sequence in order
+to improve its associated outcome. Our frame-
+work requires neither example improvements,
+nor additional evaluation of outcomes for pro-
+posed revisions. To avoid combinatorial-search
+over sequence elements, we specify a generative
+model with continuous latent factors, which is
+learned via joint approximate inference using a
+recurrent variational autoencoder (VAE) and an
+outcome-predicting neural network module. Un-
+der this model, gradient methods can be used to
+efﬁciently optimize the continuous latent factors
+with respect to inferred outcomes. By appropri-
+ately constraining this optimization and using the
+VAE decoder to generate a revised sequence, we
+ensure the revision is fundamentally similar to
+the original sequence, is associated with better
+outcomes, and looks natural. These desiderata
+are proven to hold with high probability under
+our approach, which is empirically demonstrated
+for revising natural language sentences.
+
+Introduction
+
+The success of recurrent neural network (RNN) models
+in complex tasks like machine translation and audio syn-
+thesis has inspired immense interest in learning from se-
+quence data (Eck & Schmidhuber, 2002; Graves, 2013;
+Sutskever et al., 2014; Karpathy, 2015). Comprised of ele-
+ments st P S
+, which are typically symbols from a discrete
+has length T
+s1, . . . , sT q P X
+vocabulary, a sequence x
+which can vary between different instances. Sentences are
+a popular example of such data, where each sj is a word
+from the language. In many domains, only a tiny fraction
+(the set of possible sequences over a given vocabu-
+of
+lary) represents sequences likely to be found in nature (ie.
+
+“ p
+
+X
+
+1MIT Computer Science & Artiﬁcial Intelligence Laboratory.
+
+Correspondence to: J. Mueller <jonasmueller@csail.mit.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+those which appear realistic). For example: a random se-
+quence of words will almost never form a coherent sentence
+that reads naturally, and a random amino-acid sequence is
+highly unlikely to specify a biologically active protein.
+
+P
+
+In this work, we consider applications where each sequence
+x is associated with a corresponding outcome y
+R.
+For example: a news article title or Twitter post can be
+associated with the number of shares it subsequently re-
+ceived online, or the amino-acid sequence of a synthetic
+protein can be associated with its clinical efﬁcacy. We op-
+erate under the standard supervised learning setting, assum-
+pXY
+ing availability of a dataset
+of sequence-outcome pairs. The marginal distribution
+pX is assumed as a generative model of the natural se-
+quences, and may be concentrated in a small subspace of
+. Throughout this paper, p denotes both density and dis-
+
+X
+tribution functions depending on the referenced variable.
+After ﬁtting models to
+Dn, we are presented a new se-
+quence x0 P X
+(with unknown outcome), and our goal is to
+quickly identify a revised version that is expected to have
+superior outcome. Formally, we seek the revised sequence:
+
+xi, yiqu
+
+Dn “ tp
+
+iid
+„
+
+n
+i
+
+“
+
+1
+
+|
+
+x
+
+s
+
+r
+
+x
+
+Y
+
+E
+
+“
+
+“
+
+X
+
+x˚
+
+(1)
+
+argmax
+PCx0
+Cx0 of feasible revisions to ensure
+Here, we want the set
+that x˚ remains natural and is merely a minor revision of
+x0. Under a generative modeling perspective, these two
+goals are formalized as the following desiderata: pX p
+is
+not too small, and x˚ and x0 share similar underlying latent
+characteristics. When revising a sentence for example, it is
+imperative that the revision reads naturally (has reasonable
+likelihood under the distribution of realistic sentences) and
+retains the semantics of the original.
+
+x˚
+
+q
+
+This optimization is difﬁcult because the constraint-set and
+objective may be highly complex and are both unknown
+(must be learned from data). For many types of sequence
+such as sentences, standard distance measures applied di-
+rectly in the space of
+(eg. Levenshtein distance or
+S
+TF-IDF similarity) are inadequate to capture meaningful
+similarities, even though these can be faithfully reﬂected by
+a simple metric over an appropriately learned space of con-
+tinuous latent factors (Mueller & Thyagarajan, 2016). In
+this work, we introduce a generative-modeling framework
+which transforms (1) into a simpler differentiable optimiza-
+
+or
+
+X
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+tion by leveraging continuous-valued latent representations
+learned using neural networks. After the generative model
+has been ﬁt, our proposed procedure can efﬁciently revise
+any new sequence in a manner that satisﬁes the aforemen-
+tioned desiderata (with high probability).
+
+Related Work
+
+Unlike imitation learning, our setting does not require
+availability of improved versions of a particular sequence.
+This prevents direct application of a sequence-to-sequence
+model (Sutskever et al., 2014). Similar to our approach,
+G´omez-Bombarelli et al. (2016) also utilize latent autoen-
+coder representations in order to propose novel chemical
+structures via Bayesian optimization. However, unlike se-
+quential bandit/reinforcement-learning settings, our learner
+sees no outcomes outside of the training data, neither for
+the new sequence it is asked to revise, nor for any of its
+proposed revisions of said sequence (Mueller et al., 2017).
+Our methods only require an easily-assembled dataset of
+sequence-outcome pairs and are thus widely applicable.
+
+Combinatorial structures are often optimized via complex
+search heuristics such as genetic programming (Zaefferer
+et al., 2014). However, search relies on evaluating iso-
+lated changes in each iteration, whereas good revisions of
+a sequence are often made over a larger context (ie. al-
+tering a phrase in a sentence). From the vast number of
+possibilities, such revisions are unlikely to be found by
+search-procedures, and it is generally observed that such
+methods are outperformed by gradient-based optimization
+in high-dimensional continuous settings. Unlike combina-
+torial search, our framework leverages gradients in order to
+efﬁciently ﬁnd good revisions at test time. Simonyan et al.
+(2014) and Nguyen et al. (2015) also proposed gradient-
+based optimization of inputs with respect to neural predic-
+tions, but work in this vein has been focused on conditional
+generation (rather than revision) and is primarily restricted
+to the continuous image domain (Nguyen et al., 2016).
+
+Methods
+
+To identify good revisions, we ﬁrst map our stochastic com-
+binatorial optimization problem into a continuous space
+where the objective and constraints exhibit a simpler form.
+We assume the data are generated by the probabilistic
+Rd
+graphical model in Figure 1A. Here, latent factors Z
+specify a (continuous) conﬁguration of the generative pro-
+cess for X, Y (both sequences and outcomes), and we
+adopt the prior pZ “
+. Relationships between these
+q
+variables are summarized by the maps F, E, D which we
+parameterize using three neural networks F , E, D trained
+to enable efﬁcient approximate inference under this model.
+
+0, I
+p
+
+N
+
+P
+
+The ﬁrst step of our framework is to ﬁt this model to
+
+Dn
+
+(A) Graphical Model
+
+(B) Revision Procedure
+
+F
+
+x
+
+z
+
+y
+
+E
+
+D
+
+y0
+
+z0
+
+F
+
+E
+
+x0
+
+y1
+
+§
+
+§
+
+. . .
+
+y˚
+
+§
+
+F
+`rzF
+
+`rzF
+
+z1
+
+. . .
+
+F
+`rzF
+
+z˚
+
+D
+
+x˚
+
+Figure 1. (A) Assumed graphical model (shaded nodes indicate
+observed variables, dashed arrows are learned neural network
+mappings). (B) Procedure for revising a given x0 to produce x˚
+with superior expected outcome.
+
+by learning the parameters of these inference networks: the
+encoder E , the decoder D, and the outcome-predictor F .
+A good model that facilitates high-quality revision under
+our framework will possess the following properties: (1)
+Y can efﬁciently be inferred from Z and this relationship
+obeys a smooth functional form, (2) the map D produces
+a realistic sequence x given any z with reasonable prior
+probability, (3) the distribution of natural sequences is ge-
+ometrically simple in the latent Z-space. We explicitly en-
+courage (1) by choosing F as a fairly simple feedforward
+network, (2) by deﬁning D as the most-likely x given z,
+and (3) by endowing Z with our simple N
+
+prior.
+
+0, I
+p
+
+q
+
+Another characteristic desired of our Z-representations is
+that they encode meaningful sequence-features such that
+two fundamentally similar sequences are likely to have
+been generated from neighboring z-values. Applied to im-
+age data, VAE models similar to ours have been found to
+learn latent representations that disentangle salient char-
+acteristics such as scale, rotation, and other independent
+visual concepts (Higgins et al., 2016). The latent repre-
+sentations of recurrent architectures trained on text (similar
+to the models used here) have also been shown to encode
+meaningful semantics, with a strong correlation between
+distances in the latent space and human-judged similarity
+between texts (Mueller & Thyagarajan, 2016). By exploit-
+ing such simpliﬁed geometry, a basic shift in the latent
+vector space may be able to produce higher-quality revi-
+sions than attempts to directly manipulate the combinato-
+rial space of sequence elements.
+
+E
+
+x0q
+p
+
+After ﬁtting a model with these desirable qualities, our
+strategy to revise a given sequence x0 P X
+is outlined
+in Figure 1B. First, we compute its latent representation
+z0 “
+using a trained encoding map. As the latent
+representations z are continuous, we can employ efﬁcient
+gradient-based optimization to ﬁnd a nearby local optimum
+(within a simple constraint-set around z0 de-
+z˚ of F
+ﬁned later on). To z˚, we subsequently apply a simple de-
+coding map D (deﬁned with respect to our learned model)
+in order to obtain our revised sequence x˚. Under our
+
+z
+p
+
+q
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+assumed model, the optimization in latent representation-
+space attempts to identify a generative conﬁguration which
+produces large values of Y (as inferred via F ). The sub-
+sequent decoding step seeks the most likely sequence pro-
+duced by the optimized setting of the latent factors.
+
+Variational Autoencoder
+
+|
+
+z
+
+P
+
+For approximate inference in the X, Z relationship, we
+leverage the variational autoencoder (VAE) model of
+Kingma & Welling (2014). In our VAE, a generative model
+of sequences is speciﬁed by our prior over the latent values
+z combined with a likelihood function pDp
+x
+which our
+q
+decoder network D outputs in order to evaluate the likeli-
+Rd. Given any sequence
+hood of any sequence x given z
+x, our encoder network E outputs a variational approxima-
+x
+z
+tion qEp
+of the true posterior over the latent-values
+q
+|
+p
+z
+pZp
+x
+pDp
+x
+z
+. As advocated by Kingma &
+q
+q9
+|
+p
+q
+Welling (2014) and Bowman et al. (2016), we employ the
+z
+variational family qEp
+x) with diag-
+q “
+onal covariance. Our revision methodology employs the
+encoding procedure E
+x which maps a sequence
+q “
+to the maximum a posteriori (MAP) conﬁguration of the
+latent values z (as estimated by the encoder network E ).
+The parameters of E, D are learned using stochastic
+variational inference to maximize a lower bound for the
+marginal likelihood of each observation in the training data:
+
+µz
+p
+
+x, ⌃z
+
+x
+p
+
+µz
+
+N
+
+x
+
+z
+
+|
+
+|
+
+|
+
+|
+
+|
+
+|
+
+|
+
+|
+
+|
+
+(2)
+
+q
+z
+‰
+qs
+
+z
+qEp
+
+x
+log pX p
+x
+Lrecp
+x
+Lprip
+x “
+
+x
+x
+q ` Lprip
+Lrecp
+q • ´
+log pDp
+x
+EqE p
+“
+x
+z
+q r
+q “ ´
+|
+pZq
+x
+z
+qEp
+KL
+p
+q “
+q||
+Deﬁning  z
+⌃z
+, the prior-enforcing Kullback-
+diag
+xq
+p
+Leibler divergence has a differentiable closed form expres-
+sion when qE, pZ are diagonal Gaussian distributions. The
+reconstruction term
+Lrec (ie. negative log-likelihood under
+the decoder model) is efﬁciently approximated using just
+one Monte-Carlo sample z
+x
+. To optimize the
+q
+|
+„
+Dn with respect to
+variational lower bound over our data
+the parameters of neural networks E, D, we use stochas-
+tic gradients of (2) obtained via backpropagation and the
+reparameterization trick of Kingma & Welling (2014).
+Throughout, our encoder/decoder models E, D are recur-
+rent neural networks (RNN). RNNs adapt standard feedfor-
+ward neural networks for sequence data x
+s1, . . . , sT q
+,
+where at each time-step t
+, a ﬁxed size hidden-
+u
+Rd is updated based on the next element
+state vector ht P
+in the input sequence. To produce the approximate pos-
+terior for a given x, our encoder network E appends the
+following additional layers to the ﬁnal RNN hidden-state
+(parameterized by Wµ, W , Wv, bµ, b , bv):
+bµ P
+`
+
+WµhT `
+exp
+p´|
+
+WvhT `
+ReLU
+p
+
+x “
+|
+x “
+
+R
+b |q
+
+1, . . . , T
+
+µz
+ z
+
+bvq
+
+W v
+
+“ p
+
+P t
+
+, v
+
+(3)
+
+“
+
+d
+
+|
+
+|
+
+|
+
+|
+
+x P
+
+x “
+
+~1 and
+
+Rd form the diagonal of
+The (squared) elements of  z
+our approximate-posterior covariance ⌃z
+Lpri is
+x. Since
+minimized at  z
+Lrec is likely to worsen with
+additional variance in encodings (as our posterior approx-
+imation is unimodal), we simply do not consider  z
+x val-
+ues that exceed 1 in our variational family. This restriction
+results in more stable training and also encourages the en-
+coder and decoder to co-evolve such that the true posterior
+is likely closer to unimodal with variance
+
+1.
+
+|
+
+§
+
+To evaluate the likelihood of a sequence, RNN D computes
+not only its hidden state ht, but also the additional output:
+
+(4)
+
+softmax
+
+b⇡q
+s1, . . . , st
+
+W⇡ht `
+⇡t “
+p
+st |
+At each position t, ⇡t estimates p
+by re-
+1q
+p
+´
+lying on ht to summarize the sequence history. By the
+T
+1, . . . , s1q
+st
+1 p
+factorization p
+s1, . . . , sT q “
+,
+t
+p
+´
+“
+we have pDp
+x
+1 ⇡tr
+z
+, which is calculated by
+q “
+|
+z and feeding
+specifying an initial hidden-state h0 “
+into D. From a given latent conﬁguration
+x
+s1, . . . , sT q
+“ p
+z, our revisions are produced by decoding a sequence via
+the most-likely observation, which we denote as the map:
+
+st |
+p
+
+sts
+±
+
+±
+
+T
+t
+
+“
+
+D
+
+z
+p
+
+q “
+
+argmax
+
+x
+
+PX
+
+x
+pDp
+
+|
+
+z
+
+q
+
+(5)
+
+While the most-likely decoding in (5) is itself a combi-
+natorial problem, beam search can exploit the sequential-
+factorization of p
+to efﬁciently ﬁnd a good approx-
+imate solution (Wiseman & Rush, 2016; Sutskever et al.,
+2014). For x˚
+D
+z
+, this decoding strategy seeks
+q P X
+p
+x˚
+to ensure neither pX p
+q
+
+is too small.
+
+nor p
+
+x
+p
+
+z
+p
+
+x˚
+
+“
+
+z
+
+q
+
+q
+
+|
+
+|
+
+Compositional Prediction of Outcomes
+
+Ñ
+
+R. It is assumed that F
+
+In addition to the VAE component, we ﬁt a composi-
+tional outcome-prediction model which uses a standard
+feed forward neural network F to implement the map
+F : Rd
+un-
+der our generative model. Rather than integrating over Z
+dz, we em-
+to compute E
+|
+“
+ploy the ﬁrst-order Taylor approximation F
+, where
+the approximation-error shrinks the more closely F resem-
+bles an afﬁne transformation. To ensure this approximate-
+inference step accurately estimates the conditional expec-
+tation, we jointly train E and F with the loss:
+
+q “
+z
+qEp
+q
+
+x
+q
+E
+p
+
+x
+p
+
+z
+p
+
+z
+p
+
+s “
+
+X
+
+“
+
+qq
+
+Z
+
+E
+
+F
+
+Y
+
+Y
+
+x
+
+z
+
+≥
+
+r
+
+s
+
+r
+
+|
+
+|
+
+Lmsep
+
+x, y
+
+y
+q “ r
+
+F
+
+E
+p
+
+x
+p
+
+qqs
+
+´
+
+2
+
+(6)
+
+If the architecture of networks E, F is speciﬁed with suf-
+ﬁcient capacity to capture the underlying conditional rela-
+tionship, then we should have F
+x
+s
+after properly learning the network parameters from a suf-
+ﬁciently large dataset (even F is a nonlinear map).
+
+E
+p
+
+qq «
+
+x
+p
+
+X
+
+“
+
+E
+
+Y
+
+r
+
+|
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+Enforcing Invariance
+
+z
+p
+
+In theory, it is possible that some dimensions of z pertain
+solely to the outcome y and do not have any effect on the
+decoded sequence D
+. Happening to learn this sort of
+q
+latent representation would be troubling, since subsequent
+optimization of the inferred y with respect to z might not
+actually lead to a superior revised sequence. To mitigate
+this issue, we carefully ensure the dimensionality d of our
+latent Z does not signiﬁcantly exceed the bottleneck ca-
+pacity needed to produce accurate outcome-predictions and
+VAE reconstructions (Gupta et al., 2016). We explicitly
+suppress this undesirable scenario by adding the following
+loss to guide training of our neural networks:
+
+2
+
+qqq
+‰
+
+Linv “
+
+Ez
+
+pZ
+
+„
+
+F
+
+z
+p
+
+q ´
+
+F
+
+E
+p
+
+D
+p
+
+z
+p
+
+(7)
+
+“
+
+q
+
+z
+p
+
+When optimizing neural network parameters with respect
+to this loss, we treat the parameters of D and the lefthand
+F
+term as ﬁxed, solely backpropagating Monte-Carlo
+estimated gradients into E, F . Driving
+Linv toward 0 en-
+sures our outcome-predictions remain invariant to varia-
+tion introduced by the encoding-decoding process (and this
+term also serves as a practical regularizer to enforce addi-
+tional smoothness in our learned functions).
+
+Joint Training
+
+The parameters of all components of this model (qE, pD,
+and F ) are learned jointly in an end-to-end fashion. Train-
+ing is done via stochastic gradient descent applied to mini-
+mize the following objective over the examples in
+
+Dn:
+
+x, y
+
+Lp
+
+q “ Lrec `
+
+ priLpri `
+
+ mse
+Y Lmse `
+ 2
+
+ inv
+Y Linv
+ 2
+
+(8)
+
+•
+
+where  2
+Y denotes the (empirical) variance of the outcomes,
+and the  
+0 are constants chosen to balance the relative
+weight of each goal so that the overall framework produces
+0
+maximally useful revisions. By setting  mse “
+at ﬁrst, we can optionally leverage a separate large cor-
+pus of unlabeled examples to initially train only the VAE
+component of our architecture, as in the unsupervised pre-
+training strategy used successfully by Kiros et al. (2015);
+Erhan et al. (2010).
+
+ inv “
+
+In practice, we found the following training strategy to
+work well, in which numerous mini-batch stochastic gra-
+dient updates (typically 10-30 epochs) are applied within
+every one of these steps:
+Step 1: Begin with  inv “
+Lmse
+are the only training objectives. We found that regardless
+of the precise value speciﬁed for  mse, both
+Lmse
+were often driven to their lowest possible values during this
+joint optimization (veriﬁed by training individually against
+each objective).
+
+Lrec and
+Lrec and
+
+ pri “
+
+0, so
+
+Step 2: Grow  pri from 0 to 1 following the sigmoid an-
+nealing schedule proposed by Bowman et al. (2016), which
+is needed to ensure the variational sequence to sequence
+model does not simply ignore the encodings z (note that
+1).
+the formal variational lower bound is attained at  pri “
+Step 3: Gradually increase  inv linearly until
+Linv becomes
+small on average across our Monte-Carlo samples z
+pZ.
+„
+Here, pD is treated as constant with respect to
+Linv, and
+each mini-batch used in stochastic gradient descent is cho-
+sen to contain the same number of Monte-Carlo samples
+for estimating
+
+Linv as (sequence, outcome) pairs.
+
+Proposing Revisions
+
+While the aforementioned training procedure is computa-
+tionally intensive, once learned, our neural networks can
+be leveraged for efﬁcient inference. Given user-speciﬁed
+0 and a to-be-revised sequence x0, we pro-
+constant ↵
+pose the revision x˚ output by the following procedure.
+
+°
+
+, constant ↵
+
+REVISE Algorithm
+Input: sequence x0 P X
+Output: revised sequence x˚
+P X
+1) Use E to compute qEp
+x0q
+z
+|
+Rd : qEp
+z
+z
+2) Deﬁne
+Cx0 “
+P
+argmax
+z
+F
+3) Find z˚
+ 
+q
+p
+“
+z
+PCx0
+z˚
+D
+4) Return x˚
+p
+
+“
+
+q
+
+|
+
+0,
+
+2⇡⌃z
+|
+
+´
+x0 |
+
+|
+
+P p
+
+1
+2
+
+q
+
+x0q •
+
+↵
+(gradient ascent)
+
+(
+(beam search)
+
+Cx0 Ñ
+
+Rd ensures that
+Intuitively, the level-set constraint
+z˚, the latent conﬁguration from which we decode x˚, is
+likely similar to the latent characteristics responsible for the
+generation of x0. Assuming x0 and x˚ share similar latent
+factors implies these sequences are fundamentally similar
+according to the generative model. Note that z˚
+x0q
+p
+is always a feasible solution of the latent-factor optimiza-
+tion over z
+P Cx0 (for any allowed value of ↵). Further-
+more, this constrained optimization is easy under our Gaus-
+sian approximate-posterior, since
+Cx0 forms a simple ellip-
+soid centered around E
+
+“
+
+E
+
+x0q
+.
+p
+
+E
+
+x0q
+p
+
+x0q
+p
+
+To ﬁnd z˚ in Step 3 of the REVISE procedure, we use gra-
+dient ascent initialized at z
+, which can quickly
+“
+reach a local maximum if F is parameterized by a simple
+feedforward network. Starting the search at E
+makes
+most sense for unimodal posterior approximations like our
+Gaussian qE. To ensure all iterates remain in the feasible
+region
+Cx0 , we instead take gradient steps with respect to a
+z
+J
+penalized objective F
+¨
+p
+x0qq
+p
+1
+⌃z
+x|
+|
+
+q
+1
+T ⌃´
+z
+x0 p
+z
+|
+
+z
+p
+z
+´ p
+2⇡
+
+s
+1 is gradually decreased toward 0 to en-
+
+x0qq
+p
+ı
+
+´
+2
+d
+q
+
+q `
+E
+
+“ ´
+µ
+
+z
+p
+K
+
+where:
+
+”
+2 log
+
+and 0
+
+q “
+
+2↵
+
+log
+
+(9)
+
+K
+
+´
+
+E
+
+rp
+
+µ
+
+J
+
+{
+
+{
+
+|
+
+†
+
+!
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+Cx0 . In
+sure the optimization can approach the boundary of
+terms of resulting revision quality, we found this log barrier
+method outperformed other standard ﬁrst-order techniques
+for constrained optimization such as the projected gradient
+and Franke-Wolfe algorithms.
+
+In principle, our revision method can operate on the latent
+representations of a traditional deterministic autoencoder
+for sequences, such as the seq2seq models of Sutskever
+et al. (2014) and Cho et al. (2014). However, the VAE
+offers numerous practical advantages, some of which are
+highlighted by Bowman et al. (2016) in the context of gen-
+erating more-coherent sentences. The posterior uncertainty
+of the VAE encourages the network to smoothly spread the
+training examples across the support of the latent distribu-
+tion. In contrast, central regions of the latent space under a
+traditional autoencoder can contain holes (to which no ex-
+amples are mapped), and it is not straightforward to avoid
+these in our optimization of z˚. Furthermore, we introduce
+an adaptive variant of our decoder in
+S1 which is designed
+to avoid poor revisions in cases where the initial sequence
+is already not reconstructed properly: D
+
+§
+
+x0.
+
+E
+p
+
+x0qq ‰
+p
+
+Theoretical Properties of Revision
+
+§
+
+Here, we theoretically characterize properties of revisions
+obtained via our REVISE procedure (all proofs are rel-
+egated to
+S3 in the Supplementary Material). Our re-
+sults imply that in an ideal setting where our neural net-
+work inference approximations are exact, the revisions pro-
+posed by our method are guaranteed to satisfy our previ-
+ously stated desiderata: x˚ is associated with an expected
+outcome-increase, x˚ appears natural (has nontrivial prob-
+ability under pX whenever x0 is a natural sequence), and
+x˚ is likely to share similar latent characteristics as x0
+(since x˚ is the most likely observation generated from
+↵ by design). Although exact
+z˚ and qEp
+approximations are unrealistic in practice, our theory pre-
+cisely quantiﬁes the expected degradation in the quality of
+proposed revisions that accompanies a decline in either the
+accuracy of our approximate inference techniques or the
+marginal likelihood of the original sequence to revise.
+
+x0q •
+
+z˚
+
+|
+
+Theorems 1 and 2 below ensure that for an initial sequence
+x0 drawn from the natural distribution, the likelihood of the
+revised sequence x˚ output by our REVISE procedure un-
+der pX has lower bound determined by the user-parameter
+x0q
+↵ and the probability of the original sequence pX p
+.
+Thus, when revising a sequence x0 which looks natural
+(has substantial probability under pX ), our procedure is
+highly likely to produce a revised sequence x˚ which also
+looks natural. The strength of this guarantee can be pre-
+cisely controlled by choosing ↵ appropriately large in ap-
+plications where this property is critical.
+
+In each high probability statement, our bounds assume the
+
+initial to-be-revised sequence x0 stems from the natural
+distribution pX , and each result holds for any ﬁxed con-
+0. We ﬁrst introduce the following assumptions:
+stant  
+
+°
+
+z
+qZp
+Rd :
+
+q “
+z
+||
+
+(A1) For  
+
+0, ↵
+
+0, there exists 0
+
+ 
+
+1 such that:
+
+ 
+
+1
+
+p
+
+ 
+
+x
+
+°
+
+„
+
+´
+x
+
+z
+p
+ii. Pr
+
+°
+i. With probability
+
+†
+§
+2 (over x
+pX ):
+{
+z
+whenever qEp
+0
+BR
+Z
+2p
+qq
+p
+qZ, the average encoding
+r
+
+q •
+
+q
+Pr
+
+q •
+BR
+
+|
+Z
+¨
+p
+where Z
+Z
+distribution deﬁned by Hoffman & Johnson (2016) as:
+r
+Ex
+
+•
+z
+qEp
+¨
+0
+2p
+qq •
+{
+0, I
+, and
+q
+p
+
+|
+ 
+
+N
+
+„
+
+„
+
+↵
+
+x
+
+R
+
+R
+
+|
+
+{
+
+pX r
+„
+R
+
+x
+
+z
+qEp
+denotes the Euclidean ball
+
+(10)
+
+qs
+
+|
+
+{
+
+|
+
+2
+
+u
+
+u
+
+t
+
+z
+
+1
+
+P
+
+¯
+
+´
+
+↵
+
+R
+
+´
+
+•
+
+´
+
+x˚
+
+r
+ 
+
+  
+8
+
+q §
+
+|| §
+
+(11)
+
+pX ):
+
+¨ p
+,
+
+z˚
+p
+
+8
+c
+
+1
+4d log
+
+´
+a
+max
+
+“
+8 log
+
+r
+R2, 2
+
+0
+BRp
+q “ t
+centered around 0 with radius R deﬁned here as:
+max
+
+R1, R2u
+t
+d
+2⇡
+with R1 “
+q
+s
+R2 “
+R2 “
+(A2) There exists ⌘
+0 (depends on  ) such that with
+r
+°
+⌘
+p
+2 (over x0 „
+probability
+{
+This means the latent posterior is bounded at x˚, z˚ (as
+deﬁned in REVISE), where both depend upon the initial to-
+be-revised sequence x0.
+Theorem 1. For any  
+pX p
+1
+´
+•
+
+0, (A1) and (A2) imply:
+↵ 
+pX p
+x0q
+⌘ ¨
+q •
+pX ).
+  (over x0 „
+Condition (A1) forms a generalization of absolute conti-
+nuity, and is required since little can be guaranteed about
+our inference procedures if the variational posterior is too
+inaccurate. Equality holds in (A1) with probability 1 if the
+variational distributions qE exactly represent the true poste-
+rior ( 
+1 as the variational approximations become more
+accurate over the measure pX ). In practice, minimization
+of the reverse KL divergence (
+Lpri) used in our VAE for-
+x
+z
+mulation ensures that qEp
+is small wherever the true
+q
+z
+posterior p
+|
+p
+
+takes small values (Blei et al., 2017).
+
+with probability
+
+x˚
+
+Ñ
+
+°
+
+x
+
+q
+
+|
+
+|
+
+x˚
+
+z
+p
+
+While the bound in Theorem 1 has particularly simple
+form, this result hinges on assumption (A2). One can show
+for example that the inequality in (A2) is satisﬁed if the
+posteriors p
+are Lipschitz continuous functions of
+z at z˚ (sharing one Lipschitz constant over all possible
+x˚). In general however, (A2) heavily depends on both the
+data distribution pX and decoder model pD. Therefore, we
+provide a similar lower bound guarantee on the likelihood
+of our revision x˚ under pX , which instead only relies on
+weaker assumption (A3) below.
+
+q
+
+(A3) There exists L
+x
+pDp
+
+z
+
+q
+
+|
+
+is a L-Lipschitz function of z over BR
+
+0 such that for each x
+P X
+0
+.
+1p
+q
+`
+
+:
+
+°
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+|
+
+z
+
+P
+
+•
+
+Here, L depends on   (through R), and we assume L
+1
+without loss of generality. (A3) is guaranteed to hold in the
+setting where we only consider sequences of ﬁnite length
+T . This is because the probability output by our decoder
+§
+x
+model, pDp
+, is differentiable with bounded gradi-
+q
+ents over all z
+0
+BRp
+under any sequence-to-sequence
+q
+RNN architecture which can be properly trained using gra-
+Rd is a closed interval,
+dient methods. Since BR
+0
+1p
+`
+x
+pDp
+must be Lipschitz continuous over this set, for a
+given value of x. We can simply deﬁne L to be the largest
+Lipschitz constant over the
+(
+|S| “
+user-speciﬁed constant ↵
+ , R all depend on  .
+Theorem 2. For any  
+with probability
+
+P X
+size of the vocabulary). In the next theorem below,
+0 is deﬁned in REVISE, and L,
+
+0, if (A1) and (A3) hold, then
+
+T possible choices of x
+
+q Ä
+
+|S|
+
+pX ):
+
+°
+
+1
+
+z
+
+q
+
+|
+
+°
+  (over x0 „
+
+•
+
+´
+Ce´
+Ld
+
+R
+
+x˚
+
+pX p
+
+q •
+
+ 
+
+↵
+
+¨
+
+pX p
+
+¨
+
+¨
+
+d
+
+1
+
+`
+
+x0q
+‰
+
+where constant C
+
+2
+
+{
+
+⇡d
+d
+2 `
+
+p
+
+“
+
+¨
+
+1
+
+q
+
+d
+p
+d
+p
+
+`
+
+d
+1
+q
+`
+d
+2
+`
+q
+
+1
+
+“
+
+ 
+
+“
+
+Our ﬁnal result, Theorem 3, ensures that our optimization
+of z˚ with respect to F is tied to the expected outcomes at
+x˚
+z˚
+D
+, so that large improvements in the optimiza-
+q
+p
+x0qq
+E
+tion objective: F
+imply that our revision
+p
+p
+procedure likely produces large expected improvements in
+X
+X
+the outcome: E
+. For this
+E
+result, we make the following assumptions:
+
+z˚
+p
+
+x0s
+
+q ´
+
+s ´
+
+x˚
+
+“
+
+“
+
+F
+
+Y
+
+Y
+
+r
+
+r
+
+|
+
+|
+
+(A4)
+X
+Pr
+p
+
+For any  
+ 
+
+1
+
+´
+
+P Kq •
+x
+
+K “ t
+
+P X
+
+0,
+
+there exists 
+
+°
+2, where we deﬁne:
+{
+: x0 “
+
+pX p
+
+ùñ
+
+x
+
+x˚
+
+°
+
+
+
+u
+
+q •
+
+0 such that
+
+(12)
+
+as the subset of sequences whose improved versions pro-
+duced by our REVISE procedure remain natural with likeli-
+. Note that either Theorem 1 or 2 (with the corre-
+hood
+sponding assumptions) ensures that one can suitably deﬁne
+ such that (A4) is satisﬁed (by considering a sufﬁciently
+large ﬁnite subset of
+
+•
+
+).
+X
+0, there exists ✏mse °
+, where we deﬁne:
+
+0 such that
+
+(A5) For any 
+1
+Pr
+P Emseq °
+:
+x
+
+X
+p
+
+Emse“ t
+
+P X
+
+°
+´
+F
+|
+
+E
+p
+
+x
+p
+
+qq ´
+
+Y
+
+E
+
+r
+
+X
+|
+
+x
+
+“
+
+s| §
+
+✏mseu
+
+(13)
+
+(A6) For any  
+
+F
+|
+
+z
+p
+
+q ´
+
+F
+
+E
+p
+
+0, there exists ✏inv °
+for all z
+✏inv
+z
+p
+
+qqq| §
+
+°
+D
+p
+
+0 such that:
+
+0
+BRp
+q Ä
+
+P
+
+d
+
+R
+
+where R is deﬁned in (11) and depends on  .
+
+Here, ✏mse and ✏inv quantify the approximation error of our
+neural networks for predicting expected outcomes and en-
+suring encoding-decoding invariance with respect to F .
+
+Standard learning theory implies both ✏mse, ✏inv will be
+driven toward 0 if we use neural networks with sufﬁcient
+capacity to substantially reduce
+Linv over a large
+training set.
+Theorem 3. For any  
+and (A6) hold, then with probability
+
+0, if conditions (A1), (A4), (A5),
+
+Lmse and
+
+:
+
+°
+
+1
+
+ 
+
+ z˚ ´
+
+✏
+
+F
+
+z˚
+p
+
+§
+
+q ´
+
+F
+
+E
+p
+
+•
+x0qq §
+p
+
+´
+´
+ z˚ `
+
+✏
+
+(14)
+
+where
+
+ z˚ “
+✏
+“
+
+E
+r
+✏inv `
+
+Y
+X
+|
+2✏mse
+
+x˚
+
+Y
+
+E
+
+r
+
+|
+
+X
+
+x0s
+
+“
+
+s ´
+
+“
+
+Here, , ✏inv are deﬁned in terms of   as speciﬁed in (A4),
+(A6), and ✏mse is deﬁned in terms of  as speciﬁed in (A5).
+
+Experiments
+
+All of our RNNs employ the Gated Recurrent Unit (GRU)
+of Cho et al. (2014), which contains a simple gating mech-
+anism to effectively learn long-range dependencies across
+a sequence. Throughout, F is a simple feedforward net-
+work with 1 hidden layer and tanh activations (note that the
+popular ReLU activation is inappropriate for F since it has
+zero gradient over half its domain). Decoding with respect
+to pD is simply done entirely greedily (ie. a beam-search of
+size 1) to demonstrate our approach is not reliant on search
+S2 contains additional details for each analysis.
+heuristics.
+
+§
+
+Simulation Study
+
+A, B, . . . , I, J
+
+To study our methods in a setting where all aspects of per-
+formance can be quantiﬁed, we construct a natural distri-
+bution pX over sequences of lengths 10-20 whose elements
+stem from the vocabulary
+. Each se-
+S “ t
+quence is generated via the probabilistic grammar of Table
+S1. For each sequence, the associated outcome y is sim-
+ply the number of times A appears in the sequence (a com-
+pletely deterministic relationship). Since A often follows C
+and is almost always followed by B under pX , a procedure
+to generate natural revisions cannot simply insert/substitute
+A symbols at random positions.
+
+u
+
+|
+
+r
+
+Y
+
+E
+
+X
+
+q “
+
+1
+ ´
+Y p
+
+Table 1 compares various methods for proposing revisions.
+Letting  Y denote the standard deviation of outcomes
+Dn, we evaluate each proposed x˚ using a rescaled
+in
+version of the actual underlying outcome-improvement:
+x˚
+x˚
+ Y p
+. Ex-
+cept where sample size is explicitly listed, all models were
+trained using n
+10, 000 (sequence, outcome) pairs sam-
+pled from the generative grammar. Wherever appropriate,
+the different methods all make use of the same neural net-
+128. Other
+work components with latent dimension d
+than ↵, all hyperparameters of each revision method de-
+scribed below were chosen so that over 1000 revisions, the
+Levenshtein (edit) distance d
+
+3.3 on average.
+
+x0sq
+
+s ´
+
+X
+
+“
+
+“
+
+“
+
+“
+
+E
+
+Y
+
+r
+
+|
+
+x˚, x0q «
+p
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+10000
+
+Model
+
+log ↵
+n
+n
+
+“ ´
+1000
+100
+
+“
+“
+1
+log ↵
+“ ´
+ADAPTIVE
+ pri “
+ inv “
+SEARCH
+
+0
+
+x˚
+
+ Y p
+q
+0.51 ˘0.55
+0.15 ˘0.44
+0.02 ˘0.30
+
+0.20 ˘0.39
+0.47 ˘0.49
+0.05 ˘0.68
+0.45 ˘0.51
+
+´
+
+x˚
+
+q
+
+log pX p
+29.0 ˘9.3
+32.0 ˘9.4
+37.0 ˘9.7
+
+d
+
+x˚, x0q
+p
+3.3 ˘3.4
+2.8 ˘3.4
+4.2 ˘4.0
+
+28.2 ˘7.6
+28.8 ˘9.0
+30.4 ˘8.4
+29.0 ˘9.4
+
+1.4 ˘2.2
+3.1 ˘3.4
+3.3 ˘3.5
+3.2 ˘1.4
+
+Table 1. Results for revisions x˚ produced by different methods
+in our simulation study (averaged over the same test set of 1000
+starting sequences x0
+1 standard deviation shown
+and the best results in bold).
+
+pX , with
+
+„
+
+˘
+
+“ ´
+
+All three results above the line in Table 1 are based on the
+full model described in our joint training procedure, with
+new sequences proposed via our REVISE algorithm (using
+the setting log ↵
+10000). In the latter two results, this
+model was only trained on a smaller subset of the data. We
+also generated revisions via this same procedure with the
+more conservative choice log ↵
+1. ADAPTIVE denotes
+10000), this time using
+the same approach (with log ↵
+the adaptive decoding Dx0 introduced in
+S1, which is in-
+tended to slightly bias revisions toward x0. The model with
+0 is a similar method using a deterministic
+ inv “
+sequence-to-sequence autoencoder rather than our proba-
+bilistic VAE formulation (no variational posterior approxi-
+mation or invariance-enforcing) where the latent encodings
+are still jointly trained to predict outcomes via F . Under
+this model, a revision is proposed by starting at E
+in
+the latent space, taking 1000 (unconstrained) gradient steps
+with respect to F , and ﬁnally applying D to the resulting z.
+
+“ ´
+“ ´
+
+ pri “
+
+x0q
+p
+
+§
+
+The above methods form an ablation study of the various
+components in our framework. SEARCH is a different com-
+binatorial approach where we randomly generate 100 revi-
+sions by performing 4 random edits in x0 (each individual
+edit is randomly selected as one of: substitution, insertion,
+deletion, or no change).
+In this approach, we separately
+learn a language-model RNN L on our training sequences
+(Mikolov et al., 2010). Sharing the same GRU architec-
+ture as our decoder model, L directly estimates the likeli-
+hood of any given sequence under pX . Of the randomly
+generated revisions, we only retain those sequences x for
+which L
+x
+x0q
+(in this case, those which are not
+q •
+p
+p
+10 times less likely than the original
+estimated to be
+sequence x0 under pX ). Finally, we score each remain-
+ing candidate (including x0) using the outcome-prediction
+model F
+
+, and the best is chosen as x˚.
+
+|S|
+†
+
+L
+
+1
+
+E
+p
+
+x
+p
+
+qq
+
+Table 1 shows that our probabilistic VAE formulation
+outperforms the alternative approaches, both in terms of
+outcome-improvement achieved as well as ensuring revi-
+
+Model
+
+10000
+log ↵
+“ ´
+log ↵
+1
+“ ´
+ADAPTIVE
+ pri “
+ inv “
+SEARCH
+
+0
+
+x˚
+
+ Y p
+q
+0.52 ˘0.77
+0.31 ˘0.50
+0.52 ˘0.72
+0.22 ˘1.03
+0.19 ˘0.56
+
+x˚
+
+ Lp
+q
+-8.8 ˘6.5
+-7.6 ˘5.8
+-8.7 ˘6.4
+-10.2 ˘7.0
+-7.7 ˘4.2
+
+d
+
+x˚, x0q
+p
+2.6 ˘3.3
+1.7 ˘2.6
+2.5 ˘3.3
+3.3 ˘3.4
+3.0 ˘1.2
+
+Table 2. Results for revised beer-review sentences x˚ produced
+standard deviation reported over
+by different methods (average
+˘
+the same held-out set of 1000 initial sentences x0). The third col-
+umn employs the deﬁnition  L
+.
+q
+
+x˚
+p
+
+x˚
+p
+
+x0
+p
+
+log L
+
+log L
+
+q “
+
+q ´
+
+´
+
+x0q
+
+log pX p
+
+sions follow pX . For comparison,
+had an av-
+erage value of 26.8 (over these 1000 starting sequences),
+and changing one randomly-selected symbol in each se-
+quence to A results in an average negative log-probability
+of 32.8. Thus, all of our revision methods clearly account
+for pX to some degree. We ﬁnd that all components used
+in our REVISION procedure are useful in achieving superior
+revisions. While individual standard deviations seem large,
+log pX values
+nearly all average differences in  Y or
+produced by different methods are statistically signiﬁcant
+considering they are over 1000 revisions.
+
+´
+
+q
+
+x˚
+
+x0q
+x0q
+
+From Supplementary Figure S1, it is clear that ↵ con-
+trols how conservative the changes proposed by our RE-
+x˚
+log pX p
+VISE procedure tend to be, in terms of both
+q
+´
+and the edit distance d
+x0, x˚
+. The red curve in Figure
+q
+p
+x˚
+S1A suggests that our theoretical lower bounds for pX p
+q
+are overly stringent in practice (although only the average-
+case is depicted in the ﬁgure). The relationship between
+log pX p
+and log pX p
+(see Figure S1B) is best-ﬁt by
+a line of slope 1.2, indicating that the linear dependence
+in the Theorem 1 bound for pX p
+on pX p
+is rea-
+sonably accurate. Figure S1C shows that the magnitude
+of changes in the latent space (arising from z-optimization
+during our REVISE procedure) only exhibits a weak corre-
+lation with the edit distance between the resulting revision
+and the original sequence. This implies that a ﬁxed shift in
+different directions in the latent space can produce drasti-
+cally different degrees of change in the sequence space. To
+ensure a high-quality revision, it is thus crucial to carefully
+treat the (variational) posterior landscape when performing
+manipulations of Z.
+
+x˚
+
+q
+
+Improving Sentence Positivity
+
+„
+
+Next, we apply our model to
+1M reviews from BeerAd-
+vocate (McAuley et al., 2012). Each beer review is parsed
+into separate sentences, and each sentence is treated as an
+individual sequence of words. In order to evaluate meth-
+ods using an outcome that can be obtained for any pro-
+posed revision, we choose y
+as the VADER senti-
+ment compound score of a given sentence (Hutto & Gilbert,
+
+0, 1
+
+P r
+
+s
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+Model
+
+Sentence
+
+10000
+
+x0
+log ↵
+“ ´
+ADAPTIVE
+log ↵
+1
+“ ´
+ pri “
+ inv “
+SEARCH
+
+0
+
+this smells pretty bad.
+smells pretty delightful!
+smells pretty delightful!
+i liked this smells pretty.
+pretty this smells bad!
+wow this smells pretty bad.
+
+x˚
+
+q
+
+d
+
+x˚
+
+q
+
+ Y p
+-
++2.8
++2.8
++2.5
+-0.2
++1.9
+
+ Lp
+-
+-0.5
+-0.5
+-2.8
+-3.1
+-4.6
+
+x˚, x0q
+p
+-
+3
+3
+3
+3
+1
+
+Table 3. Example of a held-out beer review x0 (in bold) revised to improve the VADER sentiment. Underneath the original sentence,
+we show the revision produced by each different method along with the true (rescaled) outcome improvement  Y , change in estimated
+marginal likelihood  L, and edit distance d
+
+x˚, x0
+p
+
+. Table S2 contains additional examples.
+q
+
+# Steps Decoded Sentence
+x0
+100
+1000
+5000
+10000
+x˚
+
+where are you, henry??
+where are you, henry??
+where are you, royal??
+where art thou now?
+which cannot come, you of thee?
+where art thou, keeper??
+
+x0
+100
+1000
+5000
+10000
+x˚
+
+you are both the same size.
+you are both the same.
+you are both wretched.
+you are both the king.
+you are both these are very.
+you are both wretched men.
+
+x0
+p
+
+Table 4. Decoding from latent Z conﬁgurations encountered at
+the indicated number of (unconstrained) gradient steps from
+E
+, for the model trained to distinguish sentences from Shake-
+q
+speare vs. contemporary authors. Shown ﬁrst and last are x0 and
+the x˚ returned by our REVISION procedure (constrained with
+log ↵
+
+10000). Table S3 contains additional examples.
+
+“ ´
+
+2014). VADER is a complex rule-based sentiment analysis
+tool which jointly estimates polarity and intensity of En-
+glish text, and larger VADER scores correspond to text that
+humans ﬁnd more positive with high ﬁdelity.
+
+We applied all aforementioned approaches to produce re-
+visions for a held-out set of 1000 test sentences. As pX
+underlying these sentences is unknown, we report estimates
+thereof obtained from a RNN language-model L learned on
+Dn. Table 2 demonstrates that our VAE ap-
+the sentences in
+proach achieves the greatest outcome-improvement. More-
+over, Tables 3 and S2 show that our probabilistically-
+constrained VAE revision approach produces much more
+coherent sentences than the other strategies.
+
+Revising Modern Text in the Language of Shakespeare
+
+100K
+For our ﬁnal application, we assemble a dataset of
+short sentences which are either from Shakespeare or a
+S2.3). In this train-
+more contemporary source (details in
+0.9
+ing data, each sentence is labeled with outcome y
+
+„
+
+§
+
+“
+
+0.1 otherwise
+if it was authored by Shakespeare and y
+(these values are chosen to avoid the ﬂat region of the sig-
+moid output layer used in network F ). When applied in
+this domain, our REVISE procedure thus attempts to alter
+a sentence so that the author is increasingly expected to be
+Shakespeare rather than a more contemporary source.
+
+“
+
+§
+
+Tables 4 and S3 show revisions (of held-out sentences)
+proposed by our REVISE procedure with adaptive decod-
+S1), together with sentences generated by apply-
+ing (see
+ing the adaptive decoder at various points along an uncon-
+strained gradient-ascent path in latent Z space (following
+gradients of F ). Since the data lack similar versions of a
+sentence written in both contemporary and Shakespearean
+language, this revision task is an ambitious application of
+our ideas. Without observing a continuous spectrum of out-
+comes or leveraging specially-designed style transfer fea-
+tures (Gatys et al., 2016), our REVISE procedure has to
+alter the underlying semantics in order to nontrivially in-
+crease the expected outcome of the revised sentence under
+F . Nevertheless, we ﬁnd that many of the revised sentences
+look realistic and resemble text written by Shakespeare.
+Furthermore, these examples demonstrate how the proba-
+bilistic constraint in our REVISE optimization prevents the
+revision-generating latent Z conﬁgurations from straying
+into regions where decodings begin to look very unnatural.
+
+Discussion
+
+This paper presents an efﬁcient method for optimizing dis-
+crete sequences when both the objective and constraints are
+stochastically estimated. Leveraging a latent-variable gen-
+erative model, our procedure does not require any examples
+of revisions in order to propose natural-looking sequences
+with improved outcomes. These characteristics are proven
+to hold with high probability in a theoretical analysis of
+VAE behavior under our controlled latent-variable manip-
+ulations. However, ensuring semantic similarity in text-
+revisions remains difﬁcult for this approach, and might be
+improved via superior VAE models or utilizing additional
+similarity labels to shape the latent geometry.
+
+Sequence to Better Sequence: Continuous Revision of Combinatorial Structures
+
+References
+
+Blei, D. M., Kucukelbir, A., and McAuliffe, J. D. Varia-
+tional inference: A review for statisticians. Journal of
+the American Statistical Association, 2017.
+
+Bowman, S. R., Vilnis, L., Vinyals, O., Dai, A. M., Joze-
+fowicz, R., and Bengio, S. Generating sentences from a
+continuous space. Conference on Computational Natu-
+ral Language Learning, 2016.
+
+Cho, K., van Merrienboer, B., Gulcehre, C., Bahdanau,
+D., Bougares, F., Schwenk, H., and Bengio, Y. Learn-
+ing phrase representations using rnn encoder-decoder for
+statistical machine translation. Empirical Methods on
+Natural Language Processing, 2014.
+
+Karpathy, A. The unreasonable effectiveness of recurrent
+neural networks. Andrej Karpathy blog, 2015. URL
+karpathy.github.io.
+
+Kingma, D. P. and Welling, M. Auto-encoding variational
+bayes. International Conference on Learning Represen-
+tations, 2014.
+
+Kiros, R., Zhu, Y., Salakhutdinov, R., Zemel, R. S., Tor-
+ralba, A., Urtasun, R., and Fidler, S. Skip-thought vec-
+tors. Advances in Neural Information Processing Sys-
+tems, 2015.
+
+McAuley, J., Leskovec, J., and Jurafsky, D. Learning at-
+titudes and attributes from multi-aspect reviews. IEEE
+International Conference on Data Mining, 2012.
+
+Eck, D. and Schmidhuber, J. A ﬁrst look at music compo-
+sition using lstm recurrent neural networks. IDSIA Tech-
+nical Report, 2002.
+
+Mikolov, T., Karaﬁat, M., Burget, L., Cernocky, J., and
+Khudanpur, S. Recurrent neural network based language
+model. Interspeech, 2010.
+
+Erhan, D., Bengio, Y., Courville, A., Manzagol, P., Vin-
+cent, P., and Bengio, S. Why does unsupervised pre-
+training help deep learning? Journal of Machine Learn-
+ing Research, 11:625–660, 2010.
+
+Gatys, L. A., Ecker, A. S., and Bethge, M.
+
+Image style
+transfer using convolutional neural networks. Computer
+Vision and Pattern Recognition, 2016.
+
+G´omez-Bombarelli, R., Duvenaud, D., Hern´andez-Lobato,
+J. M., Aguilera-Iparraguirre, J.,
+, Hirzel, T., Adams,
+R. P., and Aspuru-Guzik, A. Automatic chemical de-
+sign using a data-driven continuous representation of
+molecules. arXiv:1610.02415, 2016.
+
+Graves, A. Generating sequences with recurrent neural net-
+
+works. arXiv:1308.0850, 2013.
+
+Mueller, J. and Thyagarajan, A. Siamese recurrent archi-
+tectures for learning sentence similarity. Proc. AAAI
+Conference on Artiﬁcial Intelligence, 2016.
+
+Mueller, J., Reshef, D. N., Du, G., and Jaakkola, T. Learn-
+ing optimal interventions. Artiﬁcial Intelligence and
+Statistics, 2017.
+
+Nguyen, A., Yosinski, J., and Clune, J. Deep neural net-
+works are easily fooled: High conﬁdence predictions for
+unrecognizable images. Computer Vision and Pattern
+Recognition, 2015.
+
+Nguyen, A., Dosovitskiy, A., Yosinski, J., Brox, T., and
+Clune, J. Synthesizing the preferred inputs for neurons in
+neural networks via deep generator networks. Advances
+in Neural Information Processing Systems, 2016.
+
+Gupta, P., Banchs, R. E., and Rosso, P. Squeezing bot-
+tlenecks: Exploring the limits of autoencoder semantic
+representation capabilities. Neurocomputing, 175:1001–
+1008, 2016.
+
+Simonyan, K., Vedaldi, A., and Zisserman, A. Deep inside
+convolutional networks: Visualising image classiﬁcation
+models and saliency maps. ICLR Workshop Proceedings,
+2014.
+
+Higgins, I., Matthey, L., Glorot, X., Pal, A., Uria, B.,
+Blundell, C., Mohamed, S., and Lerchner, A. Early vi-
+sual concept learning with unsupervised deep learning.
+arXiv:1606.05579, 2016.
+
+Hoffman, M. D. and Johnson, M. J. Elbo surgery: yet
+another way to carve up the variational evidence lower
+bound. NIPS Workshop on Advances in Approximate
+Bayesian Inference, 2016.
+
+Hutto, C.J. and Gilbert, E. Vader: A parsimonious rule-
+based model for sentiment analysis of social media text.
+Eighth International Conference on Weblogs and Social
+Media, 2014.
+
+Sutskever, I., Vinyals, O., and Le, Q.V. Sequence to se-
+quence learning with neural networks. Advances in Neu-
+ral Information Processing Systems, 2014.
+
+Wiseman, S. and Rush, A. M. Sequence-to-sequence learn-
+ing as beam-search optimization. Empirical Methods in
+Natural Language Processing, 2016.
+
+Zaefferer, M., Stork, J., Friese, M., Fischbach, A., Naujoks,
+B., and Bartz-Beielstein, T. Efﬁcient global optimization
+for combinatorial problems. Genetic and Evolutionary
+Computation Conference, 2014.
+
+

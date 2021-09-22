@@ -1,0 +1,1310 @@
+Stochastic Gradient Monomial Gamma Sampler
+
+Yizhe Zhang 1 Changyou Chen 1 Zhe Gan 1 Ricardo Henao 1 Lawrence Carin 1
+
+Abstract
+
+Recent advances in stochastic gradient
+tech-
+niques have made it possible to estimate poste-
+rior distributions from large datasets via Markov
+Chain Monte Carlo (MCMC). However, when
+the target posterior is multimodal, mixing per-
+formance is often poor. This results in inade-
+quate exploration of the posterior distribution. A
+framework is proposed to improve the sampling
+efﬁciency of stochastic gradient MCMC, based
+on Hamiltonian Monte Carlo. A generalized ki-
+netic function is leveraged, delivering superior
+stationary mixing, especially for multimodal dis-
+tributions. Techniques are also discussed to over-
+come the practical issues introduced by this gen-
+eralization.
+It is shown that the proposed ap-
+proach is better at exploring complex multimodal
+posterior distributions, as demonstrated on mul-
+tiple applications and in comparison with other
+stochastic gradient MCMC methods.
+
+1. Introduction
+
+The development of increasingly sophisticated Bayesian
+models in modern machine learning has accentuated the
+need for efﬁcient generation of asymptotically exact sam-
+ples from complex posterior distributions. Markov Chain
+Monte Carlo (MCMC) is an important framework for draw-
+ing samples from a target density function. MCMC sam-
+pling typically aims to estimate a desired expectation in
+terms of a collection of samples, avoiding the need to
+compute intractable integrals. The Metropolis algorithm
+(Metropolis et al., 1953) was originally proposed to tackle
+this task. Despite great success, this method is based
+on random walk exploration, which often leads to inefﬁ-
+cient posterior sampling (with a ﬁnite number of samples).
+Alternatively, exploration of a target distribution can be
+guided using proposals inspired by Hamiltonian dynam-
+
+1Duke University, Durham, NC, 27708. Correspondence to:
+
+Yizhe Zhang <yizhe.zhang@duke.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+ics, leading to Hamiltonian Monte Carlo (HMC) (Duane
+et al., 1987). Aided by gradient information, HMC is able
+to move efﬁciently in parameter space, thus greatly improv-
+ing exploration. However, the emergence of big datasets
+poses a new challenge for HMC, as evaluation of gradients
+on whole datasets becomes computationally demanding, if
+not prohibitive, in many cases.
+
+To scale HMC methods to big data, recent advances in
+Stochastic Gradient MCMC (SG-MCMC) have subsam-
+pled the dataset into minibatches in each iteration, to de-
+crease computational burden (Welling & Teh, 2011; Chen
+et al., 2014; Ding et al., 2014; Ma et al., 2015). Stochas-
+tic Gradient Langevin Dynamics (SGLD) (Welling & Teh,
+2011) was ﬁrst proposed to generate approximate sam-
+ples from a posterior distribution using minibatches. Since
+then, research has focused on leveraging the minibatch idea
+while also providing theoretical guarantees. For instance,
+Teh et al. (2014) showed that by appropriately injecting
+noise while using a stepsize-decay scheme, SGLD is able to
+converge asymptotically to the desired posterior. Stochas-
+tic Gradient Hamiltonian Monte Carlo (SGHMC) (Chen
+et al., 2014) extended SGLD with auxiliary momentum
+variables, akin to HMC, and introduced a friction term to
+counteract the stochastic noise due to subsampling. How-
+ever, exact estimation of such noise is needed to guaran-
+tee a correct SGHMC sampler. To alleviate this issue, the
+Stochastic Gradient Nos´e-Hoover Thermostat (SGNHT)
+(Ding et al., 2014) algorithm introduced so-called thermo-
+stat variables to adaptively estimate stochastic noise via a
+thermal-equilibrium condition.
+
+One standing challenge of SG-MCMC methods is inefﬁ-
+ciency when exploring complex multimodal distributions.
+This limitation is commonly found in latent variable mod-
+els with a multi-layer structure.
+Inefﬁciency is mani-
+fested because sampling algorithms have difﬁculties mov-
+ing across modes, while traveling along the surface of the
+distribution. As a result, it may take a very large number of
+iterations (posterior samples) to cover more than one mode,
+greatly limiting scalability.
+
+We investigate strategies for improving mixing in SG-
+MCMC. We propose the Stochastic Gradient Monomial
+Gamma Thermostat (SGMGT), building upon the Mono-
+mial Gamma Sampler (MGS) proposed by Zhang et al.
+
+Stochastic Gradient Monomial Gamma Sampler
+
+(2016). They showed that a generalized kinetic func-
+tion typically improves the stationary mixing efﬁciency of
+HMC, especially when the target distribution has multi-
+ple modes. However, this advantage comes with numeri-
+cal difﬁculties, and convergence problems due to poor ini-
+tialization. By deﬁning a smooth version of this general-
+ized kinetic function, we can leverage its mixing efﬁciency,
+while satisfying the required conditions for stationarity of
+the corresponding stochastic process, as well as alleviat-
+ing numerical difﬁculties arising from differentiability is-
+sues. To ameliorate the convergence issues, we further in-
+troduce i) a sampler with an underlying elliptic stochastic
+differential equation system and ii) a resampling scheme
+for auxiliary variables (momentum and thermostats) with
+theoretical guarantees. The result is an elegant framework
+to improve stationary mixing performance on existing SG-
+MCMC algorithms augmented with auxiliary variables.
+
+2. Preliminaries
+
+Hamiltonian Monte Carlo Suppose we are interested
+in sampling from a posterior distribution represented as
+π(θ|X) ∝ p(X|θ)p(θ) = exp[−U (θ|X)], where θ de-
+notes model parameters and X = {x1, . . . , xN } repre-
+sents N data points. Assuming i.i.d. data, the potential
+energy function U (θ|X) denotes the negative log poste-
+rior density, up to a normalizing constant, i.e., U (θ|X) =
+− (cid:80)N
+i=1 log p(xi|θ) − log p(θ). For simplicity, in the fol-
+lowing we omit the conditioning of X in U (θ|X), and
+write U (θ). In HMC, the posterior density is augmented
+with an auxiliary momentum random variable p; p is in-
+dependent of θ, and typically has a marginal Gaussian dis-
+tribution with zero-mean and covariance matrix M . The
+joint distribution is written as p(θ, p) ∝ exp[−H(θ, p)] (cid:44)
+exp[−U (θ) − K(p)], where H(θ, p) is the total energy
+(or Hamiltonian) and K(p) = 1
+2 pT M −1p is the standard
+(Gaussian) kinetic energy function, and M is the mass ma-
+trix. HMC leverages Hamiltonian dynamics, driven by the
+following differential equations
+
+dθ = M −1pdt ,
+
+dp = −∇U (θ)dt ,
+
+(1)
+
+where t is the system’s time index.
+
+The total Hamiltonian is preserved under perfect simula-
+tion, i.e., by solving (1) exactly. However, closed-form
+solutions for p and θ are often intractable, thus numerical
+integrators such as the leap-frog method are utilized to gen-
+erate approximate samples of θ (Neal, 2011). This leads to
+the following update scheme:
+
+pt+1/2 = pt − (cid:15)
+
+2 ∇U (θt) ,
+
+θt+1 = θt + (cid:15)M −1pt+1/2 ,
+pt+1 = pt+1/2 − (cid:15)
+
+2 ∇U (θt+1) ,
+
+where (cid:15) is the stepsize.
+
+Monomial Gamma HMC In the Monomial Gamma
+Hamiltonian Monte Carlo (MGHMC) (Zhang et al., 2016)
+algorithm, the following generalized kinetic function is
+employed as a substitute for the Gaussian kinetics of stan-
+dard HMC:
+
+K(p) = (|p|
+
+1
+
+2a )T M −1|p|
+
+1
+2a ,
+
+(3)
+
+where |p| 1
+2a denotes the element-wise power operation, a
+is the monomial parameter. Note that when a = 1/2, (3)
+recovers the standard (Gaussian) kinetics. For general a,
+the update equations are identical to (2), except for
+
+θt+1 = θt + (cid:15)∇K(pt+1/2) .
+
+(4)
+
+Zhang et al. (2016) proved in the univariate case that
+MGHMC can yield better mixing performance when the
+sampler reaches its stationary distribution, under perfect
+dynamic simulation, i.e., inﬁnitesimal stepsize in the limit
+and adequate (ﬁnite) simulation stepsize. Additionally, it
+was shown that for multimodal distributions sampled via
+MGMHC, the probability of getting trapped in a single
+mode goes to zero, as a → ∞.
+
+However, these theoretical advantages are accompanied by
+two practical issues: i) the numerical difﬁculties accentuate
+dramatically as a increases, due to the lack of differentia-
+bility of K(p) for a ≥ 1, and ii) convergence is slow with
+poor initialization. For example, in (3) and (4), if θt is far
+away from the mode(s) of the distribution, ∇U (θt) will be
+large, causing the updated momentum pt+1/2 to blow up.
+This renders the change of θ, i.e., ∇K(pt+1/2), to be arbi-
+trarily small for large a, thus slowing convergence.
+
+Stochastic Gradient MCMC SG-MCMC is desirable
+when the dataset, X, is too large to evaluate the potential
+U (θ) using all N samples. The idea behind SG-MCMC
+is to replace U (θ) with an unbiased stochastic likelihood,
+˜U (θ), evaluated from a subset of data (termed a minibatch)
+
+˜U (θ) = − N
+N (cid:48)
+
+(cid:80)N (cid:48)
+
+i=1 log p(xτi|θ) − log p(θ) ,
+
+(5)
+
+where {τ1, · · · , τN (cid:48)} is a random subset of {1, 2, · · · , N }
+of size N (cid:48) (cid:28) N . SG-MCMC algorithms are typically
+driven by a continuous-time Markov stochastic process of
+the form (Chen et al., 2015)
+
+dΓ = V (Γ)dt + D(Γ)dW ,
+
+(6)
+
+where Γ denotes the parameters of the augmented sys-
+tem, e.g., p and θ, V (·) and D(·) are referred as drift and
+diffusion vectors, respectively, and W denotes a standard
+Wiener process.
+
+(2)
+
+In SGHMC (Chen et al., 2014), the resulting stochastic dy-
+namic process is governed by the following Stochastic Dif-
+
+Stochastic Gradient Monomial Gamma Sampler
+
+ferential Equations (SDEs) (with M = I):
+
+dθ = pdt ,
+
+dp = −[∇ ˜U (θ) + Ap]dt +
+
+2(AI − ˆB(θ))dW ,
+
+(cid:113)
+
+(7)
+
+where Γ = {θ, p}, V (Γ) is a function of {p, ∇θ ˜U , A}, and
+D(Γ) is a function of {A, ˆB(θ)}. ∇ ˜U (θ) is modeled as
+∇ ˜U (θ) = ∇U (θ) + (cid:112)2B(θ)ν, where ν ∼ N (0, 1) and h
+is the discretization stepsize. ˆB(θ) is an estimator of B(θ),
+A is a user-speciﬁed diffusion factor and I is the identity
+matrix. Chen et al. (2014) set ˆB(θ) = 0 for simplicity. The
+reasoning is that the injected noise N (0, 2Ah) will dom-
+inate as h → 0 (A remains as a constant), whereas B(θ)
+goes to zero. Unfortunately, the covariance function, B(θ),
+of the stochastic noise, ν, is difﬁcult to estimate in practice.
+
+Recently, SGNHT (Ding et al., 2014) considered incorpo-
+rating additional auxiliary variables (thermostats). The re-
+sulting SDEs correspond to
+
+dp = −[∇ ˜U (θ) + ξ (cid:12) p]dt +
+dθ = pdt , dξ = (p (cid:12) p − 1)dt ,
+
+√
+
+2AIdW ,
+
+(8)
+
+(9)
+
+where (cid:12) represents the Hadamard (element-wise) product
+and ξ are thermostat variables. Note that the diffusion fac-
+tor, A, is decoupled in (8), thus ξ can adaptively ﬁt to the
+unknown noise from the stochastic gradient ∇ ˜U (θ).
+
+3. Stochastic Gradient Monomial Gamma
+
+Sampler
+
+We now consider i) a more efﬁcient (generalized) kinetic
+function, ii) adapting the proposed kinetics to satisfy sta-
+tionary requirements and alleviate numerical difﬁculties,
+iii) incorporating an additional ﬁrst-order stochastic pro-
+cess to (8) and iv) stochastic resampling of the momentum
+and thermostats to lessen convergence issues.
+
+Generalized kinetics The statistical physics literature
+traditionally considers a quadratic form of the kinetics
+function, and a Gaussian distribution for the thermostats
+in (8), when analyzing the dynamic system of a canonical
+ensemble (Tuckerman, 2010).
+Inspired by this, one typ-
+ical assumption in previous SG-MCMC work is that the
+marginal distribution for the momentum and thermostat is
+Gaussian (Ding et al., 2014; Li et al., 2016). However, this
+assumption, while convenient, does not necessarily guaran-
+tee an optimal sampler.
+
+In recent work, Lu et al. (2016) extended the standard
+(Newtonian) kinetics to a more general form inspired by
+relativity theory. By bounding the momentum, their rela-
+tivistic Monte Carlo can lessen the problem associated with
+large potential gradients, ∇U (θt), thus resulting in a more
+robust alternative to standard HMC. Further, Zhang et al.
+
+(2016) demonstrated that adopting non-Gaussian kinetics
+delivers better mixing and reduces sampling autocorrela-
+tion, especially for cases where the posterior distribution
+has multiple modes.
+
+These ideas motivate a more general framework to charac-
+terize SG-MCMC, with potentially non-Gaussian kinetics
+and thermostats. As a relaxation of SGNHT (Ding et al.,
+2014; Ma et al., 2015), we consider a Hamiltonian system
+deﬁned in a more general form
+
+H = K(p) + U (θ) + F (ξ) ,
+
+(10)
+
+where K(·) and F (·) are any valid potential functions, in-
+herently implying that exp[−K(·)] and exp[−F (·)], deﬁne
+valid probability density functions.
+
+We ﬁrst consider the SDEs of SGNHT with generalized ki-
+netics K(p). The system can be obtained by generalizing
+K(p) = pT p/2 (with identity mass matrix M for simplic-
+ity) in (8) with arbitrary K(p), thus
+
+dθ = ∇K(p)dt ,
+dp = −[∇ ˜U (θ) + ξ (cid:12) ∇K(p)]dt +
+dξ = (∇K(p) (cid:12) ∇K(p) − ∇2K(p))dt .
+
+√
+
+2AIdW ,
+
+(11)
+
+However, if we set K(p) as in (3) with a ≥ 1, the dynamics
+governing the SDEs in (11) will often fail to converge. This
+is because the sufﬁcient condition to guarantee that the Itˆo
+process governed by the SDEs in (11) converge to a sta-
+tionary distribution generally requires the Fokker-Planck
+equation to hold (Risken, 1984). Further, the existence and
+uniqueness of the solutions to the Fokker-Planck equation
+require Lipschitz continuity of drift and diffusion vectors
+in (6) (Bris & Lions, 2008). Unfortunately, this is not the
+case for the drift vectors in (11) when a ≥ 1, as ∇K(p) is
+non-differentiable at the origin, i.e., p = 0.
+
+Softened kinetics The above limitation can be avoided
+by using a softened kinetic function Kc(p). However, to
+keep the performance beneﬁts from the original stiff kinet-
+ics, we must ensure that Kc(p) has the same tail behavior.
+We propose that for a = {1, 2}, the softened kinetics are
+(for clarity we consider 1D case, however higher dimen-
+sions still apply)
+
+(cid:40) −p + 2/c log(1 + ecp), a = 1
+
+Kc(p) =
+
+|p|1/2 +
+
+4
+c(1+ec|p|1/2 )
+
+,
+
+a = 2 ,
+
+(12)
+
+where c > 0 is a softening parameter. Note that Kc(p) is
+(inﬁnitely) differentiable for any c and asymptotically ap-
+proaches the stiff kinetics as c → ∞. A comparison be-
+tween stiff kinetics, K(p), and softened kinetics Kc(p) is
+shown in Figure 1, for different values of c. Discussion and
+formulation of the softened kinetics for arbitrary a (and M )
+are provided in the Supplementary Material (SM).
+
+Stochastic Gradient Monomial Gamma Sampler
+
+rior samples from the invariant joint distribution p(Γ) ∝
+exp[−H(Γ)], yielding the desired marginal distribution
+w.r.t. θ as p(θ) ∝ exp[−U (θ)].
+Theorem 1. The stochastic process governed by (13) con-
+verges to a stationary distribution p(Γ) ∝ exp[−H(Γ)],
+where H(Γ) is as deﬁned in (10), and Γ = {θ, p, ξ}.
+
+The reasoning behind increasing stochasticity in the SDEs
+is two-fold. First, the additional Langevin dynamics are
+crucial to SG-MCMC with generalized kinetics for large
+a. For instance, for σθ = 0, the update for θ from (11)
+is θt+1 = θt + ∇K(pt)h. When a > 1 and |pt| is large,
+∇K(p) = 1
+a |p|1/a−1 will be close to zero, thus θt+1 (the
+next sample) will be close to θt, i.e., the sampler moves
+arbitrarily slow. As discussed by Zhang et al. (2016), this
+can happen when θ moves to a region where the gradient
+∇U (θ) takes a large absolute value, e.g., near the low-
+density regions in a light-tailed distribution. Fortunately,
+the additional Langevin dynamics in (13), −σθ∇ ˜U (θ)dt +
+√
+2σθdW , compensate for the weak updating signal from
+∇K(p), by an immediate gradient signal ∇ ˜U (θ). Addi-
+tionally, when ˜U (θ) becomes small, ∇K(p) will become
+large. As a result, these two updating signals ∇K(p) and
+∇ ˜U (θ) compensate each other, thereby delivering a stable
+updating scheme. Likewise, the immediate gradient ∇F (ξ)
+in (13) can provide complementary updating signal for the
+thermostat variables, ξ, to offset the weak deterministic up-
+date ∇Kc(p) (cid:12) ∇Kc(p) − ∇2Kc(p), when p is large.
+
+Second, (13) has noise components on all parameters,
+{θ, p, ξ}, making the corresponding SDEs elliptic. From a
+theoretical perspective, ellipticity/hypoellipticity are neces-
+sary conditions to guarantee existence of bounded solutions
+for a particular partial differential equation related to the
+diffusion’s inﬁnitesimal generator, which lies in the core of
+most recent SG-MCMC theory (Teh et al., 2014; Vollmer
+et al., 2016; Chen et al., 2015). Ellipticity is characterized
+by a noise process (Brownian motion) covering all compo-
+nents of the system, via the diffusion, D(Γ), in (6). This
+means D(Γ) is block diagonal, thus a positive deﬁnite ma-
+trix (Mattingly et al., 2010). In a typical hypoelliptic case,
+the noise process is imposed on a subset of Γ. However,
+hypoellipticity also requires the noise to be able to spread
+through the system via the drift term, V (Γ), which may not
+be true for general V (Γ). For instance, in (8), Γ = {θ, p, ξ}
+2AI, 0}, i.e.,
+and D(Γ) is block diagonal with entries {0,
+θ and ξ are not explicitly inﬂuenced by the noise process,
+W , thus hypoellipticity cannot be guaranteed.
+
+√
+
+To the authors’ knowledge, for existing SG-MCMC algo-
+rithms, only SGLD where dθ = −∇θ ˜U (θ)dt+
+2dW , sat-
+isﬁes the ellipticity property, while other algorithms such
+as SGHMC and SGNHT assume hypoellipticity, thus their
+corresponding D(Γ) are not positive deﬁnite.
+
+√
+
+One caveat of (13) is that if σθ and σξ are too large, the up-
+
+Figure 1. Softened vs. stiff kinetics (1D). Left: a = 1. Right:
+a = 2.
+
+To generate samples of the momentum variable, p, from
+the density with softened kinetics, which is proportional
+to exp[−Kc(p)], we use a coordinate-wise rejection sam-
+pling, i.e., the proposed pd for the d-th dimension is re-
+jected with probability 1 − exp[K(pd) − Kc(pd)].
+
+In practice, setting c to a relatively large value would still
+make the gradient ∇Kc(p) ill-posed close to p = 0, thus
+causing high integration error when simulating the Hamil-
+tonian dynamics. Conversely, setting c to a small value will
+cause a high approximation error w.r.t. the original K(p),
+thus resulting in a less efﬁcient sampler. Consequently, c
+has to be determined empirically as a trade-off between in-
+tegration and approximation errors.
+
+Additional First Order Dynamics
+Inspired by Ma et al.
+(2015), we consider adding Brownian motion to θ and ξ
+in (8), with variances σθ and σξ, respectively, while main-
+taining the stochastic process (asymptotically) converging
+to the correct marginal distribution of θ. Speciﬁcally, we
+consider the following SDEs:
+
+√
+
+2σθdW ,
+
+dθ = − σθ∇ ˜U (θ)dt + ∇Kc(p)dt +
+dp = − (σp + γ∇F (ξ)) (cid:12) ∇Kc(p)dt
+− ∇ ˜U (θ)dt + (cid:112)2σpdW ,
+
+dξ = γ (cid:2)∇Kc(p) (cid:12) ∇Kc(p) − ∇2Kc(p)(cid:3) dt
+
+− σξ∇F (ξ)dt + (cid:112)2σξdW .
+
+(13)
+
+√
+
+The variances {σθ, σp, σξ} control
+the Brownian mo-
+tion for {θ, p, ξ}, respectively, and γ > 0 denotes a
+rescaling factor for the friction term of momentum up-
+dates. The additional terms −σθ∇ ˜U (θ)dt +
+2σθdW and
+−σξ∇F (ξ)dt + (cid:112)2σξdW can be understood as ﬁrst-order
+Langevin dynamics (Welling & Teh, 2011). The variance
+term, σθ, controls the contribution of ∇ ˜U (θ) to the update
+of θ w.r.t. ∇Kc(p). This is analogous to the hyperparam-
+eter balancing ∇ ˜U (θ) and p in the SGD-with-momentum
+algorithm (Rumelhart et al., 1988). Derivation details for
+∇Kc(p) and ∇2Kc(p) in (12), as well as other values of a,
+are provided in the SM.
+
+The following theorem, proven in the SM, shows that un-
+der regularity conditions, the SDEs in (13) lead to poste-
+
+-505momentum p0246Kinetic fcn valueK(p)=|p|Kc(p), c=1Kc(p), c=2Kc(p), c=3-505momentum p0123Kinetic fcn valueK(p)=|p|1/2Kc(p) c=1Kc(p) c=2Kc(p) c=3Stochastic Gradient Monomial Gamma Sampler
+
+At the burn-in stage, this momentum-accumulation/energy-
+drop cycle seen in Figure 2(bottom) via resampling mo-
+mentum can happen several times, until equilibrium is
+found. In practice, the resulting energy level is often much
+lower than initially, thereby delivering a more efﬁcient and
+accurate dynamic updating.
+
+The frequency of resampling from the marginal of the sta-
+tionary distribution can have a direct impact on the mixing
+performance. Setting the frequency too high will result in
+a random-walk behavior. Conversely, with a low frequency
+resampling, the random-walk behavior is suppressed at a
+cost of fewer jumps between trajectories associated with
+different energy levels. It is advisable to increase the re-
+sampling frequency if the sampler is initialized on low-
+density (e.g. light-tailed) region.
+
+The resampling step on p and ξ plays a role that is similar
+to adding a Langevin component to θ, in the sense that both
+improve convergence for a > 1. However, these two strate-
+gies (resampling and Langevin) are fundamentally differ-
+ent. We empirically observe that resampling is most helpful
+during burn-in, while the additional Langevin-style updates
+are more helpful with mixing during stationary sampling.
+
+SGMGT The speciﬁcations described above constitute
+an SG-MCMC method for the SDEs in (11), which we call
+Stochastic Gradient Monomial Gamma Thermostat (SG-
+MGT). We denote the SG-MCMC method with additional
+Brownian motion on θ and ξ in (13) as SGMGT-D (Diag-
+onal), i.e., with σθ > 0 and σξ > 0. The complete update
+scheme, with Euler integrator, for SGMGT is presented in
+the SM. Note that with a = 1/2, σθ = 0, σξ → 0, c → ∞,
+SGMGT-D recovers SGHMC as in Chen et al. (2014).
+Moreover, when a = 1/2, σθ = 0, c → ∞, it becomes
+SGNHT as in Ding et al. (2014).
+
+We note that SGMGT-D improves upon SGNHT in three
+respects: (i) we introduce generalized kinetics, which prov-
+ably yield lower autocorrelations than standard HMC, es-
+pecially in multimodal cases; (ii) the additional stochastic
+noise on thermostat variables yields more efﬁcient mixing;
+(iii) we use stochastic resampling to allow for faster in-
+terchange between different energy levels, thus alleviating
+sampling stickiness.
+
+To the authors’ knowledge, despite existing analysis for
+Langevin Monte Carlo (Bubeck et al., 2015; Dalalyan,
+2016), rigorous analysis and comparison of the mixing per-
+formance of general SG-MCMC is very difﬁcult, thus not
+yet established. Toward understanding the mixing perfor-
+mance of SGMGT-D, we argue that as the minibatch size
+increases, and the contribution of the diffusion in (6) de-
+creases, the SGMGT-D will approach MGHMC, in which
+case, a large a will result in high stationary mixing perfor-
+mance, especially when sampling multimodal distribution,
+
+Figure 2. Momentum resampling. Top: stochastic process with
+resampling helps sampler move quickly to a lower Hamiltonian
+contour. Bottom: resampling decreases energy step-wise during
+burn-in stage. Resampling of p occurs every 100 iterations.
+
+dates will be dominated by ﬁrst-order dynamics, thus los-
+ing the convergence beneﬁts from second-order dynamics
+(Chen et al., 2014). In practice, σθ and σξ are problem-
+speciﬁc, thus need to be tuned, e.g. , by cross-validation.
+
+Stochastic resampling When generating samples from
+the stochastic process in (13), we resample momentum
+and thermostats from their marginal distribution with a
+ﬁxed frequency, instead of every iteration from their con-
+ditionals. Since the momentum and thermostats are drawn
+from the independent marginals of stationary distribution
+p(Γ) ∝ exp[−H(Γ)], it can be shown that reconstructing
+the stochastic process with the solution of the SDEs will
+still leave the stochastic process invariant to the target sta-
+tionary distribution (Brunick et al., 2013).
+
+To simplify the discussion, consider a stochastic process of
+a particle {θ, p} as in (11) with ﬁxed ξ. As show in Fig-
+ure 2, suppose the initial value of θ is far from the maxi-
+mum a posteriori value. The dynamics governed by (11)
+will stochastically move along the Hamiltonian contour.
+The total Hamiltonian energy level is affected by the joint
+effect of the stochastic diffusion and momentum refraction
+(i.e., -ξpdt), which changes continuously over time.
+
+From previous discussions, moving on a high Hamiltonian
+contour when a > 1 is less efﬁcient because the absolute
+value of the momentum, |p|, will get increasingly large,
+slowing down the movement of θ. Resampling of momen-
+tum according to its marginal will enable the sampler to
+immediately move to a lower Hamiltonian energy level.
+
+-3-2-10123x-3-2-10123pHamiltonian contourVector field of dynamicHigher energyLower energyMarginal dist. of ptheta θ0200400600800100000.511.52#104Hamiltonian levelKinetic energy levelStochastic Gradient Monomial Gamma Sampler
+
+as theoretically shown by Zhang et al. (2016). Although
+our experiments support our intuition, a more formal theo-
+retical justiﬁcation is needed. We leave this as interesting
+future work.
+
+We observe empirically that when increasing the value of
+a, SGMGT-D may not always achieve superior mixing per-
+formance. One possible reason for this is a larger value
+of a induces “stiffer” behavior of exp[−K(p)] at p = 0,
+which typically requires a higher level of softening, thus
+higher rejection rates during the rejection sampling step.
+Also, when the dimensionality of p is higher, the rejection
+rate of the rejection sampling step increases (proportional
+to p). In such cases, the efﬁciency of the sampler decreases
+with large a. For these reasons, we limit our experiments
+to a = {1, 2}.
+
+We clearly have more hyperparameters than SGNHT. In
+practice, we ﬁx M = I, a = {1, 2}, and set the resam-
+pling frequency Tp = Tξ = 100, which provides robust
+performance. Thus, only two additional hyperparameters
+are employed (σθ and σξ) compared to SGNHT, and these
+parameters require further tuning. We use either validation
+or a hold-out set in our experiments.
+
+More accurate numerical integrators Using a ﬁrst-
+order Euler integrator to approximate the solution of the
+continuous-time SDEs in (13), leads to O(h) errors in the
+approximate samples (Chen et al., 2016). Alternatively,
+we can use the symmetric splitting scheme of Chen et al.
+(2016) to reduce the order of the approximate error to
+O(h2). Details of the splitting used in this work are pro-
+vided in the SM.
+
+Convergence properties The SGMGT framework, as an
+instance of SG-MCMC, enjoys the same convergence prop-
+erties of general SG-MCMC algorithms studied in Chen
+et al. (2015).
+It’s worth to mention that on challenging
+problems the posterior may not be densely sampled to yield
+ideal posterior computation, and the asymptotic theory is
+being used as a useful heuristic. Speciﬁcally, it is of in-
+terest to quantify how fast the sample average, ˆφT , con-
+verges to the true posterior average, ¯φ (cid:44) (cid:82) φ(θ)π(θ|X)dθ,
+for ˆφT (cid:44) 1
+t=1 φ(θt), where T is number of iterations.
+T
+Here we make the same assumptions of Chen et al. (2015),
+and further assume that a ﬁrst-order Euler integrator and a
+ﬁxed stepsize are used.
+Proposition 2. For the proposed SGMGT and SGMGT-D
+algorithms, if a ﬁxed stepsize h is used, we have:
+
+(cid:80)T
+
+Bias:
+
+MSE: E
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:12)
+E ˆφT − ¯φ
+(cid:12)
+(cid:12) = O (1/(T h) + h) ,
+(cid:17)2
+(cid:16) ˆφ − ¯φ
+
+= O (cid:0)1/(T h) + h2(cid:1) .
+
+This proposition indicates that with larger number of itera-
+
+Figure 3. Synthetic multimodal distribution. Left: empirical dis-
+tributions for different methods. Right: traceplot for each method.
+
+tions and smaller step sizes, smaller bias and MSE bounds
+can be achieved. We note that these bounds have simi-
+lar rates compared to other SG-MCMC algorithms such as
+SGLD, however, as we demonstrate below in the exper-
+iments, SGMGT and SGMGT-D usually converge faster
+than existing SG-MCMC methods.
+
+In addition, for stochastic resampling, we can extend
+Proposition 2 to the following complementary results:
+
+Lemma 1. Let πh be the stationary distribution of
+SGMGT-D. The stationary distribution of SGMGT-D with
+momentum resampling is the same as πh.
+Lemma 2. The optimal ﬁnite-time bias and MSE bounds
+for SGMGT-D with momentum replacement remain the
+same as SGMGT-D.
+
+Proofs of Lemma 1 and Lemma 2 are provided in the SM.
+The proposed SGMGT framework has a strong connection
+with second-order stochastic optimization methods, lead-
+ing to a sampling scheme with minibatches with similar
+mixing performance as slice sampling (Neal, 2003). We
+discuss the details of this in the SM.
+
+4. Experiments
+
+4.1. Multiple-well Synthetic Potential
+
+We ﬁrst evaluate the mixing efﬁciency of SGMGT and
+SGMGT-D for a synthetic problem, to generate samples
+from a complex multimodal distribution. The distribution
+is shown in Figure 3(left). See SM for the deﬁnition of
+its potential energy. The modes are almost isolated with a
+low-density region connecting each other. Consequently,
+traversing between modes is difﬁcult.
+In order to simu-
+late the noise of the gradient estimates, we set ∇ ˜U (θ) =
+∇U (θ) + N (0, 2B), similar to Ding et al. (2014), where
+B = 1.
+
+We compare SGNHT with SGMGT and SGMGT-D with
+monomial parameter a = 2 and ﬁx γ = 1. For all three
+algorithms, we try a number of hyperparameter settings,
+e.g., stepsize h, {σθ, σp, σξ}, and the soft parameter c, and
+present the best results in Figure 3. Standard SGNHT fails
+to escape from one of the modes of the distribution. For
+
+-202301234p(3)SGNHTSGMGTSGMGT-DOracle00.511.52#105-101SGNHT00.511.52#105-505SGMGT00.511.52Iterations#105-5053SGMGT-DStochastic Gradient Monomial Gamma Sampler
+
+Table 1. Average AUROC and median ESS. Dataset dimensional-
+ity is indicated in parenthesis after the name of each dataset.
+
+AUROC (D)
+SGNHT
+SGMGT(a=1)
+SGMGT-D(a=1)
+SGMGT(a=2)
+SGMGT-D(a=2)
+ESS (D)
+SGNHT
+SGMGT-D(a=1)
+SGMGT-D(a=2)
+
+A (15)
+0.89
+0.92
+0.95
+0.93
+0.95
+A (15)
+869
+3147
+2700
+
+G (25)
+0.75
+0.78
+0.86
+0.79
+0.90
+G (25)
+941
+2131
+1989
+
+H (14)
+0.90
+0.91
+0.95
+0.93
+0.95
+H (14)
+1911
+2448
+2768
+
+P(8)
+0.86
+0.86
+0.93
+0.88
+0.90
+P(8)
+2077
+4244
+3430
+
+R (7)
+0.95
+0.87
+0.98
+0.86
+0.97
+R (7)
+1761
+1494
+2265
+
+C (87)
+0.65
+0.70
+0.73
+0.62
+0.69
+C (87)
+1873
+3605
+2969
+
+SGMGT with a = 2, the generated samples reached 3
+modes. For SGMGT-D with a = 2, the sampler identi-
+ﬁed all 5 modes. In Figure 3(right), SGMGT-D adequately
+moves across different modes and yields rapid mixing per-
+formance, unlike SGMGT which exhibits stickier behavior.
+
+4.2. Bayesian Logistic Regression
+
+We evaluated the mixing efﬁciency and accuracy of SG-
+MGT and SGMGT-D using Bayesian logistic regression
+(BLR) on 6 real-world datasets from the UCI repository
+(Bache & Lichman, 2013): German credit (G), Australian
+credit (A), Pima Indian (P), Heart (H), Ripley (R) and Car-
+avan (C). The data dimensionality ranges from 7 to 87, and
+total observations vary between 250 to 5822. Gaussian pri-
+ors are imposed on the regression coefﬁcients. We set the
+minibatch size to 16. Other hyperparameters are provided
+in the SM. For each experiment, we draw 5000 iterations
+with 1000 burn-in samples.
+
+Results in terms of median Effective Sample Size (ESS)
+and prediction accuracies as Area Under Receiver Oper-
+ating Characteristic (AUROC) are summarized in Table 1.
+All the results are averages over 5 independent runs with
+random initialization. In general, SGMGT-D performs bet-
+ter than SGMGT. For higher-dimensional dataset Cavaran,
+the performance of a = 2 decreases signiﬁcantly, indicat-
+ing numerical difﬁculties. The performance gap between
+SGMGT and SGMGT-D with a = 1 or a = 2 is usually
+larger than the gap between SGNHT (a = 0.5). Presum-
+ably when a is greater than 1, SGMGT-D has better con-
+vergence.
+
+4.3. Latent Dirichlet Allocation
+
+We also test our methods on Latent Dirichlet Allocation
+(LDA) (Blei et al., 2003). Details of LDA and our im-
+plementation are provided in the SM. We use the ICML
+dataset (Chen et al., 2013), which contains 765 documents
+corresponding to abstracts of ICML proceedings from 2007
+to 2011. After stopword removal, we obtain a vocabulary
+size of 1918 and about 44K words. We use 80% of the doc-
+uments for training and the remaining 20% for testing. The
+number of topics is set to 30, resulting in 57,540 parame-
+ters. We use a symmetric Dirichlet prior with concentration
+
+Table 2. The test perplexity with varying stepsize.
+
+stepsize
+SGLD
+SGNHT
+SGMGT(a=1)
+SGMGT-D(a=1)
+SGMGT(a=2)
+SGMGT-D(a=2)
+
+0.04
+1058
+1104
+996
+987
+1024
+968
+
+0.05
+1054
+1144
+988
+983
+1029
+994
+
+0.06
+1058
+1039
+990
+996
+1030
+973
+
+0.07
+1067
+1024
+986
+996
+1013
+957
+
+0.08
+1037
+1043
+996
+992
+1030
+961
+
+0.09
+1048
+1067
+998
+1013
+1022
+954
+
+0.1
+1057
+1107
+997
+1029
+1043
+970
+
+β = 0.1. All experiments are based on 5000 MCMC sam-
+ples with 1000 burn-in rounds. We set the minibatch size to
+16. Other hyperparameter settings are provided in the SM.
+
+Table 2 shows the test perplexities for SGMGT and
+SGMGT-D for different stepsizes. For each method we
+highlight the best perplexity. The SGMGT-D with a = 2
+outperforms other methods, however SGMGT with a = 2
+fails to achieve a comparable result with SGMGT with
+a = 1, probably because a good initialization is hard to
+achieve for a high-dimensional distribution.
+
+4.4. Discriminative RBM
+
+We applied our SGMGT to the Discriminative Restricted
+Boltzmann Machine (DRBM)
+(Larochelle & Bengio,
+2008) on MNIST data. We choose DRBM instead of RBM
+because it provides explicit stochastic gradient formulas.
+
+We evaluated our methods empirically and compare them
+with SGNHT. We use one hidden layer with 500 units. For
+each method we performed 1500 iterations with 200 burn-
+in samples. The minibatch size is set to 100. Details of
+the hyperparameter settings for SGMGT and SGMGT-D
+are provided in the SM. As shown in Figure 4(right-most
+3 panels), we observe that SGMGT-D with a = 2 yields a
+superior mixing performance. For SGMGT-D with a = 2,
+the posterior samples demonstrated both rapid local mix-
+ing, and long-range movement. In contrast, SGLD seems
+trapped into a local mode after around 500 iterations.
+
+Figure 4(left) shows that SGMGT-D with a = 2 deliv-
+ers the fastest convergence with the highest test accuracy,
+0.976. The SGMGT-D improves over SGMGT, while per-
+formance of SGMGT-D seems to increase with a large
+value of a. We observed that the stochastic resampling
+played a crucial role for SGMGT, as removing the resam-
+pling step resulted in a large drop in testing performance
+and mixing efﬁciency.
+
+4.5. Recurrent Neural Network
+
+We test our framework on Recurrent Neural Networks
+(RNNs) for sequence modeling (Gan et al., 2017). We con-
+sider two tasks: (i) polyphonic music prediction; and (ii)
+word-level language modeling, detailed below. Additional
+details of the experiment are provided in the SM.
+
+Stochastic Gradient Monomial Gamma Sampler
+
+Figure 4. Experimental results for DRBM. Left: testing accuracies for SGLD, SGNHT, SGMGT and SGMGT-D. Middle-left through
+right: traceplots for SGLD, SGNHT and SGMGT-D with a = 2, respectively.
+
+Polyphonic music prediction We use four datasets:
+Piano-midi.de (Piano), Nottingham (Nott), MuseData
+(Muse) and JSB chorales (JSB) (Boulanger-Lewandowski
+et al., 2012). Each of these are represented as a collection
+of 88-dimensional binary sequences, that span the whole
+range of piano from A0 to C8.
+
+parable with other methods. For both datasets, we observe
+that SGMGT-D delivers fastest convergence. The best neg-
+ative log-likelihood is achieved by SGMGT-D a = 1. The
+difference between a = 1 and a = 2 is small, though
+SGMGT-D with a = 2 seems to decrease slightly faster
+after 20 epochs for PTB data.
+
+We use a one-layer LSTM (Hochreiter & Schmidhuber,
+1997) model, and set the number of hidden units to 200.
+The total number of parameters is around 200K. Each
+model is trained for 100 epochs. We perform early stop-
+ping, while selecting the stepsize and other hyperparame-
+ters by monitoring the performance on validation sets. Up-
+dates are performed using minibatches from one sequence.
+
+Language modeling The Penn Treebank (PTB) cor-
+pus (Marcus et al., 1993) is used for word-level language
+modeling. We adopt the standard split (929K training
+words, 73K validation words, and 82K test words). The
+vocabulary size is 10K. We train a two-layer LSTM model
+on this dataset. The total number of parameters is approxi-
+mately 6M. Each LSTM layer contains 200 units.
+
+Table 3. Test negative log-likelihood results on polyphonic music
+datasets and test perplexities on PTB using RNN.
+
+Algorithms
+SGLD
+SGNHT
+SGMGT (a=1)
+SGMGT (a=2)
+SGMGT-D (a=1)
+SGMGT-D (a=2)
+SGD
+RMSprop
+
+Piano Nott Muse
+10.83
+6.07
+11.37
+7.85
+4.24
+9.00
+8.42
+4.35
+7.90
+8.51
+4.64
+10.17
+3.33
+7.51
+7.11
+7.09
+3.35
+7.53
+10.08
+5.26
+11.13
+7.22
+3.48
+7.70
+
+JSB
+11.25
+9.27
+8.67
+8.84
+8.46
+8.43
+10.81
+8.52
+
+PTB
+127.47
+131.3
+120.6
+250.5
+113.8
+109.0
+120.44
+120.45
+
+Results are shown in Table 3. The best log-likelihood re-
+sults on the test set are achieved by using SGMGT-D with
+either a = 1 or a = 2 (depending on the dataset). To com-
+pare with optimization-based methods, we also include re-
+sults for SGD (Bottou, 2010) and RMSprop (Tieleman &
+Hinton, 2012). A more comprehensive comparison is pro-
+vided in the SM.
+
+Learning curves for Nott and PTB datasets are shown in
+Figure 5. We omit the SGLD results since they are not com-
+
+Figure 5. Learning curves of different SG-MCMC methods on se-
+quence modeling using RNN. Left: Nott. Right: Penn Treebank.
+
+We also observe that the SGMGT with a = 2 seems subop-
+timal compared with SGMGT with a = 1 and SGNHT. We
+hypothesize that numerical difﬁculties hinder the success
+of SGMGT with a = 2, especially in higher-dimensional
+cases, and without the additional Langevin components of
+SGMGT-D.
+
+5. Conclusions
+
+We improve upon existing SG-MCMC methods with sev-
+eral generalizations. We employed a more-general kinetic
+function, which we have shown to have better mixing ef-
+ﬁciency, especially for multimodal distributions. Since
+practical use of the generalized kinetics is limited by
+convergence issues during burn-in, we injected additional
+Langevin dynamics and incorporated a stochastic resam-
+pling step to obtain generalized SDEs that alleviate the
+convergence issues. Possible areas of future research in-
+clude designing an algorithm in a slice-sampling fashion,
+which maintains the invariant distribution by leveraging
+the connections between HMC and slice sampling (Zhang
+et al., 2016). In addition, it is desirable to design an al-
+gorithm that can adaptively choose the monomial parame-
+ter a, thereby achieving better mixing while automatically
+avoiding numerical difﬁculties.
+
+050010001500# of iterations0.80.850.90.951Testing accuracySGLDSGNHTSGMGT (a=1)SGMGT (a=2)SGMGT-D (a=1)SGMGT-D (a=2)050010001500# of iterations-0.6-0.4-0.20050010001500# of iterations-1-0.500.5050010001500# of Iterations-1-0.500.51050100Epochs345678910Negative Log-likelihoodNottSGNHTSGMGT (a=1)SGMGT (a=2)SGMGT-D (a=1)SGMGT-D (a=2)0204060Epochs100200300400500Negative Log-likelihoodPenn TreebankStochastic Gradient Monomial Gamma Sampler
+
+Acknowledgments
+
+This research was supported by ARO, DARPA, DOE,
+NGA, ONR and NSF.
+
+References
+
+repository, 2013.
+
+Bache, Kevin and Lichman, Moshe. UCI machine learning
+
+Betancourt, MJ.
+
+incompatibility of
+The fundamental
+Hamiltonian Monte Carlo and data subsampling. ArXiv,
+2015.
+
+Blei, David M., Ng, Andrew Y., and Jordan, Michael I.
+
+Latent Dirichlet allocation. JMLR, 3, 2003.
+
+Bottou, L´eon. Large-scale machine learning with stochas-
+
+tic gradient descent. In COMPSTAT, 2010.
+
+Boulanger-Lewandowski, Nicolas, Bengio, Yoshua, and
+Vincent, Pascal. Modeling temporal dependencies in
+high-dimensional sequences: Application to polyphonic
+music generation and transcription. In ICML, 2012.
+
+Bris, C Le and Lions, P-L. Existence and uniqueness of
+solutions to fokker–planck type equations with irregu-
+lar coefﬁcients. Communications in Partial Differential
+Equations, 33(7):1272–1317, 2008.
+
+Brunick, Gerard, Shreve, Steven, et al. Mimicking an itˆo
+process by a solution of a stochastic differential equa-
+tion. The Annals of Applied Probability, 23(4):1584–
+1628, 2013.
+
+Bubeck, Sebastien, Eldan, Ronen, and Lehec, Joseph.
+Finite-time analysis of projected langevin monte carlo.
+In NIPS, 2015.
+
+Chen, Changyou, Rao, Vinayak, Buntine, Wray, and
+Whye Teh, Yee. Dependent normalized random mea-
+sures. In ICML, 2013.
+
+Chen, Changyou, Ding, Nan, and Carin, Lawrence. On
+the convergence of stochastic gradient mcmc algorithms
+In NIPS, pp. 2278–2286,
+with high-order integrators.
+2015.
+
+Ding, Nan, Fang, Y, Babbush, R, Chen, C, Skeel, R. D, and
+Neven, H. Bayesian sampling using stochastic gradient
+thermostats. In NIPS, 2014.
+
+Duane, Simon, Kennedy, Anthony D, Pendleton, Brian J,
+and Roweth, Duncan. Hybrid Monte Carlo. Physics let-
+ters B, 195(2), 1987.
+
+DuBois, Christopher, Balan, Anoop Korattikara, Welling,
+Max, and Smyth, Padhraic. Approximate slice sampling
+for bayesian posterior inference. In AISTATS, pp. 185–
+193, 2014.
+
+Gan, Zhe, Li, Chunyuan, Chen, Changyou, Pu, Yunchen,
+Su, Qinliang, and Carin, Lawrence. Scalable bayesian
+learning of recurrent neural networks for language mod-
+eling. In ACL, 2017.
+
+Geyer, C. J. Markov chain monte carlo lecture notes, 2005.
+
+Hochreiter, Sepp and Schmidhuber, J¨urgen. Long short-
+
+term memory. Neural computation, 1997.
+
+Hwang, Chii-Ruey, Hwang-Ma, Shu-Yin, Sheu, Shuenn-
+Jyi, et al. Accelerating diffusions. The Annals of Applied
+Probability, 2005.
+
+Larochelle, H. and Bengio, Y. Classiﬁcation using discrim-
+inative restricted boltzmann machines. In ICML, 2008.
+
+Li, Chunyuan, Chen, Changyou, Fan, Kai, and Carin,
+Lawrence. High-order stochastic gradient thermostats
+for bayesian learning of deep models. In AAAI, 2016.
+
+Lu, Xiaoyu, Perrone, Valerio, Hasenclever, Leonard, Teh,
+Yee Whye, and Vollmer, Sebastian J. Relativistic monte
+carlo. arXiv, 2016.
+
+Ma, Yi-An, Chen, Tianqi, and Fox, Emily. A complete
+recipe for stochastic gradient mcmc. In NIPS, pp. 2917–
+2925, 2015.
+
+Marcus, Mitchell P, Marcinkiewicz, Mary Ann, and San-
+torini, Beatrice. Building a large annotated corpus of
+english: The penn treebank. Computational linguistics,
+1993.
+
+Chen, Changyou, Carlson, David, Gan, Zhe, Li, Chunyuan,
+and Carin, Lawrence. Bridging the gap between stochas-
+tic gradient mcmc and stochastic optimization. In AIS-
+TATS, 2016.
+
+Mattingly, J. C., Stuart, A. M., and Tretyakov, M. V. Con-
+struction of numerical time-average and stationary mea-
+sures via Poisson equations. SIAM J. NUMER. ANAL.,
+48(2):552–577, 2010.
+
+Chen, Tianqi, Fox, Emily B, and Guestrin, Carlos. Stochas-
+
+tic gradient hamiltonian monte carlo. ArXiv, 2014.
+
+Dalalyan, Arnak S. Theoretical guarantees for approximate
+sampling from smooth and log-concave densities. Jour-
+nal of the Royal Statistical Society: Series B (Statistical
+Methodology), 2016.
+
+Metropolis, Nicholas, Rosenbluth, Arianna W, Rosenbluth,
+Marshall N, Teller, Augusta H, and Teller, Edward.
+Equation of state calculations by fast computing ma-
+chines. The journal of chemical physics, 21(6), 1953.
+
+Neal, Radford M. Slice sampling. Annals of statistics,
+
+2003.
+
+Stochastic Gradient Monomial Gamma Sampler
+
+Neal, Radford M. MCMC using Hamiltonian dynamics.
+
+Handbook of Markov Chain Monte Carlo, 2, 2011.
+
+Risken, Hannes. Fokker-planck equation. In The Fokker-
+
+Planck Equation, pp. 63–95. Springer, 1984.
+
+Rumelhart, David E, Hinton, Geoffrey E, and Williams,
+Ronald J. Learning representations by back-propagating
+errors. Cognitive modeling, 5(3):1, 1988.
+
+Teh, Yee Whye, Thi´ery, Alexandre, and Vollmer, Sebas-
+tian. Consistency and ﬂuctuations for stochastic gradient
+langevin dynamics. ArXiv, 2014.
+
+Tieleman, Tijmen and Hinton, Geoffrey. Lecture 6.5-
+rmsprop: Divide the gradient by a running average of
+its recent magnitude. COURSERA: Neural networks for
+machine learning, 2012.
+
+Tuckerman, Mark.
+
+Statistical mechanics:
+
+theory and
+
+molecular simulation. Oxford University Press, 2010.
+
+Vollmer, Sebastian J, Zygalakis, Konstantinos C, and Teh,
+Yee Whye. Exploration of the (non-) asymptotic bias
+and variance of stochastic gradient langevin dynamics.
+Journal of Machine Learning Research, 17(159):1–48,
+2016.
+
+Welling, Max and Teh, Yee W. Bayesian learning via
+stochastic gradient langevin dynamics. In ICML, 2011.
+
+Zhang, Yizhe, Wang, Xiangyu, Chen, Changyou, Henao,
+Ricardo, Fan, Kai, and Carin, Lawrence. Towards uni-
+In
+fying hamiltonian monte carlo and slice sampling.
+NIPS, 2016.
+
+

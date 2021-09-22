@@ -1,0 +1,2837 @@
+Model-Independent Online Learning for Inﬂuence Maximization
+
+Sharan Vaswani 1 Branislav Kveton 2 Zheng Wen 2 Mohammad Ghavamzadeh 3 Laks V.S. Lakshmanan 1
+Mark Schmidt 1
+
+Abstract
+
+We consider inﬂuence maximization (IM) in so-
+cial networks, which is the problem of maximiz-
+ing the number of users that become aware of a
+product by selecting a set of “seed” users to ex-
+pose the product to. While prior work assumes
+a known model of information diffusion, we pro-
+pose a novel parametrization that not only makes
+our framework agnostic to the underlying diffu-
+sion model, but also statistically efﬁcient to learn
+from data. We give a corresponding monotone,
+submodular surrogate function, and show that it
+is a good approximation to the original IM ob-
+jective. We also consider the case of a new mar-
+keter looking to exploit an existing social net-
+work, while simultaneously learning the factors
+governing information propagation. For this, we
+propose a pairwise-inﬂuence semi-bandit feed-
+back model and develop a LinUCB-based ban-
+dit algorithm. Our model-independent analysis
+shows that our regret bound has a better (as com-
+pared to previous work) dependence on the size
+of the network. Experimental evaluation sug-
+gests that our framework is robust to the under-
+lying diffusion model and can efﬁciently learn a
+near-optimal solution.
+
+1. Introduction
+The aim of viral marketing is to spread awareness about
+a speciﬁc product via word-of-mouth information propa-
+gation over a social network. More precisely, marketers
+(agents) aim to select a ﬁxed number of inﬂuential users
+(called seeds) and provide them with free products or dis-
+counts. They assume that these users will inﬂuence their
+neighbours and, transitively, other users in the social net-
+work to adopt the product. This will thus result in infor-
+mation propagating across the network as more users adopt
+or become aware of the product. The marketer has a bud-
+get on the number of free products and must choose seeds
+
+1University of British Columbia 2Adobe Research 3DeepMind
+(The work was done when the author was with Adobe Research).
+Correspondence to: Sharan Vaswani <sharanv@cs.ubc.ca>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+in order to maximize the inﬂuence spread which is the ex-
+pected number of users that become aware of the product.
+This problem is referred to as inﬂuence maximization (IM).
+
+Existing solutions to the IM problem require as input, the
+underlying diffusion model which describes how informa-
+tion propagates through the network. The IM problem has
+been studied under various probabilistic diffusion models
+such as independent cascade (IC) and linear threshold (LT)
+models (Kempe et al., 2003). Under these common mod-
+els, there has been substantial work on developing efﬁcient
+heuristics and approximation algorithms (Chen et al., 2009;
+Leskovec et al., 2007; Goyal et al., 2011b;a; Tang et al.,
+2014; 2015).
+
+Unfortunately, knowledge of the underlying diffusion
+model and its parameters is essential for the existing IM
+algorithms to perform well. For example, Du et al. (2014)
+empirically showed that misspeciﬁcation of the diffusion
+model can lead to choosing bad seeds and consequently to
+a low spread. In practice, it is not clear how to choose from
+amongst the increasing number of plausible diffusion mod-
+els (Kempe et al., 2003; Gomez Rodriguez et al., 2012; Li
+et al., 2013). Even if we are able to choose a diffusion
+model according to some prior information, the number of
+parameters for these models scales with the size of the net-
+work (for example, it is equal to the number of edges for
+both the IC and LT models) and it is not clear how to set
+these. Goyal et al. (2011a) showed that even when assum-
+ing the IC or LT model, correct knowledge of the model
+parameters is critical to choosing good seeds that lead to
+a large spread. Some papers try to learn these parameters
+from past propagation data (Saito et al., 2008; Goyal et al.,
+2010; Netrapalli & Sanghavi, 2012). However in practice,
+such data is hard to obtain and the large number of param-
+eters makes this learning challenging.
+
+To overcome these difﬁculties, we propose a novel
+parametrization for the IM problem in terms of pairwise
+reachability probabilities (Section 2). This parametrization
+depends only on the state of the network after the informa-
+tion diffusion has taken place. Since it does not depend on
+how information diffuses, it is agnostic to the underlying
+diffusion model. To select seeds based on these reachabil-
+ity probabilities, we propose a monotone and submodular
+surrogate objective function based on the notion of maxi-
+mum reachability (Section 3). Our surrogate function can
+be optimized efﬁciently and is a a good approximation to
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+the IM objective. We theoretically bound the quality of this
+approximation. Our parametrization may be of indepen-
+dent interest to the IM community.
+
+Next, we consider learning how to choose good seeds in an
+online setting. Speciﬁcally, we focus on the case of a new
+marketer looking to exploit an existing network to market
+their product. They need to choose a good seed set, while
+simultaneously learning the factors affecting information
+propagation. This motivates the learning framework of IM
+semi-bandits (Vaswani et al., 2015; Chen et al., 2016; Wen
+et al., 2017).
+In these works, the marketer performs IM
+over multiple “rounds” and learns about the factors gov-
+erning the diffusion on the ﬂy. Each round corresponds
+to an IM attempt for the same or similar products. Each
+attempt incurs a loss in the inﬂuence spread (measured in
+terms of cumulative regret) because of the lack of knowl-
+edge about the diffusion process. The aim is to minimize
+the cumulative regret incurred across multiple such rounds.
+This leads to the classic exploration-exploitation trade-off
+where the marketer must either choose seeds that either im-
+prove their knowledge about the diffusion process (“explo-
+ration”) or ﬁnd a seed set that leads to a large expected
+spread (“exploitation”). Note that all previous works on
+IM semi-bandits assume the IC model.
+
+We propose a novel semi-bandit feedback model based on
+pairwise inﬂuence (Section 4). Our feedback model is
+weaker than the edge-level feedback proposed in (Chen
+et al., 2016; Wen et al., 2017). Under this feedback, we for-
+mulate IM semi-bandit as a linear bandit problem and pro-
+pose a scalable LinUCB-based algorithm (Section 5). We
+bound the cumulative regret of this algorithm (Section 6)
+and show that our regret bound has the optimal dependence
+on the time horizon, is linear in the cardinality of the seed
+set, and as compared to the previous literature, has a bet-
+ter dependence on the size of the network. In Section 7,
+we describe how to construct features based on the graph
+Laplacian eigenbasis and describe a practical implementa-
+tion of our algorithm. Finally, in Section 8, we empirically
+evaluate our proposed algorithm on a real-world network
+and show that it is statistically efﬁcient and robust to the
+underlying diffusion model.
+
+2. Inﬂuence Maximization
+
+,
+
+,
+
+C
+
+C
+
+E
+
+G
+
+D
+
+=
+
+D
+= (
+
+), where
+
+The IM problem is characterized by the triple (
+where
+G
+social network,
+and
+
+),
+is a directed graph encoding the topology of the
+is the collection of feasible seed sets,
+is the underlying diffusion model. Speciﬁcally,
+1, 2, . . . , n
+,
+are the node
+G
+{
+V
+and m =
+,
+and edge sets of
+|E|
+respectively. The collection of feasible seed sets
+is de-
+termined by a cardinality constraint on the sets and pos-
+sibly some combinatorial constraints (e.g. matroid con-
+. This implies that
+straints) that rule out some subsets of
+:
+n. The diffu-
+speciﬁes the stochastic process under which
+
+, with cardinalities n =
+
+V
+, for some K
+
+E
+|V|
+
+|S| 
+
+and
+
+K
+
+
+
+V
+
+G
+
+C
+
+}
+
+}
+
+C ✓ {S ✓ V
+sion model
+D
+
+D
+
+S2C
+
+inﬂuence is propagated across the social network once a
+is selected. Without loss of generality, we
+seed set
+assume that all stochasticity in
+is encoded in a random
+vector w, referred to as the diffusion random vector. Note
+that throughout this paper, we denote vectors in bold case.
+We assume that each diffusion has a corresponding w sam-
+pled independently from an underlying probability distri-
+bution P speciﬁc to the diffusion model. For the widely-
+used models IC and LT, w is an m-dimensional binary vec-
+tor encoding edge activations for all the edges in
+, and P
+is parametrized by m inﬂuence probabilities, one for each
+(w) to refer to the par-
+edge. Once w is sampled, we use
+ticular realization of the diffusion model
+. Note that by
+deﬁnition,
+
+(w) is deterministic, conditioned on w.
+
+D
+
+D
+
+E
+
+D
+
+⇠
+
+the marketer ﬁrst chooses a seed set
+
+Given the above deﬁnitions, an IM attempt can be de-
+scribed as:
+and then nature independently samples a diffusion random
+vector w
+P. Note that the inﬂuenced nodes in the dif-
+(w). We use
+fusion are completely determined by
+S
+the indicator 1
+0, 1
+, v,
+to denote if the node
+}
+2{
+S
+v is inﬂuenced under the seed set
+and the particular real-
+ 
+ization
+is
+, v) to denote the
+chosen, for each node v
+probability that v is inﬂuenced under the seed set
+
+ 
+,
+(w). For a given (
+G
+, we use F (
+
+), once a seed set
+
+, i.e.,
+
+S✓C
+
+S2C
+
+(w)
+
+and
+
+2V
+
+D
+
+D
+
+D
+
+D
+
+S
+
+S
+
+F (
+
+, v) = E
+
+S
+
+, v,
+
+(w)
+
+S
+
+D
+
+S
+
+1
+
+S
+
+(1)
+
+v
+
+⇤
+
+⇤
+
+S
+
+S
+
+2
+
+2V
+
+  
+ 
+F (
+
+S
+arg max
+
+⇥
+(w). We denote by F (
+
+P
+) subject to the constraint
+
+ 
+where the expectation is over all possible realizations
+, v), the ex-
+) =
+D
+pected number of nodes that are inﬂuenced when the seed
+is chosen. The aim of the IM problem is to max-
+set
+S
+imize F (
+, i.e., to ﬁnd
+S2C
+). Although IM is an NP-hard prob-
+S
+lem in general, under common diffusion models such as IC
+and LT, the objective function F (
+) is monotone and sub-
+modular, and thus, a near-optimal solution can be computed
+in polynomial time using a greedy algorithm (Nemhauser
+et al., 1978). In this work, we assume that
+is any diffu-
+sion model satisfying the following monotonicity assump-
+tion:
+
+F (
+
+S2C
+
+D
+
+S
+
+S
+
+
+
+F (
+
+, if F (
+
+and any subsets
+
+Assumption 1. For any v
+S1, v)
+
+S1 ✓S 2 ✓
+2V
+S2, v), then F (
+.
+V
+S
+Note that all progressive diffusion models (models where
+once the user is inﬂuenced, they can not change their state),
+including those in (Kempe et al., 2003; Gomez Rodriguez
+et al., 2012; Li et al., 2013) satisfy Assumption 1.
+
+, v) is monotone in
+
+S
+
+3. Surrogate Objective
+
+We now motivate and propose a surrogate objective for
+the IM problem based on the notion of maximal pairwise
+reachability. We start by deﬁning some useful notation.
+For any set
+and any set of “pairwise probabilities”
+p :
+
+[0, 1], for all nodes v
+
+, we deﬁne
+
+S✓V
+
+V⇥V!
+
+f (
+
+, v, p) = maxu
+
+pu,v
+
+(2)
+
+S
+
+2V
+
+2S
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+v
+
+S
+
+S
+
+S
+
+2V
+
+f (
+
+, v, p). Note that for all p, f (
+
+where pu,v is the pairwise probability associated with the
+, p) =
+ordered node pair (u, v). We further deﬁne f (
+S
+, p) is always
+(Krause & Golovin, 2012).
+
+monotone and submodular in
+P
+For any pair of nodes u, v
+, we deﬁne the pairwise
+reachability from u to v as p⇤u,v = F (
+, v), i.e., the prob-
+}
+ability that v will be inﬂuenced, if u is the only seed node
+under graph
+. Throughout this pa-
+per, we use “source node” and “seed” interchangeably and
+refer to the nodes not in the seed set
+as “target” nodes.
+p⇤u,v as the maximal pair-
+We deﬁne f (
+to the target node v.
+wise reachability from the seed set
+
+and diffusion model
+
+, v, p⇤) = maxu
+
+2V
+
+D
+
+2S
+
+S
+
+S
+
+G
+
+u
+
+{
+
+S
+
+, p⇤) =
+
+Our proposed surrogate objective for the IM problem is
+, v, p⇤). Based on this objective, an
+f (
+f (
+approximate solution
+to the IM problem can be obtained
+by maximizing f (
+
+, p⇤) under the constraint
+
+S
+S
+
+P
+
+2V
+
+S
+
+v
+
+,
+
+S2C
+
+S
+
+e
+
+arg max
+
+f (
+
+, p⇤)
+
+(3)
+
+e
+
+S
+
+S2C
+
+S2
+
+S
+Recall that
+⇤ is the optimal solution to the IM problem.
+To quantify the quality of the surrogate, we deﬁne the sur-
+rogate approximation factor as ⇢ = f (
+⇤). The
+following theorem, (proved in Appendix A) states that we
+can obtain the following upper and lower bounds on ⇢:
+
+, p⇤)/F (
+
+S
+
+S
+
+e
+
+Theorem 1. For any graph
+model
+
+satisfying Assumption 1,
+
+G
+
+, seed set
+
+S2C
+
+, and diffusion
+
+D
+
+S
+
+1 f (
+
+, p⇤)
+
+F (
+
+),
+
+S
+
+
+
+2 If F (
+
+) is submodular in
+
+, then 1/K
+
+S
+
+S
+
+⇢
+
+
+
+
+
+1.
+
+The above theorem implies that for any progressive model
+, p⇤) is equiva-
+satisfying Assumption 1, maximizing f (
+).
+lent to maximizing a lower-bound on the true spread F (
+For both IC and LT models, F (
+) is both monotone and
+submodular, and the approximation factor can be bounded
+from below by 1/K. In Section 8, we empirically show
+that in cases of practical interest, f (
+, p⇤) is a good ap-
+S
+) and that ⇢ is much larger than 1/K.
+proximation to F (
+
+S
+
+S
+
+S
+
+S
+
+S
+
+f (
+
+S2C
+
+arg max
+
+ = ORACLE(
+
+, p⇤) ex-
+Finally, note that solving
+S2
+actly might be computationally intractable and thus we
+need to compute a near-optimal solution based on an ap-
+e
+proximation algorithm. In this paper, we refer to such ap-
+proximation algorithms as oracles to distinguish them from
+learning algorithms. Let ORACLE be a speciﬁc oracle and
+, p) be the seed set output by it. For
+let
+S
+[0, 1], we say that ORACLE is an ↵-approximation
+any ↵
+algorithm if for all p :
+b
+ 
+↵ max
+, p⇤)
+f (
+is submodular, a valid oracle is the greedy algorithm which
+1/e approximation (Nemhauser et al.,
+gives an ↵ = 1
+1978). Hence, given the knowledge of p⇤, we can obtain
+an approcimate solution to the IM problem without know-
+ing the exact underlying diffusion model.
+
+S
+, p). For our particular case, since f (
+b
+
+[0, 1], f (
+
+V⇥V !
+
+, p)
+
+S2C
+
+ 
+
+2
+
+S
+
+S
+
+G
+
+C
+
+,
+
+4. Inﬂuence Maximization Semi-Bandits
+
+We now focus on the case of a new marketer trying to learn
+the pairwise reachabilities by repeatedly interacting with
+the network. We describe the observable feedback (Sec-
+tion 4.2) and the learning framework (Section 4.3).
+
+4.1. Inﬂuence Maximization Semi-Bandits
+
+C
+
+G
+
+D
+
+and
+
+In an inﬂuence maximization semi-bandit problem, the
+, but does not know
+agent (marketer) knows both
+. Speciﬁcally, the agent knows nei-
+the diffusion model
+D
+ther the model of
+is the IC or LT
+, for instance whether
+model; nor its parameters, for instance the inﬂuence proba-
+bilities in the IC or LT model. Consider a scenario in which
+the agent interacts with the social network for T rounds. At
+each round t
+, the agent ﬁrst chooses a seed
+}
+set
+based on its prior knowledge and past obser-
+St 2C
+vations and then nature independently samples a diffusion
+random vector wt ⇠
+P. Inﬂuence thus diffuses in the social
+(wt). The agent’s reward
+network from
+St according to
+at round t is the number of the inﬂuenced nodes
+
+1, . . . , T
+
+2{
+
+D
+
+D
+
+1
+
+.
+
+v
+
+2V
+
+P
+
+rt =
+
+(wt)
+
+D
+ 
+(wt)] = F (
+
+St, v,
+ 
+St). After
+Recall that by deﬁnition, E [rt|St,
+each such IM attempt, the agent observes the pairwise in-
+ﬂuence feedback (described next) and uses it to improve the
+subsequent IM attempts. The agent’s objective is to maxi-
+mize the expected cumulative reward across the T rounds,
+T
+t=1 rt
+i.e., to maximize E
+. This is equivalent to mini-
+mizing the cumulative regret deﬁned subsequently.
+
+D
+
+i
+
+hP
+
+4.2. Pairwise Inﬂuence Feedback Model
+
+ 
+
+}
+
+D
+
+D
+
+=
+
+2V
+
+ 
+S
+
+u
+{
+
+u
+{
+
+(wt)
+
+, v,
+}
+
+for all u
+
+We propose a novel IM semi-bandit feedback model re-
+ferred to as pairwise inﬂuence feedback. Under this feed-
+back model, at the end of each round t, the agent observes
+1
+2S t and all v
+. In other
+words, it observes whether or not v would be inﬂuenced, if
+the agent selects
+as the seed set under the diffu-
+(wt). This form of semi-bandit feedback is
+sion model
+plausible in most IM scenarios. For example, on sites like
+Facebook, we can identify the user who inﬂuenced another
+user to “share” or “like” an article, and thus, can transi-
+tively trace the propagation to the seed which started the
+diffusion. Note that our assumption is strictly weaker than
+(and implied by) edge level semi-bandit feedback (Chen
+et al., 2016; Wen et al., 2017): from edge level feedback,
+we can identify the edges along which the diffusion trav-
+elled, and thus, determine whether a particular source node
+is responsible for activating a target node. However, from
+pairwise feedback, it is impossible to infer a unique edge
+level feedback.
+
+4.3. Linear Generalization
+
+Parametrizing the problem in terms of reachability prob-
+abilities results in O(n2) parameters that need to be
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+learned. Without any structural assumptions, this becomes
+intractable for large networks. To develop statistically efﬁ-
+cient algorithms for large-scale IM semi-bandits, we make
+a linear generalization assumption similar to (Wen et al.,
+2015; 2017). Assume that each node v
+is associated
+2V
+with two vectors of dimension d, the seed (source) weight
+d. We assume that
+✓⇤v 2 <
+the target feature xv is known, whereas ✓⇤v is unknown and
+needs to be learned. The linear generalization assumption
+is stated as:
+
+d and the target feature xv 2 <
+
+Assumption 2. For all u, v
+proximated” by the inner product of ✓⇤u and xv, i.e.,
+
+, p⇤u,v can be “well ap-
+
+2V
+
+ = x>v ✓⇤u
+
+T
+
+p⇤u,v ⇡ h
+
+p⇤u,1, . . . , p⇤u,n
+
+✓⇤u, xvi
+Note that for the tabular case (the case without generaliza-
+n and
+tion across p⇤u,v), we can always choose xv = ev 2 <
+, where ev is an n-dimensional in-
+✓⇤u =
+dicator vector with the v-th element equal to 1 and all other
+elements equal to 0. However, in this case d = n, which
+is not desirable. Constructing target features when d
+n
+is non-trivial. We discuss a feature construction approach
+based on the unweighted graph Laplacian in Section 7. We
+n to encode the target features. Specif-
+use matrix X
+ically, for v = 1, . . . , n, the v-th column of X is set as xv.
+Note that X = I
+
+n in the tabular case.
+
+2 <
+
+⌧
+
+⇥
+
+⇥
+
+⇤
+
+d
+
+⇥
+
+n
+2 <
+
+Finally, note that under Assumption 2, estimating the
+reachability probabilities becomes equivalent to estimating
+n (one for each source) d-dimensional weight vectors. This
+implies that Assumption 2 reduces the number of parame-
+ters to learn from O(n2) to O(dn), and thus, is important
+for developing statistically efﬁcient algorithms for large-
+scale IM semi-bandits.
+
+4.4. Performance Metric
+
+We benchmark the performance of an IM semi-bandit algo-
+rithm by comparing its spread against the attainable inﬂu-
+ence assuming perfect knowledge of
+. Since it is NP-hard
+to compute the optimal seed set even when with perfect
+knowledge, similar to (Wen et al., 2017; Chen et al., 2016),
+we measure the performance of an IM semi-bandit algo-
+rithm by scaled cumulative regret. Speciﬁcally, if
+St is the
+seed set selected by the IM semi-bandit algorithm at round
+(0, 1), the -scaled cumulative regret R(T )
+t, for any 
+in the ﬁrst T rounds is deﬁned as
+
+D
+
+2
+
+R(T ) = T
+
+F (
+
+⇤)
+
+S
+
+ 
+
+·
+
+1
+
+
+E
+
+T
+t=1 F (
+
+.
+
+St)
+
+i
+
+hP
+
+(4)
+
+5. Algorithm
+
+In this section, we propose a LinUCB-based IM semi-
+bandit algorithm, called diffusion-independent LinUCB
+(DILinUCB), whose pseudocode is in Algorithm 1. As its
+name suggests, DILinUCB is applicable to IM semi-bandits
+
+0 for all
+
+Algorithm 1 Diffusion-Independent LinUCB (DILinUCB)
+, oracle ORACLE, target feature
+1: Input:
+
+,
+
+C
+
+C
+
+u
+
+G
+
+),
+
+2
+
+2V
+
+, p)
+
+ Id, bu,0  
+
+✓u,0  
+1 for all u, v
+2V
+b
+
+, and UCB pu,v  
+ORACLE (
+
+= (
+,
+G
+V
+E
+n, algorithm parameters c,  ,   > 0
+Rd
+matrix X
+⇥
+0,
+2: Initialize ⌃u,0  
+3: for t = 1 to T do
+Choose
+4:
+St  
+for u
+2S t do
+5:
+6:
+bu,t
+7:
+ 
+⌃u,t
+8:
+  
+Proj[0,1]
+
+Get pairwise inﬂuence feedback yu,t
+bu,t  
+1 + Xyu,t
+1 +   
+⌃u,t  
+ 
+1
+2⌃ 
+u,tbu,t
+✓u,t  
+pu,v  
+b
+V
+end for
+for u
+
+✓u,txvi
+b
+
+xvk⌃ 
+k
+
+2XX T
+
++ c
+
+1
+u,t
+
+9:
+
+8
+
+v
+
+i
+
+h
+
+h
+
+,
+
+10:
+
+2
+
+11:
+12:
+13:
+14:
+15:
+16: end for
+
+end for
+
+62 St do
+bu,t = bu,t
+ 
+⌃u,t =⌃ u,t
+
+1
+
+1
+
+ 
+
+with any diffusion model
+satisfying Assumption ]refas-
+sum:monotone. The only requirement to apply DILinUCB
+is that the IM semi-bandit provides the pairwise inﬂuence
+feedback described in Section 4.2.
+
+D
+
+d
+
+C
+
+The inputs to DILinUCB include the network topology
+,
+G
+the collection of the feasible sets
+, the optimization algo-
+rithm ORACLE, the target feature matrix X, and three algo-
+rithm parameters c,  ,   > 0. The parameter   is a regular-
+ization parameter whereas   is proportional to the noise in
+the observations and hence controls the learning rate. For
+each source node u
+and time t, we deﬁne the Gram
+2V
+d as the vector summa-
+d, and bu,t 2 <
+matrix ⌃u,t 2 <
+⇥
+rizing the past propagations from u. The vector ✓u,t is the
+source weight estimate for node u at round t. The mean
+✓u,t, xvi
+reachability probability from u to v is given by
+,
+h
+1
+xT
+u,txv.
+v ⌃ 
+xvk⌃ 
+whereas its variance is given as
+b
+Note that ⌃u and bu are sufﬁcient statistics for computing
+q
+UCB estimates pu,v for all v
+. The parameter c trades
+off the mean and variance in the UCB estimates and thus
+controls the “degree of optimism” of the algorithm.
+
+2V
+
+1
+u,t
+
+=
+
+k
+
+All the Gram matrices are initialized to  Id, where Id de-
+notes the d-dimensional identity matrix whereas the vectors
+bu,0 and ✓u,0 are set to d-dimensional all-zeros vectors. At
+each round t, DILinUCB ﬁrst uses the existing UCB esti-
+mates to compute the seed set
+St based on the given ora-
+cle ORACLE (line 4 of Algorithm 1). Then, it observes the
+pairwise reachability vector yu,t for all the selected seeds
+St. The vector yu,t is an n-dimensional column vector
+in
+such that yu,t(v) = 1 (
+(wt)) indicating whether
+, v,
+D
+node v is reachable from the source u at round t. Finally,
+2S t, DILinUCB up-
+for each of the K selected seeds u
+
+u
+{
+
+}
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+dates the sufﬁcient statistics (lines 7 and 8 of Algorithm 1)
+and the UCB estimates (line 10 of Algorithm 1). Here,
+Proj[0,1][
+
+] projects a real number onto the [0, 1] interval.
+
+·
+
+6. Regret Bound
+
+for all u, v
+
+✓⇤u, xvi
+h
+xv||2 
+
+In this section, we derive a regret bound for DILinUCB,
+under (1) Assumption 1, (2) perfect linear generalization
+i.e. p⇤u,v =
+, and (3) the assump-
+. Notice that (2) is the
+tion that
+standard assumption for linear bandit analysis (Dani et al.,
+2008), and (3) can always be satisﬁed by rescaling the tar-
+get features. Our regret bound is stated below:
+Theorem 2. For any  ,   > 0, any feature matrix X, any
+↵-approximation oracle ORACLE, and any c satisfying
+
+1 for all v
+
+2V
+
+2V
+
+||
+
+c
+
+ 
+
+1
+  s
+
+nT
+ 2 d
+
+◆
+
+✓
+
+dn log
+
+1 +
+
++ 2 log (n2T ) + p  max
+
+u
+
+2V k
+
+2,
+
+✓⇤uk
+(5)
+
+if we apply DILinUCB with input (ORACLE, X, c, ,  ),
+then its ⇢↵-scaled cumulative regret is upper-bounded as
+
+(6)
+
+(7)
+
+R⇢↵(T )
+
+2c
+⇢↵
+
+3
+2
+
+n
+
+
+
+dKT log
+
+s
+
+  log
+
+1 + nT
+d  2
+
+1 + 1
+ 
+  2
+
+ 
+
++
+
+1
+⇢
+
+.
+
+For the tabular case X = I, we obtain a tighter bound
+
+ 
+
+R⇢↵(T )
+
+2c
+⇢↵
+
+3
+2
+
+n
+
+
+
+ 
+KT log
+
+s
+
+  log
+
+1 + T
+  2
+1 + 1
+ 
+  2
+
+ 
+
++
+
+1
+⇢
+
+.
+
+ 
+
+ 
+
+e
+
+e
+
+Recall that ⇢ speciﬁes the quality of the surrogate ap-
+proximation. Notice that if we choose   =   = 1,
+and choose c s.t.
+Inequality 5 is tight, then our regret
+O(n2dpKT /(↵⇢)) for general feature matrix X,
+bound is
+O(n2.5pKT /(↵⇢)) in the tabular case. Here the
+O
+and
+hides log factors. We now brieﬂy discuss the tightness
+of our regret bounds. First, note that the O(1/⇢) factor
+e
+is due to the surrogate objective approximation discussed
+in Section 3, and the O(1/↵) factor is due to the fact
+that ORACLE is an ↵-approximation algorithm. Second,
+O(pT )-dependence on time is near-optimal,
+note that the
+O(pK)-dependence on the cardinality of the seed
+and the
+sets is standard in the combinatorial semi-bandit literature
+(Kveton et al., 2015). Third, for general X, notice that the
+O(d)-dependence on feature dimension is standard in lin-
+ear bandit literature (Dani et al., 2008; Wen et al., 2015). To
+O(n2) factor in this case, notice that one O(n)
+explain the
+e
+factor is due to the magnitude of the reward (the reward
+O(pn)
+is from 0 to n, rather than 0 to 1), whereas one
+factor is due to the statistical dependence of the pairwise
+reachabilities. Assuming statistical independence between
+these reachabilities (similar to Chen et al. (2016)), we can
+O(pn) factor. However this assumption is
+shave off this
+O(pn) is due to the fact
+unrealistic in practice. Another
+that we learn one ✓⇤u for each source node u (i.e. there is
+e
+no generalization across the source nodes). Finally, for the
+
+e
+
+e
+
+e
+
+e
+
+e
+
+tabular case X = I, the dependence on d no longer exists,
+O(pn) factor due to the fact that there
+but there is another
+is no generalization across target nodes.
+e
+
+We conclude this section by sketching the proof for The-
+orem 2 (the detailed proof is available in Appendix B and
+Appendix C). We deﬁne the “good event” as
+
+=
+
+F
+
+{|
+
+xT
+v (
+
+✓u,t
+
+1
+
+ 
+
+ 
+
+✓⇤u)
+
+|
+
+c
+
+xv
+
+k
+
+1
+k⌃ 
+u,t
+
+u, v
+
+, t
+
+T
+
+,
+
+}
+
+
+
+2V
+
+1 8
+
+ 
+
+b
+and the “bad event”
+F
+F
+decompose the ⇢↵-scaled regret R⇢↵(T ) over
+and obtain the following inequality:
+
+as the complement of
+
+F
+
+. We then
+,
+and
+
+F
+
+R⇢↵(T )
+
+T
+
+2c
+⇢↵
+
+E
+
+
+
+(
+
+t=1
+X
+
+v
+u
+2St X
+X
+2V
+
+xv
+
+k
+
+1
+k⌃ 
+u,t
+
+ 
+
+F )
+
++
+
+)
+
+P (
+F
+⇢
+
+nT,
+
+F
+
+) is the probability of
+
+where P (
+. The regret bounds
+in Theorem 2 are derived based on worst-case bounds
+xvk⌃ 
+(Appendix B.2), and a
+on
+
+T
+t=1
+u
+bound on P (
+) based on the “self-normalized bound for
+P
+matrix-valued martingales” developed in Theorem 3 (Ap-
+pendix C).
+
+2V k
+
+2St
+
+P
+
+P
+
+1
+u,t
+
+F
+
+F
+
+v
+
+ 
+
+1
+
+1  
+ 
+ 
+ 
+ 
+
+7. Practical Implementation
+
+In this section, we brieﬂy discuss how to implement our
+proposed algorithm, DILinUCB, in practical semi-bandit
+IM problems. Speciﬁcally, we will discuss how to construct
+features in Section 7.1, how to enhance the practical per-
+formance of DILinUCB based on Laplacian regularization
+in Section 7.2, and how to implement DILinUCB computa-
+tionally efﬁciently in real-world problems in Section 7.3.
+
+7.1. Target Feature Construction
+
+G
+
+2V
+
+2V
+
+. For all u
+
+Although DILinUCB is applicable with any target feature
+matrix X, in practice, its performance is highly dependent
+on the “quality” of X. In this subsection, we motivate and
+propose a systematic feature construction approach based
+on the unweighted Laplacian matrix of the network topol-
+n be the vector encoding
+, let p⇤u 2 <
+ogy
+the reachabilities from the seed u to all the target nodes
+v
+. Intuitively, p⇤u tends to be a smooth graph function
+in the sense that target nodes close to each other (e.g., in the
+same community) tend to have similar reachabilities from
+u. From (Belkin et al., 2006; Valko et al., 2014), we know
+that a smooth graph function (in this case, the reachability
+from a source) can be expressed as a linear combination of
+eigenvectors of the weighted Laplacian of the network. In
+our case, the edge weights correspond to inﬂuence prob-
+abilities and are unknown in the IM semi-bandit setting.
+However, we use the above intuition to construct target fea-
+tures based on the unweighted Laplacian of
+. Speciﬁcally,
+for a given d = 1, 2, . . . , n, we set the feature matrix X to
+be the bottom d eigenvectors (associated with d smallest
+eigenvalues) of the unweighted Laplacian of
+. Other ap-
+proaches to construct target features include the neighbour-
+
+G
+
+G
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+hood preserving node-level features as described in (Grover
+& Leskovec, 2016; Perozzi et al., 2014). We leave the in-
+vestigation of other feature construction approaches to fu-
+ture work.
+
+7.2. Laplacian Regularization
+
+✓⇤u1  
+k
+
+One limitation of our proposed DILinUCB algorithm is that
+it does not generalize across the seed nodes u. Speciﬁ-
+cally, it needs to learn the source node feature ✓⇤u for each
+source node u separately, which is inefﬁcient for large-
+scale semi-bandit IM problems. Similar to target features,
+the source features also tend to be smooth in the sense
+✓⇤u2 k2 is “small” if nodes u1 and u2 are adja-
+that
+cent. We use this idea to design a prior which ties together
+the source features for different nodes, and hence transfers
+information between them. This idea of Laplacian regu-
+larization has been used in multi-task learning (Evgeniou
+et al., 2005) and for contextual-bandits in (Cesa-Bianchi
+et al., 2013; Vaswani et al., 2017). Speciﬁcally, at each
+round t, we compute
+✓u,t by minimizing the following ob-
+jective w.r.t ✓u:
+
+t
+
+b
+
+(yu,j  
+
+X T ✓u)2 +  2
+
+✓u1  
+
+✓u2 ||
+
+||
+
+2
+2
+
+j=1
+Xu
+2St
+X
+where  2  
+mentation details are provided in Appendix D.
+
+X(u1,u2)
+0 is the regularization parameter. The imple-
+
+2E
+
+7.3. Computational Complexity
+
+We now characterize the computational complexity of
+DILinUCB, and discuss how to implement it efﬁciently.
+Note that at each time t, DILinUCB needs to ﬁrst com-
+St based on ORACLE, and then update the
+pute a solution
+UCBs. Since ⌃u,t is positive semi-deﬁnite, the linear sys-
+tem in line 9 of Algorithm 1 can be solved using con-
+jugate gradient in O(d2) time.
+It is straightforward to
+see the computational complexity to update the UCBs is
+O(Knd2). The computational complexity to compute
+St
+is dependent on ORACLE. For the classical setting in which
+and ORACLE is the greedy algo-
+C
+rithm, the computational complexity is O(Kn). To speed
+this up, we use the idea of lazy evaluations for submodular
+maximization proposed in (Minoux, 1978; Leskovec et al.,
+It is known that this results in improved running
+2007).
+time in practice.
+
+{S ✓ V
+
+|S| 
+
+K
+
+=
+
+}
+
+:
+
+8. Experiments
+
+8.1. Empirical Veriﬁcation of Surrogate Objective
+
+S
+
+In this subsection, we empirically verify that the surrogate
+, p⇤) proposed in Section 3 is a good approximation of
+f (
+). We conduct our tests on ran-
+the true IM objective F (
+dom Kronecker graphs, which are known to capture many
+properties of real-world social networks (Leskovec et al.,
+2010). Speciﬁcally, we generate a social network instance
+
+S
+
+ 
+
+100
+
+ 
+
+60
+
+50
+
+40
+
+30
+
+20
+
+10
+
+d
+a
+e
+p
+S
+
+r
+
+0
+
+ 
+0
+
+d
+a
+e
+p
+S
+
+r
+
+90
+
+80
+
+70
+
+60
+
+50
+
+40
+
+30
+
+20
+
+10
+
+0
+
+ 
+0
+
+F (S ⋆
+g )
+UB
+LB
+f( ˜Sg, p⋆)
+
+K
+
+(b)
+
+F (S)
+f (S, p⋆)
+
+K
+
+(a)
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+5
+
+10
+
+15
+
+20
+
+25
+
+30
+
+35
+
+Figure 1. Experimental veriﬁcation of surrogate objective.
+
+,
+
+G
+
+D
+
+D
+
+) as follows: we randomly sample
+
+(
+as a Kronecker
+G
+graph with n = 256 and sparsity equal to 0.03 1 (Leskovec
+et al., 2005). We choose
+as the IC model and sample
+each of its inﬂuence probabilities independently from the
+uniform distribution U (0, 0.1). Note that this range of in-
+ﬂuence probabilities is guided by the empirical evidence
+in (Goyal et al., 2010; Barbieri et al., 2013). To weaken
+the dependence on a particular instance, all the results in
+this subsection are averaged over 10 randomly generated
+instances.
+
+S
+
+S
+
+2S
+
+We ﬁrst numerically estimate the pairwise reachabilities p⇤
+for all 10 instances based on social network simulation. In a
+simulation, we randomly sample a seed set
+with cardinal-
+ity K between 1 and 35, and record the pairwise inﬂuence
+indicator yu(v) from each source u
+to each target node
+v in this simulation. The reachability p⇤u,v is estimated by
+averaging the yu(v) values across 50k such simulations.
+, p⇤) and
+Based on the p⇤ so estimated, we compare f (
+F (
+) as K, the seed set cardinality, varies from 2 to 35.
+For each K and each social network instance, we randomly
+sample 100 seed sets
+with cardinality K. Then, we eval-
+, p⇤) based on the estimated p⇤; and numerically
+uate f (
+) by averaging results of 500 inﬂuence sim-
+evaluate F (
+ulations (diffusions). For each K, we average both F (
+)
+S
+and f (
+, p⇤) across the random seed sets in each instance
+as well as across the 10 instances. We plot the average
+, p⇤) as a function of K in Figure 1(a). The
+) and f (
+F (
+) is a good lower bound on the true
+plot shows that f (
+S
+), especially for low K.
+expected spread F (
+S
+
+S
+
+S
+
+S
+
+S
+
+S
+
+S
+
+S
+
+ 
+
+e 
+
+Finally, we empirically quantify the surrogate approxima-
+tion factor ⇢. As before, we vary K from 2 to 35 and av-
+1. For each
+erage across 10 instances. Let ↵⇤ = 1
+instance and each K, we ﬁrst use the estimated p⇤ and the
+greedy algorithm to ﬁnd an ↵⇤-approximation solution
+Sg
+, p⇤). We then use the
+to the surrogate problem max
+state-of-the-art IM algorithm (Tang et al., 2014) to com-
+e
+pute an ↵⇤-approximation solution
+⇤g to the IM problem
+↵F (S⇤) (Nemhauser et al.,
+max
+). Since F (
+F (
+S
+1978), UB  = F (
+⇤g )/↵⇤ is an upper bound on F (S⇤).
+From Theorem 1, LB  = F (
+F (S⇤)/K is a lower
+
+⇤g )
+
+f (
+
+ 
+
+S
+
+S
+
+S
+
+S
+
+S
+
+S
+
+⇤g )/K
+
+S
+
+
+
+1Based on the sparsity of typical social networks.
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+bound on f (
+, p⇤). We plot the average values (over 10 in-
+S
+stances) of F (
+Sg, p⇤), UB and LB against K in Fig-
+⇤g ), f (
+S
+e
+ure 1(b). We observe that the difference in spreads does not
+increase rapidly with K. Although ⇢ is lower-bounded with
+e
+1
+0.55.
+K , in practice for all K
+This shows that in practice, our surrogate approximation is
+reasonable even for large K.
+
+Sg,p⇤)
+S ⇤g )  
+e
+
+[2, 35], ⇢
+
+↵⇤f (
+F (
+
+ 
+
+2
+
+8.2. Performance of DILinUCB
+
+We now demonstrate the performances of variants of
+DILinUCB and compare them with the start of the art. We
+choose the social network topology
+as a subgraph of the
+Facebook network available at (Leskovec & Krevl, 2014),
+which consists of n = 4k nodes and m = 88k edges. Since
+true diffusion model is unavailable, we assume the diffu-
+sion model
+is either an IC model or an LT model, and
+sample the edge inﬂuence probabilities independently from
+the uniform distribution U (0, 0.1). We also choose T = 5k
+rounds.
+
+D
+
+G
+
+We compare DILinUCB against the CUCB algorithm (Chen
+et al., 2016) in both the IC model and the LT model, with
+K = 10. CUCB (referred to as CUCB(K) in plots) assumes
+the IC model, edge-level feedback and learns the inﬂuence
+probability for each edge independently. We demonstrate
+the performance of three variants of DILinUCB - the tabular
+case with X = I, independent estimation for each source
+node using target features (Algorithm 1) and Laplacian
+regularized estimation with target features (Appendix D).
+In the subsequent plots, to emphasize the dependence on
+K and d, these are referred to as TAB(K), I(K,d) and
+L(K,d) respectively. We construct features as described in
+Section 7.1. Similar to spectral clustering (Von Luxburg,
+2007), the gap in the eigenvalues of the unweighted Lapla-
+cian can be used to choose the number of eigenvectors d.
+In our case, we choose the bottom d = 50 eigenvectors
+for constructing target features and show the effect of vary-
+ing d in the next experiment. Similar to (Gentile et al.,
+2014), all hyper-parameters for our algorithm are set using
+an initial validation set of 500 rounds. The best validation
+performance was observed for   = 10 
+
+4 and   = 1.
+
+v
+
+S
+
+2V
+
+D
+
+P
+
+We now brieﬂy discuss the performance metrics used in
+and all t = 1, 2 . . ., we
+this section. For all
+S✓V
+deﬁne rt(
+(wt)), which is the re-
+I (
+) =
+, v,
+S
+alized reward at time t if
+is chosen at that time. One
+S
+performance metric is the per-step reward. Speciﬁcally,
+in one simulation, the per-step reward at time t is deﬁned
+. Another performance metric is the cumula-
+as
+tive regret. Since it is computationally intractable to de-
+⇤g , the ↵⇤-
+rive S⇤, our regret is measured with respect to
+approximation solution discussed in Section 8.1.
+In one
+simulation, the cumulative regret at time t is deﬁned as
+Ss)
+rs(
+R(t) =
+. All the subsequent re-
+ 
+sults are averaged across 5 independent simulations.
+
+t
+s=1 rs
+t
+
+t
+s=1
+
+rs(
+
+⇤g )
+
+S
+
+S
+
+P
+
+P
+
+⇥
+
+⇤
+
+Figures 2(a) and 2(b) show the cumulative regret when the
+
+underlying diffusion model is IC and LT, respectively. We
+have the following observations: (i) As compared to CUCB,
+the cumulative regret increases at a slower rate for all vari-
+ants of DILinUCB, under both the IC and LT models, and
+for both the tabular case and case with features. (ii) Ex-
+ploiting target features (linear generalization) in DILinUCB
+leads to a much smaller cumulative regret. (iii) CUCB is not
+robust to model misspeciﬁcation: it has a near linear cumu-
+lative regret under LT model. (iv) Laplacian regularization
+has little effect on the cumulative regret in these two cases.
+These observations clearly demonstrate the two main ad-
+vantages of DILinUCB: it is both statistically efﬁcient and
+robust to diffusion model misspeciﬁcation. To explain (iv),
+we argue that the current combination of T , K, d and n
+results in sufﬁcient feedback for independent estimation to
+perform well and hence it is difﬁcult to observe any addi-
+tional beneﬁt of Laplacian regularization. We provide ad-
+ditional evidence for this argument in the next experiment.
+
+In Figure 3(a), we quantify the effect of varying d when the
+underlying diffusion model is IC and make the following
+observations: (i) The cumulative regret for both d = 10
+and d = 100 is higher than that for d = 50. (ii) Laplacian
+regularization leads to observably lower cumulative regret
+when d = 100. Observation (iii) implies that d = 10 does
+not provide enough expressive power for linear generaliza-
+tion across the nodes of the network, whereas it is relatively
+difﬁcult to estimate 100-dimensional ✓⇤u vectors within 5k
+rounds. Observation (iv) implies that tying source node es-
+timates together imposes an additional bias which becomes
+important while learning higher dimensional coefﬁcients.
+This shows the potential beneﬁt of using Laplacian regu-
+larization for larger networks, where we will need higher
+d for linear generalization across nodes. We obtain similar
+results under the LT model.
+
+5, 10, 20
+{
+
+In Figures 3(b) and 3(c), we show the effect of varying
+K on the per-step reward. We compare CUCB and the in-
+dependent version of our algorithm when the underlying
+model is IC and LT. We make the following observations:
+(i) For both IC and LT, the per-step reward for all meth-
+ods increases with K.
+(ii) For the IC model, the per-
+step reward for our algorithm is higher than CUCB when
+K =
+, but the difference in the two spreads de-
+}
+creases with K. For K = 50, CUCB outperforms our al-
+gorithm. (iii) For the LT model, the per-step reward of our
+algorithm is substantially higher than CUCB for all K. Ob-
+servation (i) is readily explained since both IC and LT are
+progressive models, and satisfy Assumption 1. To explain
+(ii), note that CUCB is correctly speciﬁed for the IC model.
+As K becomes higher, more edges become active and CUCB
+observes more feedback. It is thus able to learn more efﬁ-
+ciently, leading to a higher per-step reward compared to our
+algorithm when K = 50. Observation (iii) again demon-
+strates that CUCB is not robust to diffusion model misspeci-
+ﬁcation, while DILinUCB is.
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+ 
+
+5
+x 10
+
+ 
+
+CUCB(10)
+TAB(10)
+I(10,50)
+L(10,50)
+
+5
+x 10
+
+CUCB(10)
+TAB(10)
+I(10,50)
+L(10,50)
+
+r
+
+t
+e
+g
+e
+R
+e
+v
+i
+t
+
+ 
+
+l
+
+a
+u
+m
+u
+C
+
+18
+
+16
+
+14
+
+12
+
+10
+
+8
+
+6
+
+4
+
+2
+
+0
+
+ 
+0
+
+r
+
+t
+e
+g
+e
+R
+e
+v
+i
+t
+
+ 
+
+l
+
+a
+u
+m
+u
+C
+
+14
+
+12
+
+10
+
+8
+
+6
+
+4
+
+2
+
+0
+
+ 
+0
+
+1000
+
+2000
+
+3000
+
+4000
+
+5000
+
+1000
+
+2000
+
+3000
+
+4000
+
+5000
+
+Number of rounds
+
+(a) IC Model
+
+Number of rounds
+
+(b) LT Model
+
+Figure 2. Comparing DILinUCB and CUCB on the Facebook subgraph with K = 10.
+
+CUCB(10)
+I(10,10)
+L(10,10)
+I(10,50)
+L(10,50)
+I(10,100)
+L(10,100)
+
+5
+x 10
+
+r
+
+t
+e
+g
+e
+R
+e
+v
+i
+t
+
+ 
+
+l
+
+a
+u
+m
+u
+C
+
+18
+
+16
+
+14
+
+12
+
+10
+
+8
+
+6
+
+4
+
+2
+
+0
+
+ 
+0
+
+ 
+
+1000
+
+ 
+
+ 
+
+CUCB(5)
+CUCB(20)
+CUCB(50)
+I(5,50)
+I(20,50)
+I(50,50)
+
+ 
+
+r
+
+d
+a
+w
+e
+R
+p
+e
+t
+s
+−
+e
+P
+
+r
+
+900
+
+800
+
+700
+
+600
+
+500
+
+400
+
+300
+
+200
+
+100
+
+0
+
+ 
+0
+
+CUCB(5)
+CUCB(20)
+CUCB(50)
+I(5,50)
+I(20,50)
+I(50,50)
+
+900
+
+800
+
+700
+
+600
+
+500
+
+400
+
+300
+
+200
+
+100
+
+ 
+
+r
+
+d
+a
+w
+e
+R
+p
+e
+t
+s
+−
+e
+P
+
+r
+
+0
+
+ 
+0
+
+1000
+
+2000
+
+3000
+
+4000
+
+5000
+
+1000
+
+2000
+
+3000
+
+4000
+
+5000
+
+1000
+
+2000
+
+3000
+
+4000
+
+5000
+
+Number of rounds
+
+Number of rounds
+
+Number of rounds
+
+(a) Effect of d in IC
+
+(b) Effect of K in IC
+
+(c) Effect of K in LT
+
+Figure 3. Effects of varying d or K.
+
+9. Related Work
+
+IM semi-bandits have been studied in several recent pa-
+pers (Wen et al., 2017; Chen et al., 2016; Vaswani et al.,
+2015; Carpentier & Valko, 2016). Chen et al. (2016) stud-
+ied IM semi-bandit under edge-level feedback and the IC
+diffusion model. They formulated it as a combinatorial
+multi-armed bandit problem and proposed a UCB algo-
+rithm (CUCB). They only consider the tabular case, and de-
+rive an O(n3) regret bound that also depends on the recip-
+rocal of the minimum observation probability p of an edge.
+This can be problematic in for example, a line graph with
+L edges where all edge weights are 0.5. Then 1/p is 2L
+1,
+implying an exponentially large regret. Moreover, they as-
+sume that source nodes inﬂuence the target nodes indepen-
+dently, which is not true in most practical social networks.
+In contrast, both our algorithm and analysis are diffusion
+independent, and our analysis does not require the “inde-
+pendent inﬂuence” assumption made in (Chen et al., 2016).
+Our regret bound is O(n2.5) in the tabular case and O(n2d)
+in the general linear bandit case. Vaswani et al. (2015)
+use "-greedy and Thompson sampling algorithms for a dif-
+ferent and more challenging feedback model, where the
+learning agent observes inﬂuenced nodes but not the edges.
+They do not give any theoretical guarantees. Concurrent
+to our work, Wen et al. (2017) consider a linear general-
+ization model across edges and prove regret bounds under
+
+ 
+
+edge-level feedback. Note that all of the above papers as-
+sume the IC diffusion model.
+
+Carpentier & Valko (2016); Fang & Tao (2014) consider
+a simpler local model of inﬂuence, in which information
+does not transitively diffuse across the network. Lei et al.
+(2015) consider the related, but different, problem of max-
+imizing the number of unique activated nodes across mul-
+tiple rounds. They do not provide any theoretical analysis.
+
+10. Conclusion
+
+In this paper, we described a novel model-independent
+parametrization and a corresponding surrogate objective
+function for the IM problem. We used this parametriza-
+tion to propose DILinUCB, a diffusion-independent learn-
+ing algorithm for IM semi-bandits. We conjecture that with
+an appropriate generalization across source nodes, it may
+be possible to get a more statistically efﬁcient algorithm
+and get rid of an additional O(pn) factor in the regret
+bound. In the future, we hope to address alternate bandit
+algorithms such Thompson sampling, and feedback mod-
+els such as node-level in Vaswani et al. (2015).
+
+Acknowledgements: This research was supported by the
+Natural Sciences and Engineering Research Council of
+Canada.
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+References
+Abbasi-Yadkori, Yasin, P´al, D´avid, and Szepesv´ari, Csaba.
+Improved algorithms for linear stochastic bandits. In Ad-
+vances in Neural Information Processing Systems, pp.
+2312–2320, 2011.
+
+Barbieri, Nicola, Bonchi, Francesco,
+
+and Manco,
+Giuseppe. Topic-aware social inﬂuence propagation
+models. Knowledge and information systems, 37(3):
+555–584, 2013.
+
+Belkin, Mikhail, Niyogi, Partha, and Sindhwani, Vikas.
+Manifold regularization: A geometric framework for
+learning from labeled and unlabeled examples. Journal
+of machine learning research, 7(Nov):2399–2434, 2006.
+
+Carpentier, Alexandra and Valko, Michal. Revealing graph
+In Interna-
+bandits for maximizing local inﬂuence.
+tional Conference on Artiﬁcial Intelligence and Statis-
+tics, 2016.
+
+Cesa-Bianchi, Nicolo, Gentile, Claudio, and Zappella, Gio-
+vanni. A gang of bandits. In Advances in Neural Infor-
+mation Processing Systems, pp. 737–745, 2013.
+
+Chen, Wei, Wang, Yajun, and Yang, Siyu. Efﬁcient in-
+In Proceed-
+ﬂuence maximization in social networks.
+ings of the 15th ACM SIGKDD international conference
+on Knowledge discovery and data mining, pp. 199–208.
+ACM, 2009.
+
+Chen, Wei, Wang, Yajun, Yuan, Yang, and Wang, Qin-
+shi. Combinatorial multi-armed bandit and its extension
+to probabilistically triggered arms. Journal of Machine
+Learning Research, 17(50):1–33, 2016.
+
+Dani, Varsha, Hayes, Thomas P, and Kakade, Sham M.
+Stochastic linear optimization under bandit feedback. In
+COLT, pp. 355–366, 2008.
+
+Du, Nan, Liang, Yingyu, Balcan, Maria-Florina, and
+Inﬂuence Function Learning in Infor-
+Song, Le.
+Journal of Machine
+mation Diffusion Networks.
+Learning Research, 32:2016–2024, 2014.
+URL
+http://machinelearning.wustl.edu/mlpapers/
+papers/icml2014c2{_}du14.
+
+Evgeniou, Theodoros, Micchelli, Charles A, and Pontil,
+Massimiliano. Learning multiple tasks with kernel meth-
+ods. Journal of Machine Learning Research, 6(Apr):
+615–637, 2005.
+
+Fang, Meng and Tao, Dacheng. Networked bandits with
+disjoint linear payoffs. In Internattional Conference on
+Knowledge Discovery and Data Mining, 2014.
+
+Gentile, Claudio, Li, Shuai, and Zappella, Giovanni. On-
+In Proceedings of the 31st
+line clustering of bandits.
+International Conference on Machine Learning (ICML-
+14), pp. 757–765, 2014.
+
+Gomez Rodriguez, M, Sch¨olkopf, B, Pineau, Langford J,
+Inﬂuence maximization in continuous time dif-
+et al.
+In 29th International Conference on
+fusion networks.
+Machine Learning (ICML 2012), pp. 1–8. International
+Machine Learning Society, 2012.
+
+Goyal, Amit, Bonchi, Francesco, and Lakshmanan,
+Laks VS. Learning inﬂuence probabilities in social net-
+In Proceedings of the third ACM international
+works.
+conference on Web search and data mining, pp. 241–250.
+ACM, 2010.
+
+Goyal, Amit, Bonchi, Francesco, and Lakshmanan,
+Laks VS. A data-based approach to social inﬂuence
+maximization. Proceedings of the VLDB Endowment,
+5(1):73–84, 2011a.
+
+Goyal, Amit, Lu, Wei, and Lakshmanan, Laks VS. Sim-
+path: An efﬁcient algorithm for inﬂuence maximiza-
+tion under the linear threshold model. In Data Mining
+(ICDM), 2011 IEEE 11th International Conference on,
+pp. 211–220. IEEE, 2011b.
+
+Grover, Aditya and Leskovec, Jure. node2vec: Scalable
+feature learning for networks. In Proceedings of the 22nd
+ACM SIGKDD International Conference on Knowledge
+Discovery and Data Mining, pp. 855–864. ACM, 2016.
+
+Hestenes, Magnus Rudolph and Stiefel, Eduard. Methods
+of conjugate gradients for solving linear systems, vol-
+ume 49. 1952.
+
+Kempe, David, Kleinberg, Jon, and Tardos, ´Eva. Maxi-
+mizing the spread of inﬂuence through a social network.
+In Proceedings of the ninth ACM SIGKDD international
+conference on Knowledge discovery and data mining,
+pp. 137–146. ACM, 2003.
+
+Krause, Andreas and Golovin, Daniel. Submodular func-
+tion maximization. Tractability: Practical Approaches
+to Hard Problems, 3(19):8, 2012.
+
+Kveton, Branislav, Wen, Zheng, Ashkan, Azin, and
+Szepesvari, Csaba. Tight regret bounds for stochastic
+combinatorial semi-bandits. In AISTATS, 2015.
+
+Lei, Siyu, Maniu, Silviu, Mo, Luyi, Cheng, Reynold, and
+Senellart, Pierre. Online inﬂuence maximization. In Pro-
+ceedings of the 21th ACM SIGKDD International Con-
+ference on Knowledge Discovery and Data Mining, Syd-
+ney, NSW, Australia, August 10-13, 2015, pp. 645–654,
+2015.
+
+Leskovec, Jure and Krevl, Andrej. SNAP Datasets: Stan-
+ford large network dataset collection. http://snap.
+stanford.edu/data, June 2014.
+
+Leskovec, Jure, Krause, Andreas, Guestrin, Carlos, Falout-
+sos, Christos, VanBriesen, Jeanne, and Glance, Natalie.
+
+Model-Independent Online Learning for Inﬂuence Maximization
+
+In Pro-
+Cost-effective outbreak detection in networks.
+ceedings of the 13th ACM SIGKDD international con-
+ference on Knowledge discovery and data mining, pp.
+420–429. ACM, 2007.
+
+Valko, Michal, Munos, R´emi, Kveton, Branislav, and
+Koc´ak, Tom´aˇs. Spectral bandits for smooth graph func-
+In 31th International Conference on Machine
+tions.
+Learning, 2014.
+
+Vaswani, Sharan, Lakshmanan, Laks. V. S., and Mark
+Schmidt. Inﬂuence maximization with bandits. Techni-
+cal report, http://arxiv.org/abs/1503.00024, 2015. URL
+http://arxiv.org/abs/1503.00024.
+
+Vaswani, Sharan, Schmidt, Mark, and Lakshmanan, Laks.
+Horde of bandits using gaussian markov random ﬁelds.
+In Artiﬁcial Intelligence and Statistics, pp. 690–699,
+2017.
+
+Von Luxburg, Ulrike. A tutorial on spectral clustering.
+
+Statistics and computing, 17(4):395–416, 2007.
+
+Wen, Zheng, Kveton, Branislav, and Ashkan, Azin. Efﬁ-
+cient learning in large-scale combinatorial semi-bandits.
+In Proceedings of the 32nd International Conference on
+Machine Learning, ICML 2015, Lille, France, 6-11 July
+2015, 2015.
+
+Wen, Zheng, Kveton, Branislav, Valko, Michal, and
+Vaswani, Sharan. Online inﬂuence maximization under
+independent cascade model with semi-bandit feedback.
+arXiv preprint arXiv:1605.06593v2, 2017.
+
+Leskovec, Jure, Chakrabarti, Deepayan, Kleinberg, Jon,
+Faloutsos, Christos, and Ghahramani, Zoubin. Kro-
+necker graphs: An approach to modeling networks. The
+Journal of Machine Learning Research, 11:985–1042,
+2010.
+
+Leskovec, Jurij, Chakrabarti, Deepayan, Kleinberg, Jon,
+and Faloutsos, Christos.
+Realistic, mathematically
+tractable graph generation and evolution, using kro-
+necker multiplication. In European Conference on Prin-
+ciples of Data Mining and Knowledge Discovery, pp.
+133–145. Springer, 2005.
+
+Li, Yanhua, Chen, Wei, Wang, Yajun, and Zhang, Zhi-
+Inﬂuence diffusion dynamics and inﬂuence maxi-
+Li.
+mization in social networks with friend and foe relation-
+In Proceedings of the sixth ACM international
+ships.
+conference on Web search and data mining, pp. 657–666.
+ACM, 2013.
+
+Minoux, Michel. Accelerated greedy algorithms for maxi-
+mizing submodular set functions. In Optimization Tech-
+niques, pp. 234–243. Springer, 1978.
+
+Nemhauser, George L, Wolsey, Laurence A, and Fisher,
+Marshall L. An analysis of approximations for maximiz-
+ing submodular set functions. Mathematical Program-
+ming, 14(1):265–294, 1978.
+
+Netrapalli, Praneeth and Sanghavi, Sujay. Learning the
+graph of epidemic cascades. In ACM SIGMETRICS Per-
+formance Evaluation Review, volume 40, pp. 211–222.
+ACM, 2012.
+
+Perozzi, Bryan, Al-Rfou, Rami, and Skiena, Steven. Deep-
+walk: Online learning of social representations. In Pro-
+ceedings of the 20th ACM SIGKDD international con-
+ference on Knowledge discovery and data mining, pp.
+701–710. ACM, 2014.
+
+Saito, Kazumi, Nakano, Ryohei, and Kimura, Masahiro.
+Prediction of information diffusion probabilities for in-
+dependent cascade model. In Knowledge-Based Intelli-
+gent Information and Engineering Systems, pp. 67–75.
+Springer, 2008.
+
+Tang, Youze, Xiao, Xiaokui, and Yanchen, Shi.
+
+In-
+ﬂuence maximization: Near-optimal time complexity
+meets practical efﬁciency. 2014.
+
+Tang, Youze, Shi, Yanchen, and Xiao, Xiaokui.
+
+Inﬂu-
+ence maximization in near-linear time: A martingale ap-
+proach. In Proceedings of the 2015 ACM SIGMOD Inter-
+national Conference on Management of Data, SIGMOD
+’15, pp. 1539–1554, 2015. ISBN 978-1-4503-2758-9.
+
+

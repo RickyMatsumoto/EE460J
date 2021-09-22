@@ -1,0 +1,1828 @@
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+Zilong Tan 1 Sayan Mukherjee 1
+
+Abstract
+
+We present an efﬁcient algorithm for learning
+mixed membership models when the number of
+variables p is much larger than the number of
+hidden components k. This algorithm reduces
+the computational complexity of state-of-the-art
+tensor methods, which require decomposing an
+O (cid:0)p3(cid:1) tensor, to factorizing O (p/k) sub-tensors
+each of size O (cid:0)k3(cid:1). In addition, we address the
+issue of negative entries in the empirical method
+of moments based estimators. We provide suf-
+ﬁcient conditions under which our approach has
+provable guarantees. Our approach obtains com-
+petitive empirical results on both simulated and
+real data.
+
+1. Introduction
+
+Mixed membership models (Woodbury et al., 1978;
+Pritchard et al., 2000a;b; Blei et al., 2003; Erosheva, 2005)
+have been used extensively across applications ranging
+from modeling population structure in genetics (Pritchard
+et al., 2000a;b) to topic modeling of documents (Wood-
+bury et al., 1978; Blei et al., 2003; Erosheva, 2005). Mixed
+membership models use Dirichlet latent variables to deﬁne
+cluster membership where samples can partially belong to
+each of k latent components. Parameter estimation for such
+latent variables models (LVMs) using maximum likelihood
+methods such as expectation maximization is computation-
+ally intensive for large data, for example, if number of sam-
+ples n is large.
+
+Parameter estimation using the method of moments for
+LVMs is an attractive scalable alternative that has been
+shown to have certain theoretical and computational ad-
+vantages over maximum likelihood methods in the set-
+ting when n is large. For LVMs, method of moments ap-
+proaches reduce to tensor methods—the moments of the
+model parameters are expressed as a function of statistics
+
+1Duke University, Durham, NC. Correspondence to: Sayan
+
+Mukherjee <sayan@stat.duke.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+of the observations in a tensor form. Inference in this set-
+ting becomes a problem of tensor factorization. Compu-
+tational advantages of using tensor methods have been ob-
+served for many popular models, including latent Dirichlet
+allocation (Anandkumar et al., 2012), spherical Gaussian
+mixture models (Hsu & Kakade, 2013), hidden Markov
+models (Anandkumar et al., 2012), independent component
+analysis (Comon & Jutten, 2010), and multi-view models
+(Anandkumar et al., 2014). An appealing property of tensor
+methods is the guarantee of a unique decomposition under
+mild conditions (cf. Kruskal, 1977; Leurgans et al., 1993).
+
+There are two complications to using standard tensor de-
+composition methods (Anandkumar et al., 2016; 2014; Gu
+et al., 2014; Kuleshov et al., 2015; Nicol`o Colombo and
+Nikos Vlassis; Kim et al., 2014; Chi & Kolda, 2012) for
+LVMs. The ﬁrst problem is computation and space com-
+plexity. Given p variables in the LVM, parameter inference
+requires factorizing typically a non-orthogonal estimator
+tensor of size O (cid:0)p3(cid:1) (Anandkumar et al., 2014; Kuleshov
+et al., 2015; Nicol`o Colombo and Nikos Vlassis), which
+is prohibitive for large p. When the estimator is orthogo-
+nal and symmetric, this can be done in O (cid:0)p2 log p(cid:1) (Wang
+et al., 2015). Online tensor decomposition (Huang et al.,
+2013) uses dimension reduction to instead factorize a re-
+duced k-by-k-by-k tensor. However, the dimension reduc-
+tion can be slower than decomposing the estimator directly
+for large sample sizes, as well as suffer from high variance
+(Wang et al., 2015). We introduce a simple factorization
+with improved complexity for the general case where the
+parameters are not required to be orthogonal.
+
+The second problem arises from negative entries in the
+empirical moments tensor. LVMs for count data are con-
+strained to have nonnegative parameters. However, the em-
+pirical moments tensor computed from the data may con-
+tain negative elements due to sampling variation and noise.
+Indeed, for small sample sizes or data with many small
+or zero counts, there will be many negative entries in the
+empirical moments tensor. General tensor decomposition
+algorithms (Kuleshov et al., 2015; Nicol`o Colombo and
+Nikos Vlassis), including the tensor power method (TPM)
+(Anandkumar et al., 2014), do not guarantee the nonneg-
+ativity of model parameters. Approaches such as posi-
+tive/nonnegative tensor factorization (Chi & Kolda, 2012;
+Shashua & Hazan, 2005; Welling & Weber, 2001) also do
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+not address this situation as they require all the elements of
+the tensor to be factorized to be nonnegative. With robust
+tensor methods (Anandkumar et al., 2016; Gu et al., 2014),
+sparse negative entries may potentially be treated as cor-
+rupted elements; however, these methods are not applicable
+in this setting since there can be many negative elements.
+
+In this paper, we introduce a novel parameter inference
+algorithm called partitioned tensor parallel quadratic pro-
+gramming (PTPQP) that is efﬁcient in the setting where
+the number of variables p is much larger than the number
+of latent components k. The algorithm is also robust to
+negative entries in the empirical moments tensor. There
+are two key innovations in the PTPQP algorithm. The ﬁrst
+innovation is a partitioning technique which recovers the
+parameters through factorizing O (p/k) much smaller sub-
+tensors each of size O (cid:0)k3(cid:1). The second innovation is a par-
+allel quadratic programming (Brand & Chen, 2011) based
+algorithm to factor tensors with negative entries under the
+constraint that the factors are all nonnegative. To the best
+of our knowledge, this is the ﬁrst algorithm designed to ad-
+dress the problem of negative entries in empirical estima-
+tor tensors. We show that the proposed factorization algo-
+rithm converges linearly with respect to each factor matrix.
+We also provide sufﬁcient conditions under which the par-
+titioned factorization scheme is consistent, the parameter
+estimates converge to the true parameters.
+
+2. Preliminaries
+
+Notations. We use bold lowercase letters to represent vec-
+tors and bold capital letters for matrices. Tensors are de-
+noted by calligraphic capital letters. The subscript notation
+Aj refers to j-th column of matrix A. We denote the j-
+th column of the identity matrix as ej and 1 is a vector
+of ones. We further write diag (x) for a diagonal matrix
+whose diagonal entries are x, and diag (A) to mean a vec-
+tor of the diagonal entries of A.
+
+Element-wise matrix operators include (cid:31) and (cid:23), e.g., A (cid:23)
+0 means that A has nonnegative entries.
+(·)+ refers to
+element-wise max (·, 0). ∗ and (cid:11) respectively represent
+element-wise multiplication and division. Moreover, ×
+refers to the outer product and (cid:12) denotes the Khatri-Rao
+product. (cid:107)·(cid:107)F and (cid:107)·(cid:107)2 represent the Frobenius norm and
+spectral norm, respectively.
+
+Tensor basics. This paper uses similar tensor notations
+as (Kolda & Bader, 2009). In particular, we are primarily
+concerned with Kruskal tensors in Rd1×d2×d3, which can
+be expressed in the form of
+
+T =
+
+Aj × Bj × Cj,
+
+(1)
+
+r
+(cid:88)
+
+j=1
+
+d3-by-r factor matrices. The rank of T is deﬁned as the
+smallest r that admits such a decomposition. The decom-
+position is known as the CP (CANDECOMP/PARAFAC)
+decomposition. The j-mode unfolding of T , denoted by
+T(j), for j = 1, 2, 3 is a dj-by-
+matrix whose
+rows are serializations of the tensor ﬁxing the index of the
+j-th dimension. The unfoldings have the following well-
+known compact expressions:
+
+t(cid:54)=j dt
+
+(cid:16)(cid:81)
+
+(cid:17)
+
+T(1) = A (C (cid:12) B)(cid:62) ,
+T(3) = C (B (cid:12) A)(cid:62) .
+
+T(2) = B (C (cid:12) A)(cid:62)
+
+(2)
+
+3. Learning through Method of Moments
+
+3.1. Generalized Dirichlet latent variable models
+
+A generalized Dirichlet latent variable model (GDLM) was
+proposed in (Zhao et al., 2016) for the joint distribution of
+n observations y1, y2, · · · , yn. Each observation yi con-
+sists of p variables yi = (yi1, yi2, · · · , yip)(cid:62). GDLM
+assumes a generative process involving k hidden compo-
+nents. For each observation, sample a random Dirichlet
+vector xi = (xi1, xi2, · · · , xik)(cid:62) ∈ ∆k−1 with concen-
+tration parameter α = (α1, α2, · · · , αk)(cid:62). The elements
+of xi are the membership probabilities for yi to belong to
+each of the k components. Speciﬁcally,
+
+yij ∼
+
+xihgj (θjh) ,
+
+k
+(cid:88)
+
+h=1
+
+where gj (θjh) is the density of the j-th variable speciﬁc
+to component h with parameter θj = (θj1, θj2, · · · , θjk).
+One advantage of GLDM is that yij can take categorical
+values. Let dj denote the number of categories for the j-th
+variable (set dj = 1 for scalar variables), θj becomes a dj-
+by-k probability matrix where the c-th row corresponds to
+category c. We aim to accurately recover θj from indepen-
+dent copies of yi involving variables of mixed data types,
+either categorical or non-categorical.
+
+3.2. Moment-based estimators
+
+The moment estimators of latent variable models typically
+take the form of a tensor (Anandkumar et al., 2014). Con-
+sider the estimators of GDLM (Zhao et al., 2016) for ex-
+ample. Let bij = eyij if variable j is categorical; bij = yij
+otherwise. The second- and third- order parameter estima-
+tors for variable j, s, and t are written
+
+Mjs = E [bij × bis] − c1E [bij] E [bis](cid:62)
+Mjst = E [bij × bis × bit] + c2E [bij] × E [bis] × E [bit]
+− c3 (E [E [bij] × bis × bit] + E [bij × E [bis] × bit]
+
+where A, B, and C are respectively d1-by-r, d2-by-r, and
+
++E [bij × bis × E [bit]]) .
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+apply in the general case where the parameters are non-
+orthogonal and the sample size can be potentially large. A
+key insight underlying our approach is that it is sufﬁcient to
+recover the parameters by factorizing only O (p/k) much
+smaller sub-tensors each of size O (cid:0)k3(cid:1). This technique
+can also be combined with the aforementioned methods to
+further improve the complexity in certain cases.
+
+(3)
+
+(4)
+
+Alternatively, Mjs and Mjst have the following CP de-
+composition into parameters θj:
+
+Mjs =
+
+ηhθjh × θsh,
+
+θuv ∈ Rdi
+
+Mjst =
+
+λhθjh × θsh × θth,
+
+θuv ∈ Rdi.
+
+(cid:88)
+
+h≥1
+(cid:88)
+
+h≥1
+
+Here, c1, c2, c3, ηh, and λh depend on only α0 = (cid:80)
+j≥1 αj.
+For the special case of latent Dirichlet allocation, Mjs and
+Mjst are scalar joint probabilities.
+
+The parameters θj are typically obtained by factorizing the
+block tensor M2 whose (j, s)-th element is the empirical
+(cid:99)Mjs and/or M3 whose (j, s, t)-th element is the empirical
+(cid:99)Mjst (Anandkumar et al., 2016; 2014; Zhao et al., 2016).
+Note that θj are generally non-orthogonal, and thus pre-
+processing steps are needed for orthogonal decomposition
+methods (Wang et al., 2015; Song et al., 2016; Anandku-
+mar et al., 2014). The preprocessing can be expensive and
+often leads to suboptimal performance (Souloumiac, 2009;
+Nicol`o Colombo and Nikos Vlassis). Here, we highlight a
+few relevant observations:
+
+• Mjs alone does not yield unique parameters θj due
+to the well-known rotation problem. This is true even
+when enforcing nonnegativity constraints on parame-
+ters (Donoho & Stodden, 2004).
+
+• Mjst is sufﬁcient to uniquely recover the parameters
+under certain mild conditions (Kruskal, 1977); for ex-
+ample, when any two of θj, θs, and θt have linearly
+independent columns and the columns of the third are
+pair-wise linearly independent (Leurgans et al., 1993).
+
+• The empirical estimator (cid:99)Mjst generally contains neg-
+ative entries due to variance and noise. The fraction of
+negative entries can approach 50%, as we shall see in
+experiments. We address this issue in § 4.4.
+
+• While the decomposition (4) can be unique up to per-
+mutation and rescaling, the correspondence between
+each column of the factor matrix and each hidden
+component may not be consistent across multiple de-
+compositions. Techniques for achieving consistency
+are developed in § 4.2.
+
+3.3. Computational complexity
+
+max
+
+Tensor methods such as TPM typically decompose the
+O (cid:0)p3d3
+(cid:1) full estimator tensor that includes all vari-
+ables. More efﬁcient algorithms have been developed for
+the case that parameters are orthogonal (Wang et al., 2015;
+Song et al., 2016), and when the sample size is small
+(Huang et al., 2013). However, these methods do not
+
+4. An efﬁcient algorithm
+
+In this section, we develop partitioned tensor parallel
+quadratic programming (PTPQP) an efﬁcient approximate
+algorithm for learning mixed membership models. We ﬁrst
+introduce a novel partitioning-and-matching scheme that
+reduces parameter estimation to factorizing a sequence of
+sub-tensors. Then, we develop a nonnegative factoriza-
+tion algorithm that can handle negative entries in the sub-
+tensors.
+
+4.1. Partitioned factorization
+
+Factorizing the full tensor formed by all Mjst is expensive
+while a three-variable tensor Mjst in (4) alone may not be
+sufﬁcient to determine θj when k is large. In this section,
+we consider factorizing the sub-tensors corresponding to a
+cover of the set of variables [p] such that each sub-tensor
+admits an identiﬁable CP decomposition (1), i.e. unique
+up to permutation and rescaling of columns. This gives
+the parameters for all variables. Suppose that p > k and
+the maximum number of categories dmax is a constant, the
+aggregated size of the sub-tensors can be much smaller, i.e.,
+O (cid:0)pk2(cid:1), than the size O (cid:0)p3(cid:1) of the full estimator.
+Let πj, πs, and πt denote ordered subsets ⊆ [p], with car-
+dinality |πj| = pj, |πs| = ps, and |πt| = pt, respectively.
+Consider the pj-by-ps-by-pt block tensor Mπj πsπt
+whose
+(u, v, w)-th element is the tensor Mπj πsπt
+uvw = Mπj
+uπs
+vπt
+w .
+From (4) the tensor Mπj πsπt
+
+is
+
+k
+(cid:88)
+
+h=1
+
+λh
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+θπj
+1h
+θπj
+2h
+...
+θπj
+pj h
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+θπs
+1h
+θπs
+2h
+...
+θπs
+ps
+
+h
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+θπt
+1h
+θπt
+2h
+...
+θπt
+pt
+
+h
+
+×
+
+×
+
+.
+
+(5)
+
+Clearly, the block tensor is identiﬁable if it has an identi-
+ﬁable sub-tensor. Suppose that a sub-tensor Mπuπvπw
+is
+identiﬁable, then one can construct an identiﬁable tensor
+Mπj(cid:48)πs(cid:48)πt(cid:48)
+
+from Mπj πsπt
+
+by setting
+
+πj(cid:48) = πj ∪ πu,
+
+πs(cid:48) = πs ∪ πv,
+
+πt(cid:48) = πt ∪ πw.
+
+(6)
+
+We further remark that a sub-tensor can be identiﬁable un-
+der mild conditions, for example, if the sum of the Kruskal
+rank of the three factor matrices is at least than 2k + 2
+(Kruskal, 1977).
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+Given an identiﬁable sub-tensor Mπuπvπw
+of anchor vari-
+ables indexed by πu, πv, and πw, the partitioning produces
+a set of sub-tensors (partitions) constructed through (6),
+that includes all variables. Thus, Mπuπvπw
+is a common
+sub-tensor shared across all partitions. We choose anchor
+variables whose parameter matrices are of full column rank
+to obtain an identiﬁable Mπuπvπw
+. Finally, one can divide
+the rest of variables evenly and randomly into the parti-
+tions.
+
+4.2. Matching parameters with hidden components
+
+Since the factorization of a partition (5) can only be iden-
+tiﬁable up to permutation and rescaling of the columns of
+constituent θj, the correspondence between the columns of
+θj and hidden components can differ across partitions. To
+enforce consistency, we associate a permutation operator
+ψj for each variable j such that (cid:0)ψjθj
+h are the parame-
+ters speciﬁc to hidden component h across all variables j.
+Consider the following vector representation of ψ:
+
+(cid:1)
+
+ψ = (ψ1, ψ2, · · · , ψk) , ψi ∈ [k]
+
+ψA = [Aψ1, Aψ1, · · · , Aψk ] .
+
+and Mπuπvπw
+
+as well, i.e., ψx = ψy,
+
+Observe that ψj = ψs = ψt within a factorization of
+Mjst, and this also holds for the partitioned factoriza-
+tion (5) of Mπj πsπt
+∀x, y ∈
+πj ∪ πs ∪ πt.
+Consider the factorizations of Mπj πsπt
+and
+suppose that ∃x ∈ (cid:0)πj ∪ πs ∪ πt(cid:1) ∩ (πu ∪ πv ∪ πw). The
+permutation operator for one factorization is determined
+given the other by column matching the parameters of vari-
+able x in both factorizations. Thus, an inductive way to
+achieve a consistent factorization is to start with one factor-
+ization, and let its permutation be the identity (1, 2, · · · , k),
+then perform the factorization over new sets of variables
+with at least one variable in common with the initial factor-
+ization. Permutations for the sequential factorizations are
+determined via column matching parameter matrices of the
+common variables.
+
+Given two factorized parameter matrices θj and θ(cid:48)
+j of vari-
+able j, our goal is to ﬁnd a consistent permutation ψ (of θj
+with respect to θ(cid:48)
+jh correspond
+to the same hidden component for all h ∈ [k]. We now
+present an algorithm with provable guarantees to compute
+a consistent permutation.
+
+j) such that (ψθj)h and θ(cid:48)
+
+Smallest angle matching A simple matching algorithm is
+to match the two columns of the two parameter matrices
+that have the smallest angle between them. Consider the
+factorizations of Mjst and Mjuv which yield respectively
+parameters θj and θ(cid:48)
+j for the common variable j. Given the
+permutation ψj for Mjst, the permutation ψu for Mjuv is
+
+computed by:
+
+ψu
+
+s = arg max
+
+t
+
+(cid:0) ¯θ(cid:48)(cid:62)
+
+j ψj ¯θj
+
+(cid:1)
+
+.
+
+ts
+
+(7)
+
+Here, ¯θj and ¯θ(cid:48)
+and θ(cid:48)
+
+j represent respectively the normalized θj
+
+j with each column having unit Euclidean norm.
+There are cases that ψu computed via Equation (7) is not
+consistent: 1) ψu contains duplicate entries and hence is
+ineligible; and 2) since θj and θ(cid:48)
+j are the factorized pa-
+rameter matrices which are generally perturbed from the
+ground-truth, the resulting ψu may differ from the consis-
+tent permutation. To cope with these cases, we establish in
+§ 5 the sufﬁcient conditions for ψu to be consistent.
+
+Orthogonal Procrustes matching One issue with the
+smallest angle matching is that each column is paired inde-
+pendently. It is easy for multiple columns to be paired with
+a common nearest neighbor. We describe a more robust al-
+gorithm based on the orthogonal Procrustes problem, and
+show improved guarantees. Since a consistent permutation
+is orthogonal, a natural relaxation is to only require the op-
+erator to be orthogonal. This is an orthogonal Procrustes
+problem, formulated in the same settings as § 4.2
+
+(cid:13)
+(cid:13) ¯θ(cid:48)
+
+jΨ − ψj ¯θj
+
+(cid:13)
+2
+(cid:13)
+
+F
+
+,
+
+min
+Ψ
+
+s.t. Ψ(cid:62)Ψ = I.
+
+(8)
+
+j ψj ¯θj = U ΣV (cid:62) be the singular value decompo-
+Let ¯θ(cid:48)(cid:62)
+sition (SVD), the solution Ψ∗ is given by the polar factor
+(Sch¨onemann, 1966)
+
+Ψ∗ = U V (cid:62).
+
+(9)
+
+Here, Ψ∗ is orthogonal and does not immediately imply
+the desired permutation ψu. To compute ψu, one can ad-
+ditionally restrict Ψ to be a permutation matrix, and solve
+for ψu using linear programming (Gower & Dijksterhuis).
+Aside from efﬁciency, one fundamental question is that un-
+der what assumptions the objective (8) yields the consistent
+permutation.
+
+Given the solution Ψ∗ to the Procrustes problem, we pro-
+pose the following simple algorithm for computing ψu:
+
+ψu
+
+s = arg max
+
+Ψ∗
+
+ts.
+
+t
+
+(10)
+
+We ﬁrst establish through Theorem 1 that if ψu obtained
+using (10) is a valid permutation, i.e., no duplicate entries,
+then it is optimal in terms of the objective (8).
+Theorem 1. The ψu obtained using (10) satisﬁes
+
+(cid:13)
+(cid:13)ψu ¯θ(cid:48)
+
+j − ψj ¯θj
+
+(cid:13)
+2
+(cid:13)
+
+F
+
+≤ (cid:13)
+
+(cid:13)ψ ¯θ(cid:48)
+
+j − ψj ¯θj
+
+(cid:13)
+2
+(cid:13)
+
+F
+
+for all permutations ψ.
+
+In section § 5 we state sufﬁcient conditions under which the
+objective (8) yields a consistent permutation.
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+4.3. Approximate nonnegative factorization
+
+In previous sections, we reduced the inference problem to
+factorizing partitioned sub-tensors. We now present a fac-
+torization algorithm for the sub-tensors that contain nega-
+tive entries. Our goal is to approximate a sub-tensor M by
+a sub-tensor (cid:102)M = (cid:80)
+j Aj × Bj × Cj where the factors A,
+B, and C are nonnegative. The Frobenius norm is used to
+quantify the approximation
+
+min
+A,B,C(cid:23)0
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)M − (cid:102)M
+(cid:13)F
+
+.
+
+(11)
+
+Note that we do not assume that M (cid:23) 0 in (11) which
+distinguishes our optimization problem from other approxi-
+mate factorization algorithms (Welling & Weber, 2001; Chi
+& Kolda, 2012; Kim et al., 2014; Shashua & Hazan, 2005).
+In § 4.4, we provide some details as to why negative entries
+are problematic for standard approximate factorization al-
+gorithms. We can rewrite (11) using the 1-mode unfolding
+as
+
+min
+A,B,C(cid:23)0
+
+(cid:13)
+(cid:13)
+
+(cid:13)M(1) − A (C (cid:12) B)(cid:62)(cid:13)
+(cid:13)
+(cid:13)F
+
+.
+
+(12)
+
+Equivalent formulations with respect to the 2-mode and 3-
+mode unfoldings can be readily obtained from (2).
+
+We point out that another widely-used error measure — the
+I-divergence (Finesso & Spreij, 2006; Chi & Kolda, 2012)
+— may not be suitable for our learning problem. The opti-
+mization using I-divergence is given by
+
+min
+A,B,C(cid:23)0
+
+(cid:88)
+
+u,v,w
+
+(cid:20)
+Muvw log
+
+Muvw
+(cid:102)Muvw
+
+− Muvw + (cid:102)Muvw
+
+.
+
+(cid:21)
+
+This optimization is useful for nonnegative M when each
+entry follows a Poisson distribution. In this case, the objec-
+tive is equivalent to the sum of Kullback-Leibler divergence
+across all entries of M:
+
+(cid:88)
+
+(cid:16)
+Pois (x; Muvw) (cid:13)
+
+DKL
+
+(cid:16)
+
+(cid:13) Pois
+
+x; (cid:102)Muvw
+
+(cid:17)(cid:17)
+
+.
+
+u,v,w
+
+However, the Poisson assumption does not generally hold
+for the estimator tensor (4).
+
+4.4. Handling negative entries in empirical estimators
+
+We ﬁrst illustrate that factorizing a tensor with negative en-
+tries using either positive tensor factorization (Welling &
+Weber, 2001) or nonnegative tensor factorization (Chi &
+Kolda, 2012; Shashua & Hazan, 2005) will either result
+in factors that violate the the nonnegativity constraint or
+the result of the algorithm diverges. In addition, we show
+that general tensor decompositions cannot enforce the fac-
+tor nonnegativity even after rounding the negative entries
+to zero.
+
+We then present a simple method based on weighted non-
+negative matrix factorization (WNMF) (Zhang et al., 1996)
+that enforce the factor nonnegativity constraint. We further
+generalize this method using parallel quadratic program-
+ming (PQP) (Brand & Chen, 2011) to obtain a method with
+a provable convergence rate.
+
+Issue of negative entries If the tensor is strictly nonneg-
+ative, the optimization speciﬁed in (11) can be reduced to
+nonnegative matrix factorization (NMF). Solvers abound
+for NMF including the celebrated Lee-Seung’s multiplica-
+tive updates (Lee & Seung, 2001). The reduction is done by
+viewing (12) as (cid:107)Y − W H(cid:107)2
+(1), W = A,
+and H = (C (cid:12) B)(cid:62), and alternating
+(cid:0)Y H (cid:62)(cid:1)
+st
+(W HH (cid:62))st
+
+F with Y = Mjst
+
+Wst ← Wst
+
+(13)
+
+,
+
+over each unfolding and factor matrix W . Obviously, the
+updates may yield negative entries in W when the unfold-
+ing contains negative entries. In addition, convergence re-
+lies on the nonnegativity of the unfolding (cf. Lee & Se-
+ung, 2001). This issue extends to their tensor factorization
+variants (Welling & Weber, 2001; Chi & Kolda, 2012; Kim
+et al., 2014) known as the positive tensor factorization and
+nonnegative tensor factorization. For these approaches, a
+naive resolution is to round negative entries of (cid:99)Mjst to 0,
+this however lacks theoretical guarantees.
+
+It is important to note that the rounding does not help gen-
+eral tensor decompositions like TPM. The following exam-
+ple illustrates that the unique decomposition (up to permu-
+tation and rescaling) of a positive tensor can contain nega-
+tive entries. Consider a 2-by-2-by-2 positive tensor, whose
+1-mode unfolding is given by
+
+(cid:20)1
+2
+
+3
+2
+
+2
+2
+
+(cid:21)
+2
+2
+
+,
+
+where the vertical bar separates two frontal slices. It has
+the following decomposition, written in the form of (1):
+(cid:21)
+
+A = C =
+
+, B =
+
+(cid:20)1
+1
+
+1
+0
+
+(cid:21)
+(cid:20)2 −1
+1
+2
+
+.
+
+Since all factors are of full-rank,
+the decomposition
+is unique up to permutation and rescaling of columns
+(Kruskal, 1977). Thus, a general tensor decomposition
+yields a B with negative entries regardless of rescaling.
+
+4.5. Factorization via WNMF
+
+Since the ground-truth Mjst are nonnegative, we may “ig-
+nore” the negative entries of (cid:99)Mjst by treating them as
+missing values. This idea leads to the following modiﬁed
+objective:
+
+min
+W ,H(cid:23)0
+
+(cid:107)Ω ∗ (Y − W H)(cid:107)2
+F
+
+(14)
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+where Y , W , H are chosen identically as (13), and deﬁne
+the boolean Ωuv := Yuv ≥ 1. The optimization can be
+carried out using WNMF. Here, we modify the original up-
+dates by introducing a positive constant (cid:15) to ensure that the
+updates are well-deﬁned:
+
+Wuv ← Wuv
+
+(cid:2)(Ω ∗ Y ) H (cid:62)(cid:3)
+
+uv + (cid:15)
+
+[((W H) ∗ Ω) H (cid:62)]uv + (cid:15)
+
+.
+
+(15)
+
+It can be easily shown that the presence of (cid:15) does not af-
+In addition, having (cid:15) in both
+fect the solution accuracy.
+the numerator and denominator of (15) guarantees that the
+objective (14) is non-increasing under the updates.
+
+4.6. Parallel quadratic programming
+
+We now generalize the WNMF approach using parallel
+quadratic programming to obtain a convergence rate. Let
+S++ denote the set of symmetric positive deﬁnite matrices,
+we consider the following optimization problem
+
+min
+x
+
+1
+2
+
+x(cid:62)Qx + z(cid:62)x s.t. x ≥ 0, Q ∈ S++,
+
+(16)
+
+which can be solved by iterating multiplicative updates
+(Brand & Chen, 2011; Sha et al., 2003). We use the parallel
+quadratic programming (PQP) algorithm (Brand & Chen,
+2011; Brand et al., 2011) to solve (16), partly because it has
+a provable linear convergence rate. The PQP multiplicative
+update for (16) takes the following simple form:
+
+with
+
+Q+ = (Q)+ + diag (γ) ,
+z+ = (z)+ + φ,
+
+Q− = (−Q)+ + diag (γ)
+z− = (−z)+ + φ.
+
+Here γ and φ are arguments to PQP, we will discuss these
+arguments in section § 5.2. The update maintains nonnega-
+tivity since all items are nonnegative. We make the follow-
+ing observation.
+
+Theorem 2. The multiplicative updates for Lee-Seung and
+WNMF are special cases of PQP.
+
+We can now solve the approximate nonnegative factoriza-
+tion problem stated in (11) using (17). Theorem 3 states the
+multiplicative updates. A more detailed discussion of Φ is
+included in § 5.2. We present pseudo-code in Algorithm 1.
+
+Theorem 3. For optimization (11), the following update
+converges linearly to a local optimum
+
+A ← A ∗ (cid:2)(−Z)+ + Φ(cid:3) (cid:11) (cid:2)AQ + (Z)+ + Φ(cid:3)
+
+(18)
+
+(cid:15) ← 10−10
+
+Algorithm 1 Factorize (M, k, d)
+M ← M/ maxuvw |Muvw| ,
+% Initialize with random nonnegative matrices:
+A ← rand (dj, k), B ← rand (ds, k), C ← rand (dt, k)
+% Create a set of alternating variable tuples:
+F ← (cid:8)(cid:2)A, (cid:0)C(cid:62)C(cid:1) ∗ (cid:0)B(cid:62)B(cid:1) , −M(1) (C (cid:12) B)(cid:3)(cid:9)
+F ← F ∪(cid:8)(cid:2)B, (cid:0)C(cid:62)C(cid:1) ∗ (cid:0)A(cid:62)A(cid:1) , −M(2) (C (cid:12) A)(cid:3)(cid:9)
+F ← F ∪(cid:8)(cid:2)C, (cid:0)B(cid:62)B(cid:1) ∗ (cid:0)A(cid:62)A(cid:1) , −M(3) (B (cid:12) A)(cid:3)(cid:9)
+repeat
+
+for each [X, Q, Z] in F do
+
+min
+
+(Q) (cid:112)diag (ZQ−1Z(cid:62))diag (Q)(cid:62)
+
+Φ ← λ−1/2
+Φ ← (Φ − |Z|)+ /2 + (cid:15)11(cid:62)
+X ← X ∗ (cid:2)(−Z)+ + Φ(cid:3) (cid:11) (cid:2)XQ + (Z)+ + Φ(cid:3)
+
+end for
+
+until X ceased to change, or reached max #iterations
+Normalize the columns of A, B, C to sum to 1.
+return A, B, C
+
+with
+
+Q = (cid:0)C(cid:62)C(cid:1) ∗ (cid:0)B(cid:62)B(cid:1) ,
+(cid:32)(cid:115)
+
+Φ (cid:31)
+
+1
+2
+
+diag (ZQ−1Z(cid:62))
+λmin (Q)
+
+Z = −M(1) (C (cid:12) B)
+
+diag (Q)(cid:62) − |Z|
+
+(cid:33)
+
+,
+
++
+
+where λmin (·) is the smallest eigenvalue. Similar updates
+for B and C are obtained using (2).
+
+To summarize, the proposed approach, referred to as PT-
+PQP, consists of three steps. Given the indexes of anchor
+variables πu ∪ πv ∪ πw, the variables [p] \ (πu ∪ πv ∪ πw)
+are ﬁrst evenly divided into r partitions, and the anchor
+variables are added to each partition. The second step
+consists of forming and factorizing the sub-tensor of each
+partition using Algorithm 1, this step can be parallelized.
+Third, normalize the anchor matrix (cid:2)θπu(cid:62), θπv(cid:62), θπw(cid:62)(cid:3)(cid:62)
+formed by the anchor variable parameters to have unit col-
+umn Euclidean norm, and then use either (7) or (10) to
+match over the anchor matrix.
+
+(cid:80)
+
+Efﬁciency. Most of the computational cost is in the
+factorization. Consider one partition, and let Mπj πsπt
+the sub-tensor size is
+be the corresponding sub-tensor,
+h∈π dh. The maximum number of cate-
+
+(cid:81)
+π∈{πj ,πs,πt}
+gories for a variable is generally a constant for the GDLM.
+Under smallest partitioning, this size is determined by the
+sub-tensor of anchor variables, i.e., O (cid:0)k3(cid:1), which corre-
+sponds to (p/k) partitions. One beneﬁt of PTPQP is that
+the number of sub-tensor factorizations is linear in p due to
+the partitioned factorization, this results in signiﬁcant efﬁ-
+ciency gains when p (cid:29) k. Furthermore, PTPQP is easy to
+
+x ← x ∗ (cid:0)Q−x + z−(cid:1) (cid:11) (cid:0)Q+x + z+(cid:1) ,
+
+(17)
+
+4.7. Proposed approach
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+be parallelized across multiple CPUs and machines, since
+the computation as well as data are not distributed across
+partitions.
+
+5. Provable Guarantees
+
+In this section, we state the main theoretical results of the
+proposed partitioned factorization and tensor PQP factor-
+ization. The proofs can be found in the longer version of
+this paper (Tan & Mukherjee, 2017).
+
+5.1. Sufﬁcient conditions for guaranteed matching
+
+Theorem 4 and Theorem 5 state that when the anchor pa-
+rameter matrices from two factorizations are “close”, the
+proposed matching algorithms obtain a consistent permu-
+tation.
+
+Theorem 4. Suppose that θj is the ground-truth matrix
+for variable j. Solving Equation (7) results in a consistent
+permutation if for all factors (cid:98)θj of variable j
+
+(cid:13)
+(cid:13)
+(cid:13)θjh − (cid:98)θjh
+(cid:107)θjh(cid:107)2
+
+(cid:13)
+(cid:13)
+(cid:13)2
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)
+
+1
+2
+
+(cid:115)
+
+(cid:18)
+
+1
+8
+
+< 1 −
+
++
+
+1 + max
+u<v
+
+(cid:0) ¯θ(cid:62)
+
+j
+
+¯θj
+
+(cid:1)
+
+uv
+
+(cid:19)
+
+for all h ∈ [k], where ¯θjh = θjh/ (cid:107)θjh(cid:107)2.
+
+Theorem 4 states that one obtains a consistent permutation
+by solving Equation (7) in the columns of the ground-truth
+parameter matrix are distinct from each other in angles and
+the factorized parameter matrix is near the ground-truth in
+Frobenius norm. Thus, a good anchor variable for the parti-
+tioned factorization (5) is one whose parameter matrix has
+distant columns in angles.
+
+The bound in Theorem 4 can be made sharp for certain θj,
+and thus the smallest angle matching algorithm has general
+guarantees only when the perturbation is small, i.e., the rel-
+ative error ratio is less than 1 −
+Theorem 5. Suppose that θ and θ(cid:48) are two factorized pa-
+rameter matrices for a variable. Solving (10) results in a
+consistent permutation ψ, if (cid:107)E(cid:107)2 < σk
+
+2/2 ≈ 1/13.
+
+2 +
+
+(cid:112)
+
+√
+
+(cid:0)θ(cid:62)θ(cid:1) and
+√
+
+−
+
+(cid:107)E(cid:107)2
+ρ
+
+(cid:16)
+
+log
+
+1 −
+
+(cid:17)
+
+ρ
+ν
+
+<
+
+2 −
+4
+
+2
+
+with
+
+ρ = σ1 (E) + σ2 (E) ,
+
+ν = σk
+
+(cid:0)θ(cid:62)θ(cid:1) + σk−1
+
+(cid:0)θ(cid:62)θ(cid:1)
+
+where the error matrix is deﬁne as E = (ψθ)(cid:62) (θ(cid:48) − ψθ),
+and σj (·) denotes the j-th largest singular value.
+
+The ﬁrst condition in Theorem 5 requires that at least one
+of θ and θ(cid:48) must have full column rank. We may exchange
+
+θ and θ(cid:48) in Theorem 5 to ﬁrst obtain the consistent permu-
+tation of θ(cid:48) with respect to θ, ψ then follows immediately.
+
+Theorem 5 states that solving (10) recovers a consistent
+permutation whenever the error spectral norm is small as
+compared to the smallest singular value of θ(cid:62)θ. This is
+especially useful for θ ∈ Rd×k with the number of rows
+d much larger than the number of columns k.
+In par-
+ticular, for θ with independent and identically distributed
+(cid:0)θ(cid:62)θ(cid:1) is at least of the order
+subgaussian entries, σk
+(cid:16)√
+
+(cid:17)2
+
+√
+
+d −
+
+k − 1
+
+(Rudelson & Vershynin, 2009).
+
+5.2. Convergence
+
+The following theorem states a sufﬁcient condition for PQP
+to achieve linear convergence rate. The theorem statement
+and proof is an adaptation of results stated in (Brand &
+Chen, 2011)—the proof in (Brand & Chen, 2011) over-
+looks a required condition on φ and the condition γ (cid:23)
+diag (Qjj) in the original proof is unnecessary.
+Theorem 6. The PQP algorithm given by (17) monoton-
+ically decreases the objective (16) and has linear conver-
+gence, if γ (cid:23) (−Q)+ 1 and
+
+(cid:32)(cid:115)
+
+φ (cid:31)
+
+1
+2
+
+z(cid:62)Q−1z
+λmin (Q)
+
+diag (Q) − |z|
+
+,
+
+(19)
+
+(cid:33)
+
++
+
+where λmin (·) is the smallest eigenvalue.
+
+6. Results on real and simulated data
+
+We compare the proposed algorithm ptpqp with state-of-
+the-art approaches including: 1) the tensor power method
+tpm (Anandkumar et al., 2014) and matrix simultane-
+ous diagonalization, nojd0 and nojd1 (Kuleshov et al.,
+2015)—two general tensor decomposition methods; 2)
+nonnegative tensor factorization hals (Kim et al., 2014);
+and 3) generalized method of moments meld (Zhao et al.,
+2016). We use the online code provided by the correspond-
+ing authors. The code to reproduce the experiments is
+available at: https://goo.gl/3DBXIo.
+
+6.1. Learning GDLMs on simulated data
+
+We adapt a simulation study from (Zhao et al., 2016) to
+compare runtime and accuracy of parameter estimation.
+We consider a GDLM where each variable takes categor-
+ical values {0, 1, 2, 3} and the parameters of the Dirich-
+let mixing distribution are {αj = 0.1}k
+j=1. We initially
+consider 25 variables. The true parameters for each hid-
+den component h are drawn from the Dirichlet distribu-
+tion Dir (0.5, 0.5, 0.5, 0.5). The resulting moment estima-
+tor is a 100-by-100-by-100 tensor. We vary the number
+of components k and add noise by replacing a fraction δ
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+n = 100
+
+n = 500
+
+n = 1000
+
+n = 5000
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+0.4
+0.3
+0.2
+0.1
+0
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+E
+S
+M
+R
+
+%
+0
+=
+δ
+
+%
+5
+=
+δ
+
+%
+1
+.
+0
+=
+δ
+
+0.4
+
+0.2
+
+0
+
+0.4
+
+0.2
+
+0
+
+0.4
+
+0.2
+
+0
+
+ptpqp
+hals
+meld
+tpm
+nojd0
+nojd1
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+k
+
+k
+
+k
+
+k
+
+Figure 1. RMSE between inferred and true parameters.
+
+of the observations with draws from a discrete uniform
+distribution. We also vary the number of samples n =
+100, 500, 1000, 5000, number of clusters k = 3, 5, 10, 20,
+and contamination δ = 0, 0.05, 0.1. Across these settings
+we found that the empirical third-order estimator typically
+exhibits between 20% and 50% negative entries.
+
+Accuracy of inference: Accuracy is measured by root-
+mean-square error (RMSE) which we compare across algo-
+rithms as a function of the number of components for vari-
+ous sample sizes and levels of contamination, see Figure 1.
+Both hals and ptpqp are consistently among the top esti-
+mators, and ptpqp outperforms hals as n grows. For small
+sample sizes and many hidden components meld achieves
+the smallest RMSE. The RMSE of tpm is relatively large,
+probably due to the whitening technique used to approx-
+imately transform the nonorthogonal factorization into an
+orthogonal one, see (Souloumiac, 2009; Nicol`o Colombo
+and Nikos Vlassis). The most relevant observation is that
+ptpqp outperforms other methods for large, noisy data.
+
+Computational cost: We examined how runtime scales as
+a function of the number of partitions. For the same model
+we set p = 1000 variables and n = 1000 samples. The
+tensor is now 4000-by-4000-by-4000. We evaluated the
+runtime of ptpqp (without parallelization) with the num-
+ber of partitions set to {30, 40, 50, 100, 200}. On a laptop
+with Intel i7-4702HQ@2.20GHz CPU and 8GB memory,
+ptpqp with 100 partitions completes within 3.5 min, 4 min,
+and 5 min for k = 4, 8, 12, respectively. In addition, the
+runtime monotonically decreases with the number of par-
+titions. Further speedups can be obtained by parallelizing
+the factorization of partitions across multiple CPUs or ma-
+chines.
+
+6.2. Predicting crowdsourced labels
+
+In (Zhang et al., 2014), a combination of EM and tensor
+decompositions was used to predict crowdsourcing anno-
+tations. The task is to predict the true label given incom-
+
+plete and noisy observations from a set of workers, this is
+a mixed membership problem (Dawid & Skene, 1979). In
+(Zhang et al., 2014) a third-order tensor estimator was pro-
+posed to obtain an initial estimate for the EM algorithm.
+We compare the predictive performance on ﬁve data sets of
+several tensor decomposition methods as well as the EM
+algorithm initialized with majority voting by the workers
+(MV+EM). The fraction of incorrect predictions and the
+size of each dataset are in the table below. Note that pt-
+pqp matches or outperforms the other tensor methods on
+all but one dataset, and even outperforms MV+EM on two
+datasets.
+
+Table 1. Incorrectly predicted labels (%)
+
+DATASET
+PTPQP
+HALS
+TPM
+NOJD0
+NOJD1
+
+BIRDS
+11.11
+12.96
+11.11
+12.04
+12.04
+MV+EM 11.11
+108
+
+SIZE
+
+RTE
+7.75
+7.75
+7.62
+8.00
+8.00
+7.12
+800
+
+TREC DOGS WEB
+14.44
+15.37
+30.81
+26.84
+20.57
+31.47
+14.70
+15.49
+31.87
+18.39
+15.49
+32.97
+25.97
+15.86
+35.91
+30.20
+15.91
+15.86
+2665
+807
+19033
+
+7. Conclusions
+
+We proposed an efﬁcient algorithm for learning mixed mix-
+ture models based on the idea of partitioned factorizations.
+The key challenge is to consistently match the partitioned
+parameters with the hidden components. We provided suf-
+In addition, we
+ﬁcient conditions to ensure consistency.
+have also developed a nonnegative approximation to handle
+the negative entries in the empirical method of moments es-
+timators, a problem not addressed by several recent tensor
+methods. Results on synthetic and real data corroborate
+that the proposed approach achieves improved inference
+accuracy as well as computational efﬁciency than state-of-
+the-art methods.
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+Acknowledgements
+
+Z.T. would like to thank Rong Ge for sharing helpful in-
+sights. S.M. would like to thank Lek-Heng Lim for in-
+sights. Z.T. would like to acknowledge the support of
+grants NSF CNS-1423128, NSF IIS-1423124, and NSF
+CNS-1218981. S.M. would like to acknowledge the sup-
+port of grants NSF IIS-1546331, NSF DMS-1418261,
+NSF IIS-1320357, NSF DMS-1045153, and NSF DMS-
+1613261.
+
+References
+
+Anandkumar, Anima, Foster, Dean P, Hsu, Daniel J,
+Kakade, Sham M, and kai Liu, Yi. A spectral algo-
+rithm for latent dirichlet allocation. In NIPS, pp. 917–
+925. 2012.
+
+Anandkumar, Anima, Jain, Prateek, Shi, Yang, and Niran-
+jan, U. N. Tensor vs. matrix methods: Robust tensor
+decomposition under block sparse perturbations. In AIS-
+TATS, pp. 268–276, 2016.
+
+Anandkumar, Animashree, Ge, Rong, Hsu, Daniel,
+Kakade, Sham M., and Telgarsky, Matus. Tensor de-
+compositions for learning latent variable models. JMLR,
+15(1):2773–2832, January 2014.
+
+Blei, David M., Ng, Andrew Y., and Jordan, Michael I.
+Latent Dirichlet allocation. JMLR, 3:993–1022, 2003.
+
+Brand, M. and Chen, D. Parallel quadratic programming
+for image processing. In IEEE International Conference
+on Image Processing (ICIP), pp. 2261–2264, September
+2011.
+
+Brand, M., Shilpiekandula, V., and Bortoff, S.A. A parallel
+quadratic programming algorithm for model predictive
+control. In World Congress of the International Feder-
+ation of Automatic Control (IFAC), volume 18, August
+2011.
+
+Chi, Eric C. and Kolda, Tamara G. On tensors, sparsity,
+and nonnegative factorizations. SIAM Journal on Matrix
+Analysis and Applications, 33(4):1272–1299, December
+2012.
+
+Comon, Pierre and Jutten, Christian (eds.). Handbook of
+blind source separation : independent component anal-
+ysis and applications. Communications engineering. El-
+sevier, 2010.
+
+Dawid, A. P. and Skene, A. M. Maximum likelihood es-
+timation of observer error-rates using the em algorithm.
+Journal of the Royal Statistical Society. Series C (Ap-
+plied Statistics), 28(1):20–28, 1979.
+
+Donoho, David and Stodden, Victoria. When does non-
+negative matrix factorization give a correct decomposi-
+tion into parts? In NIPS, pp. 1141–1148. 2004.
+
+Erosheva, Elena A. Comparing latent structures of the
+grade of membership, rasch, and latent class models.
+Psychometrika, 70(4):619–628, 2005.
+
+Finesso, Lorenzo and Spreij, Peter. Nonnegative matrix
+factorization and I-divergence alternating minimization.
+Linear Algebra and its Applications, 416(2):270–287,
+July 2006.
+
+Gower, J.C. and Dijksterhuis, G.B. Procrustes Problems.
+ISBN
+
+Oxford Statistical Science Series. OUP Oxford.
+9780198510581.
+
+Gu, Quanquan, Gui, Huan, and Han, Jiawei. Robust ten-
+sor decomposition with gross corruption. In NIPS, pp.
+1422–1430. 2014.
+
+Hsu, Daniel and Kakade, Sham M. Learning mixtures of
+spherical gaussians: Moment methods and spectral de-
+compositions. In Innovations in Theoretical Computer
+Science (ITCS), pp. 11–20, 2013.
+
+Huang, Furong, Niranjan, U. N., Hakeem, Moham-
+mad Umar, Verma, Prateek, and Anandkumar, An-
+Fast detection of overlapping communi-
+imashree.
+CoRR,
+ties via online tensor methods on gpus.
+abs/1309.0787, 2013. URL http://arxiv.org/
+abs/1309.0787.
+
+Kim, Jingu, He, Yunlong, and Park, Haesun. Algorithms
+for nonnegative matrix and tensor factorizations: a uni-
+ﬁed view based on block coordinate descent framework.
+Journal of Global Optimization, 58(2):285–319, 2014.
+
+Kolda, Tamara G. and Bader, Brett W. Tensor decomposi-
+tions and applications. SIAM Rev., 51(3):455–500, Au-
+gust 2009.
+
+Kruskal, Joseph B. Three-way arrays: Rank and unique-
+ness of trilinear decompositions, with application to
+arithmetic complexity and statistics. Linear Algebra and
+Its Applications, 18(2):95–138, 1977.
+
+Kuleshov, V., Chaganty, A., and Liang, P. Tensor factoriza-
+
+tion via matrix factorization. In AISTATS, 2015.
+
+Lee, Daniel D. and Seung, H. Sebastian. Algorithms for
+non-negative matrix factorization. In NIPS, pp. 556–562,
+2001.
+
+Leurgans, S. E., Ross, R. T., and Abel, R. B. A decom-
+position for three-way arrays. SIAM Journal on Matrix
+Analysis and Applications, 14:1064–1083, 1993.
+
+Partitioned Tensor Factorizations for Learning Mixed Membership Models
+
+Zhang, Sheng, Wang, Weihong, Ford, James, and Make-
+don, Fillia. Learning from incomplete ratings using non-
+negative matrix factorization. In In Proceedings of the
+6th SIAM Conference on Data Mining (SDM), pp. 549–
+553, 1996.
+
+Zhang, Yuchen, Chen, Xi, Zhou, Dengyong, and Jordan,
+Michael I. Spectral methods meet EM: A provably op-
+timal algorithm for crowdsourcing. In NIPS, pp. 1260–
+1268, 2014.
+
+Zhao, Shiwen, Engelhardt, Barbara E., Mukherjee, Sayan,
+and Dunson, David B. Fast moment estimation for gen-
+eralized latent dirichlet models. CoRR, abs/1603.05324,
+URL http://arxiv.org/abs/1603.
+2016.
+05324.
+
+Nicol`o Colombo and Nikos Vlassis, title = Tensor Decom-
+position via Joint Matrix Schur Decomposition, bookti-
+tle = ICML pages = 2820-2828 year = 2016.
+
+Pritchard, Jonathan K., Stephens, Matthew, and Donnelly,
+Peter. Inference of population structure using multilocus
+genotype data. Genetics, 155(2):945–959, 2000a.
+
+Pritchard, Jonathan K., Stephens, Matthew, Rosenberg,
+Noah A., and Donnelly, Peter. Association mapping in
+structured populations. The American Journal of Human
+Genetics, 67(1):170–181, 2000b.
+
+Rudelson, Mark and Vershynin, Roman. Smallest singular
+value of a random rectangular matrix. Comm. Pure Appl.
+Math, pp. 1707–1739, 2009.
+
+Sch¨onemann, Peter. A generalized solution of the orthog-
+onal procrustes problem. Psychometrika, 31(1):1–10,
+1966.
+
+Sha, Fei, Saul, Lawrence K., and Lee, Daniel D. Mul-
+tiplicative updates for nonnegative quadratic program-
+In NIPS, pp. 1065–
+ming in support vector machines.
+1072. 2003.
+
+Shashua, Amnon and Hazan, Tamir. Non-negative tensor
+factorization with applications to statistics and computer
+vision. In ICML, pp. 792–799, 2005.
+
+Song, Zhao, Woodruff, David P., and Zhang, Huan. Sub-
+linear time orthogonal tensor decomposition. In NIPS,
+pp. 793–801, 2016.
+
+Souloumiac, A. Joint diagonalization: is non-orthogonal
+In 3rd International
+always preferable to orthogonal?
+Workshop on Computational Advances in Multi-Sensor
+Adaptive Processing, pp. 305–308, 2009.
+
+Tan, Zilong and Mukherjee, Sayan. Efﬁcient learning of
+graded membership models. CoRR, abs/1702.07933,
+URL http://arxiv.org/abs/1702.
+2017.
+07933.
+
+Wang, Yining, Tung, Hsiao-Yu, Smola, Alexander J, and
+Anandkumar, Anima. Fast and guaranteed tensor de-
+composition via sketching. In NIPS, pp. 991–999. 2015.
+
+Welling, Max and Weber, Markus. Positive tensor fac-
+torization. Pattern Recognition Letters, 22:1255–1261,
+2001.
+
+Woodbury, Max A., Clive, Jonathan, and Garson, Arthur,
+Jr. Mathematical typology: A grade of membership tech-
+nique for obtaining disease deﬁnition. Computers and
+Biomedical Research, 11:277–298, 1978.
+
+

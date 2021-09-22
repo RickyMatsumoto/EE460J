@@ -1,0 +1,1107 @@
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+Andrew Forney 1 Judea Pearl 1 Elias Bareinboim 2
+
+Abstract
+
+The Multi-Armed Bandit problem with Un-
+observed Confounders
+(MABUC) considers
+decision-making settings where unmeasured
+variables can inﬂuence both the agent’s deci-
+sions and received rewards (Bareinboim et al.,
+2015). Recent ﬁndings showed that unobserved
+confounders (UCs) pose a unique challenge to al-
+gorithms based on standard randomization (i.e.,
+experimental data); if UCs are naively averaged
+out, these algorithms behave sub-optimally, pos-
+sibly incurring inﬁnite regret. In this paper, we
+show how counterfactual-based decision-making
+circumvents these problems and leads to a co-
+herent fusion of observational and experimental
+data. We then demonstrate this new strategy in
+an enhanced Thompson Sampling bandit player,
+and support our ﬁndings’ efﬁcacy with extensive
+simulations.
+
+1. Introduction
+
+Active learning agents are becoming increasingly inte-
+grated into complex environments, where a number of het-
+erogeneous sources of information are available for use
+(4; 6; 10). These agents have the ability to both intervene in
+their environments (choosing actions, receiving feedback
+on the quality of their choices, and then modifying future
+actions accordingly), as well as observe other agents inter-
+acting. With the opportunity to learn from data collected
+from different sources other than personal experimentation
+come new challenges of “transfer” in learning. In particu-
+lar, agents should know that actions that are desirable for
+populations may not be desirable for all individuals, and as
+such, should be wary of how observed behavior generalizes
+(i.e., transfers) to them and how these observations should
+be combined with the agent’s own experience.
+
+1University of California, Los Angeles, California, USA
+2Purdue University, West Lafayette, Indiana, USA. Correspon-
+dence to: Andrew Forney <forns@cs.ucla.edu>.
+
+In this work, we study the conditions under which data col-
+lected under heterogeneous conditions (to be deﬁned) can
+be combined by an online agent to improve performance in
+a reinforcement learning task. This challenge is not with-
+out precedent, as recent works have investigated dataset
+transportability (when source and target differ structurally),
+though in ofﬂine domains (3; 4). Others have studied sce-
+narios in which agents learn from expert teachers in the
+inverse reinforcement learning problems (1; 8). Recent
+work from causal analysis has addressed data-fusion for
+interventional quantities in reinforcement learning tasks
+(18). However, this work addresses data-fusion in domains
+where counterfactual quantities are sought, as for personal-
+ized decision-making (2; 17).
+
+Environments for which an agent possesses fully labelled
+data and a fully speciﬁed model (in which all factors re-
+lating contexts, actions, and their associated rewards are
+known) are trivial from a learning transfer perspective; in
+such scenarios, collected data is homogeneous because all
+factors that may introduce bias between samples can be
+controlled. Conversely, in this paper, we focus on the chal-
+lenges that arise due to unobserved confounders (UCs),
+namely, unmeasured and unlabelled variables that inﬂuence
+an agent’s natural action choice as well as the outcome of
+that action. Such factors are particularly subtle when left
+uncontrolled due to their invisible nature and emergence of
+what is known as confounding bias (12).
+
+Our agent’s goal is to quickly learn about its environ-
+ment by consolidating data collected from observing other
+agents and data collected through its own experience, so
+UCs pose a fundamental challenge: the results from seeing
+another agent performing an action are not always qualita-
+tively the same as doing the action itself. As such, through-
+out this paper, we will differentiate three classes of data
+that may be employed by an autonomous agent to inform
+its decision-making:
+
+1. Observational data is gathered through passive ex-
+amination of the actions and rewards of agents other
+than the actor, but for whom the actor is assumed to
+be exchangeable.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+2. Experimental data is gathered through randomiza-
+tion (e.g., standard MAB exploration), or from a ﬁxed,
+non-reactive policy.
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+3. Counterfactual data (though traditionally computed
+from a fully speciﬁed model or under speciﬁc empiri-
+cal conditions) represents the rewards associated with
+actions under a particular (or “personalized”) instanti-
+ation of the UCs.
+
+In the remainder of this work, we demonstrate how these
+data types can be fused to facilitate learning in a variant of
+the Multi-Armed Bandit problem with Unobserved Con-
+In traditional
+founders (MABUC), ﬁrst discussed in (2).
+bandit instances (e.g., (13; 9; 7; 14; 5)), an agent is faced
+with K ∈ N, K ≥ 2 discrete action choices (often called
+“arms”), each with its own, independent, and initially un-
+known reward distribution. The agent’s task is to maximize
+cumulative rewards over a series of rounds, which requires
+learning about the underlying reward distributions associ-
+ated with each arm. In the MABUC (formalized shortly),
+agents are faced with the same task, except that UCs mod-
+ify the agent’s arm-choice predilections and payout rates at
+each round, and the dimensionality and functional form of
+the UCs are unknown.
+
+Though the data-fusion problem is an ongoing exploration
+in the data sciences (4), this paper is the ﬁrst to study learn-
+ing techniques in MABUC settings that combine data sam-
+pled under heterogeneous data-collection modes. Speciﬁ-
+cally, our contributions are as follows:
+
+1. Using counterfactual calculus, we formally show that
+counterfactual quantities can be estimated by active
+agents empirically (Sec. 4).
+
+2. We demonstrate how observational, experimental, and
+counterfactual datasets can be combined through a
+heuristic for MABUC agents (Sec. 4).
+
+3. We then develop a variant of the Thompson Sampling
+algorithm that implements this new heuristic, and run
+extensive simulations demonstrating its faster conver-
+gence rates compared to the current state-of-the-art
+(Sec. 5).1
+
+2. The Greedy Casino Revisited
+
+In this section, we consider an expanded version of the
+Greedy Casino problem introduced in (2). In its new ﬂoor’s
+conﬁguration, the Greedy Casino is considering four new
+themed slot-machines (instead of the two used in the pre-
+vious version) and wishes to make them as lucrative as
+possible. After running a battery of preliminary tests, the
+casino executives discover that two traits in particular pre-
+dict which of the four machines that a gambler is likely
+
+1Supplemental material. For paper appendices and other re-
+
+sources, visit: https://goo.gl/MYJWbY
+
+Figure 1. Plots of MAB algorithms performance vs. RDC in the
+Greedy Casino scenario.
+
+to play: whether or not the machines are all blinking (de-
+noted B ∈ {0, 1}), and whether or not the gambler is drunk
+(denoted D ∈ {0, 1}). After consulting with a team of psy-
+chologists and statisticians, the casino learns that any arbi-
+trary gambler’s natural machine choice can be modeled by
+the structural equation (12): X ← fX (B, D) = B + 2 ∗ D
+if the four machines are indexed as X ∈ {0, 1, 2, 3}. The
+casino also learns that its patrons have an equal chance of
+being drunk or not (i.e., P (D = 1) = 0.5) and decide to
+program their new machines to blink half of the time (i.e.,
+P (B = 1) = 0.5).
+
+To prevent casinos from exploiting their patrons, a new
+gambling law stipulates that all slot machines in the state
+must maintain a minimum 30% win rate. Wishing to lever-
+age their new discovery about gamblers’ machine choice
+predilections while conscious of this law, the casino imple-
+ments a reactive payout strategy for their machines, which
+are equipped with sensors to determine if their gambler is
+drunk or not (assume that the sensors are perfect at mak-
+ing this determination). As such, the machines are pro-
+grammed with the payout distribution illustrated in Table
+1a.
+
+After the launch of the new slot machines, some observant
+gamblers note that players appear to be winning only 20%
+of the time, and report their suspicions to the state gam-
+bling commission. An investigator is then sent to the casino
+to determine the merit of these complaints, and begins re-
+cruiting random gamblers from the casino ﬂoor to play at
+randomly selected machines, despite the players’ natural
+predilections. Surprisingly, he ﬁnds that players in this ex-
+periment win 40% of the time, and declares that the casino
+has committed no crime. Meanwhile, the casino contin-
+ues to exploit players’ gambling predilections, paying them
+10% less than the law-mandated minimum. Plainly, gam-
+blers are unaware of being manipulated by the UCs B, D,
+and of the predatory payout policy that the casino has con-
+structed around them. The collected data is summarized
+in Table 1b; the second column (E[y1|X]) represents the
+observations drawn from the casino’s ﬂoor while the third
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+(a)
+
+D = 1
+
+D = 0
+E[y1|X, B, D] B = 0 B = 1 B = 0 B = 1
+0.60
+0.50
+0.30
+*0.20
+
+X = 0
+X = 1
+X = 2
+X = 3
+
+*0.20
+0.60
+0.50
+0.30
+
+0.30
+0.50
+*0.20
+0.30
+0.60
+*0.20
+0.60
+0.50
+E[y1|X] E[y1|do(X)]
+0.40
+0.40
+0.40
+0.40
+
+0.20
+0.20
+0.20
+0.20
+
+(b)
+X = 0
+X = 1
+X = 2
+X = 3
+
+Table 1. (a) Payout rates decided by reactive slot machines as a
+function of arm choice X, sobriety D, and machine conspicu-
+ousness B. Players’ natural arm choices under D, B are indi-
+cated by asterisks. (b) Payout rates according to the observational,
+E[y1|X], and experimental E[y1|do(X)], distributions. Y = y1
+represents winning.
+
+(E[y1|do(X)]) represents the randomized experiment per-
+formed by the state investigator (both with large sample
+sizes).
+
+In an attempt to ﬁnd a better gambling strategy, an obser-
+vant habitu´e decides to run a battery of experiments using
+standard MAB algorithms (e.g., (cid:15)-greedy, UCB, Thomson
+Sampling) as well as an algorithm following an approach
+presented in (2) known as the Regret Decision Criterion
+(RDC) (reviewed in the next section).
+Importantly, the
+RDC agent lacks the capability to identify and observe the
+UCs. The results of her experiments are depicted in Fig. 1.
+She notes, somewhat surprised, that all algorithms which
+ignore the inﬂuence of the UCs (i.e., all but RDC) perform
+equivalently to the randomized experiment conducted by
+the investigator. Noting the differences in the payout rates
+between the observational and experimental data, she pon-
+ders how this can be the case and how she might use these
+datasets to improve her gambling strategy and winnings.
+
+3. Background
+
+In this section, we formalize the MABUC problem in the
+language of Structural Causal Models (SCMs), which will
+allow us to articulate the notions of observational, experi-
+mental, and counterfactual distributions as well as formal-
+ize the problem of confounding due to the inﬂuence of UCs.
+
+Each SCM M is associated with a causal diagram G and
+encodes a set of endogenous (or observed) variables V and
+exogenous (or unobserved) variables U ; edges in G corre-
+spond to functional relationships relative to each endoge-
+nous variable Vi ∈ V , namely, Vi ← fi(P Ai, Ui), where
+P Ai ⊆ V \ Vi and Ui ⊆ U ; and a probability distribution
+over the exogenous variables P (U = u).
+
+Each M induces: (1) observational distributions P (V =
+v), which represent the “natural” world, without external
+interventions; (2) a set of experimental (a.k.a.
+interven-
+tional) distributions P (Y = y|do(X = x)) for X, Y ⊆ V ,
+which represent the world in which X is forced to the value
+x despite any causal inﬂuences that would otherwise func-
+tionally determine its value in the natural setting; and (3) a
+set of counterfactual distributions, deﬁned next (12).2
+Deﬁnition 3.1. (Counterfactual) (12) Let X and Y be two
+subsets of endogenous variables in V . The counterfactual
+sentence “Y would be y (in situation U = u), had X been
+x” is interpreted as the equality Yx(u) = y, where Yx(u)
+encodes the solution for Y in a structural system where for
+every Vi ∈ X, the equation fi is replaced with the constant
+x.
+
+Note that the counterfactual expression E[Yx = y|X = x(cid:48)]
+is well-deﬁned, even when x (cid:54)= x(cid:48), and is read “The ex-
+pectation that Y = y had X been x given that X was ob-
+served to be x(cid:48)”. Despite being logically valid statements in
+SCMs, counterfactual quantities must be estimated from ei-
+ther a fully speciﬁed model, or, in the absence of such, from
+data. In ofﬂine settings, however, counterfactual quantities
+are not empirically estimable (namely, when the antecedent
+of the counterfactual contradicts the observed value), ex-
+cept in some special cases ((12), Chs. 7, 9). The reason
+is that if we submitted the subject to condition X = x(cid:48),
+we cannot go back in time before exposure and submit the
+same subject to a new condition X = x. As is well un-
+derstood in the causal inference literature, this procedure is
+not the same as ﬁrst exposing a random unit to condition
+X = x(cid:48) since the ones who initially were inclined to act as
+X = x are somehow different than the randomly selected
+subject. That said, we will show (in Sec. 4) that online
+learning agents possess the means to estimate counterfac-
+tuals directly.
+
+In practice, the observational and experimental distribu-
+tions can be estimated through procedures known as ran-
+dom sampling and random experimentation, respectively.
+Confounding bias emerges when UCs are present and can
+be seen through the difference between these two distribu-
+tions, P (Y |do(X = x)) − P (Y |X = x). The absence
+of UCs implies that P (Y |do(X = x)) = P (Y |X = x),
+which allows random sampling (instead of a randomized
+experiment) to estimate the experimental distribution.
+
+The contrast between observational and experimental data
+is mirrored in the distinction between actions (which repre-
+sent reactive “choices” resulting from an agents’ environ-
+ments, beliefs, and other causes) and acts (which represent
+deliberate choices resulting from rational decision-making
+or interventions that sever the causal inﬂuences of the sys-
+
+2For a comprehensive review of SCMs, we refer readers to
+
+(12).
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+tem (12)). To tie these concepts to the MABUC problem,
+one important tool introduced in (2) is known as the agent’s
+intent.
+
+Deﬁnition 3.2. (Intent) Consider a SCM M and an en-
+dogenous variable X ∈ V that is amenable to external in-
+terventions and is (naturally) determined by the structural
+equation fx(P Ax, Ux), where P Ax ⊆ V represents the
+observed parents of X, and Ux ⊆ U are the UCs of X.
+After realization P Ax = pax and Ux = ux (without any
+external intervention), we say that the output of the struc-
+tural function given the current conﬁguration of all UCs is
+the agent’s intent, I = fx(pax, ux).
+
+Thus, intent can be seen as an agent’s chosen action before
+its execution, which, in fact, is a proxy for any inﬂuencing
+UCs.3 To ground these notions, consider again the Greedy
+Casino example in which the gamblers’ intents are enacted
+on the unperturbed casino ﬂoor, but are then averaged over
+during the investigator’s randomized study.
+
+We can now put these observations together and explicitly
+deﬁne the MABUC problem:
+
+(K-Armed Bandits with Unobserved
+Deﬁnition 3.3.
+Confounders) A K-Armed bandit problem (K ∈ N, K ≥
+2) with unobserved confounders (MABUC, for short) is de-
+ﬁned as a model M with a reward distribution over P (u)
+where, for each round 0 < t < T, t ∈ N:
+
+1. Unobserved confounders: Ut represents the unob-
+served variable encoding the payout rate and unob-
+served inﬂuences to the propensity to choose arm xt
+at round t.
+
+2. Intent: It ∈ {i1, ..., ik} represents the agent’s in-
+tended arm choice at round t (prior to its ﬁnal choice,
+Xt) such that It = fi(paxt, ut).
+
+3. Policy: πt ∈ {x1, ..., xk} denotes the agent’s deci-
+sion algorithm as a function of its history (discussed
+shortly) and current intent, fπ(ht, it).4
+
+4. Choice: Xt ∈ {x1, ..., xk} denotes the agent’s ﬁnal
+arm choice that is “pulled” at round t, xt = fx(πt).
+
+5. Reward: Yt ∈ {0, 1} represents the Bernoulli reward
+(0 for losing, 1 for winning) from choosing arm xt
+under UC state ut as decided by yt = fy(xt, ut).
+
+3Def. 3.2 does not require that all its inﬂuencing factors be
+measured or acknowledged by the agent. This deﬁnition acco-
+modates the fact that an agent’s decisions can be inﬂuenced by
+unknown factors, an observation that is not new to the cognitive
+sciences (16; 11).
+
+4Using this representation, the distinction between obs. and
+exp. settings is made transparent – πt copies it in the former, but
+ignores it and listens instead to a random device (e.g., a coin toss)
+in the latter.
+
+Figure 2. Model for each round of the MABUC decision process.
+Solid nodes denote observed variables and open nodes represent
+unobserved variables. The square node indicates a decision point
+made by the agent’s strategy.
+
+The graphical model in Fig. 2 represents a prototypical
+MABUC (Def. 3.3). We also add a graphical representa-
+tion of the agent’s history Ht, a data structure containing
+the agent’s observations, experiments, and counterfactual
+experiences up to time step t. The means by which these
+different data-collections can be used in the agent’s policy
+are explored at length in the next section. In summary, at
+every round t of MABUC, the unobserved state ut is drawn
+from P (u), which then decides it, which is then considered
+by the strategy πt in concert with the game’s history ht; the
+strategy makes a ﬁnal arm choice, which is then pulled, as
+represented by xt, and the reward yt is revealed.
+
+Based on this deﬁnition, the regret decision criterion can be
+stated (2):
+
+Deﬁnition 3.4. (Regret Decision Criterion (RDC)) (2)
+In a MABUC instance with arm choice X, intent I = i,
+and reward Y , agents should choose the action a that max-
+imizes their intent-speciﬁc reward, or formally:
+
+argmax
+a
+
+E[YX=a|X = i]
+
+(1)
+
+In brief, RDC prescribes that the arm X = a that maxi-
+mizes the expected value of reward Y having conditioned
+on the intended arm X = i should be selected, even when
+a (cid:54)= i.
+
+4. Fusing Datasets
+
+Suppose our agent assumes the role of a gambler in the
+Greedy Casino (Sec. 2) and possesses (1) observations
+of arm choices and payouts from other players in the
+casino, (2) the randomized experimental results from the
+state investigator, and (3) the knowledge to use intent in
+its decision-making for choosing arms by the Regret De-
+cision Criterion (RDC). In other words, the agent begins
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+the MABUC problem with large samples of observations
+(E[Y |X]) and experimental results (E[Y |do(X)]), and will
+maximize the counterfactual RDC (E[YX=a = 1|X = i])
+because it recognizes the presence of UCs (viz. E[Y |X] (cid:54)=
+E[Y |do(X)]; see Table 1b). We note that the observational
+and experimental data available to our agent contains infor-
+mation about its environment, but cannot simply be incor-
+porated into the counterfactual maximization criteria (viz.
+E[Y |X] (cid:54)= E[Y |do(X)] (cid:54)= E[Yx|x(cid:48)]; see Table 1). So,
+the agent can choose to either discard its observations and
+experiments, and simply gamble by the tenets of RDC, or
+combine them in an informative way. This section explores
+the latter option.
+
+Relating the Datasets
+
+Note that the experimental quantity E[Y |do(X = x)] can
+be written in counterfactual notation E[YX=x] = E[Yx],
+which reads as “The expected value of Y had X been x.”
+Note also that E[Yx] can be written as a weighted average
+of the reward associated with arm x across all intent condi-
+tions (by the law of total probabilities), namely:
+
+E[Yx] = E[Yx|x1]P (x1) + ... + E[Yx|xK]P (xK)
+
+(2)
+
+Examining Eq. 2, we see that the equation is composed
+of expressions from our agent’s three datasets (observa-
+tional, experimental, and counterfactual). By deﬁnition,
+the LHS of the equation (E[Yx]) is drawn from the exper-
+imental dataset. On the RHS, we have two types of quan-
+tities. Expressions of the form E[Yx|x(cid:48)] for which x = x(cid:48)
+are observational by the consistency axiom (12), because
+when the hypothesized and observed actions are the same,
+the value of y is the same (i.e., E[Yx|x] = E[Y |x]). On
+the other hand, expressions of the form E[Yx|x(cid:48)] for which
+x (cid:54)= x(cid:48) are non-trivial counterfactuals, mixing observations
+and antecedents occurring in different worlds.
+
+In general, evaluating counterfactuals empirically is not
+possible, except for some special cases, such as when the
+action X is binary (12). However, RDC asserts that if one
+preempts the agent’s decision process when the intent I = i
+is about to become a decision (X), i still encodes informa-
+tion about the UCs Ui (because i = fi(P Ax, Ux)). This
+implies that randomizing within intent conditions can lead
+to the computation of the counterfactual given by RDC,
+which is a special counterfactual also called the effect of
+treatment on the treated (ETT) (12).
+
+In order for us to exploit the properties of this equivalence
+to improve the performance of RDC agents in the MABUC
+setting, we ﬁrst demonstrate that RDC indeed measures the
+counterfactual quantity of the ETT.
+
+Theorem 4.1. The counterfactual ETT is empirically es-
+timable for arbitrary action-choice dimension (i.e., |X| =
+k for k ≥ 2) when agents condition on their intent I = i
+
+Figure 3. Counterfactual reward-history table as a cross of arm
+choice and intent.
+
+and estimate the response Y to their ﬁnal action choice
+X = a.
+
+For a proof of Theorem 4.1, see supplementary material,
+Appendix A. Because RDC is equivalently an interven-
+tional quantity, we have shown that the ETT, a counter-
+factual expression, can be estimated empirically through
+counterfactual-based randomization.5 The main advan-
+tages of this, now proven, equivalence are threefold: (1)
+the empirical estimation of previously unidentiﬁable coun-
+terfactual quantities presents opportunities for further ex-
+ploration in causal analysis, (2) the ETT’s prescription for
+integrating experimental and observational data (see Eq.
+2) permits a now interventional data-fusion strategy when
+such data is available, and (3) data points sampled by the
+agent using intent-speciﬁc decision-making are counter-
+factual in nature, and should therefore be added to the
+agent’s counterfactual history. Procedures implementing
+RDC-type randomization should thus record intent-speciﬁc
+arm rewards in a table similar to Fig. 3. A second con-
+sequence of recording arm-intent-speciﬁc payouts in this
+fashion is that observational data may be substituted di-
+rectly into cells for which the ﬁnal arm choice and intent
+agree (see reference to consistency axiom below Eq. 2).
+
+Strategies for Online Agents
+
+Now that we have illustrated how the different datasets re-
+late to our agent in the MABUC setting, we consider that
+the counterfactual expressions in Eq. 2 must be learned
+by our agent and are not known at the start of the game.
+Because of this ﬁnite-sample concern, we propose differ-
+ent learning strategies that exploit the datasets’ relationship
+while managing the uncertainty implicit in a MAB learning
+scenario.
+
+Strategy 1: Cross-Intent Learning. Consider Eq. 2 once
+
+5It is understood that the ETT can be computed for binary de-
+cisions or when the backdoor criterion holds (12), but it was not
+believed to be estimable for arbitrary dimensions prior to RDC-
+randomization.
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+more. This holds for every arm X = x, which induces a
+system of equations as shown in Fig. 3. Consider a single
+cell in this system, say E[Yxr |xw], which we can solve and
+rewrite as:
+
+EXInt[Yxr |xw] = [E[Yxr ] −
+
+E[Yxr |xi]P (xi)]/P (xw)
+
+K
+(cid:88)
+
+i(cid:54)=w
+
+This form provides a systematic way of learning about arm
+payouts across intent conditions, which is desirable be-
+cause an arm pulled under one intent condition provides
+knowledge about the payouts of that arm under other intent
+conditions. This can be depicted graphically, as shown by
+row B in Fig. 3 – information about Yxr ﬂows from intent
+conditions xi (cid:54)= xw to intent xw (a form of information
+leakage, (15)).
+
+Strategy 2: Cross-Arm Learning. Consider any three
+arms, xr, xs, xw such that r /∈ {s, w} and assume we are
+interested in estimating the value of E[Yxr |xw] (our query,
+for short). Considering again the equations induced by Eq.
+(2), we have,
+
+E[Yxr ] =
+
+E[Yxr |xi]P (xi)
+
+E[Yxs] =
+
+E[Yxs |xi]P (xi)
+
+K
+(cid:88)
+
+K
+(cid:88)
+
+i
+
+i
+
+Note that each of Eqs. (4, 5) share the same intent priors
+on our query intent P (xw), so we can solve for P (xw) in
+both equations using simple algebra, which yields,
+E[Yxr ] − (cid:80)K
+
+i(cid:54)=w E[Yxr |xi]P (xi)
+
+P (xw) =
+
+E[Yxs] − (cid:80)K
+
+=
+
+E[Yxr |xw]
+i(cid:54)=w E[Yxs |xi]P (xi)
+E[Yxs|xw]
+
+Using Eq. (6) and solving for the query in terms of our
+paired arm xs, ∀ r (cid:54)= s we have
+(cid:2)E[Yxr ] − (cid:80)K
+
+i(cid:54)=w E[Yxr |xi]P (xi)(cid:3)E[Yxs|xw]
+i(cid:54)=w E[Yxs |xi]P (xi)
+
+E[Yxs] − (cid:80)K
+
+E[Yxr |xw] =
+
+Eq. (7) illustrates that any non-diagonal cell from the table
+in Fig. 3 can be estimated through pairwise arm compar-
+isons with the same intent. Put differently, Eq. (7) allows
+our agent to estimate E[Yxr |xw] from samples in which
+any arm xs (cid:54)= xr was pulled under the same intent xw.
+
+In practice, the online nature of the problem can make some
+of these pairwise computations noisy due to sampling vari-
+ability when xr is an infrequently explored arm. To obtain
+
+(3)
+
+(4)
+
+(5)
+
+(6)
+
+(7)
+
+a more robust estimate of the target quantity, this pairwise
+comparison can be repeated between the query arm and all
+other arms with the same intent, and then pooled together.
+This can be seen as information about Yxr |xw ﬂowing from
+arm xs (cid:54)= xr to xr (under intent xw) – column C in Fig.
+2(b).
+
+One such pooling strategy is to take the inverse-variance-
+weighted average.6 Formally, we can consider a function
+E[Yxr |xw] = hXArm(xr, xw, xs) such that hXArm per-
+forms the empirical evaluation of the RHS of Eq. (7). Ad-
+ditionally, let σ2
+x,i = V arsamp[Yx|i] indicate the empirical
+payout variance for each arm-intent condition (as from the
+reward successes and failures captured by the agent in Ta-
+ble 3). To estimate our query from all other arms in the
+same intent through inverse-variance weighting, we have
+our now complete, second heuristic:
+
+EXArm[Yxr |xw] =
+
+(cid:80)K
+
+i(cid:54)=r hXArm(xr, xw, xi)/σ2
+i(cid:54)=r 1/σ2
+
+(cid:80)K
+
+xi,xw
+
+xi,xw
+
+(8)
+
+Strategy 3: The Combined Approach. The payout esti-
+mates for a MABUC algorithm using RDC (Fig. 3) can be
+estimated from three different sources: (1) Esamp[Yxr |xw],
+the sample estimates collected by the agent during the exe-
+cution of the algorithm. (2) EXInt[Yxr |xw], the computed
+estimate using cross-intent learning.
+(3) EXArm[Yxr |xw],
+the computed estimate using cross-arm learning. Naturally,
+these three quantities can be combined to obtain a more ro-
+bust and stable estimate to the target query.
+
+We employ an inverse-variance weighting scheme so as to
+leverage these three estimators, and so we must formulate
+a metric for the payout variance associated with each strat-
+egy’s computed estimate. To do so, we deﬁne an average
+variance for each strategy, which is the average over each
+sample estimate’s variance (i.e., σ2
+x,i) used in the compu-
+tation. Speciﬁcally, for the cross-arm approach (Eq. 8),
+we have two summations over sample payout estimates
+E[Yxr |xi], E[Yxs |xi] ∀i (cid:54)= w which involve 2(K − 1)
+terms, plus the numerator’s E[Yxs |xw], giving us a total
+of 2(K − 1) + 1 = 2K − 1 variances to average. The
+same is true for the cross-intent apprach (Eq. 3), which in-
+volves K−1 sample variances to average. When estimating
+
+6This strategy follows from the fact that we have Bernoulli re-
+wards for each arm-intent condition, and as the number of samples
+increases for these distributions, the variance diminishes, mean-
+ing that arm-intent conditions with smaller variances are more re-
+liable than those with larger ones.
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+3. From these UCs and any other observed features in the
+environment, the agent’s heuristics suggest an action
+to take, i.e., its intent. With its intent known, the agent
+combines the data in its history (in this work, by the
+prescription of Strategy 3 above) to better inform its
+decision-making.
+
+4. Based on its intent and combined history, the agent
+
+commits to a ﬁnal action choice.
+
+5. The action’s response in the environment (i.e., its re-
+ward) is observed, and the collected data point is
+added to the agent’s counterfactual dataset (as a con-
+sequence of Theorem 4.1).
+
+5. Simulations & Results
+
+In this section, we validate the efﬁcacy of the strategies
+discussed previously through simulations. To make a fair
+comparison to previous MABUC bandit players, we will
+follow the ﬁrst implementation of RDC that used Thomp-
+son Sampling (TS) as its basis, embedding the strategies
+described in the previous section within a TS player called
+(T SRDC∗). We note that after moving from traditional
+to counterfactual-based decision-making we moved from
+optimal arm-choice nonconvergence to convergence in the
+MABUC setting (e.g., Fig. 1); now, the goal is to accelerate
+convergence.
+
+In brief, T SRDC∗ agents perform the following at each
+round: (1) Observe the intent it from the current round’s
+(2) Sample ˆEsamp[Yxr |it] from
+realization of UCs, ut.
+each arm’s (xr) corresponding intent-speciﬁc beta distribu-
+tion β(sxr,it, fxr,it)7 in which sxr,it is the number of suc-
+cesses (wins) and fxr,it is the number of failures (losses).
+(3) Compute each arm’s it-speciﬁc score using the com-
+bined datasets via Strategy 3 (Eq. 9). (4) Choose the arm,
+xa, with the highest score computed in previous step. (5)
+Observe result (win / loss) and update ˆEsamp[Yxa |it].
+Procedure. Simulations were performed on the 4-arm
+MABUC problem, with results averaged across N = 1000
+Monte Carlo repetitions, each T = 3000 rounds in dura-
+tion. To illustrate the robustness of each proposed strategy,
+we performed simulations spanning across a wide range of
+payout parameterizations (see Appendix B for a complete
+report of experimental results).
+
+Compared Algorithms. Each simulation compares the
+performance of four variants of Thompson Sampling, de-
+scribed below and with the data-sets employed by each in-
+dicated in Table 2:
+
+Figure 4. Illustrated data-fusion process.
+
+E[Yxr |xw], we can write the corresponding variances:
+
+σ2
+xr,xi
+
+(cid:3) + (cid:2)
+
+σ2
+xs,xi
+
+(cid:3) + σ2
+
+xs,xw
+
+(cid:105)
+
+K
+(cid:88)
+
+i(cid:54)=w
+
+σ2
+XArm =
+
+σ2
+XInt =
+
+1
+2K − 1
+
+K
+(cid:88)
+
+(cid:104)(cid:2)
+
+i(cid:54)=w
+
+1
+K − 1
+
+K
+(cid:88)
+
+i(cid:54)=w
+
+σ2
+xr,xi
+
+Finally, to estimate E[Yxr |xw] using our combined ap-
+proach, we have:
+
+α = Esamp[Yxr |xw]/σ2
+
+xr,xw
++ EXArm[Yxr |xw]/σ2
+
+β = 1/σ2
+
+xr,xw
+
++ 1/σ2
+
+XArm
+XInt + 1/σ2
+
+XArm
+
++ EXInt[Yxr |xw]/σ2
+
+XInt
+
+Ecombo[Yxr |xw] =
+
+(9)
+
+α
+β
+
+To visualize the data-fusion process discussed here, con-
+sider the diagram in Figure 4.
+
+1. In this scenario, we consider that our agent has col-
+lected large samples of experimental and observa-
+tional data from its environment (e.g., in the Greedy
+Casino, the agent might observe other gamblers to
+comprise its observational data and incorporate exper-
+imental ﬁndings from the state investigator’s report).
+
+2. Unobserved confounders are realized in the environ-
+ment, though their labels and values are unknown to
+the agent.
+
+7The parameters for these distributions are decided by the
+agent’s history (see Figure 2(b)), including contributions from ob-
+servational data for cells in which action and intent agree.
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+Algorithm Cf. Data Obs. Data Exp. Data
+T SRDC∗
+T SRDC+
+T SRDC
+T S
+
+(cid:88)
+(cid:88)
+(cid:88)
+
+(cid:88)
+(cid:88)
+
+(cid:88)
+
+(cid:88)
+
+Table 2. Data-sets employed by the compared TS variants.
+
+1. T S is the traditional Thompson Sampling bandit al-
+gorithm that attempts to maximize the interventional
+quantity E[y|do(x)], and does not condition on intent.
+
+2. T SRDC is TS player that uses RDC (Def. 3.4), but
+employs no additional observational or experimental
+data in its play.
+
+3. T SRDC+ is the approach produced by (2), which uses
+RDC and employs observational data, but does not in-
+corporate experimental data nor exploit the relation-
+ship between data types detailed in the previous sec-
+tion.
+
+4. T SRDC∗ follows the algorithm described above and
+uses the data-fusion strategy described in the previous
+section.
+
+Evaluation. Each algorithm’s performance is evaluated us-
+ing two standard metrics: (1) the probability of optimal arm
+choice and (2) cumulative regret, both as a function of t av-
+eraged across all N Monte Carlo simulations. However,
+unlike in the traditional MAB literature, we compare each
+algorithm’s choice to the optimal choice of an omniscient
+oracle that knows the value of any UCs in any given round
+of any MC repetition (indicated as x∗
+n,t). Formally, for all
+(cid:80)
+0 < t < T we evaluate (1) as 1
+n 1(x∗
+n,t = xn,t) and
+N
+(2) as 1
+|un,i] − yn,i.
+N
+
+i E[Yx∗
+
+(cid:80)t
+
+(cid:80)
+
+n,i
+
+n
+
+Experiment 1: “Greedy Casino.” The Greedy Casino
+parameterization, as described in Table 1, exempliﬁes the
+scenario where all arms are both observationally equiva-
+lent (E[Y |x] = E[Y |x(cid:48)], ∀x, x(cid:48)) and experimentally equiv-
+alent (E[Y |do(x)] = E[Y |do(x(cid:48))], ∀x, x(cid:48)), but distinguish-
+able within intent conditions (E[Yx|x(cid:48)]).
+In this reward
+parameterization, T SRDC∗ experienced signiﬁcantly less
+regret (M = 42.23) than its chief competitor, T SRDC+,
+(M = 65.04), t(1998) = 13.25, p < .001.
+
+Experiment 2: “Paradoxical Switching.” The Paradox-
+ical Switching parameterization (see Appendix B for pa-
+rameters) exempliﬁes a curious scenario wherein E[Yx1 ] =
+0.5 > E[Yx(cid:48)], ∀x(cid:48)
+(cid:54)= x1, but for which x1 is the optimal
+arm choice in only one intent condition (I = x1). Agents
+unempowered by RDC will face a paradox in that the arm
+with the highest experimental payout is not always opti-
+mal. Again, T SRDC∗ experienced signiﬁcantly less re-
+
+Figure 5. Plots of TS variant performances in the Greedy Casino
+[Ex1] and Paradoxical Switching [Ex2] scenarios.
+
+gret (M = 36.91) than its chief competitor, T SRDC+,
+(M = 64.70), t(1998) = 22.43, p < .001.
+
+The accelerated learning enjoyed by RDC+ is not local-
+ized to these parameter choices alone. In Appendix B, we
+show that T SRDC∗ consistently experiences signiﬁcantly
+less regret than its competitors across a wide range of re-
+ward parametrizations.
+
+6. Conclusion
+
+The present work addresses the challenges faced by on-
+line learning agents that gain access to increasingly diverse,
+and qualitatively different sources of information, and how
+these sources can be meaningfully synthesized to accel-
+erate learning. This data-fusion problem is complicated
+by the presence of unobserved confounders (UCs), whose
+identities and inﬂuences are unknown to the modeler. In re-
+sponse, we present a novel method by which online agents
+may combine their observations, experiments, and coun-
+terfactual (i.e., personalized) experiences to more quickly
+learn about their environments, even in the presence of
+UCs. We then illustrate the efﬁcacy of this approach in
+the Multi-Armed Bandit problem with Unobserved Con-
+founders (MABUC), and demonstrate how a traditional
+Thompson Sampling player may be improved by its ap-
+plication. Simulations demonstrate that our data-fusion ap-
+proach generalizes across reward parameterizations and re-
+sults in signiﬁcantly less regret (in some cases, as much as
+half) than other competitive MABUC algorithms.
+
+Counterfactual Data-Fusion for Online Reinforcement Learners
+
+[14] S. L. Scott. A modern bayesian look at the multi-
+armed bandit. Applied Stochastic Models in Business
+and Industry, 26(6):639–658, 2010.
+
+[15] R. Sen, K. Shanmugam, A. Dimakis, and S. Shakkot-
+tai. Identifying Best Interventions through Online Im-
+portance Sampling . International Conference on Ma-
+chine Learning, page to appear, 2017.
+
+[16] A. Tversky and D. Kahneman. Judgment under un-
+In Utility, proba-
+certainty: Heuristics and biases.
+bility, and human decision making, pages 141–162.
+Springer, 1975.
+
+[17] J. Zhang and E. Bareinboim. Markov decision pro-
+cesses with unobserved confounders: A causal ap-
+proach. Technical Report R-23, Purdue AI Lab, 2016.
+
+[18] J. Zhang and E. Bareinboim. Transfer Learning in
+Inter-
+Multi-Armed Bandits: A Causal Approach.
+national Joint Conference on Artiﬁcial Intelligence,
+2017.
+
+References
+
+[1] P. Abbeel and A. Y. Ng. Apprenticeship learning
+via inverse reinforcement learning. In Proceedings of
+the twenty-ﬁrst international conference on Machine
+learning, page 1. ACM, 2004.
+
+[2] E. Bareinboim, A. Forney, and J. Pearl. Bandits
+with unobserved confounders: A causal approach. In
+Advances in Neural Information Processing Systems,
+pages 1342–1350, 2015.
+
+[3] E. Bareinboim and J. Pearl. Causal inference by sur-
+rogate experiments: z-identiﬁability. In N. de Freitas
+and K. Murphy, editors, Proceedings of the Twenty-
+Eighth Conference on Uncertainty in Artiﬁcial Intelli-
+gence (UAI 2012), pages 113–120. AUAI Press, 2012.
+
+[4] E. Bareinboim and J. Pearl. Causal inference and
+the data-fusion problem. Proceedings of the National
+Academy of Sciences, 113(27):7345–7352, 2016.
+
+[5] S. Bubeck and N. Cesa-Bianchi. Regret analysis
+of stochastic and nonstochastic multi-armed bandit
+problems. Foundations and Trends in Machine Learn-
+ing, 5:1–122, 2012.
+
+[6] N. R. Council et al. Frontiers in massive data analy-
+
+sis. National Academies Press, 2013.
+
+[7] E. Even-Dar, S. Mannor, and Y. Mansour. Action
+elimination and stopping conditions for the multi-
+armed bandit and reinforcement learning problems. J.
+Mach. Learn. Res., 7:1079–1105, Dec. 2006.
+
+[8] M. K. Ho, M. Littman, J. MacGlashan, F. Cushman,
+J. Austerweil, and J. L. Austerweil. Showing versus
+In Advances In
+doing: Teaching by demonstration.
+Neural Information Processing Systems, pages 3027–
+3035, 2016.
+
+[9] T. L. Lai and H. Robbins. Asymptotically efﬁcient
+adaptive allocation rules. Advances in Applied Math-
+ematics, 6(1):4 – 22, 1985.
+
+[10] A. Liang, X. Mu, and V. Syrgkanis. Optimal Learning
+
+from Multiple Information Sources. 2017.
+
+[11] A. Murata and T. Nakamura. Basic study on preven-
+tion of human error-how cognitive biases distort deci-
+sion making and lead to crucial accidents. Advances
+in Cross-Cultural Decision Making, 5:83, 2014.
+
+[12] J. Pearl. Causality: Models, Reasoning, and Infer-
+ence. Cambridge University Press, New York, 2000.
+Second ed., 2009.
+
+[13] H. Robbins. Some aspects of the sequential design of
+experiments. Bull. Amer. Math. Soc., 58(5):527–535,
+09 1952.
+
+

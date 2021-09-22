@@ -1,0 +1,1639 @@
+Averaged-DQN: Variance Reduction and Stabilization for
+Deep Reinforcement Learning
+
+Oron Anschel 1 Nir Baram 1 Nahum Shimkin 1
+
+Abstract
+
+Instability and variability of Deep Reinforcement
+Learning (DRL) algorithms tend to adversely af-
+fect their performance. Averaged-DQN is a sim-
+ple extension to the DQN algorithm, based on
+averaging previously learned Q-values estimates,
+which leads to a more stable training procedure
+and improved performance by reducing approxi-
+mation error variance in the target values. To un-
+derstand the effect of the algorithm, we examine
+the source of value function estimation errors and
+provide an analytical comparison within a sim-
+pliﬁed model. We further present experiments
+on the Arcade Learning Environment benchmark
+that demonstrate signiﬁcantly improved stability
+and performance due to the proposed extension.
+
+1. Introduction
+
+In Reinforcement Learning (RL) an agent seeks an opti-
+mal policy for a sequential decision making problem (Sut-
+ton & Barto, 1998). It does so by learning which action
+is optimal for each environment state. Over the course
+of time, many algorithms have been introduced for solv-
+ing RL problems including Q-learning (Watkins & Dayan,
+1992), SARSA (Rummery & Niranjan, 1994; Sutton &
+Barto, 1998), and policy gradient methods (Sutton et al.,
+1999). These methods are often analyzed in the setup of
+linear function approximation, where convergence is guar-
+anteed under mild assumptions (Tsitsiklis, 1994; Jaakkola
+et al., 1994; Tsitsiklis & Van Roy, 1997; Even-Dar & Man-
+sour, 2003). In practice, real-world problems usually in-
+volve high-dimensional inputs forcing linear function ap-
+proximation methods to rely upon hand engineered features
+
+1Department
+Israel.
+
+Electrical
+of
+Correspondence
+
+32000,
+<oronanschel@campus.technion.ac.il>,
+<nirb@campus.technion.ac.il>,
+<shimkin@ee.technion.ac.il>.
+
+Engineering,
+to:
+
+Haifa
+Oron Anschel
+Baram
+Nir
+Shimkin
+
+Nahum
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+for problem-speciﬁc state representation. These problem-
+speciﬁc features diminish the agent ﬂexibility, and so the
+need of an expressive and ﬂexible non-linear function ap-
+proximation emerges. Except for few successful attempts
+(e.g., TD-gammon, Tesauro (1995)), the combination of
+non-linear function approximation and RL was considered
+unstable and was shown to diverge even in simple domains
+(Boyan & Moore, 1995).
+
+The recent Deep Q-Network (DQN) algorithm (Mnih et al.,
+2013), was the ﬁrst to successfully combine a power-
+ful non-linear function approximation technique known
+as Deep Neural Network (DNN) (LeCun et al., 1998;
+Krizhevsky et al., 2012) together with the Q-learning al-
+gorithm. DQN presented a remarkably ﬂexible and stable
+algorithm, showing success in the majority of games within
+the Arcade Learning Environment (ALE) (Bellemare et al.,
+2013). DQN increased the training stability by breaking
+the RL problem into sequential supervised learning tasks.
+To do so, DQN introduces the concept of a target network
+and uses an Experience Replay buffer (ER) (Lin, 1993).
+
+Following the DQN work, additional modiﬁcations and ex-
+tensions to the basic algorithm further increased training
+stability. Schaul et al. (2015) suggested sophisticated ER
+sampling strategy. Several works extended standard RL
+exploration techniques to deal with high-dimensional input
+(Bellemare et al., 2016; Tang et al., 2016; Osband et al.,
+2016). Mnih et al. (2016) showed that sampling from ER
+could be replaced with asynchronous updates from parallel
+environments (which enables the use of on-policy meth-
+ods). Wang et al. (2015) suggested a network architecture
+base on the advantage function decomposition (Baird III,
+1993).
+
+In this work we address issues that arise from the combi-
+nation of Q-learning and function approximation. Thrun &
+Schwartz (1993) were ﬁrst to investigate one of these issues
+which they have termed as the overestimation phenomena.
+The max operator in Q-learning can lead to overestimation
+of state-action values in the presence of noise. Van Hasselt
+et al. (2015) suggest the Double-DQN that uses the Double
+Q-learning estimator (Van Hasselt, 2010) method as a solu-
+tion to the problem. Additionally, Van Hasselt et al. (2015)
+showed that Q-learning overestimation do occur in practice
+
+Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+(at least in the ALE).
+
+2.2. Q-learning
+
+This work suggests a different solution to the overestima-
+tion phenomena, named Averaged-DQN (Section 3), based
+on averaging previously learned Q-values estimates. The
+averaging reduces the target approximation error variance
+(Sections 4 and 5) which leads to stability and improved
+results. Additionally, we provide experimental results on
+selected games of the Arcade Learning Environment.
+
+One of the most popular RL algorithms is the Q-learning
+algorithm (Watkins & Dayan, 1992). This algorithm is
+based on a simple value iteration update (Bellman, 1957),
+directly estimating the optimal value function Q∗. Tabular
+Q-learning assumes a table that contains old action-value
+function estimates and preform updates using the follow-
+ing update rule:
+
+We summarize the main contributions of this paper as fol-
+lows:
+
+•
+
+•
+
+A novel extension to the DQN algorithm which stabi-
+lizes training, and improves the attained performance,
+by averaging over previously learned Q-values.
+
+Variance analysis that explains some of the DQN
+problems, and how the proposed extension addresses
+them.
+
+•
+
+Experiments with several ALE games demonstrating
+the favorable effect of the proposed scheme.
+
+2. Background
+
+In this section we elaborate on relevant RL background,
+and speciﬁcally on the Q-learning algorithm.
+
+2.1. Reinforcement Learning
+
+We consider the usual RL learning framework (Sutton &
+Barto, 1998). An agent is faced with a sequential deci-
+sion making problem, where interaction with the environ-
+ment takes place at discrete time steps (t = 0, 1, . . .). At
+S, selects an action
+time t the agent observes state st ∈
+A, which results in a scalar reward rt ∈
+at ∈
+R, and a
+transition to a next state st+1 ∈
+S. We consider inﬁnite
+horizon problems with a discounted cumulative reward ob-
+[0, 1] is the dis-
+jective Rt =
+count factor. The goal of the agent is to ﬁnd an optimal
+policy π : S
+A that maximize its expected discounted
+cumulative reward.
+
+trt� , where γ
+
+∞t�=t γt�
+
+�
+→
+
+∈
+
+−
+
+Value-based methods for solving RL problems encode poli-
+cies through the use of value functions, which denote the
+expected discounted cumulative reward from a given state
+s, following a policy π. Speciﬁcally we are interested in
+state-action value functions:
+
+Qπ(s, a) = E
+
+π
+
+∞
+
+�
+
+t=0
+�
+
+γtrt |
+
+s0 = s, a0 = a
+
+.
+
+�
+
+The optimal value function is denoted as Q∗(s, a) =
+maxπ Qπ(s, a), and an optimal policy π∗ can be easily de-
+rived by π∗(s)
+
+argmaxaQ∗(s, a).
+
+∈
+
+Q(s, a)
+
+Q(s, a) + α(r + γ max
+
+Q(s�, a�)
+
+Q(s, a)),
+
+←
+
+a�
+
+−
+
+(1)
+where s� is the resulting state after applying action a in the
+state s, r is the immediate reward observed for action a at
+state s, γ is the discount factor, and α is a learning rate.
+
+When the number of states is large, maintaining a look-
+up table with all possible state-action pairs values in mem-
+ory is impractical. A common solution to this issue is to
+use function approximation parametrized by θ, such that
+Q(s, a)
+
+Q(s, a; θ).
+
+≈
+
+2.3. Deep Q Networks (DQN)
+
+We present in Algorithm 1 a slightly different formulation
+of the DQN algorithm (Mnih et al., 2013). In iteration i
+the DQN algorithm solves a supervised learning problem
+to approximate the action-value function Q(s, a; θ) (line 6).
+This is an extension of implementing (1) in its function ap-
+proximation form (Riedmiller, 2005).
+
+Algorithm 1 DQN
+1: Initialize Q(s, a; θ) with random weights θ0
+2: Initialize Experience Replay (ER) buffer
+B
+)
+3: Initialize exploration procedure Explore(
+·
+4: for i = 1, 2, . . . , N do
+5:
+
+[r + γ maxa� Q(s�, a�; θi
+
+yi
+s,a = E
+θi ≈
+Explore(
+
+B
+argminθ E
+
+B
+), update
+�
+B
+
+·
+
+(yi
+
+s,a −
+
+6:
+
+7:
+
+1)
+Q(s, a; θ))2
+
+−
+
+|
+
+s, a]
+
+�
+
+8: end for
+output QDQN(s, a; θN )
+
+−
+
+−
+
+1), where the expectation (E
+B
+
+The target values yi
+s,a (line 5) are constructed using a desig-
+1) (using the previous iter-
+nated target-network Q(s, a; θi
+ation parameters θi
+) is taken
+w.r.t. the sample distribution of experience transitions in the
+ER buffer (s, a, r, s�)
+. The DQN loss (line 6) is mini-
+mized using a Stochastic Gradient Descent (SGD) variant,
+sampling mini-batches from the ER buffer. Additionally,
+DQN requires an exploration procedure (which we denote
+)) to interact with the environment (e.g., an �-
+as Explore(
+greedy exploration procedure). The number of new experi-
+ence transitions (s, a, r, s�) added by exploration to the ER
+
+∼ B
+
+·
+
+Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+buffer in each iteration is small, relatively to the size of the
+ER buffer. Thereby, θi
+1 can be used as a good initializa-
+tion for θ in iteration i.
+
+−
+
+Note that in the original implementation (Mnih et al., 2013;
+2015), transitions are added to the ER buffer simultane-
+ously with the minimization of the DQN loss (line 6). Us-
+ing the hyperparameters employed by Mnih et al. (2013;
+2015) (detailed for completeness in Appendix E), 1% of the
+experience transitions in ER buffer are replaced between
+target network parameter updates, and 8% are sampled for
+minimization.
+
+3. Averaged DQN
+
+The Averaged-DQN algorithm (Algorithm 2) is an exten-
+sion of the DQN algorithm. Averaged-DQN uses the K
+previously learned Q-values estimates to produce the cur-
+rent action-value estimate (line 5). The Averaged-DQN al-
+gorithm stabilizes the training process (see Figure 1), by
+reducing the variance of target approximation error as we
+elaborate in Section 5. The computational effort com-
+pared to DQN is, K-fold more forward passes through a
+Q-network while minimizing the DQN loss (line 7). The
+number of back-propagation updates remains the same as
+in DQN. Computational cost experiments are provided in
+Appedix D. The output of the algorithm is the average over
+the last K previously learned Q-networks.
+
+Figure 1. DQN and Averaged-DQN performance in the Atari
+game of BREAKOUT. The bold lines are averages over seven in-
+dependent learning trials. Every 1M frames, a performance test
+using �-greedy policy with � = 0.05 for 500000 frames was con-
+ducted. The shaded area presents one standard deviation. For both
+DQN and Averaged-DQN the hyperparameters used were taken
+from Mnih et al. (2015).
+
+In Figures 1 and 2 we can see the performance of Averaged-
+
+Algorithm 2 Averaged DQN
+1: Initialize Q(s, a; θ) with random weights θ0
+2: Initialize Experience Replay (ER) buffer
+3: Initialize exploration procedure Explore(
+4: for i = 1, 2, . . . , N do
+K
+5: QA
+k=1 Q(s, a; θi
+i
+−
+yi
+s,a = E
+6:
+θi ≈
+Explore(
+
+k)
+−
+r + γ maxa� QA
+1(s�, a�)
+i
+|
+−
+Q(s, a; θ))2
+(yi
+
+B
+argminθ E
+�
+
+1(s, a) = 1
+K
+
+s,a −
+
+B
+)
+·
+
+�
+
+8:
+
+7:
+
+s, a
+
+B
+), update
+�
+B
+
+·
+
+�
+
+�
+
+9: end for
+output QA
+
+N (s, a) = 1
+K
+
+1
+
+K
+k=0 Q(s, a; θN
+
+−
+
+k)
+
+−
+
+�
+
+DQN compared to DQN (and Double-DQN), further exper-
+imental results are given in Section 6.
+
+We note that recently-learned state-action value estimates
+are likely to be better than older ones, therefore we have
+also considered a recency-weighted average. In practice,
+a weighted average scheme did not improve performance
+and therefore is not presented here.
+
+4. Overestimation and Approximation Errors
+
+Next, we discuss the various types of errors that arise due to
+the combination of Q-learning and function approximation
+in the DQN algorithm, and their effect on training stability.
+We refer to DQN’s performance in the BREAKOUT game
+in Figure 1. The source of the learning curve variance in
+DQN’s performance is an occasional sudden drop in the
+average score that is usually recovered in the next evalua-
+tion phase (for another illustration of the variance source
+see Appendix A). Another phenomenon can be observed in
+Figure 2, where DQN initially reaches a steady state (after
+20 million frames), followed by a gradual deterioration in
+performance.
+
+For the rest of this section, we list the above mentioned er-
+rors, and discuss our hypothesis as to the relations between
+each error and the instability phenomena depicted in Fig-
+ures 1 and 2.
+
+We follow terminology from Thrun & Schwartz (1993),
+and deﬁne some additional relevant quantities. Letting
+Q(s, a; θi) be the value function of DQN at iteration i, we
+denote Δi = Q(s, a; θi)
+Q∗(s, a) and decompose it as
+follows:
+
+−
+
+Δi = Q(s, a; θi)
+
+= Q(s, a; θi)
+
+Q∗(s, a)
++ yi
+yi
+s,a
+
+−
+
+−
+
+Target Approximation
+Error
+��
+
+�
+
+�
+
+s,a −
+Overestimation
+Error
+��
+
+�
+
+�
+
+ˆyi
+s,a
+
++ ˆyi
+
+s,a −
+
+Q∗(s, a)
+
+.
+
+Optimality
+Difference
+��
+
+�
+
+�
+
+020406080100120frames [millions]0100200300400Averaged score per episodeBreakoutDQNAveraged DQN, K=10Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+Figure 2. DQN, Double-DQN, and Averaged-DQN performance (left), and average value estimates (right) in the Atari game of ASTERIX.
+The bold lines are averages over seven independent learning trials. The shaded area presents one standard deviation. Every 2M frames,
+a performance test using �-greedy policy with � = 0.05 for 500000 frames was conducted. The hyperparameters used were taken from
+Mnih et al. (2015).
+
+Here yi
+
+s,a is the DQN target, and ˆyi
+
+s,a is the true target:
+
+yi
+s,a = E
+
+r + γ max
+
+Q(s�, a�; θi
+
+1)
+
+s, a
+
+,
+
+ˆyi
+s,a = E
+
+r + γ max
+
+B
+
+B
+
+�
+
+�
+
+−
+
+|
+
+�
+
+a�
+
+a�
+
+(yi
+
+1
+−
+s�,a�
+
+)
+
+|
+
+s, a
+
+.
+
+�
+
+Let us denote by Z i
+by Ri
+
+s,a the overestimation error, namely
+
+s,a the target approximation error, and
+
+Z i
+Ri
+
+s,a = Q(s, a; θi)
+−
+ˆyi
+s,a = yi
+s,a.
+
+s,a −
+
+yi
+s,a,
+
+The optimality difference can be seen as the error of a stan-
+dard tabular Q-learning, here we address the other errors.
+We next discuss each error in turn.
+
+4.1. Target Approximation Error (TAE)
+
+The TAE (Z i
+s,a), is the error in the learned Q(s, a; θi) rela-
+tive to yi
+s,a, which is determined after minimizing the DQN
+loss (Algorithm 1 line 6, Algorithm 2 line 7). The TAE is
+a result of several factors: Firstly, the sub-optimality of θi
+due to inexact minimization. Secondly, the limited repre-
+sentation power of a neural net (model error). Lastly, the
+generalization error for unseen state-action pairs due to the
+ﬁnite size of the ER buffer.
+
+The TAE can cause a deviations from a policy to a worse
+one. For example, such deviation to a sub-optimal policy
+occurs in case yi
+
+s,a = Q∗(s, a) and,
+
+s,a = ˆyi
+
+We hypothesize that the variability in DQN’s performance
+in Figure 1, that was discussed at the start of this section, is
+related to deviating from a steady-state policy induced by
+the TAE.
+
+4.2. Overestimation Error
+
+The Q-learning overestimation phenomena were ﬁrst inves-
+tigated by Thrun & Schwartz (1993). In their work, Thrun
+and Schwartz considered the TAE Z i
+s,a as a random vari-
+�, �]. Due to the
+able uniformly distributed in the interval [
+max operator in the DQN target yi
+s,a, the expected over-
+1
+estimation errors Ez[Ri
+−
+n+1
+(where n is the number of applicable actions in state s).
+The intuition for this upper bound is that in the worst case,
+all Q values are equal, and we get equality to the upper
+bound:
+
+s,a] are upper bounded by γ� n
+
+−
+
+Ez[Ri
+
+s,a] = γEz[max
+
+[Z i
+
+1
+−
+s�,a�
+
+]] = γ�
+
+a�
+
+n
+1
+−
+n + 1
+
+.
+
+The overestimation error is different in its nature from the
+TAE since it presents a positive bias that can cause asymp-
+totically sub-optimal policies, as was shown by Thrun &
+Schwartz (1993), and later by Van Hasselt et al. (2015)
+in the ALE environment. Note that a uniform bias in the
+action-value function will not cause a change in the induced
+policy. Unfortunately, the overestimation bias is uneven
+and is bigger in states where the Q-values are similar for
+the different actions, or in states which are the start of a
+long trajectory (as we discuss in Section 5 on accumulation
+of TAE variance).
+
+argmaxa[Q(s, a; θi)]
+
+= argmaxa[Q(s, a; θi)
+= argmaxa[yi
+
+s,a].
+
+−
+
+Z i
+
+s,a]
+
+Following from the above mentioned overestimation upper
+bound, the magnitude of the bias is controlled by the vari-
+ance of the TAE.
+
+020406080100120frames [millions]0200040006000800010000Averaged score per episodeAsterixDQNDouble - DQNAveraged DQN, K=1020406080100120frames [millions]100101102103104Value estimates (log scale)AsterixDQNDouble - DQNAveraged DQN, K=10�
+Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+The Double Q-learning and its DQN implementation
+(Double-DQN) (Van Hasselt et al., 2015; Van Hasselt,
+2010) is one possible approach to tackle the overestimation
+problem, which replaces the positive bias with a negative
+one. Another possible remedy to the adverse effects of this
+error is to directly reduce the variance of the TAE, as in our
+proposed scheme (Section 5).
+
+In Figure 2 we repeated the experiment presented in
+Van Hasselt et al. (2015) (along with the application of
+Averaged-DQN). This experiment is discussed in Van Has-
+selt et al. (2015) as an example of overestimation that leads
+to asymptotically sub-optimal policies. Since Averaged-
+DQN reduces the TAE variance, this experiment supports
+an hypothesis that the main cause for overestimation in
+DQN is the TAE variance.
+
+5. TAE Variance Reduction
+
+To analyse the TAE variance we ﬁrst must assume a statis-
+tical model on the TAE, and we do so in a similar way to
+Thrun & Schwartz (1993). Suppose that the TAE Z i
+s,a is
+s,a] = σ2
+s,a] = 0, Var[Z i
+a random process such that E[Z i
+s ,
+= j: Cov[Z i
+and for i
+] = 0. Furthermore, to fo-
+s�,a�
+cus only on the TAE we eliminate the overestimation error
+by considering a ﬁxed policy for updating the target values.
+Also, we can conveniently consider a zero reward r = 0
+everywhere since it has no effect on variance calculations.
+
+s,a, Z j
+
+Denote by Qi � Q(s; θi)s
+S the vector of value estimates
+in iteration i (where the ﬁxed action a is suppressed), and
+by Zi the vector of corresponding TAEs. For Averaged-
+DQN we get:
+
+∈
+
+Qi = Zi + γP
+
+1
+K
+
+K
+
+�k=1
+
+Qi
+
+k,
+
+−
+
+S
+
+S
+R
++
+
+×
+
+∈
+
+where P
+is the transition probabilities matrix
+for the given policy. The covariance of the above Vec-
+tor Autoregressive (VAR) model is given by the discrete-
+time Lyapunov equation, and can be solved directly or by
+specialized numerical algorithms (Arthur E Bryson, 1975).
+However, to obtain an explicit comparison, we further spe-
+cialize the model to an M -state unidirectional MDP as in
+Figure 3
+
+a
+
+a
+
+a
+
+a
+
+s0
+
+s1
+
+· · ·
+
+sM
+
+2
+
+−
+
+sM
+
+1
+
+−
+
+Figure 3. M states unidirectional MDP, The process starts at state
+s0, then in each time step moves to the right, until the terminal
+state sM
+
+1 is reached. A zero reward is obtained in any state.
+
+−
+
+5.1. DQN Variance
+
+We assume the statistical model mentioned at the start of
+this section. Consider a unidirectional Markov Decision
+Process (MDP) as in Figure 3, where the agent starts at
+state s0, state sM
+1 is a terminal state, and the reward in
+any state is equal to zero.
+
+−
+
+Employing DQN on this MDP model, we get that for i >
+M :
+
+s0,a
+
+QDQN(s0, a; θi) = Z i
+= Z i
+= Z i
+= Z i
+
+s0,a + γQ(s1, a; θi
+s1,a + yi
+s0,a + γ[Z i
+s0,a + γZ i
+1
+s1,a +
+−
+
+s0,a + yi
+1)
+−
+1
+s1,a] =
+−
++ γ(M
+
+−
+
+1
+
+· · ·
+
+=
+1)Z i
+
+· · ·
+−
+
+(M
+
+1)
+1,a ,
+−
+
+−
+sM
+
+−
+
+where in the last equality we have used the fact yj
+M
+for all j (terminal state). Therefore,
+
+−
+
+1,a = 0
+
+Var[QDQN(s0, a; θi)] =
+
+γ2mσ2
+
+sm.
+
+M
+
+1
+
+−
+
+m=0
+�
+
+The above example gives intuition about the behavior of
+the TAE variance in DQN. The TAE is accumulated over
+the past DQN iterations on the updates trajectory. Accu-
+mulation of TAE errors results in bigger variance with its
+associated adverse effect, as was discussed in Section 4.
+
+Algorithm 3 Ensemble DQN
+1: Initialize K Q-networks Q(s, a; θk) with random
+1, . . . , K
+
+weights θk
+
+0 for k
+
+}
+
+∈ {
+2: Initialize Experience Replay (ER) buffer
+B
+3: Initialize exploration procedure Explore(
+)
+·
+4: for i = 1, 2, . . . , N do
+K
+5: QE
+k=1 Q(s, a; θk
+1)
+i
+i
+−
+−
+yi
+1(s�, a�))
+s,a = E
+6:
+for k = 1, 2, . . . , K do
+�
+
+r + γ maxa� QE
+i
+−
+
+1(s, a) = 1
+K
+
+�
+
+7:
+
+B
+
+|
+
+argminθ E
+
+(yi
+
+s,a −
+
+Q(s, a; θ))2
+
+s, a
+
+�
+
+�
+
+8:
+
+9:
+
+10:
+
+θk
+i ≈
+end for
+Explore(
+
+11: end for
+output QE
+
+�
+
+B
+
+B
+
+), update
+
+·
+
+N (s, a) = 1
+K
+
+K
+k=1 Q(s, a; θk
+i )
+
+�
+
+5.2. Ensemble DQN Variance
+
+We consider two approaches for TAE variance reduction.
+The ﬁrst one is the Averaged-DQN and the second we term
+Ensemble-DQN. We start with Ensemble-DQN which is a
+straightforward way to obtain a 1/K variance reduction,
+
+�
+Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+with a computational effort of K-fold learning problems,
+compared to DQN. Ensemble-DQN (Algorithm 3) solves
+K DQN losses in parallel, then averages over the resulted
+Q-values estimates.
+
+For Ensemble-DQN on the unidirectional MDP in Figure
+3, we get for i > M :
+
+QE
+
+i (s0, a) =
+
+Z k,i
+
+m
+sm,a ,
+−
+
+M
+
+1
+
+−
+
+m=0
+�
+1
+M
+−
+
+K
+
+γm 1
+K
+
+�k=1
+γ2mσ2
+sm
+
+1
+K
+
+Var[QE
+
+i (s0, a)] =
+
+=
+
+m=0
+�
+1
+K
+s,a and Z k�,j
+where for k
+are two uncorrelated
+s�,a�
+TAEs. The calculations of QE(s0, a) are detailed in Ap-
+pendix B.
+
+Var[QDQN(s0, a; θi)],
+
+= k�: Z k,i
+
+5.3. Averaged DQN Variance
+
+We continue with Averaged-DQN, and calculate the vari-
+ance in state s0 for the unidirectional MDP in Figure 3. We
+get that for i > KM :
+
+Var[QA
+
+i (s0, a)] =
+
+DK,mγ2mσ2
+
+sm ,
+
+1
+
+−
+
+Un/K
+
+where DK,m = 1
+2(m+1), with U =
+N
+(Un)N
+n=0 denoting a Discrete Fourier Transform (DFT) of
+1. The calculations of
+a rectangle pulse, and
+QA(s0, a) and DK,m are more involved and are detailed in
+Appendix C.
+
+Un/K
+
+�
+|
+
+| ≤
+
+|
+
+Furthermore, for K > 1, m > 0 we have that DK,m <
+1/K (Appendix C) and therefore the following holds
+
+Var[QA
+
+i (s0, a)] < Var[QE
+
+i (s0, a)]
+
+=
+
+Var[QDQN(s0, a; θi)],
+
+1
+K
+
+meaning that Averaged-DQN is theoretically more efﬁcient
+in TAE variance reduction than Ensemble-DQN, and at
+least K times better than DQN. The intuition here is that
+Averaged-DQN averages over TAEs averages, which are
+the value estimates of the next states.
+
+6. Experiments
+
+The experiments were designed to address the following
+questions:
+
+•
+
+How does the number K of averaged target networks
+affect the error in value estimates, and in particular the
+overestimation error.
+
+M
+
+1
+
+−
+
+m=0
+�
+N
+1
+−
+n=0 |
+
+•
+
+How does the averaging affect the learned polices
+quality.
+
+To that end, we ran Averaged-DQN and DQN on the
+ALE benchmark. Additionally, we ran Averaged-DQN,
+Ensemble-DQN, and DQN on a Gridworld toy problem
+where the optimal value function can be computed exactly.
+
+6.1. Arcade Learning Environment (ALE)
+
+To evaluate Averaged-DQN, we adopt
+the typical RL
+methodology where agent performance is measured at the
+end of training. We refer the reader to Liang et al. (2016)
+for further discussion about DQN evaluation methods on
+the ALE benchmark. The hyperparameters used were taken
+from Mnih et al. (2015), and are presented for complete-
+ness in Appendix E. DQN code was taken from McGill
+University RLLAB, and is available online1 (together with
+Averaged-DQN implementation).
+
+We have evaluated the Averaged-DQN algorithm on three
+Atari games from the Arcade Learning Environment
+(Bellemare et al., 2013). The game of BREAKOUT was
+selected due to its popularity and the relative ease of the
+DQN to reach a steady state policy. In contrast, the game
+of SEAQUEST was selected due to its relative complexity,
+and the signiﬁcant improvement in performance obtained
+by other DQN variants (e.g., Schaul et al. (2015); Wang
+et al. (2015)). Finally, the game of ASTERIX was presented
+in Van Hasselt et al. (2015) as an example to overestimation
+in DQN that leads to divergence.
+
+As can be seen in Figure 4 and in Table 1 for all three
+games, increasing the number of averaged networks in
+Averaged-DQN results in lower average values estimates,
+better-preforming policies, and less variability between the
+runs of independent learning trials. For the game of AS-
+TERIX, we see similarly to Van Hasselt et al. (2015) that
+the divergence of DQN can be prevented by averaging.
+
+Overall, the results suggest that in practice Averaged-DQN
+reduces the TAE variance, which leads to smaller overes-
+timation, stabilized learning curves and signiﬁcantly im-
+proved performance.
+
+6.2. Gridworld
+
+The Gridworld problem (Figure 5) is a common RL bench-
+mark (e.g., Boyan & Moore (1995)). As opposed to the
+ALE, Gridworld has a smaller state space that allows the
+ER buffer to contain all possible state-action pairs. Addi-
+tionally, it allows the optimal value function Q∗ to be ac-
+
+1McGill University RLLAB DQN Atari code: https:
+
+//bitbucket.org/rllabmcgill/atari_release.
+Averaged-DQN
+oronanschel/atari_release_averaged_dqn
+
+https://bitbucket.org/
+
+code
+
+�
+Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+Figure 4. The top row shows Averaged-DQN performance for the different number K of averaged networks on three Atari games. For
+K = 1 Averaged-DQN is reduced to DQN. The bold lines are averaged over seven independent learning trials. Every 2M frames,
+a performance test using �-greedy policy with � = 0.05 for 500000 frames was conducted. The shaded area presents one standard
+deviation. The bottom row shows the average value estimates for the three games. It can be seen that as the number of averaged networks
+is increased, overestimation of the values is reduced, performance improves, and less variability is observed. The hyperparameters used
+were taken from Mnih et al. (2015).
+
+curately computed.
+
+For the experiments, we have used Averaged-DQN, and
+Ensemble-DQN with ER buffer containing all possible
+state-action pairs. The network architecture that was used
+composed of a small fully connected neural network with
+one hidden layer of 80 neurons. For minimization of the
+DQN loss, the ADAM optimizer (Kingma & Ba, 2014) was
+used on 100 mini-batches of 32 samples per target network
+parameters update in the ﬁrst experiment, and 300 mini-
+batches in the second.
+
+6.2.1. ENVIRONMENT SETUP
+
+}x,y
+
+(x, y)
+
+In this experiment on the problem of Gridworld (Figure
+5), the state space contains pairs of points from a 2D dis-
+crete grid (S =
+1,...,20). The algorithm inter-
+{
+∈
+acts with the environment through raw pixel features with a
+one-hot feature map φ(st) := (1
+1,...,20.
+There are four actions corresponding to steps in each com-
+pass direction, a reward of r = +1 in state st = (20, 20),
+and r = 0 otherwise. We consider the discounted return
+problem with a discount factor of γ = 0.9.
+
+st = (x, y)
+}
+
+)x,y
+
+{
+
+∈
+
+Figure 5. Gridworld problem. The agent starts at the left-bottom
+of the grid. In the upper-right corner, a reward of +1 is obtained.
+
+6.2.2. OVERESTIMATION
+
+In Figure 6 it can be seen that increasing the number K of
+averaged target networks leads to reduced overestimation
+eventually. Also, more averaged target networks seem to
+reduces the overshoot of the values, and leads to smoother
+and less inconsistent convergence.
+
+6.2.3. AVERAGED VERSUS ENSEMBLE DQN
+
+In Figure 7, it can be seen that as was predicted by the
+analysis in Section 5, Ensemble-DQN is also inferior to
+Averaged-DQN regarding variance reduction, and as a con-
+
+020406080100120frames [millions]0100200300400500600Averaged score per episodeBreakoutDQN (K=1)Averaged DQN, K=2Averaged DQN, K=5Averaged DQN, K=10020406080100120frames [millions]0250050007500100001250015000Averaged score per episodeSeaquestDQN (K=1)Averaged DQN, K=5Averaged DQN, K=10Averaged DQN, K=15020406080100120frames [millions]02000400060008000100001200014000Averaged score per episodeAsterixDQN (K=1)Averaged DQN, K=5Averaged DQN, K=10Averaged DQN, K=15020406080100120frames [millions]02468101214Value estimatesBreakoutDQN (K=1)Averaged DQN, K=2Averaged DQN, K=5Averaged DQN, K=10020406080100120frames [millions]05101520Value estimatesSeaquestDQN (K=1)Averaged DQN, K=5Averaged DQN, K=10Averaged DQN, K=15020406080100120frames [millions]100101102103Value estimates (log scale)AsterixDQN (K=1)Averaged DQN, K=5Averaged DQN, K=10Averaged DQN, K=15+1startGridworldAveraged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+Table 1. The columns present the average performance of DQN and Averaged-DQN after 120M frames, using �-greedy policy with
+� = 0.05 for 500000 frames. The standard variation represents the variability over seven independent trials. Average performance
+improved with the number of averaged networks. Human and random performance were taken from Mnih et al. (2015).
+
+GAME
+
+DQN
+
+AVERAGED-DQN
+
+AVERAGED-DQN
+
+AVERAGED-DQN
+
+HUMAN
+
+RANDOM
+
+AVG. (STD. DEV.)
+
+(K=5)
+
+(K=10)
+
+(K=15)
+
+BREAKOUT
+
+245.1
+
+(124.5)
+
+381.5
+
+(20.2)
+
+381.8
+
+(24.2)
+
+- -
+
+31.8
+
+SEAQUEST
+
+3775.2
+
+(1575.6)
+
+5740.2
+
+(664.79 )
+
+9961.7
+
+(1946.9)
+
+10475.1
+
+(2926.6)
+
+20182.0
+
+1.7
+
+68.4
+
+ASTERIX
+
+195.6
+
+(80.4)
+
+6960.0
+
+(999.2)
+
+8008.3
+
+(243.6)
+
+8364.9
+
+(618.6)
+
+8503.0
+
+210.0
+
+Figure 6. Averaged-DQN average predicted value in Gridworld.
+Increasing the number K of averaged target networks leads to a
+faster convergence with less overestimation (positive-bias). The
+bold lines are averages over 40 independent learning trials, and
+the shaded area presents one standard deviation.
+In the ﬁgure,
+A,B,C,D present DQN, and Averaged-DQN for K=5,10,20 aver-
+age overestimation.
+
+sequence far more overestimates the values. We note that
+Ensemble-DQN was not implemented for the ALE exper-
+iments due to its demanding computational effort, and the
+empirical evidence that was already obtained in this simple
+Gridworld domain.
+
+7. Discussion and Future Directions
+
+In this work, we have presented the Averaged-DQN algo-
+rithm, an extension to DQN that stabilizes training, and im-
+proves performance by efﬁcient TAE variance reduction.
+We have shown both in theory and in practice that the pro-
+posed scheme is superior in TAE variance reduction, com-
+pared to a straightforward but computationally demanding
+approach such as Ensemble-DQN (Algorithm 3). We have
+demonstrated in several games of Atari that increasing the
+number K of averaged target networks leads to better poli-
+
+Figure 7. Averaged-DQN and Ensemble-DQN predicted value in
+Gridworld. Averaging of past learned value is more beneﬁcial
+than learning in parallel. The bold lines are averages over 20
+independent learning trials, where the shaded area presents one
+standard deviation.
+
+cies while reducing overestimation. Averaged-DQN is a
+simple extension that can be easily integrated with other
+DQN variants such as Schaul et al. (2015); Van Hasselt
+et al. (2015); Wang et al. (2015); Bellemare et al. (2016);
+He et al. (2016). Indeed, it would be of interest to study
+the added value of averaging when combined with these
+variants. Also, since Averaged-DQN has variance reduc-
+tion effect on the learning curve, a more systematic com-
+parison between the different variants can be facilitated as
+discussed in (Liang et al., 2016).
+
+In future work, we may dynamically learn when and how
+many networks to average for best results. One simple sug-
+gestion may be to correlate the number of networks with
+the state TD-error, similarly to Schaul et al. (2015). Finally,
+incorporating averaging techniques similar to Averaged-
+DQN within on-policy methods such as SARSA and Actor-
+Critic methods (Mnih et al., 2016) can further stabilize
+these algorithms.
+
+2004006008001000Iterations1.901.921.941.961.982.002.022.042.06AveragepredictedvalueABCDGridworldEs[maxaQ∗(s,a)]DQN(K=1)AveragedDQN,K=5AveragedDQN,K=10AveragedDQN,K=2002004006008001000Iterations1.901.921.941.961.982.002.022.04AveragepredictedvalueGridworldEs[maxaQ∗(s,a)]DQN(K=1)EnsembleDQN,K=20AveragedDQN,K=20Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+References
+
+Arthur E Bryson, Yu Chi Ho. Applied Optimal Control:
+Optimization Estimation and Control. Hemisphere Pub-
+lishing, 1975.
+
+Baird III, Leemon C. Advantage updating. Technical re-
+
+port, DTIC Document, 1993.
+
+Bellemare, M. G., Naddaf, Y., Veness, J., and Bowling, M.
+The arcade learning environment: An evaluation plat-
+form for general agents. Journal of Artiﬁcial Intelligence
+Research, 47:253–279, 2013.
+
+Bellemare, Marc G, Srinivasan, Sriram, Ostrovski, Georg,
+Schaul, Tom, Saxton, David, and Munos, Remi. Uni-
+fying count-based exploration and intrinsic motivation.
+arXiv preprint arXiv:1606.01868, 2016.
+
+Bellman, Richard. A Markovian decision process. Indiana
+
+Univ. Math. J., 6:679–684, 1957.
+
+Boyan, Justin and Moore, Andrew W. Generalization in
+reinforcement learning: Safely approximating the value
+function. Advances in neural information processing
+systems, pp. 369–376, 1995.
+
+Even-Dar, Eyal and Mansour, Yishay. Learning rates for
+q-learning. Journal of Machine Learning Research, 5
+(Dec):1–25, 2003.
+
+He, Frank S., Yang Liu, Alexander G. Schwing, and Peng,
+Jian. Learning to play in a day: Faster deep reinforce-
+ment learning by optimality tightening. arXiv preprint
+arXiv:1611.01606, 2016.
+
+Jaakkola, Tommi, Jordan, Michael I, and Singh, Satinder P.
+On the convergence of stochastic iterative dynamic pro-
+gramming algorithms. Neural Computation, 6(6):1185–
+1201, 1994.
+
+Kingma, Diederik P. and Ba, Jimmy. Adam: A method
+arXiv preprint arXiv:
+
+for stochastic optimization.
+1412.6980, 2014.
+
+Krizhevsky, Alex, Sutskever, Ilya, and Hinton, Geoffrey E.
+Imagenet classiﬁcation with deep convolutional neural
+networks. In Advances in NIPS, pp. 1097–1105, 2012.
+
+LeCun, Yann, Bottou, L´eon, Bengio, Yoshua, and Haffner,
+Patrick. Gradient-based learning applied to document
+recognition. Proceedings of the IEEE, 86(11):2278–
+2324, 1998.
+
+Liang, Yitao, Machado, Marlos C, Talvitie, Erik, and Bowl-
+ing, Michael. State of the art control of Atari games
+In Proceedings
+using shallow reinforcement learning.
+of the 2016 International Conference on Autonomous
+Agents & Multiagent Systems, pp. 485–493, 2016.
+
+Lin, Long-Ji. Reinforcement learning for robots using neu-
+ral networks. Technical report, DTIC Document, 1993.
+
+Mnih, Volodymyr, Kavukcuoglu, Koray, Silver, David,
+Graves, Alex, Antonoglou, Ioannis, Wierstra, Daan, and
+Riedmiller, Martin. Playing Atari with deep reinforce-
+ment learning. arXiv preprint arXiv:1312.5602, 2013.
+
+Mnih, Volodymyr, Kavukcuoglu, Koray, Silver, David,
+Rusu, Andrei A, Veness, Joel, Bellemare, Marc G,
+Graves, Alex, Riedmiller, Martin, Fidjeland, Andreas K,
+Ostrovski, Georg, et al. Human-level control through
+deep reinforcement learning. Nature, 518(7540):529–
+533, 2015.
+
+Mnih, Volodymyr, Badia, Adria Puigdomenech, Mirza,
+Mehdi, Graves, Alex, Lillicrap, Timothy P, Harley, Tim,
+Silver, David, and Kavukcuoglu, Koray. Asynchronous
+methods for deep reinforcement learning. arXiv preprint
+arXiv:1602.01783, 2016.
+
+Osband, Ian, Blundell, Charles, Pritzel, Alexander, and
+Van Roy, Benjamin. Deep exploration via bootstrapped
+DQN. arXiv preprint arXiv:1602.04621, 2016.
+
+Riedmiller, Martin. Neural ﬁtted Q iteration–ﬁrst experi-
+ences with a data efﬁcient neural reinforcement learning
+method. In European Conference on Machine Learning,
+pp. 317–328. Springer, 2005.
+
+Rummery, Gavin A and Niranjan, Mahesan. On-line Q-
+learning using connectionist systems. University of
+Cambridge, Department of Engineering, 1994.
+
+Schaul, Tom, Quan, John, Antonoglou, Ioannis, and Sil-
+ver, David. Prioritized experience replay. arXiv preprint
+arXiv:1511.05952, 2015.
+
+Sutton, Richard S and Barto, Andrew G. Reinforcement
+Learning: An Introduction. MIT Press Cambridge, 1998.
+
+Sutton, Richard S, McAllester, David A, Singh, Satinder P,
+and Mansour, Yishay. Policy gradient methods for re-
+inforcement learning with function approximation.
+In
+NIPS, volume 99, pp. 1057–1063, 1999.
+
+Tang, Haoran, Rein Houthooft, Davis Foote, Adam Stooke,
+Xi Chen, Yan Duan, John Schulman, and Filip De Turck,
+Pieter Abbeel. #exploration: A study of count-based ex-
+ploration for deep reinforcement learning. arXiv preprint
+arXiv:1611.04717, 2016.
+
+Tesauro, Gerald. Temporal difference learning and td-
+gammon. Communications of the ACM, 38(3):58–68,
+1995.
+
+Thrun, Sebastian and Schwartz, Anton.
+
+function approximation for reinforcement learning.
+
+Issues in using
+In
+
+Averaged-DQN: Variance Reduction and Stabilization for Deep Reinforcement Learning
+
+Proceedings of the 1993 Connectionist Models Summer
+School Hillsdale, NJ. Lawrence Erlbaum, 1993.
+
+Tsitsiklis, John N. Asynchronous stochastic approxima-
+tion and q-learning. Machine Learning, 16(3):185–202,
+1994.
+
+Tsitsiklis, John N and Van Roy, Benjamin. An analysis
+of temporal-difference learning with function approxi-
+mation. IEEE transactions on automatic control, 42(5):
+674–690, 1997.
+
+Van Hasselt, Hado. Double Q-learning. In Lafferty, J. D.,
+Williams, C. K. I., Shawe-Taylor, J., Zemel, R. S., and
+Culotta, A. (eds.), Advances in Neural Information Pro-
+cessing Systems 23, pp. 2613–2621. 2010.
+
+Van Hasselt, Hado, Guez, Arthur, and Silver, David. Deep
+reinforcement learning with double Q-learning. arXiv
+preprint arXiv: 1509.06461, 2015.
+
+Wang, Ziyu, de Freitas, Nando, and Lanctot, Marc. Dueling
+network architectures for deep reinforcement learning.
+arXiv preprint arXiv: 1511.06581, 2015.
+
+Watkins, Christopher JCH and Dayan, Peter. Q-learning.
+
+Machine Learning, 8(3-4):279–292, 1992.
+
+

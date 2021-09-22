@@ -1,0 +1,1134 @@
+Stochastic Bouncy Particle Sampler
+
+Ari Pakman * 1 Dar Gilboa * 1 David Carlson 2 Liam Paninski 1
+
+Abstract
+
+include (Ahn et al., 2012; Ding et al., 2014).
+
+We introduce a stochastic version of the non-
+reversible, rejection-free Bouncy Particle Sam-
+pler (BPS), a Markov process whose sample tra-
+jectories are piecewise linear, to efﬁciently sam-
+ple Bayesian posteriors in big datasets. We prove
+that in the BPS no bias is introduced by noisy
+evaluations of the log-likelihood gradient. On the
+other hand, we argue that efﬁciency considera-
+tions favor a small, controllable bias, in exchange
+for faster mixing. We introduce a simple method
+that controls this trade-off. We illustrate these
+ideas in several examples which outperform pre-
+vious approaches.
+
+1. Introduction
+
+The advent of the Big Data era presents special chal-
+lenges to practitioners of Bayesian modeling because typ-
+ical sampling-based inference methods have a computa-
+tional cost per sample linear in the size of the dataset. This
+computational burden has been addressed in recent years
+through two major approaches (see (Bardenet et al., 2015)
+for a recent overview): (i) split the data into batches and
+combine posterior samples obtained in parallel from each
+batch, or (ii) use variants of the Markov Chain Monte Carlo
+(MCMC) algorithm that only query a subset of the data at
+every iteration. Our interest in the paper is in the latter ap-
+proach, where many methods are based on modifying both
+steps of the Metropolis-Hastings (MH) algorithm: in the
+proposal step, only a mini-batch of the data is used, and the
+accept-reject step is either ignored or approximated (Korat-
+tikara et al., 2013; Bardenet et al., 2014). This strategy has
+been explored using proposals from Langevin (Welling &
+Teh, 2011), Riemannian Langevin (Patterson & Teh, 2013),
+Hamiltonian (Chen et al., 2014) and Riemannian Hamil-
+tonian (Ma et al., 2015) dynamics. Other relevant works
+
+*Equal contribution
+
+1Statistics Department and Grossman
+Center for the Statistics of Mind, Columbia University, New York,
+NY 10027, USA 2Duke University, Durham, NC 27708, USA.
+Correspondence to: Ari Pakman <aripakman@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Despite the success of the above approach,
+the partial
+accept-reject step is a source of bias, the precise size of
+which is difﬁcult to control, and which tends to be ampli-
+ﬁed by the noisy evaluation of the gradient. This has mo-
+tivated the search for unbiased stochastic samplers, such
+as the Fireﬂy MCMC algorithm (Maclaurin & Adams,
+2014), the debiased pseudolikelihood approach of (Quiroz
+et al., 2016), and the quasi-stationary distribution approach
+of (Pollock et al., 2016).
+
+The present work is motivated by the idea that the bias
+could be reduced by starting from a rejection-free MCMC
+algorithm, avoiding thus the Metropolis-Hastings algo-
+rithm altogether. Two similar algorithms of this type
+have been recently proposed:
+the Bouncy Particle Sam-
+pler (BPS) (Peters & de With, 2012; Bouchard-Cˆot´e et al.,
+2015), and Zig-Zag Monte Carlo (Bierkens & Roberts,
+2015; Bierkens et al., 2016). These algorithms sample
+from the target distribution through non-reversible, piece-
+wise linear Markov processes. Non-reversibility (i.e., the
+failure to satisfy detailed balance) has been shown in many
+cases to yield faster mixing rates (Neal, 2004; Vucelja,
+2014; Bouchard-Cˆot´e et al., 2015).
+
+Our contributions in this paper are twofold. Firstly, we
+show that the BPS algorithm is particularly well suited to
+sample from posterior distributions of big datasets, because
+the target distribution is invariant under zero-mean noisy
+perturbations of the log-likelihood gradient, such as those
+introduced by using mini-batches of the full dataset in each
+iteration.
+
+Stochastic variants of BPS or Zig-Zag that preserve ex-
+actly the target distribution have been proposed, such as
+Local BPS (Bouchard-Cˆot´e et al., 2015) or Zig-Zag with
+subsampling (ZZ-SS) (Bierkens et al., 2016), but they lead
+to extremely slow mixing because are based on overly
+conservative bounds (which moreover must be derived on
+a case-by-case basis, and in many cases may not hold
+at all). This leads us to our second contribution,
+the
+Stochastic Bouncy Particle Sampler (SBPS), a stochastic
+version of the BPS algorithm which trades a small amount
+of bias for signiﬁcantly reduced variance, yielding supe-
+rior performance (and requiring no parameter tuning or
+derivation of problem-speciﬁc bounds) compared to exist-
+
+Algorithm 1 Bouncy Particle Sampler
+
+Stochastic Bouncy Particle Sampler
+
+Initialize particle position w0 ∈ RD and velocity
+v ∈ SD−1
+while desired do
+
+Sample Poisson process ﬁrst arrivals tr, tb
+with rates λr,λ(t) = [v · ∇U (w0 + vt)]+
+Let t = min(tb, tr)
+Move wt = w0 + vt ,
+if tb < tr then
+
+Reﬂect v ← v − 2 (v·∇U (wt))∇U (wt)
+
+||∇U (wt)||2
+
+Refresh: sample v ∼ Unif[SD−1]
+
+else
+
+end if
+Let w0 ← wt
+
+end while
+RETURN piecewise linear trajectory of w
+
+ing subsampling-based Monte Carlo methods. SBPS inher-
+its the piecewise linear sample paths of BPS, and therefore
+enjoys faster convergence of empirical means, particularly
+of rapidly varying test functions, compared to more stan-
+dard approaches.
+
+We organize this paper as follows. In Section 2 we review
+the Bouncy Particle Sampler, in Section 3 we study the in-
+variance of the target distribution under noise perturbations
+to the BPS updates, in Section 4 we introduce SBPS, and in
+Section 5 a preconditioned variant. In Section 6 we discuss
+related works and in Section 7 we illustrate the advantages
+of SBPS in several examples.
+
+2. The Bouncy Particle Sampler
+
+Consider a distribution p(w) ∝ e−U (w) , w ∈ RD, where
+the normalization factor may be intractable. The Bouncy
+Particle Sampler (BPS), proposed in (Peters & de With,
+2012; Monmarch´e, 2014) and formalized and developed
+in (Bouchard-Cˆot´e et al., 2015), introduces a random veloc-
+ity vector v distributed uniformly in the unit sphere SD−1,
+and deﬁnes a continuous Markov process in (w, v). To de-
+scribe this process we begin in discrete time and then take
+the continuous-time limit. Denoting time by t, consider
+a discrete-time Markov process that acts on the variables
+(w, v) as
+
+(w, v)t+∆t =
+
+(cid:26)(w+v∆t, v) w/prob. 1 − ∆t[G]+
+(w+v∆t, vr) w/prob. ∆t[G]+
+
+where
+
+[x]+ = max(x, 0) ,
+G = v · ∇U (w) ,
+vr = v − 2 (v·∇U (w))∇U (w)
+
+||∇U (w)||2
+
+.
+
+Note that G in (3) is the directional derivative of U (w) in
+the direction v, and vr is a reﬂection of v with respect
+to the plane perpendicular to the gradient ∇U , satisfying
+vr · ∇U = −v · ∇U and (vr)r = v.
+In other words,
+the particle w moves along a straight line in the direction
+of v and this direction is reﬂected as (4) with probability
+∆t[G]+. This probability is non-zero only if the particle is
+moving in a direction of lower target probability p(w), or
+equivalently higher potential U (w).
+
+Applying the transition (1) repeatedly and taking ∆t → 0,
+the random reﬂection point becomes an event in an inho-
+mogeneous Poisson process with intensity [G]+. The re-
+sulting sampling procedure generates a piecewise linear
+Markov process (Davis, 1984; Dufour et al., 2015), and is
+summarized in Algorithm 1. Note that the algorithm also
+includes occasional resamplings of v, to ensure ergodic-
+ity (Bouchard-Cˆot´e et al., 2015). Remarkably, in the limit
+∆t → 0, the algorithm leaves the joint factorized distri-
+bution p(w)p(v) invariant, as we review in Supp. Mate-
+rial A.1.
+
+The Zig-Zag process (Bierkens & Roberts, 2015; Bierkens
+et al., 2016) is similar to BPS, but velocity components can
+take only ±1 values, and the piecewise linear trajectories
+change direction only in a single coordinate at each random
+breakpoint. For a review of these methods, see (Fearnhead
+et al., 2016; Bierkens et al., 2017).
+
+3. Noise Resilience and Big Data
+
+3.1. Noise Resilience
+
+Let us assume that only a noisy version of the gradient is
+available to compute the probability of bouncing and the
+reﬂected velocity in (4). In the Big Data scenario described
+below, this is the result of using a random subset of the data
+at each gradient evaluation, and can be represented as
+
+∇ ˜U (w) = ∇U (w) + nw ,
+
+nw ∼ p(nw|w) ,
+
+(5)
+
+where nw ∈ RD and p(nw|w) has zero mean.
+
+Theorem 1: The invariance of p(w, v) under the BPS al-
+gorithm is unaffected by the zero-mean noise (5) if nw1 and
+nw2 are independent for w1 (cid:54)= w2.
+
+See Supp. Material A.2 for a proof sketch. Deﬁning ˜G =
+v · ∇ ˜U (w), the intensity of the inhomogeneous Poisson
+process [ ˜G]+, which determines the time of the velocity
+bounce, now becomes stochastic, and the resulting point
+process is called a doubly stochastic, or Cox, process (Cox,
+1955; Grandell, 1976). The effect of the gradient noise
+is to increase the average point process intensity, since
+E
+, from Jensen’s inequality. This
+
+(cid:104)
+E[ ˜G]
+
+[ ˜G]+
+
+≥
+
+(cid:105)
+
+(cid:104)
+
+(cid:105)
+
++
+
+(1)
+
+(2)
+
+(3)
+
+(4)
+
+Stochastic Bouncy Particle Sampler
+
+Figure 1: Noisy vs. noiseless gradients in BPS. Above: Contour plot of the 2D density considered and sample BPS trajectories during
+50 bounces, with exact and noisy gradients. The noise was sampled in each component from a N (0, 52) distribution. Below, Left:
+smoothed histogram of travel times until bouncing, with shorter times for noisy gradients. Middle: QQ-plot of one of the coordinates,
+showing that the invariant distribution is not changed by the noise. Right: ACFs of one of the coordinates, with slower mixing per
+iteration in the noisy case. However, note that these ACF plots do not account for computational cost per iteration.
+
+leads to more frequent bounces and typically a slower mix-
+ing of the Markov process, as illustrated in Figure 1.
+
+Many Cox processes are based on Poisson intensities
+obeying stochastic differential equations, or assume that
+the joint distribution at several w’s has a non-trivial w-
+dependent structure. Our case is different because we as-
+sume that nw1 and nw2 are independent even when w1 and
+w2 are inﬁnitesimally close.
+
+3.2. Sampling from Big Data posteriors
+
+In a prototypical Bayesian setting, we have a prior f (w),
+i.i.d. data points xi, and the negative log-posterior gradient
+is
+
+∇U (w) = −∇
+
+log f (w) +
+
+log p(xi|w)
+
+.
+
+(6)
+
+(cid:20)
+
+(cid:21)
+
+N
+(cid:80)
+i=1
+
+When N is big we consider replacing the above gradient
+by the noisy approximation
+
+∇ ˜U (w) = −∇
+
+(cid:20)
+log f (w) + N
+n
+
+n
+(cid:80)
+i=1
+
+(cid:21)
+
+log p(xri|w)
+
+,
+
+(7)
+
+where n (cid:28) N and the n indices {ri} are sampled ran-
+domly without replacement. To sample from the posterior
+using the noisy gradient (7), we want to simulate the ﬁrst ar-
+rival time in a doubly stochastic Poisson process with ran-
+dom intensity [ ˜G(t)]+, where
+
+˜G(t) = v · ∇ ˜U (w + vt) .
+
+(8)
+
+Note that ˜U is a stochastic process, and noise independence
+for different w’s implies that different t’s require indepen-
+dent mini-batches. Out of several methods to sample from
+
+(noisy) Poisson processes, the thinning method (Lewis &
+Shedler, 1979) is compatible with the noise independence
+assumption. This is a form of rejection sampling which
+proposes a ﬁrst arrival time t, sampled from an inho-
+mogeneous Poisson process with intensity λ(t) such that
+λ(t) ≥ [ ˜G(t)]+ The particle moves a distance tv, and ac-
+cepts the proposal to bounce the velocity with probability
+[ ˜G(t)]+/λ(t). Note that this accept-reject step is different
+from the MH algorithm (Robert & Casella, 2013), since
+the particle always moves the distance tv, and a rejection
+only affects the velocity bouncing. This can greatly im-
+prove the efﬁciency of the sampler. As in the noiseless
+case, one should in general also resample v occasionally, to
+ensure ergodicity (Bouchard-Cˆot´e et al., 2015), although in
+the examples we considered this was not empirically nec-
+essary, since the mini-batch noise serves to randomize the
+velocity sufﬁciently, preventing “non-ergodic” trajectories
+that do not explore the full space.
+
+In some special cases one can derive a bound λ(t) that al-
+ways holds (Bouchard-Cˆot´e et al., 2015; Bierkens et al.,
+2017). But this is atypical, due to the dependence of ˜G(t)
+in (8) on the changing velocity v and the mini-batch noise.
+Even when such bounds do exist, they tend to be conser-
+vatively high, leading to an inefﬁcient sampler with many
+rejected proposals (wasting many mini-batches of data) be-
+fore accepting.
+
+Instead, we propose below an adaptive approximate bound
+which achieves a bias-variance trade-off between the fre-
+quency of the bounce proposals and a controllable proba-
+bility of bound violation.
+
+Density Contours-3-2-10123-2024Exact Gradient-3-2-10123-2024Noisy Gradient0510Time until bouncing00.050.10.150.2FrequencyExact GradientNoisy Gradient-505Exact Gradient-505Noisy GradientQQ-plot of X coordinate05101520Lag00.51ACFExact GradientNoisy GradientStochastic Bouncy Particle Sampler
+
+4. Proposal from Local Regression
+
+Our approach to an adaptive and tractable proposal inten-
+sity λ(t) relies on a predictive model of ˜G based on previ-
+ous observations; the key idea is to exploit the correlations
+between nearby ˜G values. The upper value of the result-
+ing predictive conﬁdence band can then be used as λ(t),
+and this band is adaptively updated as more proposals are
+generated.
+
+While there are many possibilities for such a predictive
+model, we found that a simple local linear model was very
+effective and computationally trivial. Consider then the lin-
+ear regression of m observed values ˜Gi ≡ ˜G(ti) since the
+previous bounce,
+
+˜Gi = β1ti + β0 + εti
+
+εti ∼ N (0, c2
+ti
+
+) ,
+
+(9)
+
+where i = 1, . . . , m and the noise variance can be esti-
+mated from the mini-batch in (7) as
+
+t = N 2
+c2
+
+n (1 − n
+
+N )Vari [v · ∇ log p(xri|w)] .
+
+(10)
+
+Here Vari denotes the sample variance of the mini-batch,
+and we included the ﬁnite population correction factor
+(1 − n
+N ) because the indices {ri} are sampled without re-
+placement. The Gaussian noise assumption in ˜G(t) in (9) is
+valid when the mini-batch is sufﬁciently large that we can
+appeal to a central limit theorem. (For heavy-tailed noise
+we could consider more robust estimators, but we do not
+pursue this direction here.)
+
+Adding a Gaussian prior N (µ, σ2) to β1, and deﬁning xi ≡
+(1, ti), the log posterior of β = (β0, β1)T is
+
+2 log p(β|{ti, ˜Gi, c2
+ti
+
+}) = −
+
+m
+(cid:80)
+i=1
+
+( ˜Gi−xi·β)2
+c2
+ti
+
+− (β1−µ)2
+
+σ2 + const.
+
+Let ˆβ and Σ be the mean and covariance of this distribu-
+tion. Using these estimates, we obtain the predictive distri-
+bution ˆG(t) for ˜G(t) for t > tm,
+
+ˆG(t) = ˆβ1t + ˆβ0 + ηt
+
+ηt ∼ N (0, ρ2(t))
+
+(11)
+
+where ρ2(t) = xΣxT + c2
+tm
+
+(12)
+
+with x = (1, t). Note that as usual the noise variance is
+different in (9) and (11), since in (9) we are ﬁtting observed
+pairs ˜Gi, ti, while in (11) we are predicting the value of
+˜G(t) and we include the uncertainty from the ˆβ estimates.
+Also, for simplicity we extrapolate the observation noise to
+be the same as in the last mini-batch, c2
+
+tm.
+
+We can now construct a tractable approximate thinning pro-
+posal intensity by choosing a conﬁdence band multiple k,
+
+Figure 2: Thinning proposal intensity for bounce times from a
+linear regression predictive conﬁdence interval applied to a two-
+dimensional logistic regression posterior with N = 1000, n =
+100. Left: Starting from t = 0, the piecewise linear intensity γ(t)
+is used to propose bounce times (green points). As these proposals
+are rejected additional observations ˜Gi are made until a proposal
+is accepted (red point). The decrease in the slope of γ(t) indicates
+the decreasing uncertainty in the estimated regression parameters
+as observations increase; note that the linear approximation for the
+true G(t) is quite accurate here. Note also the reduced observation
+frequency at lower values of G(t) indicating more efﬁcient sam-
+pling than is achievable with the constant and much higher bounds
+used in (Bouchard-Cˆot´e et al., 2015; Bierkens et al., 2016), which
+were in the range [104, 2 ∗ 104] for this data. Right: The cor-
+responding SBPS particle trajectory, with arrows indicating the
+initial velocity and the velocity after the bounce. The contours
+show the Laplace approximation of the log posterior.
+
+and deﬁning γ(t) as a linear interpolation between selected
+points along the non-linear curve
+
+ˆβ1t + ˆβ0 + kρ(t) .
+
+(13)
+
+The proposal intensity is now λ(t) = [γ(t)]+, and sam-
+pling from an inhomogeneous Poisson process with piece-
+wise linear rate λ(t) can be done analytically using the in-
+verse CDF method. When a bounce time is proposed at
+time t, the particle moves a distance tv, a noisy observa-
+tion ˜G(t) is made as in (8) and the bounce time is accepted
+with probability min(1, [ ˜G(t)]+/λ(t)).
+If the bounce is
+accepted, the velocity is reﬂected as in (4) (using ˜U in-
+stead of U ), and the set of observed values is reinitialized
+with (− ˜G(t), ct), which are the values one would obtain
+from sampling the same mini-batch after the bounce, since
+vr · ˜U = −v · ˜U = − ˜G(t). On the other hand, if the pro-
+posal is rejected, the observed ( ˜G(t), ct) are added to the
+set of observed values. The hyperparameters µ, σ2 of the
+regression model can be learned by performing, after each
+bounce, a gradient ascent step on the marginal likelihood,
+p({ ˜Gi}|µ, σ2); this gradient can be computed analytically
+and does not signiﬁcantly impact the computational cost.
+The linear model for ˜G is good when the target distribu-
+tion can be locally approximated by a Gaussian, since ˜G(t)
+in (8) is a projection of the derivative of the negative log
+
+Stochastic Bouncy Particle Sampler
+
+posterior. When the posterior is highly non-Gaussian, a de-
+caying weight can be used for more-distant observations,
+leading to a local regression; the scale of this decay can
+be ﬁt again via stochastic gradient ascent on the predictive
+likelihood. We have also explored a Gaussian Process re-
+gression model, but it did not improve over the linear model
+in the cases we considered. In Supp. Material E we discuss
+a potential problem with our approach in the case of multi-
+modal distributions, and propose a solution for such cases.
+Finally, note that the directional derivative of ˜U (w) needed
+in (8) can in many cases be computed at a cheaper cost
+(by a factor of d = dim(w)) than the full gradient. The
+latter is only needed when a bounce is accepted. This is in
+contrast to other gradient based samplers which require the
+full gradient at every step.
+
+We dub this approach to BPS with noisy gradients Stochas-
+tic BPS (SBPS). See Supp. Material C for pseudocode. Fig-
+ure 2 illustrates the evolution of these dynamic proposal in-
+tensities in a simple example. In Section 5, we consider a
+variant to SBPS, called pSBPS, that learns a diagonal pre-
+conditioning factor for the gradient, and leads to a more ef-
+ﬁcient exploration of the space when the posterior is highly
+anisotropic and roughly axis-aligned.
+
+4.1. Bias in the Samples
+
+The constant k in (13) controls the tradeoff between bias
+from possible [ ˜G(t)]+/λ(t) > 1 cases and lower com-
+putational cost: higher k leads to a more conservative
+(higher) proposal intensity and therefore a less-biased but
+more data-inefﬁcient sampler. We present a bound on the
+Wasserstein distance between the exact and bias distribu-
+tions in Supp. Material B, and explore this bias-variance
+tradeoff further in Supp. Material F. A quick bias diagnos-
+tic is the rate at which the bound is violated, i.e., cases with
+[ ˜G(t)]+/λ(t) > 1; if this rate is signiﬁcantly higher than
+expected under the local linear regression model, then a
+different approach should be considered.
+
+5. Preconditioned SBPS
+
+Consider now the linear transformation w = Az with an
+arbitrary square matrix A. A distribution p(w) of interest
+can be expressed in terms of z as
+
+pz(z)dz = p(w(z))dw = p(Az)|A|dz ,
+= exp(−Uz(z))dz .
+
+(14)
+
+(15)
+
+The SBPS algorithm can be applied to the density pz(z)
+using the gradients of U (w). For this note that ∇zUz(z) =
+A∇wU (w). The Poisson intensity to compute bounces is
+[G]+, with G = v · A∇U (w), and the velocity reﬂection
+
+Figure 3: Effect of diagonal preconditioning on SBPS perfor-
+mance. Sampling is from the logistic regression posterior as de-
+scribed in Section 7.1 , with d = 20, N = 1000, k = 3, n = 100.
+The preconditioner parameters are β = .99, (cid:15) = 10−4. Left:
+Contour plots of posterior log likelihood under the Laplace ap-
+proximation. Center, right: ACF and trajectories in the direction
+of greatest covariance.
+
+is computed as
+
+vr = v − 2
+
+(v · A∇U (w))A∇U (w)
+||A∇U (w)||2
+
+.
+
+(16)
+
+The piecewise linear trajectory zt = z0+vt becomes wt =
+w0 + Avt. The matrix A is called a preconditioner in the
+optimization literature, but can also be used in a sampling
+context to reduce anisotropy of posterior distributions; it
+is often the case that a good preconditioner is not known
+in advance but is instead learned adaptively (Duchi et al.,
+2011).
+
+We use a diagonal preconditioner for simplicity. Denoting
+the ith component at the jth evaluation of the gradient by
+gj
+i , we deﬁne
+
+aj
+i = β(gj
+i )2 + (1 − β)aj−1
+(cid:80)d
+˜aj = 1
+d
+
+i=1
+
+,
+
+i
+
+,
+
+1√
+aj
+i +(cid:15)
+
+(17)
+
+(18)
+
+for some 0 ≤ β ≤ 1, (cid:15) (cid:28) 1. The preconditioner at iteration
+(cid:18)
+
+(cid:19)
+
+j is deﬁned as Aj = Diag
+
+. This is the same
+
+˜aj√
+aj
+i +(cid:15)
+
+preconditioner used in (Li et al., 2016), up to the ˜aj factor;
+the latter is needed here in order to prevent scaling of ˜G.
+
+As noted in (Li et al., 2016), a time dependent precondi-
+tioner requires adding a term proportional to ∂Aj
+∂w to the
+gradient, yet this term is negligibly small and can be ig-
+nored when β ≈ 1, since in this parameter regime the pre-
+conditioner changes slowly as a function of j and thus of w.
+
+We call
+It per-
+this preconditioned variant pSBPS.
+forms favorably compared to SBPS when the posterior
+is anisotropic and axis-aligned, since we use a diago-
+nal approximation of the Hessian in the preconditioner.
+See (Bierkens et al., 2017) for a related approach. As Fig-
+ure 3 shows, pSBPS converges to the posterior mode faster
+than SBPS, and mixes faster in the direction of greatest co-
+variance.1
+
+1pSBPS code at https://github.com/dargilboa/SBPS-public.
+
+Stochastic Bouncy Particle Sampler
+
+Figure 4: Logistic regression posterior sampling, with d = 20, N = 1000, k = 3, n = 100 (best seen in color). Top Left: Negative
+Log Likelihood (NLL) per data point of samples from SBPS compared with SGLD (step sizes 0.01, 0.1), mSGNHT (step size 0.1),
+lipSBPS and SS-ZZ (see text for deﬁnitions and references), all initialized at the same random positions. Also shown are the normalized
+2N χ2(d) +
+NLL of the MAP estimator N LL( ˆw)/N and the mean ± std. dev. of the Laplace approximation NLL (distributed as
+N LL( ˆw)/N ). The continuous samplers (SBPS, SS-ZZ, lipSBPS) were run to match the data cost of the discrete (SGLD, mSGNHT),
+and for their ACFs we discretized the continuous paths uniformly to obtain the same number of samples. Note that SBPS is the fastest
+to converge. Center/Right: Trajectories and ACFs in the directions of largest and smallest eigenvalues of the Laplace approximation
+inverse Hessian. The ACFs were calculated after burn-in, while the trajectory plots only show initial convergence. Inset: CPU runtime
+for 100 epochs, showing a ×35 advantage of n = 100 SBPS over n = 1 SS-ZZ and lipSBPS
+
+1
+
+6. Related Works
+
+Biased Samplers: Many stochastic gradient samplers (e.g.
+(Welling & Teh, 2011)) can be formulated exactly using
+a Wiener process (Ma et al., 2015), but they are biased be-
+cause (i) the Gaussian assumption in the noise may not hold
+for small mini-batches, and (ii) the MH correction to the
+time discretization is avoided or approximated. Recently,
+irreversible samplers have been studied in this context (Ma
+et al., 2016). Choosing the step size in these samplers can
+be quite challenging, as discussed below:
+too-large step
+sizes increase the bias, while too-small step sizes slow the
+mixing, and in generic high-dimensional examples there
+is no way to automatically tune the step size (though see
+(Giles et al., 2016) for recent progress).
+In contrast, the
+bias in SBPS, controlled by the constant k, does not come
+from time discretization, but from easy-to-track violations
+of the thinning bound when [ ˜G(t)]+/λ(t) > 1.
+
+Exact non-BPS-like Samplers: Fireﬂy MCMC (Maclau-
+rin & Adams, 2014) augments the target distribution with
+one binary variable per data point, and yields unbiased
+samples while only querying a subset of data points at each
+iteration. But it needs distribution-dependent lower bounds
+on the likelihood and requires an initial full sweep of the
+
+data. Also mixing can be extremely slow (Quiroz et al.,
+2015; Bardenet et al., 2015), and all the dataset must be
+available for access all the time.
+
+Two recent novel proposals are (Quiroz et al., 2016), based
+on debiased pseudolikelihood combined with variance re-
+duction techniques, and (Pollock et al., 2016), based on
+quasi-stationary distributions. These methods are relatively
+more complex, and we have not yet systematically com-
+pared them against SBPS.
+
+Exact BPS-like Samplers: Two subsampling variants
+of BPS which preserve the exact distribution are Lo-
+cal BPS (Bouchard-Cˆot´e et al., 2015), that needs a pre-
+processing step of computational cost O(N log N ), and
+ZZ-SS (Bierkens et al., 2016).
+In these approaches, the
+requirement to preserve the distribution exactly leads to ex-
+tremely conservative thinning bounds, which in turn yield
+a very slow exploration of the space, as we will see below.
+Also, the bounds need to be rederived for each new model
+(if possible at all), unlike SBPS which can be used for any
+differentiable posterior distribution.
+
+Stochastic Bouncy Particle Sampler
+
+7. Experiments
+
+7.1. Logistic Regression
+
+Although simpler MCMC methods perform well
+in
+Bayesian logistic regression (BLR) models (Chopin &
+Ridgway, 2015), we begin with this well-understood case
+for comparing SBPS against a few of the existing stochas-
+tic MCMC methods discussed in the previous section. To
+generate the data, we sampled the components of the true
+w ∈ Rd from Unif[−5, 5] and N data points {xi} from
+a d-dimensional zero-mean Gaussian, with one component
+of the diagonal covariance set to 6 and all the rest to 1. La-
+bels {yi} are drawn from yi ∼ Bern(σ(w · xi)), where
+σ(x) = 1/(1 + ex). In the regime d (cid:28) N the Laplace ap-
+proximation holds fairly well, providing another good com-
+parison method. Figure 4 shows results for N = 1000, d =
+20, k = 3, n = 100.
+
+We run comparisons against the biased stochastic samplers
+Stochastic Gradient Langevin Dynamics (SGLD) (Welling
+& Teh, 2011) and multivariate Stochastic Gradient Nose-
+Hoover Thermostat (mSGNHT) (Li et al., 2015) with ﬁxed
+step sizes. As noted above, choosing optimal step sizes for
+these samplers is challenging. To allow SGLD and mS-
+GNHT to perform best, we performed a scan to ﬁnd the
+largest (fastest-mixing) step size that did not lead to overly
+large bias compared to the Laplace approximation. (Note,
+importantly, that this scan is expensive and is not possible
+in high-dimensional examples where the Laplace approxi-
+mation does not hold - precisely the cases where MCMC
+methods are most valuable.) See Supp. Material E for de-
+tails of this scan, which led to an optimal step size of 0.1
+for SGLD. Larger step sizes led to visible biases in the sam-
+ples (not shown); we also show the results with step size
+0.01 for comparison to note that the results do depend sen-
+sitively on this parameter.
+
+We also compare against ZZ-SS. Instead of Local BPS, we
+ran comparisons against an unbiased method we call lipS-
+BPS (short for Lipshitz BPS), where the velocity bounces
+occur as ﬁrst arrival events in a Poisson process with noisy
+intensity [v · ∇ ˜U (w)]+ built from a noisy gradient (7) of
+minimal size n = 1, and simulated with thinning using
+an exact upper bound derived in Supp. Material F. One
+can verify that the resulting stochastic process is identi-
+cal to that of Local BPS. Our bound is higher than that
+used in (Bouchard-Cˆot´e et al., 2015) by up to a factor of 2,
+which results in up to twice as many bounce proposals. On
+the other hand, our bound can be computed in O(N ) time,
+does not require non-negative covariates, and can be used
+also for n > 1. Again, we note that this lipSBPS method,
+like Local BPS and ZZ-SS, are not generally applicable be-
+cause the derived bounds only apply in special cases.
+
+The results of Figure 4 show that SBPS outperforms the op-
+
+Figure 5: Estimated mean of f (w) = sin((w − ˆw/r), under
+continuous and discrete samples, with different ratios r/b, where
+b ≈ 2×10−2 is the average linear trajectory length. The posterior
+distribution and settings are as in Figure 4. Assuming the Laplace
+approximation holds, the expectation of f is 0. Left: For r/b = 1
+there is little difference between continuous or discrete samples.
+Center: For r/b = 10−2 the continuous mean converges faster
+than the discrete. Right: Expectation of the absolute value of the
+test function averaged over 5 runs of 1000 epochs, as a function
+of r/b. The advantage of the continuous expectation when this
+ratio is r/b (cid:28) 1 is evident.
+
+timally tuned SGLD and mSGNHT, and converges orders
+of magnitude faster than lipSBPS and ZZ-SS. While the lat-
+ter two methods are unbiased, our results suggest that the
+small bias introduced by SBPS is worth the massive reduc-
+tion in variance.
+
+In Supp. Material F we explore the effects of the hyper-
+parameters: k, n, and v refresh rate λr. The conclusion is
+that in this logistic example no manual hyperparameter tun-
+ing was required (in stark contrast to the careful step size
+tuning required for SGLD): the bias-controlling constant k
+can be set in the range k ∈ [3, 5] (consistent with the tails of
+the Gaussian in the linear regression model) and the mini-
+batch size n should be small, but large enough for the CLT
+to justify the noise term in (9); n = 100 worked well, but
+the results were not sensitively dependent on n. For small
+values of n the mini-batch variability provided sufﬁcient
+velocity randomness that no additional velocity refreshes
+were necessary, so we did not have to tune λr either.
+
+The comparison to pSBPS shows an improvement in the
+rate of convergence to the posterior mode. The MAP es-
+timator ˆw was calculated using SAG (Roux et al., 2012),
+and the Hessian was computed exactly.
+
+7.2. Continuous Trajectory Sampling
+
+A unique feature of BPS-like samplers is that their output is
+a continuous trajectory. Given w0 and a set of R velocities
+and bounce times {vi, ti}, the estimated expectation of a
+test function f (w) is
+
+(cid:104)f (w)(cid:105)BP S ≡
+
+f (wi + vit)dt
+
+(19)
+
+1
+T
+
+ti(cid:90)
+
+R−1
+(cid:88)
+
+i=0
+
+0
+
+where wi+1 = wi + viti and T is the total particle
+travel time. For simple test functions this integral is ana-
+lytic, while more generally it can be computed numerically
+
+Stochastic Bouncy Particle Sampler
+
+Figure 6: Neural network posterior sampling for a single hidden layer network trained on MNIST. d = 192, N = 8340, n = 500. For
+SBPS k = 3. The posterior is compared to an expensive Metropolis-Hastings run. SBPS shows comparable mixing to an appropriately
+chosen SGLD without the need for a scan over step sizes. As can be seen, a poor choice of SGLD step size can lead to slow mixing or
+bias in the narrow directions of the target
+
+with standard efﬁcient one-dimensional quadrature meth-
+ods. When f (w) varies across a characteristic length r
+shorter than the average trajectory length b of the linear seg-
+ments, we intuitively expect the error in the estimate (19)
+to be smaller than in estimators based on discrete samples.
+Note that this advantage tends to diminish for higher SBPS
+noise, since the linear segments become shorter.
+
+Figure 5 explores empirically this idea in a simple set-
+ting by comparing the value of the expectation of f (w) =
+sin((w − ˆw)/r) under the posterior distribution of the lo-
+gistic example considered above. Here (w, ˆw) are the ﬁrst
+coordinates of the vectors (w, ˆw), ˆw is the MAP value, and
+r the characteristic length of f . As expected, the error in
+the expectation is lower in the continuous case for r/b < 1.
+
+7.3. Neural Network Posterior Sampling
+
+We considered a simple model of one hidden layer fol-
+lowed by a softmax. For Bayesian approaches to neural
+networks see (Neal, 2012; Gal, 2016). The likelihood was
+the standard cross entropy with an additional L2 regular-
+log(pi) + c
+2
+
+ization term L = −
+
+j where pi is the
+
+w2
+
+d
+(cid:80)
+j=1
+
+N
+(cid:80)
+i=1
+
+probability of classifying the ith example correctly. L was
+approximated via subsampling, and c = 0.001. This archi-
+tecture was trained on the MNIST dataset. A subset of the
+training set was preprocessed by downsampling the images
+to 7 × 7, removing pixels that are 0 for all training exam-
+ples and decreasing the number of digits to 4. The resulting
+training set size was N = 8340. The resulting dimension-
+ality of the posterior was d = 192. Mini-batch size was
+n = 500 for all methods. All weights were initialized at
+0 and all methods were run for 104 epochs. SBPS is com-
+pared with SGLD at different step sizes, and performance
+
+is comparable to SGLD with an appropriate step size with-
+out requiring an expensive scan over step sizes. Since the
+additional regularization term can lead to unbounded gradi-
+ents of the log posterior ∇U (w) one can no longer use the
+bounds derived for the Local BPS and ZZ-SS algorithms
+and thus they cannot be applied to this problem without
+further work. This is not the case for SBPS. The posterior
+is not Gaussian due to the likelihood terms and thus the
+Laplace approximation is not effective unless the posterior
+is dominated by the prior.
+
+In order to assess the quality of the sampling, we compare
+the trajectories to a standard costly Metropolis-Hastings
+MCMC using a Gaussian with variance 0.2 as the pro-
+posal distribution. This algorithm was run for 4 ∗ 105
+epochs and the proposal acceptance rate was 0.43. Figure 6
+shows samples in the directions of the largest, median and
+smallest variance of the empirical covariance matrix of the
+Metropolis-Hastings samples.
+
+8. Conclusions
+
+This paper introduced a non-reversible sampler that can
+be applied to big datasets by means of subsampling the
+data in each iteration. At the price of a small, controllable
+bias, it provides the beneﬁts of (i) high mixing speed as-
+sociated with non-reversibility, and (ii) continuous sample
+trajectories, with (iii) minimal hyperparameter tuning re-
+quired, leading to state of the art performance and making
+it a convenient alternative to biased, difﬁcult-to-tune MH-
+based stochastic samplers.
+
+Stochastic Bouncy Particle Sampler
+
+References
+
+Ahn, Sungjin, Korattikara, Anoop, and Welling, Max.
+Bayesian posterior sampling via stochastic gradient
+ﬁsher scoring. ICML, 2012.
+
+Bardenet, R´emi, Doucet, Arnaud, and Holmes, Chris. To-
+wards scaling up Markov chain Monte Carlo: an adap-
+In ICML, pp. 405–413,
+tive subsampling approach.
+2014.
+
+Bardenet, R´emi, Doucet, Arnaud, and Holmes, Chris.
+On Markov chain Monte Carlo methods for tall data.
+arXiv:1505.02827, 2015.
+
+Bierkens, Joris and Roberts, Gareth. A piecewise deter-
+ministic scaling limit of Lifted Metropolis-Hastings in
+the Curie-Weiss model. arXiv:1509.00302, 2015.
+
+Bierkens, Joris, Fearnhead, Paul, and Roberts, Gareth.
+The Zig-Zag Process and Super-Efﬁcient Sampling
+arXiv preprint
+for Bayesian Analysis of Big Data.
+arXiv:1607.03188, 2016.
+
+Bierkens, Joris, Bouchard-Cˆot´e, Alexandre, Doucet, Ar-
+naud, Duncan, Andrew B, Fearnhead, Paul, Roberts,
+Gareth, and Vollmer, Sebastian J.
+Piecewise Deter-
+ministic Markov Processes for Scalable Monte Carlo on
+Restricted Domains. arXiv preprint arXiv:1701.04244,
+2017.
+
+Bouchard-Cˆot´e, Alexandre, Vollmer, Sebastian J, and
+Doucet, Arnaud. The Bouncy Particle Sampler: A Non-
+Reversible Rejection-Free Markov Chain Monte Carlo
+Method. arXiv:1510.02451, 2015.
+
+Chen, Tianqi, Fox, Emily B, and Guestrin, Carlos. Stochas-
+tic gradient HMC. In ICML, pp. 1683—1691, 2014.
+
+Chopin, Nicolas and Ridgway, James. Leave Pima Indians
+alone: binary regression as a benchmark for Bayesian
+computation. arXiv preprint arXiv:1506.08640, 2015.
+
+Cox, David R. Some statistical methods connected with
+series of events. J. Royal Stat. Soc., Series B (Method-
+ological), pp. 129–164, 1955.
+
+Davis, Mark HA. Piecewise-deterministic Markov pro-
+cesses: A general class of non-diffusion stochastic mod-
+els. J. Royal Stat. Soc., Series B (Methodological), pp.
+353–388, 1984.
+
+Ding, Nan, Fang, Youhan, Babbush, Ryan, Chen,
+Changyou, Skeel, Robert D, and Neven, Hartmut.
+Bayesian sampling using stochastic gradient
+ther-
+mostats. In NIPS, pp. 3203–3211, 2014.
+
+Duchi, John, Hazan, Elad, and Singer, Yoram. Adaptive
+subgradient methods for online learning and stochastic
+optimization. Journal of Machine Learning Research,
+12(Jul):2121–2159, 2011.
+
+Dufour, Franc¸ois, Zhang, Huilong, et al. Numerical Meth-
+ods for Simulation and Optimization of Piecewise Deter-
+ministic Markov Processes. John Wiley & Sons, 2015.
+
+Fearnhead, Paul, Bierkens, Joris, Pollock, Murray, and
+Roberts, Gareth O. Piecewise Deterministic Markov
+arXiv
+Processes for Continuous-Time Monte Carlo.
+preprint arXiv:1611.07873, 2016.
+
+Gal, Yarin. Uncertainty in Deep Learning (Cambridge PhD
+
+Thesis). 2016.
+
+Giles, Mike, Nagapetyan, Tigran, Szpruch, Lukasz,
+Vollmer, Sebastian, and Zygalakis, Konstantinos. Multi-
+level Monte Carlo for Scalable Bayesian Computations.
+arXiv preprint arXiv:1609.06144, 2016.
+
+Grandell, Jan.
+
+Doubly stochastic Poisson processes.
+
+Springer, 1976.
+
+Korattikara, Anoop, Chen, Yutian, and Welling, Max. Aus-
+terity in MCMC land: Cutting the Metropolis-Hastings
+budget. arXiv:1304.5299, 2013.
+
+Lewis, Peter A and Shedler, Gerald S. Simulation of non-
+homogeneous Poisson processes by thinning. Naval Re-
+search Logistics Quarterly, 26(3):403–413, 1979.
+
+Li, Chunyuan, Chen, Changyou, Fan, Kai, and Carin,
+Lawrence. High-Order Stochastic Gradient Thermostats
+for Bayesian Learning of Deep Models. arXiv preprint
+arXiv:1512.07662, 2015.
+
+Li, Chunyuan, Chen, Changyou, Carlson, David, and
+Carin, Lawrence. Preconditioned stochastic gradient
+langevin dynamics for deep neural networks. AAAI,
+2016.
+
+Ma, Yi-An, Chen, Tianqi, and Fox, Emily. A complete
+In NIPS, pp.
+
+recipe for stochastic gradient MCMC.
+2899–2907, 2015.
+
+Ma, Yi-An, Chen, Tianqi, Wu, Lei, and Fox, Emily B.
+A Unifying Framework for Devising Efﬁcient and
+arXiv preprint
+Irreversible MCMC Samplers.
+arXiv:1608.05973, 2016.
+
+Maclaurin, Dougal and Adams, Ryan P.
+
+Fireﬂy
+Monte Carlo: Exact MCMC with subsets of data.
+arXiv:1403.5693, 2014.
+
+Monmarch´e, Pierre. Piecewise deterministic simulated an-
+
+nealing. arXiv preprint arXiv:1410.1656, 2014.
+
+Stochastic Bouncy Particle Sampler
+
+Neal, Radford M.
+
+Improving asymptotic variance of
+MCMC estimators: Non-reversible chains are better.
+arXiv preprint math/0407281, 2004.
+
+Neal, Radford M. Bayesian learning for neural networks,
+volume 118. Springer Science & Business Media, 2012.
+
+Patterson, Sam and Teh, Yee Whye. Stochastic gradient
+Riemannian Langevin dynamics on the probability sim-
+plex. In NIPS, pp. 3102–3110, 2013.
+
+Peters, EAJF and de With, G. Rejection-free Monte Carlo
+sampling for general potentials. Phys. Rev. E, 85(2):
+026703, 2012.
+
+Pollock, Murray, Fearnhead, Paul, Johansen, Adam M, and
+Roberts, Gareth O. The Scalable Langevin Exact Algo-
+rithm: Bayesian Inference for Big Data. arXiv preprint
+arXiv:1609.03436, 2016.
+
+Quiroz, Matias, Villani, Mattias, and Kohn, Robert. Speed-
+ing up MCMC by efﬁcient data subsampling. Riksbank
+Research Paper Series, (121), 2015.
+
+Quiroz, Matias, Villani, Mattias, and Kohn, Robert. Exact
+
+Subsampling MCMC. arXiv:1603.08232, 2016.
+
+Robert, Christian and Casella, George. Monte Carlo sta-
+tistical methods. Springer Science & Business Media,
+2013.
+
+Roux, Nicolas L, Schmidt, Mark, and Bach, Francis R. A
+stochastic gradient method with an exponential conver-
+gence rate for ﬁnite training sets. In Advances in Neural
+Information Processing Systems, pp. 2663–2671, 2012.
+
+Vucelja, Marija. Lifting–A Nonreversible MCMC Algo-
+
+rithm. arXiv:1412.8762, 2014.
+
+Welling, Max and Teh, Yee W. Bayesian learning via
+In ICML, pp.
+
+stochastic gradient Langevin dynamics.
+681–688, 2011.
+
+

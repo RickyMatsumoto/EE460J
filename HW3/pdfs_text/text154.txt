@@ -1,0 +1,1977 @@
+Deep Latent Dirichlet Allocation with Topic-Layer-Adaptive
+Stochastic Gradient Riemannian MCMC
+
+Yulai Cong 1 Bo Chen 1 Hongwei Liu 1 Mingyuan Zhou 2
+
+Abstract
+
+It is challenging to develop stochastic gradient
+based scalable inference for deep discrete latent
+variable models (LVMs), due to the difﬁculties
+in not only computing the gradients, but also
+adapting the step sizes to different latent factors
+and hidden layers. For the Poisson gamma be-
+lief network (PGBN), a recently proposed deep
+discrete LVM, we derive an alternative represen-
+tation that is referred to as deep latent Dirichlet
+allocation (DLDA). Exploiting data augmenta-
+tion and marginalization techniques, we derive
+a block-diagonal Fisher information matrix and
+its inverse for the simplex-constrained global
+model parameters of DLDA. Exploiting that
+Fisher information matrix with stochastic gradient
+MCMC, we present topic-layer-adaptive stochas-
+tic gradient Riemannian (TLASGR) MCMC that
+jointly learns simplex-constrained global param-
+eters across all layers and topics, with topic and
+layer speciﬁc learning rates. State-of-the-art re-
+sults are demonstrated on big data sets.
+
+1. Introduction
+
+The increasing amount and complexity of data call for large-
+capacity models, such as deep discrete latent variable mod-
+els (LVMs) for unsupervised data analysis (Hinton et al.,
+2006; Bengio et al., 2007; Srivastava et al., 2013; Ranganath
+et al., 2015; Zhou et al., 2016a), and scalable inference meth-
+ods, such as stochastic gradient Markov chain Monte Carlo
+(SG-MCMC) that provides posterior samples in a non-batch
+learning setting (Welling & Teh, 2011; Patterson & Teh,
+2013; Ma et al., 2015). Unfortunately, most deep LVMs,
+
+1National Laboratory of Radar Signal Processing, Collabora-
+tive Innovation Center of Information Sensing and Understanding,
+Xidian University, Xi’an, China. 2McCombs School of Business,
+The University of Texas at Austin, Austin, TX 78712, USA. Corre-
+spondence to: Bo Chen <bchen@mail.xidian.edu.cn>, Mingyuan
+Zhou <mingyuan.zhou@mccombs.utexas.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+such as deep belief network (DBN) (Hinton et al., 2006)
+and deep Boltzmann machines (DBM) (Salakhutdinov &
+Hinton, 2009), use greedy layerwise training, without a prin-
+cipled way to jointly learn multilayers in an unsupervised
+manner (Bengio et al., 2007). While SG-MCMC has re-
+cently been successfully applied to several “shallow” LVMs,
+such as mixture models (Welling & Teh, 2011) and mixed-
+membership models (Patterson & Teh, 2013), it has been
+rarely applied to “deep” ones, probably due to the lack of
+understanding on how to jointly learn the latent variables
+of different layers and adjust the layer and topic speciﬁc
+learning rates in a non-batch learning setting.
+
+To investigate scalable SG-MCMC inference for deep
+LVMs, we focus our study on the recently proposed Pois-
+son gamma belief network (PGBN), whose hidden layers
+are parameterized with gamma distributed hidden units and
+connected with Dirichlet distributed basis vectors (Zhou
+et al., 2016a). The PGBN is capable of extracting topics
+from a text corpus at multiple layers and outperforms a large
+number of topic modeling algorithms. However, the PGBN
+is currently trained with a batch Gibbs sampler that is not
+scalable to big data. In this paper, we focus on developing
+scalable multilayer joint inference for the PGBN.
+
+We will show that scalable multilayer joint inference of the
+PGBN could be facilitated by its Fisher information ma-
+trix (FIM) (Amari, 1998; Girolami & Calderhead, 2011;
+Pascanu & Bengio, 2013), which, although seemingly im-
+possible to derive and challenging to work with due to the
+need to compute the expectations over trigamma functions,
+is readily available under an alternative representation of
+the PGBN, referred to as deep latent Dirichlet allocation
+(DLDA). DLDA, derived by exploiting data augmentation
+and marginalization techniques on the PGBN, can be con-
+sidered as a multilayer generalization of latent Dirichlet
+allocation (LDA) (Blei et al., 2003). Following a general
+framework for SG-MCMC (Ma et al., 2015), the block di-
+agonal structure of the FIM of DLDA makes it be easily
+inverted to precondition the mini-batch based noisy gradi-
+ents to exploit the second-order local curvature information,
+leading to topic-layer-adaptive step sizes based on the Rie-
+mannian manifold and the same asymptotic performance as
+a natural gradient based batch-learning algorithm (Amari,
+1998; Pascanu & Bengio, 2013). To the best of our knowl-
+
+Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+edge, this is the ﬁrst time that the FIM of a deep LVM is
+shown to have an analytical and practical form. How we
+derive the FIM for the PGBN using data augmentation and
+marginalization techniques in this paper may serve as an
+example to help derive the FIMs for other deep LVMs.
+
+Besides presenting the analytical FIM of the PGBN, im-
+portant for the marriage of a deep LVM and SG-MCMC,
+we make another contribution in showing how to facilitate
+SG-MCMC for an LVM equipped with simplex-constrained
+model parameters φk = (φ1k, . . . , φV k)T , which means
+(cid:80)V
+v=1 φvk = 1 and φvk ∈ R+, where R+ := {x, x ≥ 0},
+by using a reduced-mean simplex parameterization together
+with a fast sampling procedure recently introduced in Cong
+et al. (2017). Unlike other simplex parameterizations, the
+reduced-mean one does not make heuristic pseudolikeli-
+hood assumptions. Though it has previously been deemed
+unsound, it is successfully integrated into our SG-MCMC
+framework to deliver state-of-the-art results. Exploiting the
+analytical FIM of DLDA and novel inference for simplex-
+constrained parameters under a general SG-MCMC frame-
+work (Ma et al., 2015), we present topic-layer-adaptive
+stochastic gradient Riemannian (TLASGR) MCMC for
+DLDA, which automatically adjusts the learning rates of
+global model parameters across all layers and topics, with-
+out the need to set the same learning rate for all that is
+commonly used in practice due to the difﬁculty in identi-
+fying an appropriate combination of the learning rates for
+different layers and topics.
+
+2. PGBN and SG-MCMC
+
+The generative model of the Poisson gamma belief network
+(PGBN) (Zhou et al., 2016a) with L hidden layers, from top
+to bottom, is expressed as
+
+θ(L)
+j ∼ Gam
+
+r, 1/c(L+1)
+j
+
+(cid:16)
+
+(cid:17)
+
+,
+
+θ(l)
+j ∼ Gam
+
+(cid:16)
+
+· · ·
+Φ(l+1)θ(l+1)
+· · ·
+
+j
+
+, 1/c(l+1)
+j
+
+(cid:17)
+
+,
+
+(1)
+
+x(1)
+
+j ∼ Pois
+
+(cid:16)
+Φ(1)θ(1)
+
+(cid:17)
+
+j
+
+, θ(1)
+
+j ∼ Gam
+
+Φ(2)θ(2)
+
+,
+
+j
+
+(cid:18)
+
+(cid:19)
+
+,
+
+p
+
+(2)
+j
+
+(2)
+1−p
+j
+
++
+
+(cid:1) ∈ RKl−1×Kl
+
+where the jth observed or latent V -dimensional count vec-
+tors x(1)
+j ∈ ZV , where Z := {0, 1, . . .}, are factorized under
+the Poisson (Pois) likelihood; the hidden units θ(l)
+j ∈ RKl
+of layer l are factorized under the gamma (Gam) likeli-
+hood into the product of the basis vector matrix Φ(l) =
+(cid:0)φ(l)
+1 , . . . , φ(l)
+and the hidden units of the
+Kl
+(cid:1) are Dirichlet (Dir)
+k ∼ Dir (cid:0)η(l)1Kl−1
+next layer, where φ(l)
+distributed and 1Kl−1 is a Kl−1-dimensional vector of all
+ones; the gamma shape parameters r = (r1, · · · , rKL)T
+at the top layer are shared across all j; {1/c(l)
+j }3,L+1 are
+gamma scale parameters, where c(l)
+j ∼ Gam(e0, 1/f0), and
+c(2)
+j ∼ Beta(a0, b0) are
+j
+
+:= (cid:0)1 − p(2)
+
+, where p(2)
+
+(cid:1)/p(2)
+
++
+
+j
+
+j
+
+j
+
+introduced to help reduce the dependencies between θ(1)
+jk
+and c(2)
+. The PGBN in (1) can be further extended un-
+j > 0(cid:1),
+der the Bernoulli-Poisson link as b(1)
+and under the Poisson randomized gamma link as y(1)
+j ∼
+Gam(cid:0)x(1)
+
+(cid:1), where aj ∼ Gam(e0, 1/f0).
+
+j = 1(cid:0)x(1)
+
+, 1/aj
+
+j
+
+k1k2
+
+t=1 Φ(t)(cid:3)φ(l)
+
+The PGBN infers a multilayer deep representation of the
+data, whose inferred basis vectors φ(l)
+k at hidden layer l
+can be directly visualized as (cid:2) (cid:81)l−1
+k , which are
+their projections into the V -dimensional probability simplex.
+The information of the whole data set is compressed by the
+PGBN into the inferred sparse network {Φ(1), . . . , Φ(L)},
+where φ(l)
+indicates the connection strength between node
+(basis vector) k1 of layer l − 1 and node k2 of layer l.
+Moreover, the network structure can be inferred from the
+data by combining the gamma-negative binomial process
+of Zhou & Carin (2015) with a greedy layer-wise training
+strategy. Extensive experiments in Zhou et al. (2016a) show
+that the PGBN can extract basis vectors that are very spe-
+ciﬁc/abstract in the bottom layer and become increasingly
+more general when moving upwards from the bottom to top
+hidden layers, and the K1 hidden units θ(1)
+in the ﬁrst hid-
+den layer, which are unsupervisedly extracted and regular-
+ized with the deep network, are well suited for out-of-sample
+prediction and being used as features for classiﬁcation.
+
+j
+
+Despite all these attractive model properties, the current
+inference of the PGBN relies on an upward-downward
+Gibbs sampler that requires processing all data in each
+iteration and hence often does not scale well to big data
+unless with parallel computing. To make its inference
+scalable to allow processing a large amount of data suf-
+ﬁciently fast on a regular personal computer, we resort to
+SG-MCMC that subsamples the data and utilizes stochas-
+tic gradients in each MCMC iteration to generate posterior
+samples for globally shared model parameters. Let us de-
+note the posterior of model parameters z given the data
+X = {xj}1,J as p (z |X ) ∝ e−H(z), with potential func-
+tion H (z) = − ln p (z) − (cid:80)
+j ln p (xj |z ). As in Theo-
+rem 1 of Ma et al. (2015), p (z |X ) is the stationary distri-
+bution of the dynamics deﬁned by the stochastic differential
+equation (SDE) dz = f (z) dt + (cid:112)2D (z)dW (t), if the
+deterministic drift f (z) is restricted to the form
+
+f (z) = − [D (z) + Q (z)] ∇H (z) + Γ (z) ,
+
+Γi (z) = (cid:80)
+
+∂
+∂zj
+
+j
+
+[Dij (z) + Qij (z)] ,
+
+(2)
+
+(3)
+
+where D (z) is a positive semideﬁnite diffusion matrix,
+W(t) is a Wiener process, Q (z) is a skew-symmetric curl
+matrix, and Γi(z) is the ith element of the compensation
+vector Γ(z). Thus one has a mini-batch update rule as
+− (cid:2)D(zt)+Q(zt) (cid:3)∇ ˜H(zt)+Γ(zt)
+(cid:16)
+
+zt+1 = zt + εt
+
+(cid:111)
+
+(cid:110)
+
++ N
+
+0, εt
+
+(cid:2)2D (zt) − εt ˆBt
+
+(cid:3)(cid:17)
+,
+
+(4)
+
+Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+where εt denotes step sizes, ˜H (z) = − ln p (z) −
+ρ (cid:80)
+x∈ ˜X ln p (x |z ), ˜X the mini-batch, ρ the ratio of the
+dataset size |X| to the mini-batch size | ˜X|, and ˆBt an esti-
+mate of the stochastic gradient noise variance satisfying a
+positive deﬁnite constraint as 2D (zt) − εt ˆBt (cid:31) 0.
+
++
+
+As shown in Ma et al. (2015), stochastic gradient Rie-
+mannian Langevin dynamics (SGRLD) of Patterson & Teh
+(2013) is a special case with D (z) = G(z)−1, Q (z) =
+0, ˆBt = 0, where G (z) denotes the Fisher information
+matrix (FIM). SGRLD is designed to solve the inference on
+the probability simplex, where four different parameteriza-
+tions of the simplex-constrained basis vectors are discussed,
+including reduced-mean, expanded-mean, reduced-natural,
+and expanded-natural. Here, we consider both expanded-
+mean, previously shown to provide the best overall results,
+and reduced-mean, which, although discarded in Patterson
+& Teh (2013) due to its unstable gradients, is used in this
+paper to produce state-of-the-art results.
+Let us denote φk ∈ RV
++ as a vector on the probabil-
+ity simplex, ˆφk ∈ RV
++ as a nonnegative vector, and
+ϕk ∈ RV −1
+as a nonnegative vector constrained with
+ϕ·k := (cid:80)V −1
+v=1 ϕvk ≤ 1. For convenience, the symbol
+“·” will denote the operation of summing over the cor-
+responding index. We use (cid:0) ˆφ1k, · · · , ˆφV k
+ˆφvk
+as an expanded-mean parameterization of φk and
+(cid:0)ϕ1k, · · · , ϕ(V −1)k, 1 − (cid:80)
+as a reduced-mean
+parametrization of φk. SGRLD focuses on a single-layer
+model with a multinomial likelihood nk ∼ Mult (n·k, φk)
+and a Dirichlet distributed prior φk ∼ Dir (η1V ). For
+inference, it adopts the expanded-mean parameterization
+of φk and makes a heuristic assumption that n·k ∼
+Pois(cid:0) ˆφ·k
+(cid:1). While that heuristic pseudolikelihood assump-
+tion of SGRLD is neither supported by the original gener-
+ative model nor rigorously justiﬁed in theory, it converts
+a Dirichlet-multinomial model into a gamma-Poisson one,
+allowing a simple sampling equation for ˆφk as
+(cid:104)
+(nk +η)−(cid:0)n·k + ˆφ·k
+(cid:104)(cid:0) ˆφk
+
+(cid:1)
++εt
+t
+(cid:16)
+
+(cid:1)T (cid:14) (cid:80)
+v
+
+v<V ϕvk
+
+(cid:1)(φk)t
+
+0, 2εtdiag
+
+(cid:12)
+(cid:0) ˆφk
+(cid:12)
+(cid:12)
+
+(cid:1)
+t+1
+
+(cid:0) ˆφk
+
++ N
+
+(5)
+
+(cid:1)T
+
+=
+
+(cid:105)
+
+(cid:1)
+t
+
+(cid:105)(cid:17)(cid:12)
+(cid:12)
+(cid:12) ,
+
+where the absolute operation |·| is used to ensure positive-
+valued ˆφk. Below we show how to eliminate that heuristic
+assumption by parameterizing φk with reduced-mean, and
+develop efﬁcient SG-MCMC for the PGBN, which reduces
+to LDA when the number of hidden layers is one.
+
+3. Deep Latent Dirichlet Allocation
+
+While the original construction of PGBN in (1) makes it
+seemingly impossible to compute the FIM, as shown in
+Appendix A, we ﬁnd that, by exploiting data augmentation
+and marginalization techniques, the PGBN generative model
+
+can be rewritten under an alternative representation that
+marginalizes out all the gamma distributed hidden units,
+as shown in the following Lemma, where Log(·) denotes
+the logarithmic distribution (Johnson et al., 1997), m ∼
+SumLog(x, p) represents the sum-logarithmic distribution
+generated with m = (cid:80)x
+i=1 ui, ui ∼ Log(p) (Zhou et al.,
+2016b). The proof is deferred to the Appendix.
+Lemma 3.1. Denote q(l+1)
+1 + q(l)
+j
+:= 1, which means q(l+1)
+l = 1, . . . , L, where q(1)
+j
+(cid:18)
+(cid:20)
+(cid:19)(cid:21)(cid:27)(cid:19)
+
+j /c(l+1)
+
+= ln
+
+for
+
+=
+
+(cid:26)
+
+(cid:18)
+
+(cid:16)
+
+(cid:17)
+
+j
+
+j
+
+ln
+
+1 + 1
+
+ln
+
+1 + 1
+c(l)
+c(l+1)
+j
+j
+:= 1 − e−q(l)
+j and ˜p := q(L+1)
+
+1 + · · · ln
+
+ln
+
+1 + 1
+c(2)
+j
+
+With p(l)
+/(c0 + q(L+1)
+),
+j
+one may re-express the hierarchical model of the PGBN as
+deep latent Dirichlet allocation (DLDA) as
+
+·
+
+·
+
+.
+
+x(L+1)
+k·
+
+∼ Log(˜p), KL ∼ Pois[−γ0 ln(1 − ˜p)],
+X (L+1) = (cid:80)KL
+k=1 x(L+1)
+
+k·
+
+,
+
+δ
+φ
+
+∼ Mult
+
+(cid:0)x(L+1)
+
+vj
+
+(cid:1)
+j
+m(L)(L+1)
+
+vj
+
+vj = (cid:80)Kl
+x(l)
+
+k=1 x(l)
+vkj,
+m(l−1)(l)
+vj
+
+(L)
+k
+(cid:1)
+j
+, p(L+1)
+j
+
+·
+
+),
+
+(cid:104)
+
+x(L+1)
+v·
+
+, (cid:0)q(L+1)
+
+j
+
+(cid:14)q(L+1)
+
+(cid:105)
+
+,
+
+∼ SumLog(x(L+1)
+· · ·
+(cid:17)
+
+vj
+
+(cid:16)
+
+(cid:16)
+x(l)
+vkj
+
+v
+∼ SumLog(x(l)
+
+vj , p(l)
+
+j ),
+
+∼ Mult
+
+m(l)(l+1)
+kj
+
+, φ(l)
+k
+
+(cid:17)
+
+,
+
+vj = (cid:80)K1
+x(1)
+
+k=1 x(1)
+vkj,
+
+∼ Mult
+
+(cid:16)
+m(1)(2)
+kj
+
+, φ(1)
+k
+
+(cid:17)
+
+.
+
+(6)
+
+(cid:16)
+
+· · ·
+(cid:17)
+x(1)
+vkj
+
+v
+
+Note that the equations in the ﬁrst four lines of (6) precisely
+represent a random count matrix generated from a gamma-
+negative binomial process that can also be generated from
+
+x(L+1)
+kj
+
+∼ Pois
+
+(cid:16)
+rkq(L+1)
+j
+
+(cid:17)
+
+, rk ∼ Gam (γ0/K, 1/c0) ,
+
+m(L)(L+1)
+
+kj
+
+∼ SumLog
+
+x(L+1)
+kj
+
+, p(L+1)
+j
+
+(cid:16)
+
+(cid:17)
+
+(7)
+
+by letting K → ∞ (Zhou et al., 2016b). When L = 1, the
+PGBN whose (rk, φk) are the points of a gamma process re-
+duces to the gamma-negative binomial process PFA of Zhou
+& Carin (2015), whose alternative representation is pro-
+vided in Corollary D.1 in the Appendix. Note that how we
+re-express the PGBN as DLDA is related to how Schein et al.
+(2016) re-express their Poisson–gamma dynamic systems
+into an alternative representation that facilitates inference.
+
+DLDA, designed to infer a multilayer representation of ob-
+served or latent high-dimensional sparse count vectors, con-
+strains all the basis vectors of different layers to probability
+simplices. It is clear from (6) that a data point backpropa-
+gates its counts through the network one layer at a time via
+a sum-logarithmic distribution to enlarge each element of
+a Kl-dimensional count vector, a multinomial distribution
+to partition that enlarged count vector into a Kl−1 × Kl
+count matrix, and then a row-sum operation to aggregate
+
+Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+that latent count matrix into a Kl−1-dimensional count vec-
+tor, where K0 := V is the feature dimension. Below we
+show that such an alternative representation that repeats the
+enlarge-partition-augment operation brings signiﬁcant ben-
+eﬁts when it comes to deriving SG-MCMC inference with
+preconditioned gradients.
+
+3.1. Fisher Information Matrix of DLDA
+
+In deep LVMs, whose parameters of different layers are
+often highly correlated to each other, it is often difﬁcult to
+tune the step sizes of different layers together and hence
+one often chooses to train an unsupervised deep model in
+a greedy layer-wise manner (Bengio et al., 2007), which
+is a sensible but not optimal training strategy. To address
+that issue, we resort to the inverse of the FIM that is widely
+used to precondition the gradients to adjust the learning
+rates of different model parameters (Amari, 1998; Pascanu
+& Bengio, 2013; Ma et al., 2015; Li et al., 2016). However,
+it is often difﬁcult to compute the FIMs of deep LVMs as
+∂2
+∂z2 ln p (Ω |z )
+
+G (z) = EΩ|z
+
+(8)
+
+−
+
+(cid:21)
+
+(cid:20)
+
+,
+
+where z denotes the set of all global variables and Ω is the
+set of all observed and local variables.
+
+Although deriving the FIM for the PGBN generative model
+shown in (1) seems impossible, we ﬁnd it to be straight-
+forward under the alternative DLDA representation in (6).
+Since the likelihood of (6) is fully factorized with respect
+to the global parameters z, i.e., φ(l)
+k and r, one may readily
+show the FIM G (z) of (6) has a block diagonal form as
+
+(cid:16)
+
+(cid:104)
+I
+
+diag
+
+(cid:17)
+
+ϕ(1)
+1
+(cid:16)
+
+, · · · , I
+(cid:17)
+
+(cid:17)
+
+(cid:16)
+ϕ(L)
+KL
+
+(cid:105)
+
+;
+
+, I (r)
+(cid:16)
+
+x(l)
+with the likelihood
+vkj
+the reduced-mean parameterization, we have
+
+∼ Mult
+
+m(l)(l+1)
+kj
+
+v
+
+(9)
+
+(cid:17)
+
+, φ(l)
+k
+
+and
+
+(cid:17)
+(cid:16)
+ϕ(l)
+k
+
+I
+
+(cid:20)
+= −E
+
+(cid:16)(cid:81)
+
+ln
+
+∂2
+(l)2
+∂ϕ
+k
+(cid:104)
+diag
+
+(cid:16)
+
+(cid:104)
+(x(l)
+jMult
+(cid:17)
+
+vkj)v; m(l)(l+1)
+(cid:105)
+
+kj
+
+(cid:105)(cid:17)(cid:21)
+
+, φ(l)
+k
+
+= M (l)
+k
+
+1/ϕ(l)
+k
+(cid:105)
+
++11T /(1−ϕ(l)
+·k )
+(cid:105)
+(cid:104)
+(cid:104)
+m(l)(l+1)
+where M (l)
+x(l)
+=E
+k := E
+. Similarly, with the
+·k·
+k·
+∼ Pois(rkq(L+1)
+likelihood x(L+1)
+I (r) = M (L+1)diag (1/r) ,
+
+), we have
+
+(10)
+
+(11)
+
+kj
+
+j
+
+,
+
+where M (L+1) := E
+
+(cid:104)
+q(L+1)
+·
+
+(cid:105)
+
+.
+
+The block diagonal structure of the FIM of DLDA makes
+it computationally appealing to apply its inverse for pre-
+conditioning. Under the framework suggested by (4), we
+adopt the similar settings used in SGRLD (Patterson & Teh,
+2013) that lets D (z) = G(z)−1, Q (z) = 0, and ˆBt = 0.
+While other more sophisticated settings described in Ma
+et al. (2015), including as special examples stochastic gra-
+dient Hamiltonian Monte Carlo in Chen et al. (2014) and
+
+stochastic gradient thermostats in Ding et al. (2014), may
+be used to further improve the performance, we choose this
+speciﬁc one to make a direct comparison with SGRLD.
+
+By substituting the FIM G (z) and the adopted settings
+into (4), it is apparent that we only need to choose a single
+step size εt, relying on the FIM to automatically adjust the
+relatively learning rates for different parameters across all
+layers and topics. Moreover, the block-diagonal structure
+of G (z) will be carried over to its inverse D (z), making it
+simple to perform updating using (4), as described below.
+
+3.2. Inference on the Probability Simplex
+
+As discussed in Section 2, to sample simplex-constrained
+model parameters for a Dirichlet-multinomial model, the
+SGRLD of Patterson & Teh (2013) adopts the expanded-
+mean parameterization of simplex-constrained vectors and
+makes a pseudolikelihood assumption to simplify the deriva-
+tion of update equations. In this paper, without replying
+on that pseudolikelihood assumption, we choose to use the
+reduced-mean parameterization of simplex-constrained vec-
+tors, despite being considered as an unsound choice in Pat-
+terson & Teh (2013). In the following discussion, we omit
+the layer-index superscript (l) for simplicity.
+
+With the multinomial likelihood in (6) and the Dirichlet-
+multinomial conjugacy, the conditional posterior of φk can
+be expressed as (φk | −) ∼ Dir(x1k· + η, . . . , xV k· + η).
+Taking the gradient with respect to ϕk ∈ RV −1
+on the
+summation of the negative log-likelihood of a mini-batch ˜X
+scaled by ρ = |X|/| ˜X| and the negative log-likelihood of
+the Dirichlet prior, we have
+
++
+
+(cid:104)
+
+∇ϕk
+
+− ˜H(ϕk)
+
+(cid:105)
+
+=
+
+ρ¯x:k· +η−1
+ϕk
+
+−
+
+ρ˜xV k· +η−1
+1 − ϕ·k
+
+,
+
+(12)
+
+˜xvk·
+
+j:xj ∈ ˜X xvkj
+
+= (cid:80)
+¯x:k·
+:=
+where
+and
+(˜x1k·, . . . , ˜x(V −1)k·)T . Note the gradient
+in (12) be-
+comes unstable when some components of ϕk approach
+zeros, a key reason that this approach is mentioned but not
+further pursued in Patterson & Teh (2013).
+
+However, after preconditioning the noisy gradient with the
+inverse of the FIM, it is intriguing to ﬁnd out that the stability
+issue completely disappears. More speciﬁcally, by plugging
+both the FIM in (10) and noisy gradient in (12) into the SG-
+MCMC update in (4), a noisy estimate of the deterministic
+drift deﬁned in (2) obtained using the current mini-batch
+can be expressed as
+
+(cid:104)
+− ˜H (ϕk)
+
+(cid:105)
+
++ Γ (ϕk)
+
+I (ϕk)−1 ∇ϕk
+= M −1
+
+k
+
+[(ρ¯x:k· +η)−(ρ˜x·k· +ηV ) ϕk] ,
+
+(13)
+
+where Γ (ϕk) = M −1
+[1 − V ϕk] according to (3), as de-
+rived in detail in Appendix B. Consequently, with [·](cid:52) de-
+
+k
+
+Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+noting the constraint that ϕvk ≥ 0 and (cid:80)V −1
+using (4), the sampling of ϕk becomes
+
+v=1 ϕvk ≤ 1,
+
+(cid:104)
+
+(ϕk)t+1 =
+
+(cid:2)(ρ¯x:k· +η)−(ρ˜x·k· +ηV )(ϕk)t
+
+(cid:3)
+
+(ϕk)t + εt
+Mk
+(cid:104)
+(cid:16)
+diag (ϕk)t −(ϕk)t (ϕk)T
+0, 2εt
+Mk
+
+t
+
+(cid:105)(cid:17)(cid:105)
+
+.
+
+(cid:52)
+
+(14)
+
++N
+
+Even without the [·](cid:52) constraint, the multivariate normal
+(MVN) simulation in (14), although easy to interpret and
+numerically stable, is computationally expensive if the
+Cholesky decomposition, with O((V − 1)3) complexity
+(Golub & Van Loan, 2012), is adopted directly. Fortunately,
+using Theorem 2 of Cong et al. (2017), the special struc-
+ture of its covariance matrix allows an equivalent but sub-
+stantially more efﬁcient simulation of O(V ) complexity
+by transforming a random variable drawn from a related
+MVN that has a diagonal covariance matrix. More specif-
+ically, the sampling of (14) can be efﬁciently realized in a
+V -dimensional space as
+(cid:20)
+(φk)t+1 =
+
+(cid:2)(ρ˜x:k· +η)−(ρ˜x·k· +ηV )(φk)t
+
+(cid:3)
+
+(φk)t +
+(cid:18)
+
++ N
+
+0,
+
+εt
+Mk
+2εt
+Mk
+
+diag (φk)t
+
+(cid:19) (cid:21)
+
+,
+
+∠
+
+(15)
+
+where [·]∠ denotes the simplex constraint that φvk ≥ 0 and
+(cid:80)V
+v=1 φvk = 1. More details on simulating (14) and (15)
+
+can be found in Examples 1-3 of Cong et al. (2017).
+
+(cid:105)
+
+(cid:104)
+
+∇rk
+
+− ˜H(r)
+
+Similarly, with the gamma-Poisson construction in (7), we
+have Γk (r) = 1/M (L+1), as in Appendix B, and
+(cid:0)ρ˜x(L+1)
+
+(cid:1),
+(16)
+which also becomes unstable if rk approaches zero. Substi-
+tuting (16) and (11) into (4) leads to
+
+−1(cid:1)−(cid:0)c0 + ρ˜q(L+1)
+
+= r−1
+k
+
+γ0
+KL
+
++
+
+k·
+
+·
+
+ρ˜x(L+1)
+:·
+
++
+
+(cid:19)
+
+(cid:16)
+
+−rt
+
+c0 +ρ˜q(L+1)
+·
+
+(cid:17)(cid:21)
+
+rt+1 =
+
+(cid:20)(cid:18)
+
+(cid:12)
+(cid:12)
+rt +
+(cid:12)
+(cid:12)
+
+εt
+M (L+1)
+2εt
+
+(cid:18)
+
++ N
+
+0,
+
+M (L+1) diag (rt)
+
+γ0
+KL
+(cid:19)(cid:12)
+(cid:12)
+,
+(cid:12)
+(cid:12)
+
+for which there is no stability issue.
+
+(17)
+
+3.3. Topic-Layer-Adaptive Stochastic Gradient
+
+Riemannian MCMC
+Note that M (L+1) and M (l)
+for l ∈ {1, . . . , L}, appearing
+k
+as denominates in (17) and (15), respectively, are expecta-
+tions that need to be approximately calculated. We update
+them using annealed weighting (Polatkan et al., 2015) as
+
+M (l)
+
+k =
+
+1 − ε
+
+M (l)
+
+k + ε
+
+(cid:48)
+
+tρE
+
+M (L+1) =
+
+1 − ε
+
+M (L+1) + ε
+
+(cid:16)
+
+(cid:16)
+
+(cid:17)
+
+(cid:17)
+
+(cid:48)
+t
+
+(cid:48)
+t
+
+(cid:105)
+
+,
+
+(cid:104)
+˜x(l)
+·k·
+(cid:104)
+
+(cid:48)
+
+tρE
+
+˜q(L+1)
+·
+
+(cid:105)
+
+,
+
+(18)
+
+(19)
+
+where E[·] denotes averaging over the collected MCMC
+samples. For simplicity, we set ε
+t = εt in this paper, which
+is found to work well in practice.
+
+(cid:48)
+
+Algorithm 1 TLASGR MCMC for DLDA (PGBN).
+Input: Data mini-batches;
+Output: Global parameters of DLDA (PGBN).
+1: for t = 1, 2, · · · do
+2:
+3:
+
+/* Collect local information
+Upward-downward Gibbs sampling (Zhou et al., 2016a) on
+the tth mini-batch for ˜x:k·, ˜x·k·, ˜x(L+1)
+/* Update global parameters
+for l = 1, · · · , L and k = 1, · · · , Kl do
+
+, and ˜q(L+1)
+·
+
+:·
+
+;
+
+Update M (l)
+
+k with (18); then φ(l)
+
+k with (15);
+
+end for
+Update M (L+1) with (19) and then r with (17).
+
+4:
+5:
+6:
+7:
+8:
+9: end for
+
+Note that as in (15) and (17), instead of having a single learn-
+ing rate for all layers and topics, a common practice due to
+the difﬁculty to adapt the step sizes to different layers and/or
+topics, the proposed inference employs topic-layer-adaptive
+learning rates as εt/M (l)
+:= M (L+1),
+adapting a single step size εt to different topics and layers by
+multiplying it with the weights 1/M (l)
+for l ∈ {1, . . . , L}
+k
+and k ∈ {1, . . . , Kl}. We refer to the proposed inference al-
+gorithm with adaptive learning rates as topic-layer-adaptive
+stochastic gradient Riemannian (TLASGR) MCMC, as sum-
+marized in Algorithm 1 that is simple to implement.
+
+k , where M (L+1)
+
+k
+
+4. Related Work
+
+Both LDA (Blei et al., 2003) and the related Poisson factor
+analysis (PFA) (Zhou et al., 2012) are equipped with scal-
+able inference, such as stochastic variational inference (SVI)
+(Hoffman et al., 2010; Mimno et al., 2012) and SGRLD
+(Patterson & Teh, 2013). However, both are shallow LVMs
+whose modeling capacities are often insufﬁcient for big and
+complex data. The deep Poisson factor models of Gan et al.
+(2015) and Henao et al. (2015) are proposed to generalize
+PFA with deep structures, but both of them only explore the
+deep information in binary topic usage patterns instead of
+the full connection weights that are used in the PGBN. The
+proposed DLDA shares some similarities with the pachinko
+allocation model of Li & McCallum (2006) in that they both
+adopt layered construction and use Dirichlet distributed top-
+ics. Ranganath et al. (2015) propose deep exponential family
+(DEF), which differs from the PGBN in connecting adjacent
+layers via the gamma rate parameters and using black-box
+variational inference (BBVI) (Ranganath et al., 2014).
+
+Some commonly used neural networks, such as deep belief
+network (DBN) (Hinton et al., 2006) and deep Boltzmann
+machines (DBM) (Salakhutdinov & Hinton, 2009), have
+also been modiﬁed for text analysis (Hinton & Salakhut-
+dinov, 2009; Larochelle & Lauly, 2012; Srivastava et al.,
+2013). Although they may work well for certain text analy-
+sis tasks, they are not naturally designed for count data and
+often yield latent structures that are not readily interpretable.
+
+Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+The neural variational document model (NVDM) of Miao
+et al. (2016), even though using deep neural networks in its
+variational auto-encoder (VAE) (Kingma & Welling, 2013),
+still relies on a single-layer model for data generalization.
+
+Generally speaking, it is challenging to develop an efﬁcient
+and principled multilayer joint learning algorithm for deep
+LVMs. Scalable variational inference, such as BBVI, often
+makes the restrictive mean-ﬁeld assumption. Neural vari-
+ational inference and learning (NVIL) relies on variance
+reduction techniques that are often difﬁcult to be general-
+ized for discrete LVMs (Mnih & Gregor, 2014; Rezende
+et al., 2014). When a SG-MCMC algorithm is used, a
+single learning rate is often applied for different variables
+across all layers (Welling & Teh, 2011; Neal et al., 2011;
+Chen et al., 2014; Ding et al., 2014). It is possible to im-
+prove SG-MCMC by adjusting its noisy gradients with some
+stochastic optimization technique, such as Adagrad (Duchi
+et al., 2011), Adadelta (Zeiler, 2012), Adam (Kingma & Ba,
+2014), and RMSprop (Tieleman & Hinton, 2012). For exam-
+ple, Li et al. (2016) show that preconditioning the gradients
+with diagonal approximated FIM improves SG-MCMC in
+both training speed and predictive accuracy for supervised
+learning where gradients are easy to calculate. Other efforts
+exploiting similar preconditioning idea focus on shallow
+and/or binary models (Mimno et al., 2012; Patterson & Teh,
+2013; Grosse & Salakhutdinov, 2015; Song et al., 2016;
+Simsekli et al., 2016), and it is unclear how that idea can be
+extended to deep LVMs whose gradients and FIM maybe
+difﬁcult to approximate.
+
+5. Experiment results
+
+We present experimental results on three benchmark corpora:
+20Newsgroups (20News), Reuters Corpus Volume I (RCV1)
+that is moderately large, and Wikipedia (Wiki) that is huge.
+20News consists of 18,845 documents with a vocabulary
+size of 2,000, partitioned into 11,315 training documents
+and 7,531 test ones. RCV1 consists of 804,414 documents
+with a vocabulary size of 10,000, where 10,000 documents
+are randomly selected for testing. Wiki consists of 10 mil-
+lion documents randomly downloaded from Wikipedia using
+the scripts provided in Hoffman et al. (2010); as in Hoffman
+et al. (2010), Gan et al. (2015), and Henao et al. (2015),
+we use a vocabulary with 7,702 words and randomly select
+1,000 documents for testing. To make a fair comparison,
+these corpora, including the training/testing partitions, are
+set to be the same as those in Gan et al. (2015) and Henao
+et al. (2015). To be consistent with the settings of Gan et al.
+(2015) and Henao et al. (2015), no precautions are taken in
+the scripts for Wikipedia to prevent a testing document from
+being downloaded into a mini-batch for training.
+
+We consider two related performance measures. The ﬁrst
+one is the commonly-used per-heldout-word perplexity cal-
+
+culated as follows: for each test document, we randomly
+select 80% of the word tokens to sample the local variables
+speciﬁc to the document, under the global model parame-
+ters of each MCMC iteration; after the burn-in period, we
+accumulate the ﬁrst layer’s Poisson rates in each collected
+MCMC sample; in the end, we normalize these accumulated
+Poisson rates to calculate the perplexity using the remaining
+20% word tokens. Similar evaluation methods have been
+widely used, e.g., in Wallach et al. (2009), Paisley et al.
+(2011), and Zhou & Carin (2015). Although a good measure
+for overall performance, the per-heldout-word perplexity,
+calculated based on multiple collected MCMC samples of
+global parameters, may not be ideal to check the perfor-
+mance in real time to assess how efﬁcient an iterative algo-
+rithm improves its performance as time increases. Therefore,
+we slightly modify it to provide a point per-heldout-word
+perplexity calculated based on only the global parameters
+of the most recent MCMC sample. For simplicity, we refer
+to (point) per-heldout-word perplexity as (point) perplexity.
+
+For comparison, we consider LDA of Blei et al. (2003), fo-
+cused topic model (FTM) of Williamson et al. (2010), repli-
+cated softmax (RSM) of Hinton & Salakhutdinov (2009),
+nested Hierarchical Dirichlet process (nHDP) of Paisley
+et al. (2015), DPFA of Gan et al. (2015), and DPFM of
+Henao et al. (2015). For these methods, the perplexity
+results are taken from Gan et al. (2015) and Henao et al.
+(2015). For the proposed algorithms, we set the mini-batch
+size as 200, and use as burn-in 2000 mini-batches for both
+20News and RCV1 and 3500 mini-batches for Wiki. We
+collect 1500 samples to calculate perplexity. For point per-
+plexity, given the global parameters of an MCMC sample,
+we sample the local variables with 600 iterations and collect
+one sample every two iterations during the last 400 iterations.
+The hyperparameters of DLDA are set as: η(l) = 1/Kl,
+a0 = b0 = 0.01, and γ0 = c0 = e0 = f0 = 1. Note η(l)
+and Kl are set similar to that of DPFM for fair comparisons,
+while other hyperparameters follow Zhou et al. (2016a).
+
+To demonstrate the advantages of using the reduced-mean
+simplex parameterization and inverting the FIM for precon-
+ditioning to obtain topic-layer-adaptive learning rates, we
+consider four different inference methods:
+
+1) TLASGR: topic-layer-adaptive stochastic gradient Rie-
+mannian MCMC for DLDA, as described in Algorithm 1.
+
+k of TLASGR with εt/((cid:80)K1
+
+2) TLFSGR: topic-layer-ﬁxed stochastic gradient Rieman-
+nian MCMC for DLDA that replaces the adaptive learning
+rates εt/M (l)
+3) SGRLD: updating each φ(l)
+k under the expanded-mean
+parameterization as in (5), served as a good scalable baseline
+for comparison since it was shown in Patterson & Teh (2013)
+to perform signiﬁcantly better than SVI. It differs from
+TLFSGR mainly in using a different parameterization for
+
+k=1 M (1)
+
+k /K1).
+
+Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+(a) A single-layer DLDA on 20News
+
+(b) DLDA of size 128-64 on RCV1
+
+(c) DLDA of size 128-64 on Wiki
+
+Figure 1. Plot of point perplexity as a function of time. (a) 20News with a single-layer DLDA with 128 topics. (b) RCV1 with a two-layer
+DLDA with 128 and 64 topics in the ﬁrst and second layers, respectively. (c) Wiki with a two-layer DLDA, with 128 and 64 topics in the
+ﬁrst and second layers, respectively. Note a small subset of 106 documents from Wiki is used for demonstration.
+
+Table 1. Per-heldout-word perplexities on 20 News, RCV1 and
+Wiki. For models except DLDA, the results are taken from Gan
+et al. (2015) and Henao et al. (2015). Note that for Wiki, DPFM
+with MCMC infers the global parameters on a subset of the corpus
+with 3,000 MCMC iterations.
+
+Size
+
+Method
+Model
+TLASGR 128-64-32
+DLDA
+TLASGR 128-64
+DLDA
+TLASGR 128
+DLDA
+TLFSGR
+DLDA
+TLFSGR
+DLDA
+TLFSGR
+DLDA
+SGRLD
+DLDA
+SGRLD
+DLDA
+SGRLD
+DLDA
+Gibbs
+DLDA
+Gibbs
+DLDA
+Gibbs
+DLDA
+SVI
+DPFM
+MCMC
+DPFM
+DPFA-SBN
+SGNHT
+DPFA-RBM SGNHT
+nHDP
+LDA
+FTM
+RSM
+
+128-64-32
+128-64
+128
+128-64-32
+128-64
+128
+128-64-32
+128-64
+128
+128-64
+128-64
+128-64-32
+128-64-32
+(10,10,5)
+128
+128
+128
+
+SVI
+Gibbs
+Gibbs
+CD5
+
+20 News RCV1 Wiki
+786
+787
+802
+789
+791
+804
+792
+792
+803
+—
+—
+—
+791
+783
+876
+942
+932
+1059
+991
+1001
+
+815
+817
+823
+817
+819
+829
+827
+823
+829
+802
+804
+818
+961
+908
+1143
+920
+1041
+1179
+1155
+1171
+
+757
+758
+770
+760
+759
+772
+775
+770
+777
+752
+754
+768
+818
+780
+827
+896
+889
+893
+887
+877
+
+φ(l)
+
+k and adding a pseudolikelihood assumption.
+
+4) Gibbs: the upward-downward Gibbs sampler in Zhou
+et al. (2016a).
+
+Both TLASGR and TLFSGR differ from SGRLD mainly
+in how the global parameters φ(l)
+are updated. While
+k
+TLASGR uses topic-layer-adaptive learning rates, both TLF-
+SGR and SGRLD use a single learning rate, a common
+practice due to the difﬁculty of tuning the step sizes across
+layers and topics. We keep the same stepsize schedule of
+εt = a(1 + t/b)−c as in Patterson & Teh (2013) and Ma
+et al. (2015).
+
+Let us ﬁrst examine how various inference algorithms per-
+form on 20News with a single-layer DLDA of size 128,
+which can be considered as a topic model that imposes an
+
+asymmetric prior on a document’s proportion over these
+128 topics. Under this setting, as shown in Fig. 1(a), TLF-
+SGR clearly outperforms SGRLD in providing lower point
+perplexities as time progresses, which is not surprising as
+under the reduced-mean simplex parameterization, to de-
+rive its sampling equations, TLFSGR does not rely on a
+pseudolikelihood assumption that is adopted by SGRLD
+in its expanded-mean simplex parameterization. Moreover,
+TLASGR is found to further improve TLFSGR, suggesting
+that even for a single-layer model, replacing a ﬁxed learning
+rate as εt/((cid:80)K1
+k /K1) with topic-adaptive learning
+rates as εt/M (1)
+
+could further improve the performance.
+
+k=1 M (1)
+
+k
+
+Let us then examine how these algorithms perform on two
+larger corpora—RCV1 and Wiki—with a two-layer DLDA
+of size 128-64, which improves the single-layer one by cap-
+turing the co-occurrence patterns between the topics of the
+ﬁrst layer with those of the second layer (Zhou et al., 2016a).
+As show in Figs. 1(b) and 1(c), it is clear that the proposed
+TLASGR performs the best for the two-layer DLDA and
+consistently outperforms TLFSGR as time progresses. In
+comparison, SGRLD quickly improves its performance as
+a function of time in the beginning but its point perplexity
+remains higher even after 10,000 seconds, whereas Gibbs
+sampling slowly improves its performance as a function of
+time in the beginning but moves its point perplexity closer
+and closer to that of TLASGR as time progresses.
+
+Note that for 20News, the point perplexity of the mini-batch
+based TLASGR quickly decreases as time increases, while
+that of Gibbs sampling decreases relatively slowly. That dis-
+crepancy of convergence rate as a function of time becomes
+much more evident for both RCV1 and Wiki, as shown in
+Figs. 1(b) and 1(c). This is expected as both RCV1 and
+Wiki are much larger corpora, for which a mini-batch based
+inference algorithm can already make signiﬁcant progress
+in learning the global model parameters, before a batch-
+learning Gibbs sampler ﬁnishes a single iteration that needs
+to go through all documents.
+
+102103Time (Seconds)80085090095010001050Point perplexityDLDA-GibbsDLDA-SGRLDDLDA-TLFSGRDLDA-TLASGR80090010001100800810820102103104Time (Seconds)1000150020002500Point perplexityDLDA-GibbsDLDA-SGRLDDLDA-TLFSGRDLDA-TLASGR800010000820840860880102103104Time (Seconds)1000150020002500Point perplexityDLDA-GibbsDLDA-SGRLDDLDA-TLFSGRDLDA-TLASGR0.811.2#104800820840860880Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+(a)
+
+(b)
+
+(a)
+
+(b)
+
+(c)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+Figure 2. Topic-layer-adaptive learning rates inferred with a three-
+layer DLDA of size 128-64-32. (a) 20News. (b) RCV1. (c) Wiki.
+Note the layer-adaptive learning rate for layer l is obtained by
+averaging over the topic-layer-adaptive learning rates of all φ(l)
+k
+for k = 1, . . . , Kl.
+
+Figure 3. Learned dictionary atoms on MNIST digits with a three-
+layer GBN of size 128-64-32 after one full epoch. Shown in (a)-(c)
+are example atoms for φ(1)
+k , Φ(1)φ(2)
+k , respec-
+tively, learned with TLFSGR, and shown in (d)-(f) are example
+ones learned with TLASGR.
+
+k , and Φ(1)Φ(2)φ(3)
+
+To illustrate the working mechanism of TLASGR, we show
+how its inferred learning rates are adapted to different layers
+in Fig. 2. By contrast, TLFSGR admits a ﬁxed learning
+rate that leads to worse performance. Several interesting
+observations can be made for TLASGR from Figs. 2(a)-2(c):
+1) for Φ(l), higher layers prefer larger step sizes, which
+may be explained by the enlarge-partition-augment data
+generating mechanism of DLDA; 2) larger datasets prefer
+slower learning rates, reﬂected by the scales of the vertical
+axes; 3) and the relative learning rates between different
+layers vary across different datasets.
+
+To further verify the excellent performance of DLDA in-
+ferred with TLASGR, we compare a wide variety of models
+and inference algorithms in Table 1. For 20News and RCV1,
+DLDA with Gibbs sampling performs the best in terms of
+perplexity and exhibits a clear trend of improvement as the
+number of hidden layers increases. For Wiki, a single iter-
+ation of the DLDA Gibbs sampler on the full corpus is so
+expensive in both time and memory that its performance is
+not reported. For DLDA on 20News and RCV1, TLASGR
+only slightly underperforms Gibbs sampling, and the perfor-
+mance degradation from Gibbs sampling to TLASGR is sig-
+niﬁcantly smaller than that from MCMC to SVI for DPFM.
+That relative small degradation caused by changing from
+Gibbs sampling to the mini-batch based TLASGR could be
+attributed to the Fisher efﬁciency brought by the FIM. Gen-
+erally speaking, in comparison to SGRLD, TLASGR brings
+a clear boost in performance, which is particularly evident
+for a deeper DLDA, and TLASGR consistently outperforms
+TLFSGR that does not adapt its learning rates to different
+topics and layers.
+
+MNIST. To further illustrate the advantages of using the
+inverse of the FIM for preconditioning in a deep generative
+model, and to visualize the beneﬁts of automatically ad-
+justing the relative learning rates of different hidden layers,
+we apply a three-layer Poisson randomized gamma gamma
+belief network (PRG-GBN) (Zhou et al., 2016a) to 60,000
+MNIST digits and present the learned dictionary atoms after
+one full epoch, as shown in Fig. 3. It is clear that, with
+topic-layer-adaptive learning rates, which are made possi-
+ble by utilizing the FIM, TLASGR provides more effective
+mini-batch based stochastic updates to allow better informa-
+tion propagation between different hidden layers, extracting
+more interpretable features at multiple layers.
+
+6. Conclusions
+
+For scalable multilayer joint inference of the Poisson gamma
+belief network (PGBN), we introduce an alternative repre-
+sentation of the PGBN, which is referred to as deep latent
+Dirichlet allocation (DLDA) that can be considered as a mul-
+tilayer generalization of latent Dirichlet allocation. We show
+how to reparameterize the simplex constrained basis vectors,
+derive a block-diagonal Fisher information matrix (FIM),
+and efﬁciently compute the inverse of the FIM, leading to a
+stochastic gradient MCMC algorithm referred to as topic-
+layer-adaptive stochastic gradient Riemannian (TLASGR)
+MCMC. The proposed TLASGR-MCMC is able to jointly
+learn the parameters of different layers with topic-layer-
+adaptive step sizes, which makes DLDA (PGBN) much
+more practical in a big data setting. Compelling experi-
+mental results on large text corpora and the MNIST dataset
+demonstrated the advantages of TLASGR-MCMC.
+
+0100020003000Iterations024Layer-adaptive step sizes#10-5)(1))(2))(3)r0100020003000Iterations00.51Layer-adaptive step sizes#10-6)(1))(2))(3)r010002000300040005000Iterations012345Layer-adaptive step sizes#10-7)(1))(2))(3)rDeep Latent Dirichlet Allocation with TLASGR MCMC
+
+Acknowledgements
+
+Bo Chen thanks the support of the Thousand Young Tal-
+ent Program of China, NSFC (61372132), and NDPR-
+9140A07010115DZ01019. Hongwei Liu thanks the support
+of NSFC for Distinguished Young Scholars (61525105).
+
+References
+
+Amari, S. Natural gradient works efﬁciently in learning.
+
+Neural Computation, 10(2):251–276, 1998.
+
+Bengio, Y., Lamblin, P., Popovici, D., and Larochelle, H.
+Greedy layer-wise training of deep networks. In NIPS,
+pp. 153–160, 2007.
+
+Blei, D. M., Ng, A. Y., and Jordan, M. I. Latent Dirichlet
+
+allocation. JMLR, 3:993–1022, 2003.
+
+Chen, T., Fox, E. B., and Guestrin, C. Stochastic gradient
+In ICML, pp. 1683–1691,
+
+Hamiltonian Monte Carlo.
+2014.
+
+Cong, Y., Chen, B., and Zhou, M. Fast simulation of
+hyperplane-truncated multivariate normal distributions.
+Bayesian Analysis Advance Publication, 2017.
+
+Ding, N., Fang, Y., Babbush, R., Chen, C., Skeel, R. D., and
+Neven, H. Bayesian sampling using stochastic gradient
+thermostats. In NIPS, pp. 3203–3211, 2014.
+
+Duchi, J., Hazan, E., and Singer, Y. Adaptive subgradient
+methods for online learning and stochastic optimization.
+JMLR, 12(Jul):2121–2159, 2011.
+
+Gan, Z., Chen, C., Henao, R., Carlson, D., and Carin, L.
+Scalable deep Poisson factor analysis for topic modeling.
+In ICML, pp. 1823–1832, 2015.
+
+Girolami, M. and Calderhead, B. Riemann manifold
+Langevin and Hamiltonian Monte Carlo methods. JRSS-
+B, 73(2):123–214, 2011.
+
+Golub, Gene H and Van Loan, Charles F. Matrix computa-
+
+tions, volume 3. JHU Press, 2012.
+
+Hoffman, M. D., Bach, F. R., and Blei, D. M. Online
+learning for latent Dirichlet allocation. In NIPS, pp. 856–
+864, 2010.
+
+Johnson, N. L., Kotz, S., and Balakrishnan, N. Discrete
+Multivariate Distributions, volume 165. Wiley New York,
+1997.
+
+Kingma, D. and Ba, J. Adam: A method for stochastic
+
+optimization. arXiv:1412.6980, 2014.
+
+Kingma, Diederik P and Welling, Max. Auto-encoding
+
+variational Bayes. In ICLR, number 2014, 2013.
+
+Larochelle, H. and Lauly, S. A neural autoregressive topic
+
+model. In NIPS, 2012.
+
+Li, C., Chen, C., Carlson, D., and Carin, L. Preconditioned
+stochastic gradient Langevin dynamics for deep neural
+networks. AAAI, 2016.
+
+Li, W. and McCallum, A. Pachinko allocation: DAG-
+structured mixture models of topic correlations. In ICML,
+pp. 577–584, 2006.
+
+Ma, Y., Chen, T., and Fox, E. A complete recipe for stochas-
+tic gradient MCMC. In NIPS, pp. 2899–2907, 2015.
+
+Miao, Y., Yu, L., and Blunsom, P. Neural variational infer-
+
+ence for text processing. In ICML, 2016.
+
+Mimno, D., Hoffman, M. D., and Blei, D. M. Sparse stochas-
+tic inference for latent Dirichlet allocation. In ICML, pp.
+362 – 365, 2012.
+
+Mnih, A. and Gregor, K. Neural variational inference and
+
+learning in belief networks. 2014.
+
+Neal, R. M. et al. MCMC using Hamiltonian dynamics.
+Handbook of Markov Chain Monte Carlo, 2:113–162,
+2011.
+
+Paisley, J., Wang, C., and Blei, D. The discrete inﬁnite logis-
+tic normal distribution for mixed-membership modeling.
+In AISTATS, 2011.
+
+Grosse, R. B. and Salakhutdinov, R. Scaling up natural
+gradient by sparsely factorizing the inverse Fisher matrix.
+In ICML, pp. 2304–2313, 2015.
+
+Paisley, J., Wang, C., Blei, D. M., and Jordan, M. I. Nested
+hierarchical dirichlet processes. PAMI, 37(2):256–270,
+2015.
+
+Henao, R., Gan, Z., Lu, J., and Carin, L. Deep Poisson
+
+Pascanu, R. and Bengio, Y. Revisiting natural gradient for
+
+factor modeling. In NIPS, pp. 2782–2790, 2015.
+
+deep networks. arXiv:1301.3584, 2013.
+
+Hinton, G. E. and Salakhutdinov, R. R. Replicated softmax:
+In NIPS, pp. 1607–1614,
+
+an undirected topic model.
+2009.
+
+Patterson, S. and Teh, Y. W. Stochastic gradient Riemannian
+Langevin dynamics on the probability simplex. In NIPS,
+pp. 3102–3110, 2013.
+
+Hinton, G. E., Osindero, S., and Teh, Y. W. A fast learning
+algorithm for deep belief nets. Neural Computation, 18
+(7):1527–1554, 2006.
+
+Polatkan, G., Zhou, M., Carin, L., Blei, D., and Daubechies,
+I. A Bayesian nonparametric approach to image super-
+resolution. PAMI, 37(2):346–358, 2015.
+
+Deep Latent Dirichlet Allocation with TLASGR MCMC
+
+Zhou, M., Padilla, O., and Scott, J. G. Priors for random
+count matrices derived from a family of negative binomial
+processes. J. Amer. Statist. Assoc., 111(515):1144–1156,
+2016b.
+
+Ranganath, R., Gerrish, S., and Blei, D. M. Black box
+
+variational inference. In AISTATS, 2014.
+
+Ranganath, R., Tang, L., Charlin, L., and Blei, D. M. Deep
+
+exponential families. In AISTATS, 2015.
+
+Rezende, Danilo J, Mohamed, Shakir, and Wierstra, Daan.
+Stochastic backpropagation and approximate inference in
+deep generative models. In ICML, pp. 1278–1286, 2014.
+
+Salakhutdinov, R. and Hinton, G. E. Deep Boltzmann ma-
+
+chines. In AISTATS, volume 1, pp. 3, 2009.
+
+Schein, A., Zhou, M., and Wallach, H. Poisson–gamma
+dynamical systems. In NIPS, pp. 5006–5014, 2016.
+
+Simsekli, U., Badeau, R., Cemgil, A. T., and G., Richard.
+Stochastic quasi-Newton Langevin Monte Carlo.
+In
+ICML, 2016.
+
+Song, Z., Henao, R., Carlson, D., and Carin, L. Learning
+sigmoid belief networks via Monte Carlo expectation
+maximization. In AISTATS, pp. 1347–1355, 2016.
+
+Srivastava, N., Salakhutdinov, R. R., and Hinton, G. E.
+Modeling documents with deep Boltzmann machines. In
+UAI, 2013.
+
+Tieleman, T. and Hinton, G. Lecture 6.5-rmsprop: Divide
+the gradient by a running average of its recent magnitude.
+COURSERA: Neural networks for machine learning, 4
+(2), 2012.
+
+Wallach, H. M., Murray, I., Salakhutdinov, R., and Mimno,
+D. Evaluation methods for topic models. In ICML, 2009.
+
+Welling, M. and Teh, Y.-W. Bayesian learning via stochastic
+In ICML, pp. 681–688,
+
+gradient Langevin dynamics.
+2011.
+
+Williamson, S., Wang, C., Heller, K. A., and Blei, D. M.
+The IBP compound Dirichlet process and its application
+In ICML, pp. 1151–1158,
+to focused topic modeling.
+2010.
+
+Zeiler, M. D. Adadelta: an adaptive learning rate method.
+
+arXiv:1212.5701, 2012.
+
+Zhou, M. and Carin, L. Negative binomial process count
+and mixture modeling. PAMI, 37(2):307–320, 2015.
+
+Zhou, M., Hannah, L., Dunson, D. B., and Carin, L. Beta-
+negative binomial process and Poisson factor analysis. In
+AISTATS, pp. 1462–1471, 2012.
+
+Zhou, M., Cong, Y., and Chen, B. Augmentable gamma
+belief networks. Journal of Machine Learning Research,
+17(163):1–44, 2016a.
+
+

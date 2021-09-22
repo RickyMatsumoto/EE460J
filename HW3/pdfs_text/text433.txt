@@ -1,0 +1,1320 @@
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+Dmitry Molchanov 1 2 * Arsenii Ashukha 3 4 * Dmitry Vetrov 3 1
+
+Abstract
+
+We explore a recently proposed Variational
+Dropout
+technique that provided an elegant
+Bayesian interpretation to Gaussian Dropout. We
+extend Variational Dropout to the case when
+dropout rates are unbounded, propose a way to
+reduce the variance of the gradient estimator
+and report ﬁrst experimental results with indi-
+vidual dropout rates per weight. Interestingly, it
+leads to extremely sparse solutions both in fully-
+connected and convolutional layers. This effect
+is similar to automatic relevance determination
+effect in empirical Bayes but has a number of ad-
+vantages. We reduce the number of parameters
+up to 280 times on LeNet architectures and up to
+68 times on VGG-like networks with a negligible
+decrease of accuracy.
+
+1. Introduction
+
+Deep neural networks (DNNs) are a widely popular family
+of models which is currently state-of-the-art in many im-
+portant problems (Szegedy et al., 2016; Silver et al., 2016).
+However, DNNs often have many more parameters than the
+number of the training instances. This makes them prone
+to overﬁtting (Hinton et al., 2012; Zhang et al., 2016) and
+necessitates using regularization. A commonly used regu-
+larizer is Binary Dropout (Hinton et al., 2012) that prevents
+co-adaptation of neurons by randomly dropping them dur-
+ing training. An equally effective alternative is Gaussian
+Dropout (Srivastava et al., 2014) that multiplies the outputs
+of the neurons by Gaussian random noise.
+
+Dropout requires specifying the dropout rates which are the
+
+*Equal contribution
+
+1Yandex, Russia 2Skolkovo Insti-
+tute of Science and Technology, Skolkovo Innovation Cen-
+ter, Moscow, Russia 3National Research University Higher
+School of Economics, Moscow, Russia 4Moscow Institute of
+Physics and Technology, Moscow, Russia. Correspondence
+to: Dmitry Molchanov <dmitry.molchanov@skolkovotech.ru>,
+Arsenii Ashukha <ars.ashuha@gmail.com>, Dmitry Vetrov
+<vetrovd@yandex.ru>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+probabilities of dropping a neuron. The dropout rates are
+typically optimized using grid search. To avoid the ex-
+ponential complexity of optimizing multiple hyperparam-
+eters, the dropout rates are usually shared for all layers.
+Recently it was shown that dropout can be seen as a special
+case of Bayesian regularization (Gal & Ghahramani, 2015;
+Kingma et al., 2015). It is an important theoretical result
+that justiﬁes dropout and at the same time allows us to tune
+individual dropout rates for each weight, neuron or layer in
+a Bayesian way.
+
+Instead of injecting noise we can regularize a model by
+reducing the number of its parameters. This technique is
+especially attractive in the case of deep neural networks.
+Modern neural networks contain hundreds of millions of
+parameters (Szegedy et al., 2015; He et al., 2015) and re-
+quire a lot of computational and memory resources. It re-
+stricts us from using deep neural networks when those re-
+sources are limited.
+Inducing sparsity during training of
+DNNs leads to regularization, compression, and accelera-
+tion of the resulting model (Han et al., 2015a; Scardapane
+et al., 2016).
+
+Sparse Bayesian Learning (Tipping, 2001) provides a prin-
+cipled framework for training of sparse models without the
+manual tuning of hyperparameters. Unfortunately, this ap-
+proach does not extend straightforwardly to DNNs. Dur-
+ing past several years, a number of papers (Hoffman et al.,
+2013; Kingma & Welling, 2013; Rezende et al., 2014) on
+scalable variational inference have appeared. These tech-
+niques make it possible to train Bayesian Deep Neural
+Networks using stochastic optimization and provide us an
+opportunity to transfer Bayesian regularization techniques
+from simple models to DNNs.
+
+In this paper, we study Variational Dropout (Kingma et al.,
+2015) in the case when each weight of a model has its
+individual dropout rate. We propose Sparse Variational
+Dropout that extends Variational Dropout to all possible
+values of dropout rates and leads to a sparse solution. To
+achieve this goal, we provide a new approximation of the
+KL-divergence term in Variational Dropout objective that is
+tight on the full domain. We also propose a way to greatly
+reduce the variance of the stochastic gradient estimator and
+show that it leads to a much faster convergence and a better
+value of the objective function. We show theoretically that
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+Sparse Variational Dropout applied to linear models can
+lead to a sparse solution. Like classical Sparse Bayesian
+models, our method provides the Automatic Relevance De-
+termination effect, but overcomes certain disadvantages of
+empirical Bayes.
+
+Gredilla, 2014). Soft Weights Sharing (Ullrich et al., 2017)
+uses an approach, similar to Sparse Bayesian Learning
+framework, to obtain a sparse and quantized Bayesian Deep
+Neural Network, but utilizes a more ﬂexible family of prior
+distributions.
+
+Our experiments show that Sparse Variational Dropout
+leads to a high level of sparsity in fully-connected and con-
+volutional layers of Deep Neural Networks. Our method
+achieves a state-of-the-art sparsity level on LeNet architec-
+tures and scales on larger networks like VGG with negligi-
+ble performance drop. Also we show that our method fails
+to overﬁt on randomly labeled data unlike Binary Dropout
+networks.
+
+2. Related Work
+
+Deep Neural Nets are prone to overﬁtting and regulariza-
+tion is used to address this problem. Several successful
+techniques have been proposed for DNN regularization,
+among them are Dropout (Srivastava et al., 2014), Drop-
+Connect (Wan et al., 2013), Max Norm Constraint (Srivas-
+tava et al., 2014), Batch Normalization (Ioffe & Szegedy,
+2015), etc.
+
+Another way to regularize deep model is to reduce the num-
+ber of parameters. One possible approach is to use ten-
+sor decompositions (Novikov et al., 2015; Garipov et al.,
+2016). Another approach is to induce sparsity into weight
+matrices. Most recent works on sparse neural networks
+use pruning (Han et al., 2015b), elastic net regularization
+(Lebedev & Lempitsky, 2015; Liu et al., 2015; Scardapane
+et al., 2016; Wen et al., 2016) or composite techniques (Han
+et al., 2015a; Guo et al., 2016; Ullrich et al., 2017).
+
+Sparsity can also be obtained by using the Sparse Bayesian
+Learning framework (Tipping, 2001). Automatic Rel-
+evance Determination was introduced in (Neal, 1996;
+MacKay et al., 1994), where small neural networks were
+trained with ARD regularization on the input layer. This
+approach was later studied on linear models like the Rel-
+evance Vector Machine (Tipping, 2001) and other kernel
+methods (Van Gestel et al., 2001). In the Relevance Tag-
+ging Machine model (Molchanov et al., 2015) Beta prior
+distribution is used to obtain the ARD effect in a similar
+setting.
+
+Recent works on Bayesian DNNs (Kingma & Welling,
+2013; Rezende et al., 2014; Scardapane et al., 2016) pro-
+vide different ways to train deep models with a huge num-
+ber of parameters in a Bayesian way. These techniques can
+be applied to improve latent variables models (Kingma &
+Welling, 2013), to prevent overﬁtting and to obtain model
+uncertainty (Gal & Ghahramani, 2015). Recently sev-
+eral works on efﬁcient training of Sparse Bayesian Models
+have appeared (Challis & Barber, 2013; Titsias & L´azaro-
+
+Variational Dropout (Kingma et al., 2015) is an elegant
+interpretation of Gaussian Dropout as a special case of
+Bayesian regularization. This technique allows us to tune
+dropout rate and can, in theory, be used to set individ-
+ual dropout rates for each layer, neuron or even weight.
+However, that paper uses a limited family for posterior ap-
+proximation that does not allow for ARD effect. Other
+Bayesian interpretations of dropout training have also ap-
+peared during past several years (Maeda, 2014; Gal &
+Ghahramani, 2015; Srinivas & Babu, 2016). Generalized
+Dropout (Srinivas & Babu, 2016) provides a way to tune
+individual dropout rates for neurons, but uses a biased gra-
+dient estimator. Also, the posterior distribution is modelled
+by a delta function, so the resulting neural network is ef-
+fectively not Bayesian. Variational Spike-and-Slab Neural
+Networks (Louizos, 2015) is yet another Bayesian interpre-
+tation of Binary Dropout that allows for tuning of individ-
+ual dropout rates and also leads to a sparse solution. Un-
+fortunately, this procedure does not scale well with model
+width and depth.
+
+3. Preliminaries
+
+We begin by describing the Bayesian Inference and
+Stochastic Variational Inference frameworks. Then we de-
+scribe Variational Dropout, a recently proposed Bayesian
+regularization technique (Kingma et al., 2015).
+
+3.1. Bayesian Inference
+
+Consider a dataset D which is constructed from N pairs of
+objects (xn; yn)N
+n=1. Our goal is to tune the parameters w
+of a model p(y j x; w) that predicts y given x and w. In
+Bayesian Learning we usually have some prior knowledge
+about weights w, which is expressed in terms of a prior
+distribution p(w). After data D arrives, this prior distribu-
+tion is transformed into a posterior distribution p(w j D) =
+p(D j w)p(w)=p(D). This process is called Bayesian In-
+ference. Computing posterior distribution using the Bayes
+rule usually involves computation of intractable multidi-
+mensional integrals, so we need to use approximation tech-
+niques.
+
+One of such techniques is Variational Inference. In this ap-
+proach the posterior distribution p(w j D) is approximated
+by a parametric distribution qϕ(w). The quality of this ap-
+proximation is measured in terms of the Kullback-Leibler
+divergence DKL(qϕ(w) ∥ p(w j D)). The optimal value of
+variational parameters ϕ can be found by maximization of
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+the variational lower bound:
+
+L(ϕ) = LD(ϕ) (cid:0) DKL(qϕ(w) ∥ p(w)) ! max
+ϕ2(cid:8)
+
+LD(ϕ) =
+
+Eqϕ(w)[log p(yn j xn; w)]
+
+N∑
+
+n=1
+
+(1)
+
+(2)
+
+It consists of two parts, the expected log-likelihood LD(ϕ)
+and the KL-divergence DKL(qϕ(w) ∥ p(w)), which acts as
+a regularization term.
+
+3.2. Stochastic Variational Inference
+
+In the case of complex models expectations in (1) and (2)
+are intractable. Therefore the variational lower bound (1)
+and its gradients can not be computed exactly. However, it
+is still possible to estimate them using sampling and opti-
+mize the variational lower bound using stochastic optimiza-
+tion.
+
+We follow (Kingma & Welling, 2013) and use the Repa-
+rameterization Trick to obtain an unbiased differentiable
+minibatch-based Monte Carlo estimator of the expected
+log-likelihood (3). The main idea is to represent the para-
+metric noise qϕ(w) as a deterministic differentiable func-
+tion w = f (ϕ; ϵ) of a non-parametric noise ϵ s p(ϵ).
+This trick allows us to obtain an unbiased estimate of
+∇ϕLD(qϕ). Here we denote objects from a mini-batch as
+(~xm; ~ym)M
+
+m=1.
+
+L(ϕ) ≃ LSGVB(ϕ) = LSGVB
+
+D (ϕ) (cid:0) DKL(qϕ(w)∥p(w))
+
+(3)
+
+N
+M
+
+M∑
+
+m=1
+
+LD(ϕ) ≃ LSGVB
+
+D (ϕ) =
+
+log p(~ymj~xm; f (ϕ; ϵm)) (4)
+
+∇ϕLD(ϕ) ≃ N
+M
+
+M∑
+
+m=1
+
+∇ϕ log p(~ymj~xm; f (ϕ; ϵm))
+
+(5)
+
+The Local Reparameterization Trick is another technique
+that reduces the variance of this gradient estimator even fur-
+ther (Kingma et al., 2015). The idea is to sample separate
+weight matrices for each data-point inside mini-batch. It is
+computationally hard to do it straight-forwardly, but it can
+be done efﬁciently by moving the noise from weights to
+activations (Wang & Manning, 2013; Kingma et al., 2015).
+
+3.3. Variational Dropout
+
+In this section we consider a single fully-connected layer
+with I input neurons and O output neurons before a non-
+linearity. We denote an output matrix as BM (cid:2)O, input ma-
+trix as AM (cid:2)I and a weight matrix as W I(cid:2)O. We index
+the elements of these matrices as bmj, ami and wij respec-
+tively. Then B = AW .
+
+Dropout is one of the most popular regularization methods
+for deep neural networks. It injects a multiplicative random
+
+noise (cid:4) to the layer input A at each iteration of training
+procedure (Hinton et al., 2012).
+
+B = (A ⊙ (cid:4))W; with (cid:24)mi s p((cid:24))
+
+(6)
+
+The original version of dropout, so-called Bernoulli or Bi-
+nary Dropout, was presented with (cid:24)mi s Bernoulli(1 (cid:0) p)
+(Hinton et al., 2012). It means that each element of the in-
+put matrix is put to zero with probability p, also known
+as a dropout rate. Later the same authors reported that
+Gaussian Dropout with continuous noise (cid:24)mi s N (1; (cid:11) =
+p
+1(cid:0)p ) works as well and is similar to Binary Dropout with
+dropout rate p (Srivastava et al., 2014).
+It is beneﬁcial
+to use continuous noise instead of discrete one because
+multiplying the inputs by a Gaussian noise is equivalent
+to putting Gaussian noise on the weights. This proce-
+dure can be used to obtain a posterior distribution over
+the model’s weights (Wang & Manning, 2013; Kingma
+et al., 2015). That is, putting multiplicative Gaussian noise
+(cid:24)ij (cid:24) N (1; (cid:11)) on a weight wij is equivalent to sampling
+of wij from q(wij j (cid:18)ij; (cid:11)) = N (wij j (cid:18)ij; (cid:11)(cid:18)2
+ij). Now wij
+becomes a random variable parametrized by (cid:18)ij.
+
+wij = (cid:18)ij(cid:24)ij = (cid:18)ij(1 +
+
+(cid:11)ϵij) (cid:24) N (wij j (cid:18)ij; (cid:11)(cid:18)2
+
+ij)
+
+(7)
+
+p
+
+ϵij s N (0; 1)
+
+Gaussian Dropout training is equivalent to stochastic op-
+timization of the expected log likelihood (2) in the case
+when we use the reparameterization trick and draw a single
+sample W s q(W j (cid:18); (cid:11)) per minibatch to estimate the ex-
+pectation. Variational Dropout extends this technique and
+explicitly uses q(W j (cid:18); (cid:11)) as an approximate posterior dis-
+tribution for a model with a special prior on the weights.
+The parameters (cid:18) and (cid:11) of the distribution q(W j (cid:18); (cid:11)) are
+tuned via stochastic variational inference, i.e. ϕ = ((cid:18); (cid:11))
+are the variational parameters, as denoted in Section 3.2.
+The prior distribution p(W ) is chosen to be improper log-
+scale uniform to make the Variational Dropout with ﬁxed (cid:11)
+equivalent to Gaussian Dropout (Kingma et al., 2015).
+
+p(log jwijj) = const , p(jwijj) / 1
+jwijj
+
+(8)
+
+In this model, it is the only prior distribution that makes
+variational inference consistent with Gaussian Dropout
+(Kingma et al., 2015). When parameter (cid:11) is ﬁxed, the
+DKL(q(W j (cid:18); (cid:11)) ∥ p(W )) term in the variational lower
+bound (1) does not depend on (cid:18) (Kingma et al., 2015).
+Maximization of the variational lower bound (1) then be-
+comes equivalent to maximization of the expected log-
+likelihood (2) with ﬁxed parameter (cid:11). It means that Gaus-
+sian Dropout training is exactly equivalent to Variational
+Dropout with ﬁxed (cid:11). However, Variational Dropout pro-
+vides a way to train dropout rate (cid:11) by optimizing the vari-
+ational lower bound (1). Interestingly, dropout rate (cid:11) now
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+becomes a variational parameter and not a hyperparameter.
+In theory, it allows us to train individual dropout rates (cid:11)ij
+for each layer, neuron or even weight (Kingma et al., 2015).
+However, no experimental results concerning the training
+of individual dropout rates were reported in the original pa-
+per. Also, the approximate posterior family was manually
+restricted to the case (cid:11) (cid:20) 1.
+
+4. Sparse Variational Dropout
+
+In the original paper, authors reported difﬁculties in train-
+ing the model with large values of dropout rates (cid:11) (Kingma
+et al., 2015) and only considered the case of (cid:11) (cid:20) 1, which
+corresponds to a binary dropout rate p (cid:20) 0:5. However,
+the case of large (cid:11)ij is very exciting (here we mean sepa-
+rate (cid:11)ij per weight). High dropout rate (cid:11)ij ! +1 corre-
+sponds to a binary dropout rate that approaches p = 1. It
+effectively means that the corresponding weight or neuron
+is always ignored and can be removed from the model. In
+this work, we consider the case of individual (cid:11)ij for each
+weight of the model.
+
+4.1. Additive Noise Reparameterization
+
+Training Neural Networks with Variational Dropout is dif-
+ﬁcult when dropout rates (cid:11)ij are large because of a huge
+variance of stochastic gradients (Kingma et al., 2015). The
+cause of large gradient variance arises from multiplicative
+noise. To see it clearly, we can rewrite the gradient of LSGVB
+w.r.t. (cid:18)ij as follows.
+
+@LSGVB
+@(cid:18)ij
+
+=
+
+@LSGVB
+@wij
+
+(cid:1) @wij
+@(cid:18)ij
+
+(9)
+
+In the case of original parametrization ((cid:18); (cid:11)) the second
+multiplier in (9) is very noisy if (cid:11)ij is large.
+
+wij = (cid:18)ij(1 +
+
+(cid:11)ij (cid:1) ϵij);
+
+p
+
+p
+
+@wij
+@(cid:18)ij
+
+ϵij (cid:24) N (0; 1)
+
+= 1 +
+
+(cid:11)ij (cid:1) ϵij;
+
+(10)
+
+We propose a trick that allows us to drastically reduce the
+variance of this term in the case when (cid:11)ij is large. The idea
+(cid:11)ij (cid:1)ϵij with
+is to replace the multiplicative noise term 1+
+an exactly equivalent additive noise term (cid:27)ij (cid:1) ϵij, where
+ij = (cid:11)ij(cid:18)2
+(cid:27)2
+ij is treated as a new independent variable. Af-
+ter this trick we will optimize the variational lower bound
+w.r.t. ((cid:18); (cid:27)). However, we will still use (cid:11) throughout the
+paper, as it has a nice interpretation as a dropout rate.
+
+p
+
+wij = (cid:18)ij(1 +
+
+(cid:11)ij (cid:1) ϵij) = (cid:18)ij + (cid:27)ij (cid:1) ϵij
+
+p
+
+@wij
+@(cid:18)ij
+
+= 1;
+
+ϵij (cid:24) N (0; 1)
+
+Figure 1: Different approximations of KL divergence: blue
+and green ones (Kingma et al., 2015) are tight only for (cid:11) (cid:20)
+1; black one is the true value, estimated by sampling; red
+one is our approximation.
+
+From (11) we can see that @wij
+now has no injected noise,
+@(cid:18)ij
+but the distribution over wij (cid:24) q(wij j (cid:18)ij; (cid:27)2
+ij) remains
+exactly the same. The objective function and the poste-
+rior approximating family are unaltered. The only thing
+that changed is the parametrization of the approximate pos-
+terior. However, the variance of a stochastic gradient is
+greatly reduced. Using this trick, we avoid the problem of
+large gradient variance and can train the model within the
+full range of (cid:11)ij 2 (0; +1).
+
+It should be noted that the Local Reparametrization Trick
+does not depend on parametrization, so it can also be ap-
+plied here to reduce the variance even further. In our ex-
+periments, we use both Additive Noise Reparameterization
+and the Local Reparameterization Trick. We provide the ﬁ-
+nal expressions for the outputs of fully-connected and con-
+volutional layers for our model in Section 4.4.
+
+4.2. Approximation of the KL Divergence
+
+As the prior and the approximate posterior are fully factor-
+ized, the full KL-divergence term in the lower bound (1)
+can be decomposed into a sum:
+
+DKL(q(W j (cid:18); (cid:11))∥ p(W )) =
+
+=
+
+DKL(q(wij j (cid:18)ij; (cid:11)ij) ∥ p(wij))
+
+(12)
+
+The log-scale uniform prior distribution is an improper
+prior, so the KL divergence can only be calculated up to
+an additive constant C (Kingma et al., 2015).
+
+(cid:0)DKL(q(wij j (cid:18)ij; (cid:11)ij) ∥ p(wij)) =
+
+=
+
+log (cid:11)ij (cid:0) Eϵ(cid:24)N (1;(cid:11)ij ) log jϵj + C
+
+(13)
+
+∑
+
+ij
+
+1
+2
+
+(11)
+
+In the Variational Dropout model this term is intractable, as
+the expectation Eϵ(cid:24)N (1;(cid:11)ij ) log jϵj in (13) cannot be com-
+puted analytically (Kingma et al., 2015). However, this
+
+−6−4−20246logα−3−2−10123−DKLLowerbound,α≤1[Kingmaetal.]Approximation,α≤1[Kingmaetal.]OurapproximationTrue−DKLbysamplingα=1Variational Dropout Sparsiﬁes Deep Neural Networks
+
+term can be sampled and then approximated. Two different
+approximations were provided in the original paper, how-
+ever they are accurate only for small values of the dropout
+rate (cid:11) ((cid:11) (cid:20) 1). We propose another approximation (14)
+that is tight for all values of alpha. Here (cid:27)((cid:1)) denotes the
+sigmoid function. Different approximations and the true
+value of (cid:0)DKL are presented in Fig. 1. Original (cid:0)DKL
+was obtained by averaging over 107 samples of ϵ with less
+than 2 (cid:2) 10(cid:0)3 variance of the estimation.
+
+(cid:0)DKL(q(wij j (cid:18)ij; (cid:11)ij) ∥ p(wij)) (cid:25)
+(cid:25) k1(cid:27)(k2 + k3 log (cid:11)ij)) (cid:0) 0:5 log(1 + (cid:11)(cid:0)1
+k1 = 0:63576
+
+k2 = 1:87320
+
+ij ) + C
+k3 = 1:48695
+
+(14)
+
+We used the following intuition to obtain this formula. The
+negative KL-divergence goes to a constant as log (cid:11)ij goes
+to inﬁnity, and tends to 0:5 log (cid:11)ij as log (cid:11)ij goes to minus
+inﬁnity. We model this behaviour with (cid:0)0:5 log(1 + (cid:11)(cid:0)1
+ij ).
+We found that the remainder (cid:0)DKL + 0:5 log(1 + (cid:11)(cid:0)1
+ij )
+looks very similar to a sigmoid function of log (cid:11)ij, so we ﬁt
+its linear transformation k1(cid:27)(k2 + k3 log (cid:11)ij) to this curve.
+We observe that this approximation is extremely accurate
+(less than 0:009 maximum absolute deviation on the full
+range of log (cid:11)ij 2 ((cid:0)1; +1); the original approximation
+(Kingma et al., 2015) has 0:04 maximum absolute devia-
+tion with log (cid:11)ij 2 ((cid:0)1; 0]).
+
+One should notice that as (cid:11) approaches inﬁnity, the KL-
+divergence approaches a constant. As in this model the
+KL-divergence is deﬁned up to an additive constant, it is
+convenient to choose C = (cid:0)k1 so that the KL-divergence
+goes to zero when (cid:11) goes to inﬁnity. It allows us to com-
+pare values of LSGVB for neural networks of different sizes.
+
+4.3. Sparsity
+
+From the Fig. 1 one can see that (cid:0)DKL term increases
+with the growth of (cid:11). It means that this regularization term
+favors large values of (cid:11).
+The case of (cid:11)ij ! 1 corresponds to a Binary Dropout
+rate pij ! 1 (recall (cid:11) = p
+1(cid:0)p ). Intuitively it means that the
+corresponding weight is almost always dropped from the
+model. Therefore its value does not inﬂuence the model
+during the training phase and is put to zero during the test-
+ing phase.
+
+We can also look at this situation from another angle. In-
+ﬁnitely large (cid:11)ij corresponds to inﬁnitely large multiplica-
+tive noise in wij.
+It means that the value of this weight
+will be completely random and its magnitude will be un-
+bounded. It will corrupt the model prediction and decrease
+the expected log likelihood. Therefore it is beneﬁcial to
+put the corresponding weight (cid:18)ij to zero in such a way that
+ij goes to zero as well. It means that q(wij j (cid:18)ij; (cid:11)ij)
+(cid:11)ij(cid:18)2
+
+is effectively a delta function, centered at zero (cid:14)(wij).
+
+(cid:18)ij ! 0; (cid:11)ij(cid:18)2
+ij
+
+! 0
+
++
+q(wij j (cid:18)ij; (cid:11)ij) ! N (wij j 0; 0) = (cid:14)(wij)
+
+(15)
+
+In the case of linear regression this fact can be shown an-
+alytically. We denote a data matrix as X N (cid:2)D and (cid:11); (cid:18) 2
+RD. If (cid:11) is ﬁxed, the optimal value of (cid:18) can also be ob-
+tained in a closed form.
+
+(cid:18) = (X ⊤X + diag(X ⊤X)diag((cid:11)))(cid:0)1X ⊤y
+
+(16)
+
+Assume that (X ⊤X)ii ̸= 0, so that i-th feature is not a
+constant zero. Then from (16) it follows that (cid:18)i = (cid:2)((cid:11)(cid:0)1
+)
+when (cid:11)i ! +1, so both (cid:18)i and (cid:11)i(cid:18)2
+
+i tend to 0.
+
+i
+
+4.4. Sparse Variational Dropout for Fully-Connected
+
+and Convolutional Layers
+
+Finally we optimize the stochastic gradient variational
+lower bound (3) with our approximation of KL-divergence
+(14). We apply Sparse Variational Dropout to both convo-
+lutional and fully-connected layers. To reduce the variance
+of LSGVB we use a combination of the Local Reparameter-
+ization Trick and Additive Noise Reparameterization. In
+order to improve convergence, optimization is performed
+w.r.t. ((cid:18); log (cid:27)2).
+
+For a fully connected layer we use the same notation as in
+Section 3.3. In this case, Sparse Variational Dropout with
+the Local Reparameterization Trick and Additive Noise
+Reparameterization can be computed as follows:
+
+bmj s N ((cid:13)mj; (cid:14)mj)
+
+(cid:13)mj =
+
+ami(cid:18)ij;
+
+(cid:14)mj =
+
+mi(cid:27)2
+a2
+ij
+
+(17)
+
+I∑
+
+i=1
+
+I∑
+
+i=1
+
+k
+
+k
+
+mk
+
+and (cid:27)h(cid:2)w(cid:2)C
+k
+
+Now consider a convolutional layer. Take a single input
+, a single ﬁlter wh(cid:2)w(cid:2)C
+tensor AH(cid:2)W (cid:2)C
+and correspond-
+m
+ing output matrix bH ′(cid:2)W ′
+. This ﬁlter has corresponding
+variational parameters (cid:18)h(cid:2)w(cid:2)C
+. Note that in
+this case Am, (cid:18)k and (cid:27)k are tensors. Because of linear-
+ity of convolutional layers, it is possible to apply the Local
+Reparameterization Trick. Sparse Variational Dropout for
+convolutional layers then can be expressed in a way, simi-
+lar to (17). Here we use ((cid:1))2 as an element-wise operation,
+(cid:3) denotes the convolution operation, vec((cid:1)) denotes reshap-
+ing of a matrix/tensor into a vector.
+
+vec(bmk) s N ((cid:13)mk; (cid:14)mk)
+
+(cid:13)mk = vec(Am (cid:3)(cid:18)k);
+
+(cid:14)mk = diag(vec(A2
+m
+
+(cid:3)(cid:27)2
+
+k))
+
+(18)
+
+These formulae can be used for the implementation of
+Sparse Variational Dropout layers. Lasagne and PyTorch
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+source code of Sparse Variational Dropout layers is avail-
+able at https://goo.gl/2D4tFW. Both forward and
+backward passes through Sparse VD layers take twice as
+much time as passes through original layers.
+
+4.5. Relation to RVM
+
+The Relevance Vector Machine (RVM, (Tipping, 2001)) is
+a classical example of a Sparse Bayesian model. The RVM
+is essentially a Bayesian treatment of L2-regularized lin-
+ear or logistic regression, where each weight has a separate
+regularization parameter (cid:11)i. These parameters are tuned
+by empirical Bayes. During training, a large portion of
+parameters (cid:11)i goes to inﬁnity, and corresponding features
+are excluded from the model since those weights become
+zero. This effect is known as Automatic Relevance Deter-
+mination (ARD) and is a popular way to construct sparse
+Bayesian models.
+
+Empirical Bayes is a somewhat counter-intuitive procedure
+since we optimize prior distribution w.r.t.
+the observed
+data. Such trick has a risk of overﬁtting, and indeed it
+was reported in (Cawley, 2010). However, in our work
+the ARD-effect is achieved by straightforward variational
+inference rather than by empirical Bayes. Similarly to the
+RVM, in Sparse VD dropout rates (cid:11)i are responsible for
+the ARD-effect. However, in Sparse VD (cid:11)i are param-
+eters of the approximate posterior distribution rather than
+parameters of the prior distribution. In our work, the prior
+distribution is ﬁxed and does not have any parameters, and
+we tune (cid:11)i to obtain a more accurate approximation of the
+posterior distribution p(w j D). Therefore there is no risk of
+additional overﬁtting from model selection unlike the case
+of empirical Bayes.
+
+That said, despite this difference, the analytical solution
+for maximum a posteriori estimation is very similar for the
+RVM-regression
+
+wM AP = (X ⊤X + diag((cid:11)))(cid:0)1X ⊤y
+
+(19)
+
+and Sparse Variational Dropout regression
+
+(cid:18) = (X ⊤X + diag(X ⊤X)diag((cid:11)))(cid:0)1X ⊤y
+
+(20)
+
+Interestingly, the expression for Binary Dropout-regulari-
+zed linear regression is exactly the same as (20) if we sub-
+stitute (cid:11)i with pi
+1(cid:0)pi
+
+(Srivastava et al., 2014).
+
+5. Experiments
+
+We perform experiments on classiﬁcation tasks and use dif-
+ferent neural network architectures including architectures
+with a combination of batch normalization and dropout lay-
+ers. We explore the relevance determination performance
+of our algorithm as well as the classiﬁcation accuracy of the
+
+resulting sparse model. Our experiments show that Sparse
+Variational Dropout leads to extremely sparse models.
+
+In order to make a Sparse Variational Dropout analog to
+an existing architecture, we only need to remove existing
+dropout layers and replace all dense and convolutional lay-
+ers with their Sparse Variational Dropout counterparts as
+described in Section 4.4 and use LSGVB as the objective
+function. The value of the variational lower bound can be
+used to choose among several local optima.
+
+5.1. General Empirical Observations
+
+We provide a general intuition about training of Sparse
+Bayesian DNNs using Sparse Variational Dropout.
+
+As it is impossible for the weights to converge exactly to
+zero in a stochastic setting, we explicitly put weights with
+high corresponding dropout rates to 0 during testing.
+In
+our experiments with neural networks, we use the value
+log (cid:11) = 3 as a threshold. This value corresponds to a Bi-
+nary Dropout rate p > 0:95. Unlike most other methods
+(Han et al., 2015b; Wen et al., 2016), this trick usually does
+not hurt the performance of our model. It means that Sparse
+VD does not require ﬁnetuning after thresholding.
+
+Training our model from a random initialization is trouble-
+some, as a lot of weights become pruned away early during
+training, before they could possibly learn a useful represen-
+tation of the data. In this case we obtain a higher sparsity
+level, but also a high accuracy drop. The same problem is
+reported by (Sønderby et al., 2016) and is a common prob-
+lem for Bayesian DNNs. One way to resolve this problem
+is to start from a pre-trained network. This trick provides a
+fair sparsity level with almost no drop of accuracy. Here by
+pre-training we mean training of the original architecture
+without Sparse Variational Dropout until full convergence.
+
+Another way to approach this problem is to use warm-up,
+as described by (Sønderby et al., 2016). The idea is to
+rescale the KL-divergence term during training by a scalar
+term (cid:12)t, individual for each training epoch. During the ﬁrst
+epochs we used (cid:12)t = 0, then increased (cid:12)t linearly from 0
+to 1 and after that used (cid:12)t = 1. The ﬁnal objective function
+remains the same, but the optimization trajectory becomes
+different. In some sense it is equivalent to choosing a better
+initial guess for the parameters.
+
+We use the ﬁnal value of the variational lower bound to
+choose the initialization strategy. We observe that the ini-
+tialization does not matter much on simple models like
+LeNets, but in the case of more complex models like VGG,
+the difference is signiﬁcant.
+
+On most architectures we observe that the number of
+epochs required for convergence from a random initializa-
+tion is roughly the same as for the original network. How-
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+Error % Sparsity per Layer %
+
+LeNet-300-100 DNS
+SWS
+
+Network Method
+Original
+Pruning
+
+1.64
+1.59
+1.99
+1.94
+(ours) Sparse VD 1.92
+0.80
+Original
+0.77
+Pruning
+0.91
+0.97
+(ours) Sparse VD 0.75
+
+LeNet-5-Caffe DNS
+SWS
+
+92:0 (cid:0) 91:0 (cid:0) 74:0
+98:2 (cid:0) 98:2 (cid:0) 94:5
+
+98:9 (cid:0) 97:2 (cid:0) 62:0
+
+34 (cid:0) 88 (cid:0) 92:0 (cid:0) 81
+86 (cid:0) 97 (cid:0) 99:3 (cid:0) 96
+
+67 (cid:0) 98 (cid:0) 99:8 (cid:0) 95
+
+jWj
+jW̸=0j
+1
+12
+56
+23
+68
+1
+12
+111
+200
+280
+
+Table 1: Comparison of different sparsity-inducing tech-
+niques (Pruning (Han et al., 2015b;a), DNS (Guo et al.,
+2016), SWS (Ullrich et al., 2017)) on LeNet architectures.
+Our method provides the highest level of sparsity with a
+similar accuracy.
+
+Figure 2: Original parameterization vs Additive Noise
+Reparameterization. Additive Noise Reparameterization
+leads to a much faster convergence, a better value of the
+variational lower bound and a higher sparsity level.
+
+ever, we only need to make a several epochs (10-30) in or-
+der for our method to converge from a pre-trained network.
+
+that we only consider the level of sparsity and not the ﬁnal
+compression ratio.
+
+We train all networks using Adam (Kingma & Ba, 2014).
+When we start from a random initialization, we train for
+200 epochs and linearly decay the learning rate from 10(cid:0)4
+to zero. When we start from a pre-trained model, we ﬁne-
+tune for 10-30 epochs with learning rate 10(cid:0)5.
+
+5.2. Variance Reduction
+
+To see how Additive Noise Reparameterization reduces the
+variance, we compare it with the original parameteriza-
+tion. We used a fully-connected architecture with two lay-
+ers with 1000 neurons each. Both models were trained with
+identical random initializations and with the same learning
+rate, equal to 10(cid:0)4. We did not rescale the KL term during
+training. It is interesting that the original version of Vari-
+ational Dropout with our approximation of KL-divergence
+and with no restriction on alphas also provides a sparse so-
+lution. However, our method has much better convergence
+rate and provides higher sparsity and a better value of the
+variational lower bound.
+
+5.3. LeNet-300-100 and LeNet5 on MNIST
+
+We compare our method with other methods of training
+sparse neural networks on the MNIST dataset using a fully-
+connected architecture LeNet-300-100 and a convolutional
+architecture LeNet-5-Caffe1. These networks were trained
+from a random initialization and without data augmenta-
+tion. We consider pruning (Han et al., 2015b;a), Dynamic
+Network Surgery (Guo et al., 2016) and Soft Weight Shar-
+ing (Ullrich et al., 2017). In these architectures, our method
+achieves a state-of-the-art level of sparsity, while its accu-
+racy is comparable to other methods. It should be noted
+
+1A modiﬁed version of LeNet5 from (LeCun et al., 1998).
+
+Caffe Model speciﬁcation: https://goo.gl/4yI3dL
+
+5.4. VGG-like on CIFAR-10 and CIFAR-100
+
+To demonstrate that our method scales to large modern ar-
+chitectures, we apply it to a VGG-like network (Zagoruyko,
+2015) adapted for the CIFAR-10 (Krizhevsky & Hinton,
+2009) dataset. The network consists of 13 convolutional
+and two fully-connected layers, each layer followed by
+pre-activation batch normalization and Binary Dropout.
+We experiment with different sizes of this architecture
+by scaling the number of units in each network by k 2
+f0:25; 0:5; 1:0; 1:5g. We use CIFAR-10 and CIFAR-100
+for evaluation. The reported error of this architecture on
+the CIFAR-10 dataset with k = 1 is 7:55%. As no pre-
+trained weights are available, we train our own network and
+achieve 7:3% error. Sparse VD also achieves 7:3% error for
+k = 1, but retains 48(cid:2) less weights.
+
+We observe underﬁtting while training our model from a
+random initialization, so we pre-train the network with Bi-
+nary Dropout and L2 regularization. It should be noted that
+most modern DNN compression techniques also can be ap-
+plied only to pre-trained networks and work best with net-
+works, trained with L2 regularization (Han et al., 2015b).
+
+Our method achieves over 65x sparsiﬁcation on the CIFAR-
+10 dataset with no accuracy drop and up to 41x sparsiﬁca-
+tion on CIFAR-100 with a moderate accuracy drop.
+
+5.5. Random Labels
+
+Recently is was shown that the CNNs are capable of mem-
+orizing the data even with random labeling (Zhang et al.,
+2016). The standard dropout as well as other regulariza-
+tion techniques did not prevent this behaviour. Following
+that work, we also experiment with the random labeling
+of data. We use a fully-connected network on the MNIST
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+(a) Results on the CIFAR-10 dataset
+
+(b) Results on the CIFAR-100 dataset
+
+Figure 3: Accuracy and sparsity level for VGG-like architectures of different sizes. The number of neurons and ﬁlters scales
+as k. Dense networks were trained with Binary Dropout, and Sparse VD networks were trained with Sparse Variational
+Dropout on all layers. The overall sparsity level, achieved by our method, is reported as a dashed line. The accuracy drop
+is negligible in most cases, and the sparsity level is high, especially in larger networks.
+
+dataset and VGG-like networks on CIFAR-10. We put Bi-
+nary Dropout (BD) with dropout rate p = 0:5 on all fully-
+connected layers of these networks. We observe that these
+architectures can ﬁt a random labeling even with Binary
+Dropout. However, our model decides to drop every single
+weight and provide a constant prediction. It is still possible
+to make our model learn random labeling by initializing it
+with a network, pre-trained on this random labeling, and
+then ﬁnetuning it. However, the variational lower bound
+L((cid:18); (cid:11)) in this case is lower than in the case of 100% spar-
+sity. These observations may mean that Sparse VD im-
+plicitly penalizes memorization and favors generalization.
+However, this still requires a more thorough investigation.
+
+6. Discussion
+
+The “Occam’s razor” principle states that unnecessarily
+complex should not be preferred to simpler ones (MacKay,
+1992). Automatic Relevance Determination is effectively
+a Bayesian implementation of this principle that occurs in
+different cases. Previously, it was mostly studied in the case
+of factorized Gaussian prior in linear models, Gaussian
+Processes, etc. In the Relevance Tagging Machine model
+(Molchanov et al., 2015) the same effect was achieved us-
+ing Beta distributions as a prior. Finally, in this work, the
+ARD-effect is reproduced in an entirely different setting.
+We consider a ﬁxed prior and train the model using vari-
+ational inference. In this case, the ARD effect is caused
+by the particular combination of the approximate posterior
+distribution family and prior distribution, and not by model
+selection. This way we can abandon the empirical Bayes
+approach that is known to overﬁt (Cawley, 2010).
+
+We observed that if we allow Variational Dropout to drop
+irrelevant weights automatically, it ends up cutting most
+of the model weights. This result correlates with results
+of other works on training of sparse neural networks (Han
+et al., 2015a; Wen et al., 2016; Ullrich et al., 2017; So-
+
+ravit Changpinyo, 2017). All these works can be viewed
+as a kind of regularization of neural networks, as they re-
+strict the model complexity. Further investigation of such
+redundancy may lead to an understanding of generalization
+properties of DNNs and explain the phenomenon, observed
+by (Zhang et al., 2016). According to that paper, although
+modern DNNs generalize well in practice, they can also
+easily learn a random labeling of data. Interestingly, it is
+not the case for our model, as a network with zero weights
+has a higher value of objective than a trained network.
+
+In this paper we study only the level of sparsity and do not
+report the actual network compression. However, our ap-
+proach can be combined with other modern techniques of
+network compression, e.g. quantization and Huffman cod-
+ing (Han et al., 2015a; Ullrich et al., 2017), as they use spar-
+siﬁcation as an intermediate step. As our method provides a
+higher level of sparsity, we believe that it can improve these
+techniques even further. Another possible direction for fu-
+ture research is to ﬁnd a way to obtain structured sparsity
+using our framework. As reported by (Wen et al., 2016),
+structured sparsity is crucial to acceleration of DNNs.
+
+Acknowledgements
+
+We would like to thank Michael Figurnov, Ekaterina
+Lobacheva and Max Welling for valuable feedback.
+Dmitry Molchanov was supported by the Ministry of
+Education and Science of the Russian Federation (grant
+14.756.31.0001), Arsenii Ashukha was supported by HSE
+International lab of Deep Learning and Bayesian Meth-
+ods which is funded by the Russian Academic Excellence
+Project ’5-100’, Dmitry Vetrov was supported by the Rus-
+sian Science Foundation grant 17-11-01027. We would
+also like to thank the Department of Algorithms and Theory
+of Programming, Faculty of Innovation and High Technol-
+ogy in Moscow Institute of Physics and Technology for the
+provided computational resources.
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+References
+
+Cawley, Nicola L. C. Talbot. On over-ﬁtting in model selec-
+tion and subsequent selection bias in performance eval-
+uation. Journal of Machine Learning Research, 11(Jul):
+2079–2107, 2010.
+
+Challis, E and Barber, D. Gaussian kullback-leibler ap-
+proximate inference. Journal of Machine Learning Re-
+search, 14:2239–2286, 2013.
+
+Gal, Yarin and Ghahramani, Zoubin. Dropout as a bayesian
+In Deep
+
+Insights and applications.
+
+approximation:
+Learning Workshop, ICML, 2015.
+
+Garipov, Timur, Podoprikhin, Dmitry, Novikov, Alexander,
+and Vetrov, Dmitry. Ultimate tensorization: compress-
+ing convolutional and fc layers alike. arXiv preprint
+arXiv:1611.03214, 2016.
+
+Guo, Yiwen, Yao, Anbang, and Chen, Yurong. Dynamic
+In Advances In
+network surgery for efﬁcient dnns.
+Neural Information Processing Systems, pp. 1379–1387,
+2016.
+
+Han, Song, Mao, Huizi, and Dally, William J. Deep com-
+pression: Compressing deep neural networks with prun-
+ing, trained quantization and huffman coding. arXiv
+preprint arXiv:1510.00149, 2015a.
+
+Han, Song, Pool, Jeff, Tran, John, and Dally, William.
+Learning both weights and connections for efﬁcient neu-
+ral network. In Advances in Neural Information Process-
+ing Systems, pp. 1135–1143, 2015b.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun,
+Jian. Deep residual learning for image recognition. arXiv
+preprint arXiv:1512.03385, 2015.
+
+Hinton, Geoffrey E, Srivastava, Nitish, Krizhevsky, Alex,
+Sutskever, Ilya, and Salakhutdinov, Ruslan R. Improving
+neural networks by preventing co-adaptation of feature
+detectors. Technical report, 2012.
+
+Hoffman, Matthew D, Blei, David M, Wang, Chong, and
+Paisley, John William. Stochastic variational inference.
+Journal of Machine Learning Research, 14(1):1303–
+1347, 2013.
+
+Ioffe, Sergey and Szegedy, Christian. Batch normalization:
+Accelerating deep network training by reducing internal
+covariate shift. arXiv preprint arXiv:1502.03167, 2015.
+
+Kingma, Diederik and Ba,
+
+Jimmy.
+method for stochastic optimization.
+arXiv:1412.6980, 2014.
+
+Adam:
+
+A
+arXiv preprint
+
+Kingma, Diederik P and Welling, Max. Auto-encoding
+arXiv preprint arXiv:1312.6114,
+
+variational bayes.
+2013.
+
+Kingma, Diederik P, Salimans, Tim, and Welling, Max.
+Variational dropout and the local reparameterization
+trick.
+In Cortes, C., Lawrence, N. D., Lee, D. D.,
+Sugiyama, M., and Garnett, R. (eds.), Advances in Neu-
+ral Information Processing Systems 28, pp. 2575–2583.
+Curran Associates, Inc., 2015.
+
+Krizhevsky, Alex and Hinton, Geoffrey. Learning multiple
+
+layers of features from tiny images. 2009.
+
+Lebedev, Vadim and Lempitsky, Victor.
+
+Fast con-
+vnets using group-wise brain damage. arXiv preprint
+arXiv:1506.02515, 2015.
+
+LeCun, Yann, Bottou, L´eon, Bengio, Yoshua, and Haffner,
+Patrick. Gradient-based learning applied to document
+recognition. Proceedings of the IEEE, 86(11):2278–
+2324, 1998.
+
+Liu, Baoyuan, Wang, Min, Foroosh, Hassan, Tappen, Mar-
+shall, and Pensky, Marianna. Sparse convolutional neu-
+ral networks. In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition, pp. 806–814,
+2015.
+
+Louizos, Christos. Smart regularization of deep architec-
+
+tures. 2015.
+
+MacKay, David JC. Bayesian interpolation. Neural com-
+
+putation, 4(3):415–447, 1992.
+
+MacKay, David JC et al. Bayesian nonlinear modeling for
+the prediction competition. ASHRAE transactions, 100
+(2):1053–1062, 1994.
+
+Maeda, Shin-ichi. A bayesian encourages dropout. arXiv
+
+preprint arXiv:1412.7003, 2014.
+
+Molchanov, Dmitry, Kondrashkin, Dmitry, and Vetrov,
+Dmitry. Relevance tagging machine. Machine Learn-
+ing and Data Analysis, 1(13):1877–1887, 2015.
+
+Neal, Radford M. Bayesian learning for neural networks,
+volume 118. Springer Science & Business Media, 1996.
+
+Novikov, Alexander, Podoprikhin, Dmitrii, Osokin, Anton,
+and Vetrov, Dmitry P. Tensorizing neural networks. In
+Advances in Neural Information Processing Systems, pp.
+442–450, 2015.
+
+Rezende, Danilo Jimenez, Mohamed, Shakir, and Wier-
+stra, Daan. Stochastic backpropagation and approxi-
+mate inference in deep generative models. arXiv preprint
+arXiv:1401.4082, 2014.
+
+Scardapane, Simone, Comminiello, Danilo, Hussain, Amir,
+and Uncini, Aurelio. Group sparse regularization for
+deep neural networks. arXiv preprint arXiv:1607.00485,
+2016.
+
+Variational Dropout Sparsiﬁes Deep Neural Networks
+
+Wan, Li, Zeiler, Matthew, Zhang, Sixin, Cun, Yann L, and
+Fergus, Rob. Regularization of neural networks using
+In Proceedings of the 30th International
+dropconnect.
+Conference on Machine Learning (ICML-13), pp. 1058–
+1066, 2013.
+
+Wang, Sida I and Manning, Christopher D. Fast dropout
+
+training. In ICML (2), pp. 118–126, 2013.
+
+Wen, Wei, Wu, Chunpeng, Wang, Yandan, Chen, Yiran,
+and Li, Hai. Learning structured sparsity in deep neural
+networks. In Lee, D. D., Sugiyama, M., Luxburg, U. V.,
+Guyon, I., and Garnett, R. (eds.), Advances in Neural In-
+formation Processing Systems 29, pp. 2074–2082. Cur-
+ran Associates, Inc., 2016.
+
+Zagoruyko, Sergey.
+
+92.45 on cifar-10 in torch,
+2015. URL http://torch.ch/blog/2015/07/
+30/cifar.html.
+
+Zhang, Chiyuan, Bengio, Samy, Hardt, Moritz, Recht, Ben-
+jamin, and Vinyals, Oriol. Understanding deep learn-
+ing requires rethinking generalization. arXiv preprint
+arXiv:1611.03530, 2016.
+
+Silver, David, Huang, Aja, Maddison, Chris J, Guez,
+Arthur, Sifre, Laurent, Van Den Driessche, George,
+Schrittwieser, Julian, Antonoglou, Ioannis, Panneershel-
+vam, Veda, Lanctot, Marc, et al. Mastering the game of
+go with deep neural networks and tree search. Nature,
+529(7587):484–489, 2016.
+
+Sønderby, Casper Kaae, Raiko, Tapani, Maaløe, Lars,
+Sønderby, Søren Kaae, and Winther, Ole. How to Train
+Deep Variational Autoencoders and Probabilistic Lad-
+der Networks. 2016.
+
+Soravit Changpinyo, Mark Sandler, Andrey Zhmoginov.
+The power of sparsity in convolutional neural networks.
+In Under review on ICLR 2017, 2017.
+
+Srinivas, Suraj and Babu, R Venkatesh. Generalized
+
+dropout. arXiv preprint arXiv:1611.06791, 2016.
+
+Srivastava, Nitish, Hinton, Geoffrey E, Krizhevsky, Alex,
+Sutskever, Ilya, and Salakhutdinov, Ruslan. Dropout:
+a simple way to prevent neural networks from overﬁt-
+Journal of Machine Learning Research, 15(1):
+ting.
+1929–1958, 2014.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet,
+Pierre, Reed, Scott, Anguelov, Dragomir, Erhan, Du-
+mitru, Vanhoucke, Vincent, and Rabinovich, Andrew.
+In Proceedings of
+Going deeper with convolutions.
+the IEEE Conference on Computer Vision and Pattern
+Recognition, pp. 1–9, 2015.
+
+Szegedy, Christian, Ioffe, Sergey, Vanhoucke, Vincent, and
+Alemi, Alex. Inception-v4, inception-resnet and the im-
+pact of residual connections on learning. arXiv preprint
+arXiv:1602.07261, 2016.
+
+Tipping, Michael E. Sparse bayesian learning and the rel-
+evance vector machine. Journal of machine learning re-
+search, 1(Jun):211–244, 2001.
+
+Titsias, Michalis and L´azaro-Gredilla, Miguel. Doubly
+stochastic variational bayes for non-conjugate inference.
+Proceedings of The 31st International Conference on
+Machine Learning, 32:1971–1979, 2014.
+
+Ullrich, Karen, Meeds, Edward, and Welling, Max. Soft
+weight-sharing for neural network compression. arXiv
+preprint arXiv:1702.04008, 2017.
+
+Van Gestel, Tony, Suykens, JAK, De Moor, Bart, and Van-
+dewalle, Joos. Automatic relevance determination for
+least squares support vector machine regression. In Neu-
+ral Networks, 2001. Proceedings. IJCNN’01. Interna-
+tional Joint Conference on, volume 4, pp. 2416–2421.
+IEEE, 2001.
+
+

@@ -1,0 +1,1169 @@
+Learning in POMDPs with Monte Carlo Tree Search
+
+Sammie Katt 1 Frans A. Oliehoek 2 Christopher Amato 1
+
+Abstract
+The POMDP is a powerful framework for reason-
+ing under outcome and information uncertainty,
+but constructing an accurate POMDP model is
+difﬁcult. Bayes-Adaptive Partially Observable
+Markov Decision Processes (BA-POMDPs) ex-
+tend POMDPs to allow the model to be learned
+during execution. BA-POMDPs are a Bayesian
+RL approach that, in principle, allows for an
+optimal trade-off between exploitation and ex-
+ploration. Unfortunately, BA-POMDPs are cur-
+rently impractical to solve for any non-trivial do-
+main. In this paper, we extend the Monte-Carlo
+Tree Search method POMCP to BA-POMDPs
+and show that the resulting method, which we
+call BA-POMCP, is able to tackle problems that
+previous solution methods have been unable to
+solve. Additionally, we introduce several tech-
+niques that exploit the BA-POMDP structure to
+improve the efﬁciency of BA-POMCP along with
+proof of their convergence.
+
+1. Introduction
+
+The Partially Observable Markov Decision Processes
+(POMDP) (Kaelbling et al., 1998) is a general model for
+sequential decision making in stochastic and partially ob-
+servable environments, which are ubiquitous in real-world
+problems. A key shortcoming of POMDP methods is
+the assumption that the dynamics of the environment are
+known a priori. In real-world applications, however, it may
+be impossible to obtain a complete and accurate descrip-
+tion of the system. Instead, we may have uncertain prior
+knowledge about the model. When lacking a model, a prior
+can be incorporated into the POMDP problem in a princi-
+pled way, as demonstrated by the Bayes-Adaptive POMDP
+framework (Ross et al., 2011).
+
+The BA-POMDP framework provides a Bayesian approach
+
+1Northeastern University, Boston, Massachusetts,USA
+2University of Liverpool, UK. Correspondence to: Sammie Katt
+<katt.s@husky.neu.edu>.
+
+to decision making by maintaining a probability distribu-
+tion over possible models as the agent acts in an online rein-
+forcement learning setting (Duff, 2002; Wyatt, 2001). This
+method casts the Bayesian reinforcement learning prob-
+lem into a POMDP planning problem where the hidden
+model of the environment is part of the state space. Unfor-
+tunately, this planning problem becomes very large, with
+a continuous state space over all possible models, and as
+such, current solution methods are not scalable or perform
+poorly (Ross et al., 2011).
+
+Online and sample-based planning has shown promising
+performance on non-trivial POMDP problems (Ross et al.,
+2008). Online methods reduce the complexity by consid-
+ering the relevant (i.e., reachable) states only, and sample-
+based approaches tackle the complexity issues through ap-
+proximations in the form of simulated interactions with the
+environment. Here we modify one of those methods, Par-
+tial Observable Monte-Carlo Planning (POMCP) (Silver
+& Veness, 2010) and extend it to the Bayes-Adaptive case,
+leading to a novel approach: BA-POMCP.
+
+In particular, we improve the sampling approach by ex-
+ploiting the structure of the BA-POMDP resulting in root
+sampling and expected models methods. We also present
+an approach for more efﬁcient state representation, which
+we call linking states. Lastly, we prove the correctness
+of our improvements, showing that they converge to the
+true BA-POMDP solution. As a result, we present meth-
+ods that signiﬁcantly improve the scalability of learning in
+BA-POMDPs, making them practical for larger problems.
+
+First, we discuss POMDPs and BA-POMDPs in Sec-
+tions 2.1 and 2.2.
+
+2. Background
+
+2.1. POMDPs
+
+Formally, a POMDP is described by a tuple (S, A, Z, D,
+R, γ, h), where S is the set of states of the environment;
+A is the set of actions; Z is the set of observations; D is
+the ‘dynamics function’ that describes the dynamics of the
+system in the form of transition probabilities D(s(cid:48),z|s,a);1
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+1 This formulation generalizes the typical formulation with
+separate transition T and observation functions O: D = (cid:104)T, O(cid:105).
+In our experiments, we do employ this typical factorization.
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+R is the immediate reward function R(s, a) that describes
+the reward of selecting a in s; γ ∈ (0,1) is the discount
+factor; and h is the horizon of an episode in the system.
+
+The goal of the agent in a POMDP is to maximize the ex-
+pected cumulative (discounted) reward, also called the ex-
+pected return. The agent has no direct access to the sys-
+tem’s state, so it can only rely on the action-observation
+history ht = (cid:104)a0,z1, . . . ,at−1,zt(cid:105) up to the current step t.
+It can use this history to maintain a probability distribution
+over the state, also called a belief, b(s). A solution to a
+POMDP is then a mapping from a belief b to an action a,
+which is called a policy π. Solution methods aim to ﬁnd an
+optimal policy, a mapping from a belief to an action with
+the highest possible expected return.
+
+The agent maintains its belief during execution through be-
+lief updates. A belief update calculates the posterior proba-
+bility of the state s(cid:48) given the previous belief over s and
+action-observation pair (cid:104)a,z(cid:105): b(cid:48)(s) = P (s(cid:48)|b(s), a, z).
+This operation is infeasible for large spaces because it enu-
+merates over the entire state space. A common approxi-
+mation method is to represent the belief with (unweighted)
+particle ﬁlters (Thrun, 1999). A particle ﬁlter is a collection
+of K particles (states). Each particle represents a probabil-
+ity of 1
+K ; if a speciﬁc state x occurs n times in a particle
+ﬁlter, then P (x) = n
+K . The precision of the ﬁlter is de-
+termined by the amount of particles K. To update such a
+belief after each time step with observation z, a standard
+approach is to utilize rejection sampling. Given some ac-
+tion a, the agent repeatedly samples a state s from particle
+ﬁlter, then simulates the execution of a on s through D,
+and receives a (simulated) new state s(cid:48)
+sim and observation
+zsim. s(cid:48) is added to the new belief only when zsim == z,
+and rejected otherwise. This process repeats until the new
+belief contains K particles.
+
+Observable
+
+Monte-Carlo
+
+Partially
+Planning
+(POMCP) (Silver & Veness, 2010), is a scalable method
+which extends Monte Carlo tree search (MCTS) to solve
+POMDPs. POMCP is one of the leading algorithms for
+solving general POMDPs. At each time step, the algorithm
+performs online planning by incrementally building a
+lookahead tree that contains (statistics that represent)
+Q(h,a), where h is the action-observation history h to
+reach that node. It samples hidden states s at the root node
+(called ‘root sampling’) and uses that state to sample a
+trajectory that ﬁrst traverses the lookahead tree and then
+performs a (random) rollout. The return of this trajectory
+is used to update the statistics for all visited nodes. These
+statistics include the number of times an action has been
+taken at a history (N (h,a)) and estimated value of being in
+that node (Q(h,a)), based on an average over the returns.
+
+Because this lookahead tree can be very large, the search
+is directed to the relevant parts by selecting the ac-
+tions inside the tree that maximize the ‘upper conﬁdence
+
+bounds’ (Auer et al., 2002): U (h,a) = Q(h, a) +
+c(cid:112)log(N (h) + 1)/N (h,a). Here, N (h) is the number of
+times the history has been visited. At the end of each sim-
+ulation, the discounted accumulated return is used to up-
+date the estimated value of all the nodes in the tree that
+have been visited during that simulation. POMCP termi-
+nates after some criteria has been met, typically deﬁned by
+a maximum number of simulations or allocated time. The
+agent then picks the action with the highest estimated value
+(maxa Q(b,a)). POMCP can be shown to converge to an (cid:15)-
+optimal value function. Moreover, the method has demon-
+strated good performance in large domains with a limited
+number of simulations. The extension of POMCP that is
+used in this work is discussed in Section 3.
+
+2.2. BA-POMDPs
+
+Most research concerning POMDPs has considered the
+task of planning: given a full speciﬁcation of the model,
+determine an optimal policy (e.g., (Kaelbling et al., 1998;
+Shani et al., 2012)). However, in many real-world applica-
+tions, the model is not (perfectly) known in advance, which
+means that the agent has to learn about its environment dur-
+ing execution. This is the task considered in reinforcement
+learning (RL) (Sutton & Barto, 1998).
+
+A fundamental RL problem is the difﬁculty of deciding
+whether to select actions in order to learn a better model of
+the environment, or to exploit the current knowledge about
+the rewards and effects of actions. In recent years, Bayesian
+RL methods have become popular because they can pro-
+vide a principled solution to this exploration/exploitation
+trade-off (Wyatt, 2001; Duff, 2002; Engel et al., 2005;
+Poupart & Vlassis, 2008; Vlassis et al., 2012).
+
+the framework of Bayes-
+In particular, we consider
+BA-
+Adaptive POMDPs (Ross et al., 2007; 2011).
+POMDPs use Dirichlet distributions to model uncertainty
+over transitions and observations2 (typically assuming the
+reward function is chosen by the designer and is known).
+In particular, if the agent could observe both states and ob-
+servations, it could maintain a vector χ with the counts of
+the occurrences for all (cid:104)s, a, s(cid:48), z(cid:105) tuples. We write χs(cid:48)z
+sa for
+the number of times that s,a is followed by s(cid:48),z.
+
+While the agent cannot observe the states and has uncer-
+tainty about the actual count vector, this uncertainty can
+be represented using regular POMDP formalisms. That is,
+the count vector is included as part of the hidden state of
+a speciﬁc POMDP, called a BA-POMDP. Formally, a BA-
+POMDP is a tuple (cid:104) ¯S, A, ¯D, ¯R, Z, γ, h(cid:105) with some modi-
+ﬁed components in comparison to the POMDP. While the
+observation and action space remain unchanged, the state
+(space) of the BA-POMDP now includes Dirichlet parame-
+
+2 (Ross et al., 2007; 2011) follow the standard T & O POMDP
+
+representations, but we use our combined D formalism.
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+ters: ¯s = (cid:104)s, χ(cid:105), which we will refer to as augmented states.
+The reward model remains the same, since it is assumed to
+be known, ¯R((cid:104)s(cid:48),χ(cid:48)),a) = R(s,a). The dynamics func-
+tions, ¯D, however, is described in terms of the counts in ¯s,
+and is deﬁned as follows
+
+Dχ(s(cid:48),z|s, a) (cid:44) E[D(s(cid:48),z|s, a)|χ] =
+
+χs(cid:48)z
+sa
+s(cid:48)z χs(cid:48)z
+sa
+
+.
+
+(cid:80)
+
+(1)
+
+These expectations can now be used to deﬁne the transi-
+tions for the BA-POMDP. If we let δs(cid:48)z
+sa denote a vector
+of the length of χ containing all zeros except for the posi-
+tion corresponding to (cid:104)s,a,s(cid:48),z(cid:105) (where it has a one), and if
+we let Ia,b denote the Kronecker delta that indicates (is 1
+when) a = b, then we can deﬁne ¯D as ¯D(s(cid:48),χ(cid:48),z|s,χ, a) =
+Dχ(s(cid:48),z|s, a)I
+
+.
+
+χ(cid:48),χ+δs(cid:48)z
+sa
+
+Remember that these counts are not observed by the agent,
+since that would require observations of the state. The
+agent can only maintain belief over these count vectors.
+Still, when interacting with the environment, the ratio of
+the true—but unknown—count vectors will converge to co-
+incide with the true transition and observation probabili-
+ties in expectation. It is important to realize, however, that
+this convergence of count vector ratios does not directly
+imply learnability by the agent: even though the ratio of
+the count vectors of the true hidden state will converge, the
+agent’s belief over count vectors might not.
+
+BA-POMDPs are inﬁnite state POMDP models and thus
+extremely difﬁcult to solve. Ross et al. (2011) introduced
+a technique to convert such models to ﬁnite models, but
+these are still very large. Therefore, Ross et al. propose
+a simple lookahead planner to solve BA-POMDPs in an
+online manner. This approach approximates the expected
+values associated with each action at the belief by applying
+a lookahead search of depth d. This method will function
+as the comparison baseline in our experiments, as no other
+BA-POMDP solution methods have been proposed.
+
+3. BA-POMDPs via Sample-based Planning
+
+Powerful methods, such as POMCP (Silver & Veness,
+2010), have signiﬁcantly improved the scalability of
+POMDP solution methods. At the same time the most
+practical solution method for BA-POMDPs, the aforemen-
+tioned lookahead algorithm, is quite limited in dealing with
+larger problems. POMDP methods have rarely been ap-
+plied to BA-POMDPs (Amato & Oliehoek, 2015), and no
+systematic investigation of their performance has been con-
+ducted. In this paper, we aim to address this void, by ex-
+tending POMCP to BA-POMDPs, in an algorithm that we
+refer to as BA-POMCP. Moreover, we propose a number of
+novel adaptations to BA-POMCP that exploit the structure
+of the BA-POMDP. In this section, we ﬁrst lay out the basic
+adaptation of POMCP to BA-POMDPs and then describe
+the proposed modiﬁcations that improve its efﬁciency.
+
+Algorithm 1 BA-POMCP(¯b,num sims)
+
+//¯b is an augmented belief (e.g., particle ﬁlter)
+
+1:
+2: h0 ← ()
+3: for i ← 1 . . . num sims do
+4:
+5:
+6:
+7:
+8: end for
+9: a ← GREEDYACTIONSELECTION(h0)
+10: return a
+
+//First, we root sample an (augmented) state:
+¯s ← SAMPLE(¯b)
+¯s(cid:48) ← COPY(¯s)
+SIMULATE(¯s(cid:48), 0, h0)
+
+(cid:46) The empty history (i.e., now)
+
+(cid:46) reference to a particle
+
+Algorithm 2 SIMULATE(¯s, d, h)
+
+//Action selection uses statistics stored at node h:
+
+return 0
+
+1: if ISTERMINAL(h) || d == max depth then
+2:
+3: end if
+4:
+5: a ← UCBACTIONSELECTION(h)
+6: R ← R(¯s,a)
+7: z ← STEP(¯s, a)
+8: h(cid:48) ← (h,a,z)
+9: if h(cid:48) ∈ T ree then
+10:
+11: else
+12:
+13:
+14: end if
+15:
+//Update statistics:
+16: N (h,a) ← N (h,a) + 1
+17: Q(h,a) ← N (h,a)−1
+18: return r
+
+CONSTRUCTNODE(h(cid:48))
+r ← R + γ ROLLOUT(¯s(cid:48), d + 1, h(cid:48))
+
+r ← R + γ SIMULATE(¯s(cid:48), d + 1, h(cid:48))
+
+N (h,a) Q(h,a) + 1
+
+N (h,a) r
+
+//modiﬁes ¯s to sampled next state
+
+//Initializes statistics
+
+BA-POMCP BA-POMCP, just like POMCP, constructs
+a lookahead tree through simulated experiences (Algo-
+rithm 1).
+In BA-POMDPs, however, the dynamics of the
+system are inaccessible during simulations, and the belief
+is a probability distribution over augmented states. BA-
+POMCP, as a result, must sample augmented states from
+the belief ¯b, and use copies of those states (¯s = (cid:104)s,χ(cid:105)) for
+each simulation (Algorithm 2). We will refer to this as root
+sampling of the state (line 6). The copy is necessary, as
+otherwise the STEP function in Algorithm 2 would alter
+the belief ¯b. It is also expensive, for χ grows with the state,
+action and observation space, to |S|2 × |A| + |S| ∗ |A| ∗ |Ω|
+parameters. In practice, this operation becomes a bottle-
+neck to the runtime of BA-POMCP in larger domains.
+
+To apply POMCP on BA-POMDPs, where the dynamics
+are unknown, we modify the STEP function, proposing sev-
+eral variants. The most straightforward one, NAIVESTEP
+is employed in what we refer to as ‘BA-POMCP’. This
+method, shown in Algorithm 3, is similar to BA-MCP
+(Guez et al., 2012): essentially, it samples a dynamic model
+Dsa which speciﬁes probabilities Pr(s(cid:48),z|s,a) and subse-
+quently samples an actual next state and observation from
+that distribution. Note that the underlying states and obser-
+vations are all represented simply as an index, and hence
+the assignment on line 5 is not problematic. However, the
+
+Algorithm 3 BA-POMCP-STEP(¯s = (cid:104)s, χ(cid:105), a)
+
+Algorithm 5 E-BA-POMCP-STEP(¯s = (cid:104)s, χ(cid:105), a)
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+1: Dsa ∼ χsa
+2: (cid:104)s(cid:48),z(cid:105) ∼ Dsa
+3: //In place updating of ¯s = (cid:104)s, χ(cid:105)
+4: χs(cid:48)z
+sa + 1
+5: s ← s(cid:48)
+6: return z
+
+sa ← χs(cid:48)z
+
+1: //Sample root sampled function
+2: s(cid:48),z ∼ ˙Ds,a
+3: s ← s(cid:48)
+4: return z
+
+Algorithm 4 R-BA-POMCP-STEP (¯s = (cid:104)s, χ(cid:105), a)
+
+cost of the model sampling operation in line 1 is.
+
+Root Sampling of the Model BA-MCP (Guez et al.,
+2012) addresses the fully observable BRL problem by us-
+ing POMCP on an augmented state ¯s = (cid:104)s, T (cid:105), consisting
+of the observable state, as well as the hidden true transi-
+tion function T . Application of POMCP’s root sampling of
+state in this case leads to ‘root sampling of a transition func-
+tion’: Since the true transition model T does not change
+during the simulation, one is sampled at the root and used
+during the entire simulation. In the BA-POMCP case, root
+sampling of a state ¯s = (cid:104)s, χ(cid:105) does not lead to a same inter-
+pretation: no model, but counts are root sampled and they
+do change over time.
+
+We use this as inspiration to introduce a similar, but clearly
+different, (since this is not root sampling of state) technique
+called root sampling of the model (which we will refer to
+as just ‘root sampling’). The idea is simple: every time we
+root sample a state ¯s = (cid:104)s, χ(cid:105) ∼ ¯b at the beginning of a
+simulation (line 5 in Algorithm 1), we directly sample a
+˙D ∼ Dir(χ), which we will refer to as the root-sampled
+˙D and it is used for the rest of the simulation.
+model
+
+We denote this root sampling in BA-POMCP as ‘R-BA-
+POMCP’. The approach is formalized by R-BA-POMCP-
+STEP (Algorithm 4). Note that no count updates take place
+(cf. line 4 in Algorithm 3). This highlights an important
+advantage of this technique: since the counts are not used in
+the remainder of the simulation, the copy of counts (as part
+of line 6 of Algorithm 1) can be avoided altogether. Since
+this copy operation is costly, especially in larger domains,
+where the number of states, action and observations and
+the number of counts is large, this can lead to signiﬁcant
+savings. Finally, we point out that, similar to what Guez
+˙D can be constructed lazily: the part
+et al. (2012) propose,
+of the model ˙D is only sampled when it becomes necessary.
+
+The transition probabilities during R-BA-POMCP differ
+from those in BA-POMCP, and it is not obvious that a
+policy based on R-BA-POMCP maintains the same guar-
+antees. We prove in Section 4 that the solution of R-BA-
+POMCP in the limit converges to that of BA-POMCP.
+
+//Sample from Expected model
+
+1:
+2: s(cid:48),z ∼ Dχ(·, ·|s,a)
+3: χs(cid:48)z
+sa ← χs(cid:48)z
+4: s ← s(cid:48)
+5: return z
+
+sa + 1
+
+Expected models during simulations The second, com-
+plementary, adaptation modiﬁes the way models are sam-
+pled from the root-sampled counts in STEP. This version
+samples the transitions from the expected dynamics Dχ
+given in (1), rather than from a sampled dynamics func-
+tion D ∼ Dir(χ). The latter operation is relatively costly,
+while constructing Dχ is very cheap. In fact, this operation
+is so cheap, that it is more efﬁcient to (re-)calculate it on
+the ﬂy rather than to actually store Dχ. This approach is
+shown in Algorithm 5.
+
+Linking States Lastly, we propose a specialized data
+structure to encode the augmented BA-POMDP states. The
+structure aims to optimize for the complexity of the count-
+copy operation in line 6 of Algorithm 1 while allowing
+modiﬁcations to ¯s.
+
+The linking state sl is a tuple of a system state, a pointer
+(or link) to an unmodiﬁable set of counts χ and a set of up-
+dated counts (cid:104)s, l, δ(cid:105). l is a pointer to some set of counts χ,
+which remain unchanged during count updates (such as in
+the STEP function), and instead are stored in the set of up-
+dated counts, δ, as shown in Algorithm 6. The consequence
+is that the linking state copy-operation can safely perform
+a shallow copy of the counts χ, and must only consider δ,
+which is assumed to be much smaller.
+
+Linking states can be used during the (rejection-sample-
+based) belief update at the beginning of each real time step.
+While the root-sampled augmented states (including δ in
+linking states) are typically deleted at the end of each simu-
+lation during L-BA-POMCP, each belief update potentially
+increases the size of δ of each particle. Theoretically, the
+number of updated counts represented in δ increases and
+the size of δ may (eventually) grow similar to the size of χ.
+Therefore, at some point, it is necessary to construct a new
+χ(cid:48) that combines χ and δ (after which δ can be safely emp-
+tied). We deﬁne a new parameter for the maximum size of
+δ, λ, and condition to merge only if the size of δ exceeds λ.
+We noticed that, in practice, the number of merges is much
+smaller than the amount of copies in BA-POMCP. We also
+observed in our experiments that it is often the case that a
+speciﬁc (small) set of transitions are notably more popular
+than others and that δ grows quite slowly.
+
+4. Theoretical Analysis
+
+Here, we analyze the proposed root sampling of the dy-
+namics function and expected transition techniques, and
+
+Algorithm 6 L-BA-POMCP-STEP(sl = (cid:104)s, l, δ(cid:105), a)
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+1: D ∼ (cid:104)l, δ(cid:105)
+2: s(cid:48),z ∼ Ds,a
+3: s ← s(cid:48)
+4: δs(cid:48)z
+5: return z
+
+sa ← δs(cid:48)z
+
+sa + 1
+
+demonstrate they converge to the solution of the BA-
+POMDP. These main steps of this proof are similar to those
+in (Silver & Veness, 2010). We point out however, that the
+technicalities of proving the components are far more in-
+volved. Due to lack of space we will defer a detailed pre-
+sentation of all these to an extended version of this paper.
+
+the original POMCP
+The convergence guarantees of
+method are based on showing that, for an arbitrary roll-
+out policy π, the POMDP rollout distribution (the distribu-
+tion over full histories when performing root sampling of
+state) is equal to the derived MDP rollout distribution (the
+distribution over full histories when sampling in the belief
+MDP). Given that these are identical it is easy to see that
+the statistics maintained in the search tree will converge to
+the same number in expectation. As such, we will show a
+similar result here for expected transitions (‘expected’ for
+short) and root sampling of the dynamics function (‘root
+sampling’ below).
+
+We deﬁne H0 as the full history (also including states) at
+the root of simulation, Hd as the full history of a node at
+depth d in the simulation tree, and χ(Hd) as the counts
+induced by Hd. We then deﬁne the rollout distributions:
+expected-
+expected
+Deﬁnition 1. The
+transition BA-POMDP rollout distribution is the distribu-
+tion over full histories of a BA-POMDP, when performing
+Monte-Carlo simulations according to a policy π, while
+sampling expected transitions. It is given by:
+
+full-history
+
+P π(Hd+1) = Dχ(Hd)(sd+1,zd+1|as,sd)π(ad|hd)P π(Hd)
+(2)
+with P π(H0) = b0((cid:104)s0,χ0(cid:105)) the belief ‘now’ (at the root
+of the online planning).
+
+Note that there are two expectations in the above deﬁni-
+tion: ‘expected transitions’ mean that transitions for a his-
+tory Hd are sampled from Dχ(Hd). The other ‘expected’
+is the expectation of those samples (and it is easy to see
+that this will converge to the expected transition probabil-
+ities Dχ(Hd)(sd+1,zd+1|as,sd)). For root sampling of the
+dynamics model, this is less straightforward, and we give
+the deﬁnition in terms of the empirical distribution:
+
+Deﬁnition 2. The full-history root-sampling (RS) BA-
+POMDP rollout distribution is the distribution over full
+histories of a BA-POMDP, when performing Monte-Carlo
+simulations according to a policy π in combination with
+root sampling of the dynamics model D. This distribu-
+tion, for a particular stage d, is given by ˜P π
+K(Hd) (cid:44)
+
+(cid:80)Kd
+i=1
+
+I(cid:110)
+
+d
+
+Hd=H (i)
+
+(cid:111), where K is the number of simu-
+
+1
+Kd
+lations that comprise the empirical distribution, Kd is the
+number of simulations that reach depth d (not all simula-
+tions might be equally long), and H (i)
+is the history speci-
+d
+ﬁed by the i-th particle at stage d.
+
+Now, our main theoretical result is that these distributions
+are the same in the limit of the number of simulations:
+Theorem 3. The full-history RS-BA-POMDP rollout dis-
+tribution (Def. 2) converges in probability to the quantity
+of Def. 1:
+
+∀Hd
+
+˜P π
+Kd
+
+(Hd)
+
+p
+→ P π(Hd).
+
+(3)
+
+Sketch of Proof. (Due to length restrictions we omit some
+details) At the start of every simulation (we assume they
+start in some history H0), RS-BA-POMCP samples a dy-
+˙D. We consider probability ˜P π(Hd) that
+namics model
+RS-BA-POMCP generates a full history Hd at depth d.
+p
+Clearly ˜P π
+→ ˜P π(Hd), and this quantity can be
+Kd
+written out
+
+(Hd)
+
+˜P π(Hd) =
+
+(cid:90)
+
+˜P π (cid:16)
+
+Hd| ˙D
+
+(cid:17)
+
+Dir( ˙D| ˙χ)d ˙D = . . .
+
+=
+
+π(at−1|ht−0)
+
+d
+(cid:89)
+
+t=1
+
+(cid:89)
+
+(cid:104)s,a(cid:105)
+
+B(χsa(H0))
+B(χsa(Hd)
+
+(4)
+
+with B(α) = Γ(α1+...·+αk)
+Dirichlet distribution with parametric vector α.
+
+Γ(α1)·...·Γ(αk) the normalization term of a
+
+˜P π(Hd+1)
+
+For ease of notation we continue the proof for stage d + 1.
+p
+→ P π(Hd+1).
+I.e., we will show ∀Hd+1
+Note that a history Hd+1 = (Hd,ad,sd+1,zd+1), only dif-
+fers from Hd in that it has one extra transition for the
+(sd,ad,sd+1,zd+1) quadruple, implying that χ(Hd+1) only
+differs from χ(Hd) in the counts χsdad for sdad. Therefore
+(4) can be written in recursive form as
+
+˜P π(Hd+1) = ˜P π(Hd)π(ad|hd)
+
+B(χsdad (Hd))
+B(χsdad (Hd+1))
+
+(5)
+
+sdad
+
+(s(cid:48),z) χs(cid:48)z
+sdad
+
+(s(cid:48),z) χs(cid:48)z
+sdad
+
+Now, let us write T = (cid:80)
+(Hd) for the to-
+tal of the counts for sd,ad and N = χsd+1zd+1
+(Hd) for
+the number of counts for that such a transition was to
+(sd+1zd+1). Because Hd+1 only has 1 extra transition:
+(cid:80)
+(Hd+1) = T + 1 and since that transition
+was to (sd+1zd+1) the counts χsd+1zd+1
+(Hd+1) = N + 1.
+Now let us expand the rightmost term from (5):
+s(cid:48)z Γ(χs(cid:48)z
+sdad
+s(cid:48)z Γ(χs(cid:48)z
+sdad
+
+Γ(T )/ (cid:81)
+Γ(T + 1)/ (cid:81)
+
+sdad
+
+=
+
+(Hd))
+(Hd+1))
+Γ(T )
+T Γ(T )
+
+=
+
+N Γ(N )
+Γ(N )
+
+=
+
+N
+T
+
+=
+
+=
+
+Γ(T )
+Γ(T + 1)
+
+χsd+1zd+1
+sdad
+(s(cid:48),z) χs(cid:48)z
+sdad
+
+(cid:80)
+
+Γ(N + 1)
+Γ(N )
+(Hd)
+
+(Hd)
+
+(cid:44) Dχ(Hd)(sd+1,zd+1|as,sd)
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+where we used the fact that Γ(x + 1) = xΓ(x) (DeGroot,
+2004). Therefore ˜P π(Hd+1)
+
+= ˜P π(Hd)π(ad|hd)Dχ(Hd)(sd+1,zd+1|as,sd).
+
+(6)
+
+which is identical to (2) except for the difference in be-
+tween ˜P π(Hd) and P π(Hd). This can be resolved by for-
+ward induction with base step: ˜P π(H0) = P π(H0), and
+the induction step, i.e., show ˜P π(Hd+1) = P π(Hd+1)
+given ˜P π(Hd) = P π(Hd), directly following from (2)
+˜P π(Hd) =
+and (6). Therefore we can conclude that ∀d
+P π(Hd). Combining this with (4) proves the result.
+
+Corollary 4. Given suitably chosen exploration constant
+(e.g., c > Rmax
+1−γ ), BA-POMCP with root-sampling of dy-
+namics function converges in probability to the expected
+transition solution.
+
+Proof. Since Theorem 3 guarantees the distributions over
+histories are the same in the limit, they will converge to the
+same values maintained in the tree.
+
+Finally, we see that these are solutions for the BA-POMDP:
+
+Corollary 5. BA-POMCP with expected transitions sam-
+pling, as well as with root sampling of dynamics function
+converge to an (cid:15)-optimal value function of a BA-POMDP:
+V ((cid:104)s,χ(cid:105) ,h)
+
+(cid:15) ((cid:104)s,χ(cid:105) ,h), where (cid:15) = precision
+
+p
+→ V ∗
+
+.
+
+1−γ
+
+Proof. A BA-POMDP is a POMDP, so the analysis from
+Silver & Veness (2010) applies to the BA-POMDP, which
+means that the stated guarantees hold for BA-POMCP. The
+BA-POMDP is stated in terms of expected transitions, so
+the theoretical guarantees extend to the expected transition
+BA-POMCP, which in turn (4) implies that the theoretical
+guarantees extend to RS-BA-POMCP.
+
+Finally, we note that linking states does not affect they way
+that sampling is performed at all:
+
+Proposition 6. Linking states does not affect convergence
+of BA-POMCP.
+
+5. Empirical Evaluation
+
+Experimental setup In this section, we evaluate our
+algorithms on a small toy problem—the classical Tiger
+problem (Cassandra et al., 1994)—and test scalability on
+a larger domain—a partially observable extension to the
+Sysadmin problem (Guestrin et al., 2003), called Partially
+Observable Sysadmin (POSysadmin). These domains will
+show performance on a very small problem and a more
+complex one.
+
+Table 1: Default experiment parameters
+
+Parameter
+
+γ
+horizon (h)
+# particles in belief
+f (computer fail %)
+exploration const
+# episodes
+λ = # updated counts
+
+Value
+
+0.95
+20
+1000
+0.1
+h ∗ (max(R) − min(R))
+100
+30
+
+can be deterministically resolved by ‘rebooting’ the com-
+puter. The agent does not know the state of any com-
+puter, but can ‘ping’ any individual computer. At each
+step, any of the computers can ‘fail’ with some probabil-
+ity f . This leads to a state space of size 2n, an action space
+of 2n + 1, where the agent can ‘ping’ or ‘reboot’ any of
+the computers, or ‘do nothing’, and an observation space
+of 3 ({N U LL, f ailing, working}). The ‘ping’ action has
+a cost of 1 associated with it, while rebooting a computer
+costs 20 and switches the computer to ‘working’. Lastly,
+each ‘failing’ computer has a cost of 10 at each time step.
+
+We conducted an empirical evaluation with aimed for 3
+goals: The ﬁrst goal attempts to support the claims made
+in Section 4 and show that the adaptations to BA-POMCP
+do not decrease the quality of the resulting policies. Sec-
+ond, we investigate the runtime of those modiﬁcations to
+demonstrate their contribution to the efﬁciency of BA-
+POMCP. The last part contains experiments that directly
+compare the performance per action selection time with the
+baseline approach of Ross et al. (2011). For brevity, Table 1
+describes the default parameters for the following experi-
+ments. It will be explicitly mentioned whenever different
+values are used.
+
+BA-POMCP variants Section 4 proves that the solu-
+tions of the proposed modiﬁcations (root-sampling (R-),
+expected models (E-) and linking states (L-)) in the limit
+converge to the solution of BA-POMCP. Here, we investi-
+gate the transient behaviour of these methods in practice.
+These experiments describe a scenario where the agent
+starts of with a noisy prior belief.
+
+For the Tiger problem, the agent’s initial belief over the
+transition model is correct (i.e., counts that correspond to
+the true probabilities with high conﬁdence), but it provides
+an uncertain belief that underestimates the reliability of the
+observations. Speciﬁcally, it assigns 5 counts to hearing the
+correct observation and 3 counts to incorrect: the agent be-
+liefs it will hear correctly with a probability of 62.5%. The
+experiment is run for with 100, 1000 & 1000 simulations
+and all combinations of BA-POMCP adaptations.
+
+In POSysadmin, the agent acts as a system administra-
+tor with the task of maintaining a network of n comput-
+ers. Computers are either ‘working’ or ‘failing’, which
+
+Figure 1 plots the average return over 10000 runs for a
+learning period of 100 episodes for Tiger. The key obser-
+vation here is two-fold. First, all methods improve over
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+Figure 1: The average discounted return of BA-POMCP
+over 100 episodes on the Tiger problem for 100, 1000 &
+10000 simulations
+
+time through reﬁning their knowledge about D. Second,
+there are three distinct clusters of lines, each grouped by
+the number of simulations. This shows that all 3 variants
+(R/L/E-BA-POMCP) produce the same results and perfor-
+mance increases as the number of simulations increases.
+
+this
+
+investigation with the (3-computer)
+We repeat
+POSysadmin problems, where we allow 100 simulations
+per time step. In this conﬁguration, the network was fully
+connected with a failure probability f = 0.1. The (de-
+terministic) observation function is assumed known a pri-
+ori, but the prior over the transition function is noisy as
+follows: for each count c, we take the true probability of
+that transition (called p) and (randomly) either subtract or
+add .15. Note that we do not allow transitions with non-
+zero probability to fall below 0 by setting those counts to
+0.001. Each Dirichlet distribution is then normalized the
+counts to sum to 20. With 3 computers, this results in
+|S| × |A| = 8 × 7 = 56 noisy Dirichlet distributions of
+|S| = 8 parameters.
+
+Figure 2 shows how each method is able to increase its per-
+formance over time for POSysadmin. Again, the proposed
+modiﬁcations do not seem to negatively impact the solution
+quality.
+
+BA-POMCP scalability While the previous experiments
+indicate that the three adaptations produce equally good
+policies, they do not support any of the efﬁciency claims
+made in Section 3. Here, we compare the scalability of
+BA-POMCP on the POSysadmin problem. The proposed
+BA-POMCP variants are repeatedly run for 100 episodes
+on instances of POSysadmin of increasing network size (3
+to 10 computers), and we measure the average action se-
+lection time required for 1000 simulations. Note that the
+experiments are capped to allow up to 5 seconds per action
+selection, demonstrating the problem size that a speciﬁc
+
+Figure 2: The average discounted of 100 simulations of
+BA-POMCP per time episodes on the Sysadmin problem
+
+Figure 3: The average amount of seconds required for
+BA-POMCP given the the log of the amount of parameters
+(size) in the POSysadmin problem
+
+method can perform 1000 simulations in under 5 seconds.
+
+Figure 3 shows that BA-POMCP takes less than 0.5 sec-
+onds to perform 1000 simulations on an augmented state
+with approximately 150 parameters (3 computers), but is
+quickly unable to solve larger problems, as it requires more
+than 4 seconds to plan for a BA-POMDP with 200000
+counts. BA-POMCP versions with a single adaptation are
+able to solve the same problems twice as fast, while com-
+binations are able to solve much larger problems with up
+to 5 million parameters (10 computers). This implies not
+only that each individual adaptation is able to speed up BA-
+POMCP, but also that they complement one another.
+
+Performance The previous experiments ﬁrst show that
+the adaptations do not decrease the policy quality of BA-
+POMCP and second that the modiﬁed BA-POMCP meth-
+ods improve scalability. Here we put those thoughts to-
+gether and directly consider the performance relative to the
+action selection time. In these experiments we take the av-
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+Figure 4: The average return over 100 episodes per action
+selection time of on the Tiger problem
+
+erage return over multiple repeats of 100 episodes and plot
+them according to the time required to reach such perfor-
+mance. Here BA-POMCP is also directly compared to the
+baseline lookahead planner by Ross et al. (2011).
+
+First, we apply lookahead with depth 1&2 on the Tiger
+problem under the same circumstance as the ﬁrst experi-
+ment for increasing number of particles (25, 50, 100, 200
+& 500), which determines the runtime. The resulting av-
+erage episode return is plotted against the action selection
+time in Figure 4.
+
+The results show that most methods reach near optimal per-
+formance after 0.5 seconds action selection time. R-BA-
+POMCP and E-R-BA-POMCP perform worse than their
+counterparts BA-POMCP and E-BAPOMCP, which sug-
+gests that root sampling of the dynamics actually slows
+down BA-POMCP slightly. This phenomenon is due to the
+fact that the Tiger problem is so small, that the overhead of
+copying the augmented state and re-sampling of dynamics
+(during STEP function) that root sampling avoids is negli-
+gible and does overcome the additional complexity of root
+sampling. Also note that, even though the Tiger problem is
+so trivial that a lookahead of depth 1 sufﬁces to solve the
+POMDP problem optimally, BA-POMCP still consistently
+outperforms this baseline.
+
+The last experiment shows BA-POMCP and lookahead on
+the POSysadmin domain with 6 computers (which contains
+55744 counts) with a failure rate of 0.05. The agent was
+provided with an accurate belief χ.3 The results are shown
+in Figure 5.
+
+We were unable to get lookahead search to solve this prob-
+
+3We do not use the same prior as in the ﬁrst BA-POMCP vari-
+ants experiments since this gives uninformative results due to the
+fact that solution methods convergence to the optimal policy with
+respect to the (noisy) belief, which is different from the one with
+respect to the true model.
+
+Figure 5: The average return over 100 episodes per action
+selection time of BA-POMCP on the POSysadmin
+problem
+
+lem: the single instance which returned results in a reason-
+able amount of time (the single dot in the lower right cor-
+ner) was with a lookahead depth of 1 (which is insufﬁcient
+for this domain) with just 50 particles. BA-POMCP, how-
+ever, was able to perform up to 4096 simulations within
+5 seconds and reach an average return of approximately
+−198, utilizing a belief of 1000 particles. The best per-
+forming method, L-R-E-BA-POMCP requires less than 2
+seconds for similar results, and is able to reach approxi-
+mately −190 in less than 3 seconds. Finally, we see that
+each of the individual modiﬁcations outperform the origi-
+nal BA-POMCP, where Expected models seems to be the
+biggest contributor.
+
+6. Conclusion
+
+This paper provides a scalable framework for learning in
+Bayes-Adaptive POMDPs. BA-POMDPs give a princi-
+pled way of balancing exploration and exploiting in RL for
+POMDPs, but previous solution methods have not scaled
+to non-trivial domains. We extended the Monte Carlo Tree
+Search method POMCP to BA-POMDPs and described
+three modiﬁcations—Root Sampling, Linking States and
+Expected Dynamics models— to take advantage of BA-
+POMDP structure. We proved convergence of the tech-
+niques and demonstrated that our methods can generate
+high-quality solutions on signiﬁcantly larger problems than
+previous methods in the literature.
+
+Acknowledgements
+
+Research supported by NSF grant #1664923 and
+NWO Innovational Research Incentives Scheme Veni
+#639.021.336.
+
+Learning in POMDPs with Monte Carlo Tree Search
+
+Ross, St´ephane, Pineau, Joelle, Chaib-draa, Brahim, and
+Kreitmann, Pierre. A Bayesian approach for learning and
+planning in partially observable Markov decision pro-
+cesses. The Journal of Machine Learning Research, 12:
+1729–1770, 2011.
+
+Shani, Guy, Pineau, Joelle, and Kaplow, Robert. A survey
+of point-based POMDP solvers. Autonomous Agents and
+Multi-Agent Systems, pp. 1–51, 2012.
+
+Silver, David and Veness, Joel. Monte-Carlo planning in
+large POMDPs. In Advances in Neural Information Pro-
+cessing Systems, pp. 2164–2172, 2010.
+
+Sutton, Richard S. and Barto, Andrew G. Reinforcement
+
+Learning: An Introduction. MIT Press, 1998.
+
+Thrun, Sebastian. Monte Carlo POMDPs. In Advances in
+Neural Information Processing Systems, volume 12, pp.
+1064–1070, 1999.
+
+Vlassis, Nikos, Ghavamzadeh, Mohammad, Mannor, Shie,
+and Poupart, Pascal. Bayesian reinforcement learning. In
+Reinforcement Learning, pp. 359–386. Springer, 2012.
+
+Wyatt, Jeremy L. Exploration control in reinforcement
+learning using optimistic model selection. In ICML, pp.
+593–600, 2001.
+
+References
+
+Amato, Christopher and Oliehoek, Frans A. Scalable plan-
+ning and learning for multiagent POMDPs. In Proceed-
+ings of the Twenty-Ninth AAAI Conference on Artiﬁcial
+Intelligence, pp. 1995–2002, January 2015.
+
+Auer, Peter, Cesa-Bianchi, Nicolo, and Fischer, Paul.
+Finite-time analysis of the multiarmed bandit problem.
+Machine learning, 47(2-3):235–256, 2002.
+
+Cassandra, Anthony R, Kaelbling, Leslie Pack, and
+Littman, Michael L. Acting optimally in partially ob-
+In AAAI, volume 94, pp.
+servable stochastic domains.
+1023–1028, 1994.
+
+DeGroot, Morris H. Optimal Statistical Decisions. Wiley-
+
+Interscience, 2004.
+
+Duff, Michael O’Gordon. Optimal Learning: Computa-
+tional procedures for Bayes-adaptive Markov decision
+processes.
+PhD thesis, University of Massachusetts
+Amherst, 2002.
+
+Engel, Yaakov, Mannor, Shie, and Meir, Ron. Reinforce-
+ment learning with kernels and Gaussian processes. In
+Proceedings of the ICML’05 Workshop on Rich Repre-
+sentations for Reinforcement Learning, pp. 16–20. Cite-
+seer, 2005.
+
+Guestrin, Carlos, Koller, Daphne, Parr, Ronald, and
+Venkataraman, Shobha. Efﬁcient solution algorithms for
+factored MDPs. Journal of Artiﬁcial Intelligence Re-
+search, pp. 399–468, 2003.
+
+Guez, Arthur, Silver, David, and Dayan, Peter. Efﬁcient
+Bayes-adaptive reinforcement learning using sample-
+based search. In Advances in Neural Information Pro-
+cessing Systems, pp. 1025–1033, 2012.
+
+Kaelbling, Leslie Pack, Littman, Michael L, and Cassan-
+dra, Anthony R. Planning and acting in partially observ-
+able stochastic domains. Artiﬁcial intelligence, 101(1):
+99–134, 1998.
+
+Poupart, Pascal and Vlassis, Nikos A. Model-based
+Bayesian reinforcement learning in partially observable
+domains. In ISAIM, 2008.
+
+Ross, Stephane, Chaib-draa, Brahim, and Pineau, Joelle.
+Bayes-Adaptive POMDPs. In Advances in Neural Infor-
+mation Processing Systems, pp. 1225–1232, 2007.
+
+Ross, St´ephane, Pineau, Joelle, Paquet, S´ebastien, and
+Chaib-Draa, Brahim. Online planning algorithms for
+POMDPs. Journal of Artiﬁcial Intelligence Research,
+32:663–704, 2008.
+
+

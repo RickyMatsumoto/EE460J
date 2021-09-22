@@ -1,0 +1,1334 @@
+Toward Controlled Generation of Text
+
+Zhiting Hu 1 2 Zichao Yang 1 Xiaodan Liang 1 2 Ruslan Salakhutdinov 1 Eric P. Xing 1 2
+
+Abstract
+
+Generic generation and manipulation of text is
+challenging and has limited success compared
+to recent deep generative modeling in visual do-
+main. This paper aims at generating plausible
+text sentences, whose attributes are controlled by
+learning disentangled latent representations with
+designated semantics. We propose a new neu-
+ral generative model which combines variational
+auto-encoders (VAEs) and holistic attribute dis-
+criminators for effective imposition of semantic
+structures. The model can alternatively be seen
+as enhancing VAEs with the wake-sleep algo-
+rithm for leveraging fake samples as extra train-
+ing data. With differentiable approximation to
+discrete text samples, explicit constraints on in-
+dependent attribute controls, and efﬁcient col-
+laborative learning of generator and discrimina-
+tors, our model learns interpretable representa-
+tions from even only word annotations, and pro-
+duces short sentences with desired attributes of
+sentiment and tenses. Quantitative experiments
+using trained classiﬁers as evaluators validate the
+accuracy of sentence and attribute generation.
+
+1. Introduction
+
+There is a surge of research interest in deep generative
+models (Hu et al., 2017), such as Variational Autoencoders
+(VAEs) (Kingma & Welling, 2013), Generative Adver-
+sarial Nets (GANs) (Goodfellow et al., 2014), and auto-
+regressive models (van den Oord et al., 2016). Despite their
+impressive advances in visual domain, such as image gen-
+eration (Radford et al., 2015), learning interpretable image
+representations (Chen et al., 2016), and image editing (Zhu
+et al., 2016), applications to natural language generation
+have been relatively less studied. Even generating realis-
+tic sentences is challenging as the generative models are
+
+1Carnegie Mellon University 2Petuum, Inc.. Correspondence
+
+to: Zhiting Hu <zhitingh@cs.cmu.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+required to capture complex semantic structures underly-
+ing sentences. Previous work have been mostly limited
+to task-speciﬁc applications in supervised settings, includ-
+ing machine translation (Bahdanau et al., 2014) and image
+captioning (Vinyals et al., 2015). However, autoencoder
+frameworks (Sutskever et al., 2014) and recurrent neural
+network language models (Mikolov et al., 2010) do not ap-
+ply to generic text generation from arbitrary hidden rep-
+resentations due to the unsmoothness of effective hidden
+codes (Bowman et al., 2015). Very few recent attempts of
+using VAEs (Bowman et al., 2015; Tang et al., 2016) and
+GANs (Yu et al., 2017; Zhang et al., 2016) have been made
+to investigate generic text generation, while their generated
+text is largely randomized and uncontrollable.
+
+In this paper we tackle the problem of controlled generation
+of text. That is, we focus on generating realistic sentences,
+whose attributes can be controlled by learning disentangled
+latent representations. To enable the manipulation of gen-
+erated sentences, a few challenges need to be addressed.
+
+A ﬁrst challenge comes from the discrete nature of text
+samples. The resulting non-differentiability hinders the use
+of global discriminators that assess generated samples and
+back-propagate gradients to guide the optimization of gen-
+erators in a holistic manner, as shown to be highly effective
+in continuous image generation and representation model-
+ing (Chen et al., 2016; Larsen et al., 2016; Dosovitskiy &
+Brox, 2016). A number of recent approaches attempt to ad-
+dress the non-differentiability through policy learning (Yu
+et al., 2017) which tends to suffer from high variance dur-
+ing training, or continuous approximations (Zhang et al.,
+2016; Kusner & Hernndez-Lobato, 2016) where only pre-
+liminary qualitative results are presented. As an alterna-
+tive to the discriminator based learning, semi-supervised
+VAEs (Kingma et al., 2014) minimize element-wise recon-
+struction error on observed examples and are applicable to
+discrete visibles. This, however, loses the holistic view of
+full sentences and can be inferior especially for modeling
+global abstract attributes (e.g., sentiment).
+
+Another challenge for controllable generation relates to
+learning disentangled latent representations. Interpretabil-
+ity expects each part of the latent representation to govern
+and only focus on one aspect of the samples. Prior meth-
+ods (Chen et al., 2016; Odena et al., 2016) on structured
+representation learning lack explicit enforcement of the in-
+
+Toward Controlled Generation of Text
+
+dependence property on the full latent representation, and
+varying individual code may result in unexpected variation
+of other unspeciﬁed attributes besides the desired one.
+
+In this paper, we propose a new text generative model
+that addresses the above issues, permitting highly disen-
+tangled representations with designated semantic structure,
+and generating sentences with dynamically speciﬁed at-
+tributes. We base our generator on VAEs in combination
+with holistic discriminators of attributes for effective im-
+position of structures on the latent code. End-to-end opti-
+mization is enabled with differentiable softmax approxima-
+tion which anneals smoothly to discrete case and helps fast
+convergence. The probabilistic encoder of VAE also func-
+tions as an additional discriminator to capture variations
+of implicitly modeled aspects, and guide the generator to
+avoid entanglement during attribute code manipulation.
+
+Our model can be interpreted as enhancing VAEs with
+an extended wake-sleep procedure (Hinton et al., 1995),
+where the sleep phase enables incorporation of generated
+samples for learning both the generator and discriminators
+in an alternating manner. The generator and the discrim-
+inators effectively provide feedback signals to each other,
+resulting in an efﬁcient mutual bootstrapping framework.
+We show a little supervision (e.g., 100s of annotated sen-
+tences) is sufﬁcient to learn structured representations.
+
+Quantitative experiments demonstrate the efﬁcacy of our
+method. We apply our model to generate sentences with
+controlled sentiment and tenses. Our method improves
+over previous generative models on the accuracy of gen-
+erating speciﬁed attributes as well as performing classiﬁca-
+tion using generated samples. We show our method learns
+highly disentangled representations from only word-level
+labels, and produces plausible short sentences.
+
+2. Related Work
+
+Remarkable progress has been made in deep generative
+modeling. Hu et al. (2017) provide a uniﬁed view of a
+diverse set of deep generative methods. Variational Au-
+toencoders (VAEs) (Kingma & Welling, 2013) consist of
+encoder and generator networks which encode a data exam-
+ple to a latent representation and generate samples from the
+latent space, respectively. The model is trained by maxi-
+mizing a variational lower bound on the data log-likelihood
+under the generative model. A KL divergence loss is mini-
+mized to match the posterior of the latent code with a prior,
+which enables every latent code from the prior to decode
+into a plausible sentence. Without the KL regularization,
+VAEs degenerate to autoencoders and become inapplicable
+for the generic generation. The vanilla VAEs are incom-
+patible with discrete latents as they hinder differentiable
+parameterization for learning the encoder. Wake-sleep al-
+
+gorithm (Hinton et al., 1995) introduced for learning deep
+directed graphical models shares similarity with VAEs by
+also combining an inference network with the generator.
+The wake phase updates the generator with samples gener-
+ated from the inference network on training data, while the
+sleep phase updates the inference network based on sam-
+ples from the generator. Our method combines VAEs with
+an extended wake-sleep in which the sleep procedure up-
+dates both the generator and inference network (discrimi-
+nators), enabling collaborative semi-supervised learning.
+
+Besides reconstruction in raw data space, discriminator-
+based metric provides a different way for generator learn-
+ing, i.e., the discriminator assesses generated samples and
+feedbacks learning signals. For instance, GANs (Good-
+fellow et al., 2014) use a discriminator to feedback the
+probability of a sample being recognized as a real exam-
+ple. Larsen et al. (2016) combine VAEs with GANs for
+enhanced image generation. Dosovitskiy & Brox (2016);
+Taigman et al. (2017) use discriminators to measure high-
+level perceptual similarity. Applying discriminators to text
+generation is hard due to the non-differentiability of dis-
+crete samples (Yu et al., 2017; Zhang et al., 2016; Kusner
+& Hernndez-Lobato, 2016). Bowman et al. (2015); Tang
+et al. (2016); Yang et al. (2017) instead use VAEs without
+discriminators. All these text generation methods do not
+learn disentangled latent representations, resulting in ran-
+domized and uncontrollable samples.
+In contrast, disen-
+tangled generation in visual domain has made impressive
+progress. E.g., InfoGAN (Chen et al., 2016), which resem-
+bles the extended sleep procedure of our joint VAE/wake-
+sleep algorithm, disentangles latent representation in an un-
+supervised manner. The semantic of each dimension is
+observed after training rather than designated by users in
+a controlled way. Siddharth et al. (2017); Kingma et al.
+(2014) base on VAEs and obtain disentangled image rep-
+resentations with semi-supervised learning. Zhou & Neu-
+big (2017) extend semi-supervised VAEs for text transduc-
+tion. In contrast, our model combines VAEs with discrim-
+inators which provide a better, holistic metric compared to
+element-wise reconstruction. Moreover, most of these ap-
+proaches have only focused on the disentanglement of the
+structured part of latent representations, while ignoring po-
+tential dependence of the structured code with attributes not
+explicitly encoded. We address this by introducing an in-
+dependency constraint, and show its effectiveness for im-
+proved interpretability.
+
+3. Controlled Generation of Text
+
+Our model aims to generate plausible sentences condi-
+tioned on representation vectors which are endowed with
+designated semantic structures. For instance, to control
+sentence sentiment, our model allocates one dimension of
+
+Toward Controlled Generation of Text
+
+the latent representation to encode “positive” and “nega-
+tive” semantics, and generates samples with desired sen-
+timent by simply specifying a particular code. Beneﬁting
+from the disentangled structure, each such code is able to
+capture a salient attribute and is independent with other fea-
+tures. Our deep text generative model possesses several
+merits compared to prior work, as it 1) facilitates effective
+imposition of latent code semantics by enabling global dis-
+criminators to guide the discrete text generator learning;
+2) improves model interpretability by explicitly enforcing
+the constraints on independent attribute controls; 3) per-
+mits efﬁcient semi-supervised learning and bootstrapping
+by synthesizing variational auto-encoders with a tailored
+wake-sleep approach. We ﬁrst present the overview of our
+3.2).
+framework (
+
+3.1), then describe the model in detail (
+§
+
+§
+
+3.1. Model Overview
+
+§
+
+We build our framework starting from variational auto-
+encoders (
+2) which have been used for text genera-
+tion (Bowman et al., 2015), where sentence ˆx is generated
+conditioned on latent code z. The vanilla VAE employs an
+unstructured vector z in which the dimensions are entan-
+gled. To model and control the attributes of interest in an
+interpretable way, we augment the unstructured variables z
+with a set of structured variables c each of which targets a
+salient and independent semantic feature of sentences.
+
+We want our sentence generator to condition on the com-
+bined vector (z, c), and generate samples that fulﬁll the
+attributes as speciﬁed in the structured code c. Conditional
+generation in the context of VAEs (e.g., semi-supervised
+VAEs (Kingma et al., 2014)) is often learned by recon-
+structing observed examples given their feature code. How-
+ever, as demonstrated in visual domain, compared to com-
+puting element-wise distances in the data space, computing
+distances in the feature space allows invariance to distract-
+ing transformations and provides a better, holistic metric.
+Thus, for each attribute code in c, we set up an individ-
+ual discriminator to measure how well the generated sam-
+ples match the desired attributes, and drive the generator to
+produce improved results. The difﬁculty of applying dis-
+criminators in our context is that text samples are discrete
+and non-differentiable, which breaks down gradient prop-
+agation from the discriminators to the generator. We use
+a continuous approximation based on softmax with a de-
+creasing temperature, which anneals to the discrete case as
+training proceeds. This simple yet effective approach en-
+joys low variance and fast convergence.
+
+Intuitively, having an interpretable representation would
+imply that each structured code in c can independently
+control its target feature, without entangling with other at-
+tributes, especially those not explicitly modeled. We en-
+courage the independency by enforcing those irrelevant at-
+
+#
+
+Encoder
+
+!
+
+"
+
+Generator
+
+#$
+
+Discriminators
+
+Figure 1. The generative model, where z is unstructured latent
+code and c is structured code targeting sentence attributes to con-
+trol. Blue dashed arrows denote the proposed independency con-
+straint (section 3.2 for details), and red arrows denote gradient
+propagation enabled by the differentiable approximation.
+
+tributes to be completely captured in the unstructured code
+z and thus be separated from c that we will manipulate.
+To this end, we reuse the VAE encoder as an additional
+discriminator for recognizing the attributes modeled in z,
+and train the generator so that these unstructured attributes
+can be recovered from the generated samples. As a result,
+varying different attribute codes will keep the unstructured
+attributes invariant as long as z is unchanged.
+
+Figure 1 shows the overall model structure. Our complete
+model incorporates VAEs and attribute discriminators, in
+which the VAE component trains the generator to recon-
+struct real sentences for generating plausible text, while the
+discriminators enforce the generator to produce attributes
+coherent with the conditioned code. The attribute discrim-
+inators are learned to ﬁt labeled examples to entail desig-
+nated semantics, as well as trained to explain samples from
+the generator. That is, the generator and the discrimina-
+tors form a pair of collaborative learners and provide feed-
+back signals to each other. The collaborative optimization
+resembles wake-sleep algorithm. We show the combined
+VAE/wake-sleep learning enables a highly efﬁcient semi-
+supervised framework, which requires only a little supervi-
+sion to obtain interpretable representation and generation.
+
+3.2. Model Structure
+
+We now describe our model in detail, by presenting the
+learning of generator and discriminators, respectively.
+
+Generator Learning
+The generator G is an LSTM-RNN for generating token
+sequence ˆx =
+ˆx1, . . . , ˆxT }
+conditioned on the latent code
+{
+(z, c), which depicts a generative distribution:
+
+ˆx
+
+G(z, c) = pG( ˆx
+
+z, c)
+
+⇠
+
+=
+
+ˆx<t, z, c),
+
+|
+p(ˆxt
+
+|
+
+t
+
+Y
+where ˆx<t indicates the tokens preceding ˆxt. The gener-
+ation thus involves a sequence of discrete decision mak-
+ing which samples a token from a multinomial distribution
+parametrized using softmax function at each time step t:
+
+(1)
+
+(2)
+
+ˆxt
+
+softmax(ot/⌧ ),
+
+⇠
+
+Toward Controlled Generation of Text
+
+where ot is the logit vector as the inputs to the softmax
+function, and ⌧> 0 is the temperature normally set to 1.
+
+The unstructured part z of the representation is modeled
+as continuous variables with standard Gaussian prior p(z),
+while the structured code c can contain both continu-
+ous and discrete variables to encode different attributes
+(e.g., sentiment categories, formality) with appropriate
+prior p(c). Given observation x, the base VAE includes
+a conditional probabilistic encoder E to infer the latents z:
+
+z
+
+E(x) = qE(z
+
+x).
+
+⇠
+
+|
+
+(3)
+
+Let ✓G and ✓E denote the parameters of the generator G
+and the encoder E, respectively. The VAE is then opti-
+mized to minimize the reconstruction error of observed real
+sentences, and at the same time regularize the encoder to be
+close to the prior p(z):
+LVAE(✓G, ✓E; x) =
+
+KL(qE(z
+
+x)
+
+(4)
+
+p(z))
+k
+|
+x) [log pG(x
+x)qD (c
+
+|
+) is the KL-divergence; and qD(c
+
+where KL(
+x) is the
+conditional distribution deﬁned by the discriminator D for
+each structured variable in c:
+
+·k·
+
+|
+
+|
+
+|
+
+ 
++ EqE (z
+
+z, c)] ,
+
+D(x) = qD(c
+
+x).
+
+|
+
+(5)
+
+Here, for notational simplicity, we assume only one struc-
+tured variable and thus one discriminator,
+though our
+model speciﬁcation can straightforwardly be applied to
+many attributes. The distribution over (z, c) factors into
+qE and qD as we are learning disentangled representa-
+tions. Note that here the discriminator D and code c are
+not learned with the VAE loss, but instead optimized with
+the objectives described shortly. Besides the reconstruc-
+tion loss which drives the generator to produce realistic
+sentences, the discriminator provides extra learning signals
+which enforce the generator to produce coherent attribute
+that matches the structured code in c. However, as it is
+impossible to propagate gradients from the discriminator
+through the discrete samples, we resort to a deterministic
+continuous approximation. The approximation replaces the
+sampled token ˆxt (represented as a one-hot vector) at each
+step with the probability vector in Eq.(2) which is differ-
+entiable w.r.t the generator’s parameters. The probability
+vector is used as the output at the current step and the input
+to the next step along the sequence of decision making. The
+G⌧ (z, c), is
+resulting “soft” generated sentence, denoted as
+fed into the discriminator1 to measure the ﬁtness to the tar-
+get attribute, leading to the following loss for improving G:
+
+e
+
+LAttr,c(✓G) = Ep(z)p(c)
+
+|
+
+log qD(c
+
+G⌧ (z, c))
+
+.
+
+(6)
+
+h
+1The probability vector thus functions to average over the
+word embedding matrix to obtain a “soft” word embedding at
+each step.
+
+e
+
+i
+
+!
+
+The temperature ⌧ (Eq.2) is set to ⌧
+0 as training pro-
+ceeds, yielding increasingly peaked distributions that ﬁ-
+nally emulate discrete case. The simple deterministic ap-
+proximation effectively leads to reduced variance and fast
+convergence during training, which enables efﬁcient learn-
+ing of the conditional generator. The diversity of genera-
+tion results is guaranteed since we use the approximation
+only for attribute modeling and the base sentence genera-
+tion is learned through VAEs.
+
+With the objective in Eq.(6), each structured attribute of
+generated sentences is controlled through the correspond-
+ing code in c and is independent with other variables in the
+latent representation. However, it is still possible that other
+attributes not explicitly modeled may also entangle with the
+code in c, and thus varying a dimension of c can yield unex-
+pected variation of these attributes we are not interested in.
+To address this, we introduce the independency constraint
+which separates these attributes with c by enforcing them
+to be fully captured by the unstructured part z. Therefore,
+besides the attributes explicitly encoded in c, we also train
+the generator so that other non-explicit attributes can be
+correctly recognized from the generated samples and match
+the unstructured code z. Instead of building a new discrim-
+inator, we reuse the variational encoder E which serves
+precisely to infer the latents z in the base VAE. The loss
+is in the same form as with Eq.(6) except replacing the dis-
+criminator conditional qD with the encoder conditional qE:
+
+LAttr,z(✓G) = Ep(z)p(c)
+
+|
+
+log qE(z
+
+G⌧ (z, c))
+
+.
+
+(7)
+
+h
+Note that, as the discriminator in Eq.(6), the encoder now
+performs inference over generated samples from the prior,
+as opposed to observed examples as in VAEs.
+
+e
+
+i
+
+Combining Eqs.(4)-(7) we obtain the generator objective:
+
+min✓G L
+
+G =
+
+LVAE +  c
+
+LAttr,c +  z
+
+LAttr,z,
+
+(8)
+
+where  c and  z are balancing parameters. The varia-
+tional encoder is trained by minimizing the VAE loss, i.e.,
+min✓E LVAE.
+Discriminator Learning
+The discriminator D is trained to accurately infer the sen-
+tence attribute and evaluate the error of recovering the de-
+sired feature as speciﬁed in the latent code. For instance,
+for categorical attribute, the discriminator can be formu-
+lated as a sentence classiﬁer; while for continuous target
+a probabilistic regressor can be used. The discriminator
+is learned in a different way compared to the VAE encoder,
+since the target attributes can be discrete which are not sup-
+ported in the VAE framework. Moreover, in contrast to the
+unstructured code z which is learned in an unsupervised
+manner, the structured variable c uses labeled examples to
+
+Toward Controlled Generation of Text
+
+Algorithm 1 Controlled Generation of Text
+Input: A large corpus of unlabeled sentences
+X
+}
+{
+(xL, cL)
+L =
+A few sentence attribute labels
+}
+{
+Parameters:  c,  z,  u,  – balancing parameters
+
+=
+
+X
+
+x
+
+1: Initialize the base VAE by minimizing Eq.(4) on
+
+with c
+
+X
+
+sampled from prior p(c)
+
+2: repeat
+3:
+4:
+
+Train the discriminator D by Eq.(11)
+Train the generator G and the encoder E by Eq.(8) and
+minimizing Eq.(4), respectively.
+
+5: until convergence
+Output: Sentence generator G conditioned on disentangled rep-
+
+resentation (z, c)
+
+entail designated semantics. We derive an efﬁcient semi-
+supervised learning method for the discriminator.
+
+Formally, let ✓D denote the parameters of the discrimina-
+tor. To learn speciﬁed semantic meaning, we use a set of
+labeled examples
+to train the discrimi-
+}
+nator D with the following objective:
+
+(xL, cL)
+{
+
+XL =
+
+s(✓D) = EXL [log qD(cL
+
+xL)] .
+
+|
+
+L
+
+(9)
+
+Besides, the conditional generator G is also capable of syn-
+thesizing (noisy) sentence-attribute pairs ( ˆx, c) which can
+be used to augment training data for semi-supervised learn-
+ing. To alleviate the issue of noisy data and ensure ro-
+bustness of model optimization, we incorporate a minimum
+entropy regularization term (Grandvalet et al., 2004; Reed
+et al., 2014). The resulting objective is thus:
+
+u(✓D) = EpG( ˆx
+
+L
+
+z,c)p(z)p(c)
+
+|
+
+log qD(c
+
+ˆx) +  
+
+(qD(c0
+
+ˆx))
+
+|
+
+H
+
+|
+
+,
+(10)
+⇤
+
+⇥
+
+|
+
+H
+
+(qD(c0
+
+ˆx)) is the empirical Shannon entropy of
+where
+distribution qD evaluated on the generated sentence ˆx; and
+  is the balancing parameter.
+Intuitively, the minimum
+entropy regularization encourages the model to have high
+conﬁdence in predicting labels.
+
+The joint training objective of the discriminator using both
+labeled examples and synthesized samples is then given as:
+
+min✓D L
+
+D =
+
+s +  u
+
+u,
+
+L
+
+L
+
+(11)
+
+where  u is the balancing parameter.
+
+Summarization and Discussion
+We have derived our model and its learning procedure. The
+generator is ﬁrst initialized by training the base VAE on a
+large corpus of unlabeled sentences, through the objective
+of minimizing Eq.(4) with the latent code c at this time
+sampled from the prior distribution p(c). The full model is
+then trained by alternating the optimization of the generator
+and the discriminator, as summarized in Algorithm 1.
+
+,2(0|.)
+
+,3(1|.)
+
+'			)
+
+,-(.|0, 1)
+
+" ∼ +
+
+4(0)
+
+4(1)
+
+'			)
+
+,3(1|.)
+
+,-(.|0, 1)
+
+	"# ∼ %(', ))
+
+Figure 2. Left: The VAE and wake procedure, corresponding to
+Eq.(4). Right: The sleep procedure, corresponding to Eqs.(6)-
+(7) and (10). Black arrows denote inference and generation; red
+dashed arrows denote gradient propagation. The two steps in the
+sleep procedure, i.e., optimizing the discriminator and the gener-
+ator, respectively, are performed in an alternating manner.
+
+Our model can be viewed as combining the VAE frame-
+work with an extended wake-sleep method, as illustrated in
+Figure 2. Speciﬁcally, in Eq.(10), samples are produced
+by the generator and used as targets for maximum like-
+lihood training of the discriminator. This resembles the
+sleep phase of wake-sleep. Eqs.(6)-(7) further leverage the
+generated samples to improve the generator. We can see
+the above together as an extended sleep procedure based
+on “dream” samples obtained by ancestral sampling from
+the generative network. On the other hand, Eq.(4) samples
+c from the discriminator distribution qD(c
+x) on observa-
+tion x, to form a target for training the generator, which
+corresponds to the wake phase. The effective combination
+enables discrete latent code, holistic discriminator metrics,
+and efﬁcient mutual bootstrapping.
+
+|
+
+Training of the discriminators need supervised data to im-
+pose designated semantics. Discriminators for different at-
+tributes can be trained independently on separate labeled
+sets. That is, the model does not require a sentence to be
+annotated with all attributes, but instead needs only inde-
+pendent labeled data for each individual attribute. More-
+over, as the labeled data are used only for learning attribute
+semantics instead of direct sentence generation, we are al-
+lowed to extend the data scope beyond labeled sentences
+to, e.g., labeled words or phrases. As shown in the experi-
+ments (section 4), our method is able to effectively lift the
+word level knowledge to sentence level and generate con-
+vincing sentences. Finally, with the augmented unsuper-
+vised training in the sleep phrase, we show a little supervi-
+sion is sufﬁcient for learning structured representations.
+
+4. Experiments
+
+We apply our model to generate short sentences (length
+
+15) with controlled sentiment and tense. Quantitative ex-
+periments using trained classiﬁers as evaluators show our
+model gives improved generation accuracy. Disentangled
+representation is learned with a few labels or only word
+annotations. We also validate the effect of the proposed
+independency constraint for interpretable generation.
+
+Toward Controlled Generation of Text
+
+Datasets
+Sentence corpus. We use a large IMDB text corpus (Diao
+et al., 2014) for training the generative models. This is
+a collection of 350K movie reviews. We select sentences
+containing at most 15 words, and replace infrequent words
+with the token “<unk>”. The resulting dataset contains
+around 1.4M sentences with the vocabulary size of 16K.
+
+
+
+Sentiment. To control the sentiment (“positive” or “neg-
+ative”) of generated sentences, we test on the following la-
+beled sentiment data: (1) Stanford Sentiment Treebank-2
+(SST-full) (Socher et al., 2013) consists of 6920/872/1821
+movie review sentences with binary sentiment annotations
+in the train/dev/test sets, respectively. We use the 2837
+15, and evalu-
+training examples with sentence length
+ate classiﬁcation accuracy on the original test set. (2) SST-
+small. To study the size of labeled data required in the
+semi-supervised learning for accurate attribute control, we
+sample a small subset from SST-full, containing only 250
+labeled sentences for training. (3) Lexicon. We also in-
+vestigate the effectiveness of our model in terms of using
+word-level labels for sentence-level control. The lexicon
+from (Wilson et al., 2005) contains 2700 words with senti-
+ment labels. We use the lexicon for training by treating the
+words as sentences, and evaluate on the SST-full test set.
+(4) IMDB. We collect a dataset from the IMDB corpus
+by randomly selecting positive and negative movie reviews.
+The dataset has 5K/1K/10K sentences in train/dev/test.
+
+Tense. The second attribute is the tense of the main verb
+in a sentence. Though no corpus with sentence tense an-
+notations is readily available, our method is able to learn
+from only labeled words and generate desired sentences.
+We compile from the TimeBank (timeml.org) dataset and
+obtain a lexicon of 5250 words and phrases labeled with
+. The lexicon mainly
+one of
+}
+consists of verbs in different tenses (e.g., “was”, “will be”)
+as well as time expressions (e.g., “in the future”).
+
+“past”, “present”, “future”
+{
+
+Parameter Setting
+The generator and encoder are set as single-layer LSTM
+RNNs with input/hidden dimension of 300 and max sample
+length of 15. Discriminators are set as ConvNets. Detailed
+conﬁgurations are in the supplements. To avoid vanishingly
+small KL term in the VAE module (Eq.4) (Bowman et al.,
+2015), we use a KL term weight linearly annealing from 0
+to 1 during training. Balancing parameters are set to  c =
+ z =  u = 0.1, and   is selected on the dev sets. At test
+time sentences are generated with Eq.(1).
+
+4.1. Accuracy of Generated Attributes
+
+We quantitatively measure sentence attribute control by
+evaluating the accuracy of generating designated sentiment,
+and the effect of using samples for training classiﬁers.
+We compare with semi-supervised VAE (S-VAE) (Kingma
+
+Model
+
+S-VAE
+Ours
+
+Dataset
+
+SST-full
+
+SST-small
+
+Lexicon
+
+0.822
+0.851
+
+0.679
+0.707
+
+0.660
+0.701
+
+S-VAE
+Table 1. Sentiment accuracy of generated sentences.
+(Kingma et al., 2014) and our model are trained on the three sen-
+timent datasets and generate 30K sentences, respectively.
+
+et al., 2014), one of the few existing deep models capable
+of conditional text generation. S-VAE learns to reconstruct
+observed sentences given attribute code, and no discrimi-
+nators are used. See
+
+2 and 3.1 for more discussions.
+
+§
+
+We use a state-of-the-art sentiment classiﬁer (Hu et al.,
+2016a) which achieves 90% accuracy on the SST test set, to
+automatically evaluate the sentiment generation accuracy.
+Speciﬁcally, we generate sentences given sentiment code c,
+and use the pre-trained sentiment classiﬁer to assign senti-
+ment labels to the generated sentences. The accuracy is
+calculated as the percentage of the predictions that match
+the sentiment code c. Table 1 shows the results on 30K
+sentences by the two models which are trained with SST-
+full, SST-small, and Lexicon, respectively. We see that our
+method consistently outperforms S-VAE on all datasets. In
+particular, trained with only 250 labeled examples in SST-
+small, our model achieves reasonable generation accuracy,
+demonstrating the ability of learning disentangled repre-
+sentations with very little supervision. More importantly,
+given only word-level annotations in Lexicon, our model
+successfully transfers the knowledge to sentence level and
+generates desired sentiments reasonably well. Compared to
+our method that drives learning by directly assessing gen-
+erated sentences, S-VAE attempts to capture sentiment se-
+mantics only by reconstructing labeled words, which is less
+efﬁcient and gives inferior performance.
+
+We next use the generated samples to augment the sen-
+timent datasets and train sentiment classiﬁers. While
+not aiming to build best-performing classiﬁers on these
+datasets, the classiﬁcation accuracy serves as an auxiliary
+measure of the sentence generation quality. That is, higher-
+quality sentences with more accurate sentiment attribute
+can predictably help yield stronger sentiment classiﬁers.
+Figure 3 shows the accuracy of classiﬁers trained on the
+four datasets with different augmentations. “Std” is a Con-
+vNet trained on the standard original datasets, with the
+same network structure as with the sentiment discriminator
+in our model. “H-reg” additionally imposes the minimum
+entropy regularization on the generated sentences. “Ours”
+incorporates the minimum entropy regularization and the
+sentiment attribute code c of the generated sentences, as
+in Eq.(10). S-VAE uses the same protocol as our method
+to augment with the data generated by the S-VAE model.
+Comparison in Figure 3 shows that our method consistently
+gives the best performance on four datasets. For instance,
+
+Toward Controlled Generation of Text
+
+with speciﬁed tense attributes. Table 4 further shows gen-
+erated sentences with varying code z in different settings
+of structured attribute factors. We obtain samples that are
+diverse in content while consistent in sentiment and tense.
+
+We also occasionally observed failure cases as in Table 5,
+such as implausible sentences, unexpected variations of
+irrelevant attributes, and inaccurate attribute generations.
+Improved modeling is expected such as using dilated con-
+volutions as decoder, and decoding with beam search, etc.
+Better quantitative evaluations are also desired.
+
+5. Discussions
+
+We have proposed a deep generative model that learns in-
+terpretable latent representations and generates sentences
+with speciﬁed attributes. We obtained meaningful genera-
+tion with restricted sentence length, and improved accuracy
+on sentiment and tense attributes. In the future we would
+like to improve the modeling and training as above, and
+extend to generate longer sentences/paragraphs and control
+more attributes with ﬁne-grained structures.
+
+Our approach combines VAEs with attribute discrim-
+inators and imposes explicit
+independency constraints
+on attribute controls, enabling disentangled latent code.
+Semi-supervised learning within the joint VAE/wake-sleep
+framework is effective with little or incomplete supervi-
+sion. Hu et al. (2017) develop a uniﬁed view of a diverse
+set of deep generative paradigms, including GANs, VAEs,
+and wake-sleep algorithm. Our model can be alternatively
+motivated under the view as enhancing VAEs with the ex-
+tended sleep phase and by leveraging generated samples.
+
+Interpretability of the latent representations not only allows
+dynamic control of generated attributes, but also provides
+an interface that connects the end-to-end neural model with
+conventional structured methods. For instance, we can en-
+code structured constraints (e.g., logic rules or probabilistic
+structured models) on the interpretable latent code, to in-
+corporate prior knowledge or human intentions (Hu et al.,
+2016a;b); or plug the disentangled generation model into
+dialog systems to generate natural language responses from
+structured dialog states (Young et al., 2013).
+
+Though we have focused on the generation capacity of our
+model, the proposed collaborative semi-supervised learn-
+ing framework also helps improve the discriminators by
+generating labeled samples for data augmentation (e.g., see
+Figure 3). More generally, for any discriminative task, we
+can build a conditional generative model to synthesize ad-
+ditional labeled data. The accurate attribute generation of
+our approach can offer larger performance gains compared
+to previous generative methods.
+
+Acknowledgments This research is supported by NSF
+IIS1447676, ONR N000141410684, and ONR N000141712463.
+
+Figure 3. Test-set accuracy of classiﬁers trained on four sentiment
+datasets augmented with different methods (see text for details).
+The ﬁrst three datasets use the SST-full test set for evaluation.
+
+on Lexicon, our approach achieves 0.733 accuracy, com-
+pared to 0.701 of “Std”. The improvement of “H-Reg”
+over “Std” shows positive effect of the minimum entropy
+regularization on generated sentences. Further incorporat-
+ing the conditioned sentiment code of the generated sam-
+ples, as in “Ours” and “S-VAE”, provides additional perfor-
+mance gains, indicating the advantages of conditional gen-
+eration for automatic creation of labeled data. Consistent
+with the above experiment, our model outperforms S-VAE.
+
+4.2. Disentangled Representation
+
+We study the interpretability of generation and the explicit
+independency constraint (Eq.7) for disentangled control.
+
+Table 2 compares the samples generated by models with
+and without the constraint term, respectively.
+In the left
+column where the constraint applies, each pair of sen-
+tences, conditioned on different sentiment codes, are highly
+relevant in terms of, e.g., subject, tone, and wording which
+are not explicitly modeled in the structured code c while in-
+stead implicitly encoded in the unstructured code z. Vary-
+ing the sentiment code precisely changes the sentiment of
+the sentences (and paraphrases slightly to ensure ﬂuency),
+while keeping other aspects unchanged.
+In contrast, the
+results in the right column, where the independency con-
+straint is unactivated, show that varying the sentiment code
+not only changes the polarity of samples, but can also
+change other aspects unexpected to control, making the
+generation results less interpretable and predictable.
+
+We demonstrate the power of learned disentangled repre-
+sentation by varying one attribute variable at a time. Table 3
+shows the generation results. We see that each attribute
+variable in our model successfully controls its correspond-
+ing attribute, and is disentangled with other attribute code.
+The right column of the table shows meaningful variation
+of sentence tense as the tense code varies. Note that the
+semantic of tense is learned only from a lexicon without
+complete sentence examples. Our model successfully cap-
+tures the key ingredients (e.g., verb “was” for past tense and
+“will be” for future tense) and combines with the knowl-
+edge of well-formed sentences to generate realistic samples
+
+Toward Controlled Generation of Text
+
+w/ independency constraint
+
+the ﬁlm is strictly routine !
+the ﬁlm is full of imagination .
+
+w/o independency constraint
+
+the acting is bad .
+the movie is so much fun .
+
+after watching this movie , i felt that disappointed .
+after seeing this ﬁlm , i ’m a fan .
+
+none of this is very original .
+highly recommended viewing for its courage , and ideas .
+
+the acting is uniformly bad either .
+the performances are uniformly good .
+
+too bland
+highly watchable
+
+this is just awful .
+this is pure genius .
+
+i can analyze this movie without more than three words .
+i highly recommend this ﬁlm to anyone who appreciates music .
+
+Table 2. Samples from models with or without independency constraint on attribute control (i.e., Eq.7). Each pair of sentences are
+generated with sentiment code set to “negative” and “positive”, respectively, while ﬁxing the unstructured code z. The SST-full dataset
+is used for learning the sentiment representation.
+
+Varying the code of tense
+
+i thought the movie was too bland and too much
+i guess the movie is too bland and too much
+i guess the ﬁlm will have been too bland
+
+this was one of the outstanding thrillers of the last decade
+this is one of the outstanding thrillers of the all time
+this will be one of the great thrillers of the all time
+
+Table 3. Each triple of sentences is generated by varying the tense code while ﬁxing the sentiment code and z.
+
+Varying the unstructured code z
+
+(“negative”, “past”)
+the acting was also kind of hit or miss .
+i wish i ’d never seen it
+by the end i was so lost i just did n’t care anymore
+
+(“positive”, “past”)
+his acting was impeccable
+this was spectacular , i saw it in theaters twice
+it was a lot of fun
+
+(“negative”, “present”)
+the movie is very close to the show in plot and characters
+the era seems impossibly distant
+i think by the end of the ﬁlm , it has confused itself
+
+(“positive”, “present”)
+this is one of the better dance ﬁlms
+i ’ve always been a big fan of the smart dialogue .
+i recommend you go see this, especially if you hurt
+
+(“negative”, “future”)
+i wo n’t watch the movie
+and that would be devastating !
+i wo n’t get into the story because there really is n’t one
+
+(“positive”, “future”)
+i hope he ’ll make more movies in the future
+i will deﬁnitely be buying this on dvd
+you will be thinking about it afterwards, i promise you
+
+Table 4. Samples by varying the unstructured code z given sentiment (“positive”/“negative”) and tense (“past”/“present”/“future”) code.
+
+Failure cases
+
+the plot is not so original
+the plot weaves us into <unk>
+
+it does n’t get any better the other dance movies
+it does n’t reach them , but the stories look
+
+he is a horrible actor ’s most part
+he ’s a better actor than a standup
+
+i just think so
+i just think !
+
+Table 5. Failure cases when varying sentiment code with other codes ﬁxed.
+
+Toward Controlled Generation of Text
+
+References
+
+Bahdanau, Dzmitry, Cho, Kyunghyun, and Bengio,
+Yoshua. Neural machine translation by jointly learning
+to align and translate. arXiv preprint arXiv:1409.0473,
+2014.
+
+Bowman, Samuel R, Vilnis, Luke, Vinyals, Oriol, Dai, An-
+drew M, Jozefowicz, Rafal, and Bengio, Samy. Gener-
+ating sentences from a continuous space. arXiv preprint
+arXiv:1511.06349, 2015.
+
+Chen, Xi, Duan, Yan, Houthooft, Rein, Schulman, John,
+Sutskever, Ilya, and Abbeel, Pieter.
+InfoGAN: Inter-
+pretable representation learning by information max-
+In Advances in
+imizing generative adversarial nets.
+Neural Information Processing Systems, pp. 2172–2180,
+2016.
+
+Diao, Qiming, Qiu, Minghui, Wu, Chao-Yuan, Smola,
+Alexander J, Jiang, Jing, and Wang, Chong. Jointly mod-
+eling aspects, ratings and sentiments for movie recom-
+mendation (JMARS). In Proceedings of the 20th ACM
+SIGKDD international conference on Knowledge dis-
+covery and data mining, pp. 193–202. ACM, 2014.
+
+Dosovitskiy, Alexey and Brox, Thomas. Generating im-
+ages with perceptual similarity metrics based on deep
+networks. arXiv preprint arXiv:1602.02644, 2016.
+
+Goodfellow, Ian, Pouget-Abadie, Jean, Mirza, Mehdi, Xu,
+Bing, Warde-Farley, David, Ozair, Sherjil, Courville,
+Aaron, and Bengio, Yoshua. Generative adversarial nets.
+In Advances in Neural Information Processing Systems,
+pp. 2672–2680, 2014.
+
+Grandvalet, Yves, Bengio, Yoshua, et al. Semi-supervised
+learning by entropy minimization. In NIPS, volume 17,
+pp. 529–536, 2004.
+
+Hinton, Geoffrey E, Dayan, Peter, Frey, Brendan J, and
+Neal, Radford M. The “wake-sleep” algorithm for un-
+supervised neural networks. Science, 268(5214):1158,
+1995.
+
+Hu, Zhiting, Ma, Xuezhe, Liu, Zhengzhong, Hovy, Eduard,
+and Xing, Eric. Harnessing deep neural networks with
+logic rules. In ACL, 2016a.
+
+Hu, Zhiting, Yang, Zichao, Salakhutdinov, Ruslan, and
+Xing, Eric P. Deep neural networks with massive learned
+knowledge. In EMNLP, 2016b.
+
+Hu, Zhiting, Yang, Zichao, Salakhutdinov, Ruslan, and
+Xing, Eric P. On unifying deep generative models. arXiv
+preprint arXiv:1706.00550, 2017.
+
+Kingma, Diederik P and Welling, Max. Auto-encoding
+arXiv preprint arXiv:1312.6114,
+
+variational Bayes.
+2013.
+
+Kingma, Diederik P, Mohamed, Shakir, Rezende,
+Danilo Jimenez, and Welling, Max. Semi-supervised
+In Advances in
+learning with deep generative models.
+Neural Information Processing Systems, pp. 3581–3589,
+2014.
+
+Kusner, Matt and Hernndez-Lobato, Jos. GANs for se-
+quences of discrete elements with the Gumbel-softmax
+distribution. arXiv preprint arXiv:1611.04051, 2016.
+
+Larsen, Anders Boesen Lindbo, Sønderby, Søren Kaae,
+and Winther, Ole. Autoencoding beyond pixels using
+a learned similarity metric. In ICML, 2016.
+
+Mikolov, Tomas, Karaﬁ´at, Martin, Burget, Lukas, Cer-
+nock`y, Jan, and Khudanpur, Sanjeev. Recurrent neu-
+ral network based language model. In Interspeech, vol-
+ume 2, pp. 3, 2010.
+
+Odena, Augustus, Olah, Christopher, and Shlens, Jonathon.
+Conditional image synthesis with auxiliary classiﬁer
+GANs. arXiv preprint arXiv:1610.09585, 2016.
+
+Radford, Alec, Metz, Luke, and Chintala, Soumith. Un-
+supervised representation learning with deep convolu-
+tional generative adversarial networks. arXiv preprint
+arXiv:1511.06434, 2015.
+
+Reed, Scott, Lee, Honglak, Anguelov, Dragomir, Szegedy,
+Christian, Erhan, Dumitru, and Rabinovich, Andrew.
+Training deep neural networks on noisy labels with boot-
+strapping. arXiv preprint arXiv:1412.6596, 2014.
+
+Siddharth, N., Paige, Brooks, Desmaison, Alban, Meent,
+Jan-Willem van de, Wood, Frank, Goodman, Noah D.,
+Kohli, Pushmeet, and Torr, Philip H.S. Learning disen-
+tangled representations in deep generative models. 2017.
+
+Socher, Richard, Perelygin, Alex, Wu, Jean Y, Chuang,
+Jason, Manning, Christopher D, Ng, Andrew Y, Potts,
+Christopher, et al. Recursive deep models for semantic
+compositionality over a sentiment treebank. In Proceed-
+ings of the conference on empirical methods in natural
+language processing (EMNLP), volume 1631, pp. 1642.
+Citeseer, 2013.
+
+Sutskever, Ilya, Vinyals, Oriol, and Le, Quoc V.
+
+Se-
+quence to sequence learning with neural networks.
+In
+Advances in neural information processing systems, pp.
+3104–3112, 2014.
+
+Taigman, Yaniv, Polyak, Adam, and Wolf, Lior. Unsuper-
+vised cross-domain image generation. In ICLR, 2017.
+
+Tang, Shuai, Jin, Hailin, Fang, Chen, and Wang, Zhaowen.
+Unsupervised sentence representation learning with ad-
+versarial auto-encoder. 2016.
+
+Toward Controlled Generation of Text
+
+van
+
+den Oord, Aaron, Kalchbrenner, Nal,
+
+and
+Kavukcuoglu, Koray. Pixel recurrent neural networks.
+In ICML, 2016.
+
+Vinyals, Oriol, Toshev, Alexander, Bengio, Samy, and Er-
+han, Dumitru. Show and tell: A neural image caption
+In Proceedings of the IEEE Conference on
+generator.
+Computer Vision and Pattern Recognition, pp. 3156–
+3164, 2015.
+
+Wilson, Theresa, Wiebe, Janyce, and Hoffmann, Paul. Rec-
+ognizing contextual polarity in phrase-level sentiment
+In Proceedings of the conference on human
+analysis.
+language technology and empirical methods in natu-
+ral language processing, pp. 347–354. Association for
+Computational Linguistics, 2005.
+
+Yang, Zichao, Hu, Zhiting, Salakhutdinov, Ruslan, and
+Berg-Kirkpatrick, Taylor. Improved variational autoen-
+coders for text modeling using dilated convolutions. In
+ICML, 2017.
+
+Young, Steve, Gaˇsi´c, Milica, Thomson, Blaise, and
+Williams, Jason D. POMDP-based statistical spoken di-
+alog systems: A review. Proceedings of the IEEE, 101
+(5):1160–1179, 2013.
+
+Yu, Lantao, Zhang, Weinan, Wang, Jun, and Yu, Yong. Se-
+qGAN: sequence generative adversarial nets with policy
+gradient. In AAAI, 2017.
+
+Zhang, Yizhe, Gan, Zhe, and Carin, Lawrence. Generat-
+ing text via adversarial training. In NIPS Workshop on
+Adversarial Training, 2016.
+
+Zhou, Chunting and Neubig, Graham. Multi-space varia-
+tional encoder-decoders for semi-supervised labeled se-
+quence transduction. In ACL, 2017.
+
+Zhu, Jun-Yan, Kr¨ahenb¨uhl, Philipp, Shechtman, Eli, and
+Efros, Alexei A. Generative visual manipulation on the
+In European Conference on
+natural image manifold.
+Computer Vision, pp. 597–613. Springer, 2016.
+
+

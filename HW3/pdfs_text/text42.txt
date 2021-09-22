@@ -1,0 +1,1912 @@
+Generalization and Equilibrium in Generative Adversarial Nets
+(GANs)
+
+Sanjeev Arora∗
+
+Rong Ge †
+
+Yingyu Liang‡
+
+Tengyu Ma§
+
+Yi Zhang¶
+
+Abstract
+
+Generalization is deﬁned training of generative adversarial network (GAN), and it’s shown
+that generalization is not guaranteed for the popular distances between distributions such as
+Jensen-Shannon or Wasserstein. In particular, training may appear to be successful and yet the
+trained distribution may be arbitrarily far from the target distribution in standard metrics. It
+is shown that generalization does occur for a much weaker metric we call neural net distance. It
+is also shown that an approximate pure equilibrium exists in the discriminator/generator game
+for a natural training objective (Wasserstein) when generator capacity and training set sizes are
+moderate.
+
+Finally, the above theoretical ideas suggest a new training protocol, mix+gan, which can be
+combined with any existing method, and empirically is found to improves some existing GAN
+protocols out of the box.
+
+1
+
+Introduction
+
+Generative Adversarial Networks (GANs) [Goodfellow et al., 2014] have become one of the dominant
+methods for ﬁtting generative models to complicated real-life data, and even found unusual uses
+such as designing good cryptographic primitives [Abadi and Andersen, 2016]. See a survey by
+Goodfellow [2016]. Various novel architectures and training objectives were introduced to address
+perceived shortcomings of the original idea, leading to more stable training and more realistic
+generative models in practice (see Odena et al. [2016], Huang et al. [2017], Radford et al. [2016],
+Tolstikhin et al. [2017], Salimans et al. [2016], Jiwoong Im et al. [2016], Durugkar et al. [2016] and
+the reference therein).
+
+The goal is to train a generator deep net whose input is a standard Gaussian, and whose output
+is a sample from some distribution D on (cid:60)d, which has to be close to some real-life distribution
+Dreal (which could be, say, real-life images represented using raw pixels). The training uses samples
+from Dreal and trains the generator net together with a discriminator deep net that is trained to
+maximise its ability to distinguish between samples from Dreal and D. So long as the discriminator
+is successful at this task with nonzero probability, its success can be used to generate a feedback
+(using backpropagation) to the generator, thus improving its distribution D. Training is continued
+
+∗Princeton University, Computer Science Department, email: arora@cs.princeton.edu
+†Duke University, Computer Science Department, email: rongge@cs.duke.edu
+‡Princeton University, Computer Science Department, email: yingyul@cs.princeton.edu
+§Princeton University, Computer Science Department, email: tengyu@cs.princeton.edu
+¶Princeton University, Computer Science Department, email: yz7@cs.princeton.edu
+
+1
+
+Figure 1: Probability density Dreal with many peaks and valleys
+
+until the generator wins, meaning that the discriminator can do no better than random guessing
+when deciding whether or not a particular sample came from D or Dreal. This basic iterative
+framework has been tried with many training objectives; see Section 2. But it has been unclear
+what to conclude when the generator wins this game: is D close to Dreal in some metric? One seems
+to need some extension of generalization theory that would imply such a conclusion. The hurdle is
+that distribution Dreal could be complicated and may have many peaks and valleys; see Figure 1.
+The number of peaks (modes) may even be exponential in d. (Recall the curse of dimensionality:
+in d dimensions there are exp(d) directions whose pairwise angle exceeds say π/3, and each could
+be the site of a peak.) Whereas the number of samples from Dreal (and from D for that matter)
+used in the training is a lot fewer, and thus may not reﬂect most of the peaks and valleys of Dreal.
+A standard analysis due to [Goodfellow et al., 2014] shows that when the discriminator capacity
+(= number of parameters) and number of samples is “large enough”, then a win by the generator
+implies that D is very close to Dreal (see Section 2). But the discussion in the previous paragraph
+raises the possibility that “suﬃciently large” in this analysis may need to be exp(d).
+
+A second theoretical issue that remains open is whether an equilibrium always exists in this game
+between generator and discriminator. Just as a zero gradient is a necessary condition for standard
+optimization to halt, the corresponding necessary condition in a two-player game is an equilibrium.
+Conceivably absence of an equilibrium could cause some of the instability often observed while
+training GANs. (Recently Arjovsky et al. [2017] suggest that empirically, using their Wasserstein
+objective reduces instability, but we still lack proof of existence of an equilibrium.) Standard game
+theory is of no help here because we need a so-called pure equilibrium, and simple counter-examples
+such as rock/paper/scissors show that it doesn’t exist in general1.
+
+1.1 Our contributions
+
+We formally deﬁne generalization for GANs in Section 3 and show that for previously studied
+notions of distance between distributions, generalization is not guaranteed (Lemma 1). In fact we
+show that the generator can win even when D and Dreal are arbitrarily far in any standard metric.
+However, we can guarantee some weaker notion of generalization by introducing a new metric
+on distributions, the neural net distance. We show that generalization does happen with moderate
+number of training examples (i.e., when the generator wins, the two distributions must be close in
+neural net distance).
+
+To explore the existence of equilibria we turn in Section 4 to inﬁnite mixtures of generator deep
+
+1Such counterexamples are easily turned into toy GAN scenarios with generator and discriminator having ﬁnite
+
+capacity, and the game lacks a pure equilibrium. See Section B.
+
+2
+
+nets. These are clearly vastly more expressive than a single generator net: e.g., a standard result in
+bayesian nonparametrics says that every probability density is closely approximable by an inﬁnite
+mixture of Gaussians [Ghosh et al., 2003]. Thus unsurprisingly, an inﬁnite mixture should win the
+game. We then prove rigorously that even a ﬁnite mixture of fairly reasonable size can closely
+approximate the performance of the inﬁnite mixture (Theorem 4.2).
+
+This insight also allows us to show for a natural GAN setting with Wasserstein objective there
+exists an approximate equilibrium that is pure. (Roughly speaking, an approximate equilibrium is
+one in which neither of the players can gain much by deviating from their strategies.)
+
+This existence proof for an approximate equilibrium unfortunately involves a quadratic blowup
+in the “size” of the generator (which is still better than the naive exponential blowup one might
+expect). Improving this is left for future theoretical work. But we introduce a heuristic approxima-
+tion to the mixture idea to introduce a new framework for training that we call mix+gan. It can
+be added on top of any existing GAN training procedure, including those that use divergence ob-
+jectives. Experiments (reported in Section 6) show that for several previous techniques, mix+gan
+stabilizes the training, and in some cases improves the performance.
+
+2 Preliminaries
+
+Notations: Throughout the paper we use d for the dimension of samples, and p for the number
+of parameters in the generator/discriminator. In Section 3 we use m for number of samples.
+
+Generators and discriminators: Let {Gu, u ∈ U} (U ⊂ Rp) denote the class of generators,
+where Gu is a function — which is often a neural network in practice — from R(cid:96) → Rd index
+by u that denotes the parameters of the generators. Here U denotes the possible ranges of the
+parameters and without loss of generality we assume U is a subset of the unit ball2. The generator
+Gu deﬁnes a distribution DGu as follows: we generate h from (cid:96)-dimensional spherical Gaussian
+distribution and then apply Gu on h and generate a sample x = Gu(h) of the distribution DGu.
+We drop the subscript u in DGu when it’s clear from context.
+
+Let {Dv, v ∈ V} denotes the class of discriminators, where Dv is function from Rd to [0, 1] and v
+is the parameters of Dv. The value Dv(x) is usually interpreted as the probability that the sample
+x comes from the real distribution Dreal (as opposed to the generated distribution DG).
+
+In most neural network architectures, if the parameters (weights, biases) change by a small
+amount, this makes only a small diﬀerence in the output. We capture this phenomena by assuming
+Gu and Dv are L-Lipschitz with respect to their parameters. For the generator this means using
+similar parameters and the same input, we can generate similar examples. Thus for all u, u(cid:48) ∈ U and
+any input h, we have (cid:107)Gu(h) − Gu(cid:48)(h)(cid:107) ≤ L(cid:107)u − u(cid:48)(cid:107). For the discriminator the Liptschitz condition
+implies that for two discriminators using similar parameters, the output on every sample is quite
+similar. More precisely, Similarly for all v, v(cid:48) ∈ V and any sample x, we have |Dv(x) − Dv(cid:48)(x)| ≤
+L(cid:107)v − v(cid:48)(cid:107). Notice, this is distinct from the assumption (which we will also sometimes make) that
+functions Gu, Dv are Lipschitz: that focuses on the change in function value when we change x,
+while keeping u, v ﬁxed3.
+
+2otherwise we can scale the parameter properly by changing the parameterization.
+3Both Lipschitz parameters can be exponential in the number of layers in the neural net, however our Theorems
+
+only depend on the log of the Lipschitz parameters
+
+3
+
+Objective functions. The standard GAN training [Goodfellow et al., 2014] consists of training
+parameters u, v so as to optimize an objective function:
+
+(1)
+
+(2)
+
+min
+u∈U
+
+max
+v∈V
+
+E
+x∼Dreal
+
+[log Dv(x)] + E
+
+[log(1 − Dv(x))].
+
+x∼DGu
+
+Intuitively, this says that the discriminator Dv should give high values Dv(x) to the real samples
+and low values Dv(x) to the generated examples. The log function was suggested because it’s
+interpretation as the likelihood, and it enjoys a nice information-theoretic interpretation described
+below as well. However, in practice it can cause problems since log x → −∞ as x → 0. The
+objective still makes intuitive sense if we replace log by any monotone function φ : [0, 1] → R,
+which yields the objective:
+
+min
+u∈U
+
+max
+v∈V
+
+E
+x∼Dreal
+
+[φ(Dv(x))] + E
+
+[φ(1 − Dv(x))].
+
+x∼DGu
+
+We call function φ the measuring function. It should be concave so that when Dreal and DG are
+the same distribution, the best strategy for the discriminator is just to output 1/2 and the optimal
+value is 2φ(1/2). In later proofs, we will require φ to be bounded and Lipschitz. Indeed, in practice
+training often uses φ(x) = log(δ + (1 − δ)x) (which takes values in [log δ, 0] and is 1/δ-Lipschitz)
+and the recently proposed Wasserstein GAN [Arjovsky et al., 2017] objective uses φ(x) = x.
+
+(cid:80)m
+
+Training with ﬁnite samples The objective function (2) assumes we have inﬁnite examples
+from Dreal to estimate the value Ex∼Dreal[φ(Dv(x))]. With ﬁnite training examples x1, . . . , xm ∼
+i=1[φ(Dv(xi))] to estimate the quantity Ex∼Dreal[φ(Dv(x))]. We
+Dreal, in the training, one uses 1
+m
+call the distribution that gives 1/m probability to each of the xi’s the empirical version of the real
+distribution. Similarly, one can use a empirical version to estimate Ex∼DGu
+Standard interpretation via distance between distributions.4 Towards analyzing GANs,
+researchers have assumed the access to inﬁnite number of examples and that the discriminator is
+chosen optimally within some large class of functions that contain all possible neural nets. This
+often allows computing analytically the optimal discriminator and therefore removing the maximum
+operation from the objective (2), which leads to some interpretation of how and in what sense the
+resulting distribution DG is close to the true distribution Dreal.
+
+[φ(1 − Dv(x))].
+
+Preal(x)
+
+Using the original objective function (1), then the optimal choice among all the possible func-
+tions from Rd → (0, 1) is D(x) =
+Preal(x)+PG(x) , as shown in Goodfellow et al. [2014]. Here Preal(x)
+is the density of x in the real distribution, and PG(x) is the density of x in the distribution gener-
+ated by generator G. Using this discriminator — though it’s computationally infeasible to obtain
+it — one can show that the minimization problem over the generator correspond to minimizing the
+Jensen-Shannon (JS) divergence between the true distribution Dreal and the generative distribution
+DG. Recall that for two distributions µ and ν, the JS divergence is deﬁned by
+
+dJS(µ, ν) =
+
+(KL(µ(cid:107)
+
+) + KL(ν(cid:107)
+
+1
+2
+
+µ + ν
+2
+
+µ + ν
+2
+
+)).
+
+Other measuring functions φ and choice of discriminator class leads to diﬀerent distance func-
+tion between distribution other than JS divergence. Notably, Arjovsky et al. [2017] shows that
+
+4Distance between distributions is ofter referred to as statistical distance. However, since statistical distance
+sometimes refers to the (cid:96)1 (TV) distance between the distributions, we avoid using this term in this paper as much
+as possible.
+
+4
+
+when φ(t) = t, and the discriminator is chosen among all 1-Lipschitz functions, maxing out the
+discriminator, the generator is attempting to minimize the Wasserstein distance between Dreal and
+Du(h). Recall that Wasserstein distance between µ and ν is deﬁned as
+
+dW (µ, ν) =
+
+sup
+D is 1-Lipschitz
+
+E
+x∼µ
+
+[D(x)] − E
+x∼ν
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:12)
+(cid:12)
+[D(x)]
+(cid:12)
+(cid:12)
+
+.
+
+(3)
+
+3 Generalization theory for GANs
+
+This interpretation of GANs in terms of minimizing distance (such as JS divergence and Wasserstein
+distance) between the real distribution and the generated distribution relies on two crucial assump-
+tions: (i) very expressive class of discriminators such as the set of all bounded discriminator or the
+set of all 1-Lipschitz discriminators, and (ii) very large number of examples to compute/estimate
+the objective (1) or (2). Neither of these happens in practice, and we will show next that they do
+aﬀect the generalization ability. a notion that we will introduce in Section 3.1.
+
+One of the messages of our analysis will be that disciminators with bounded capacity perform
+very diﬀerently than the ideal (strong) discriminators analysed in Section 2. First, in Section 3.2
+we show that the JS divergence and Wasserstein distance that resulted from strong discriminators
+(such as bounded or 1-Lipschitz functions) don’t generalize, whereas in Section 3.3 we show that
+discriminator class with bounded number of parameters (such as neural nets) do generalize with
+relatively modest number of examples.
+
+Moreover, even though discriminator with capacity p has good generalization power, there might
+be a potential diversity issue with weak discriminators. We will see (Corollary 3.2 in Section 3.4)
+that a discriminator of capacity p cannot distinguish too well between Dreal and the empirical
+distribution ˆDreal when the number of samples m exceeds (p log p)/(cid:15)2. This holds even we have
+access to inﬁnite number of examples from Dreal. So this is not a question of “insuﬃcient training
+samples,”nor the usual worry of “overﬁtting.”One way to view this result is that a bounded capacity
+discriminator is unable to force the generator to produce a distribution with very high diversity.
+We note that similar results have been shown before in study of pseudorandomness [Trevisan et al.,
+2009] and model criticism [Gretton et al., 2012].
+
+3.1 Deﬁnition of generalization
+Let x1, . . . , xm be the training examples, and let ˆDreal denote the uniform distribution over x1, . . . , xm.
+Similarly, let Gu(h1), . . . , Gu(hr) be a set of r examples from the generated distribution DG. In the
+training of GANs, one uses E
+[φ(Dv(x))] to approximate the quantity Ex∼Dreal[φ(Dv(x))].
+Inspired by the observation that GANs and its variants attempt to minimize some distance (or
+divergence) d(·, ·) between Dreal and DG using ﬁnite samples, we deﬁne the generalization of GANs
+as follows:
+
+x∼ ˆDreal
+
+We say a divergence or distance d(·, ·) between distribution generalizes with m training examples
+
+and error ε if for the learnt distribution DG, the following hold with high probability,
+
+(cid:12)
+(cid:12)
+(cid:12)d(Dreal, DG) − d( ˆDreal, ˆDG)
+(cid:12)
+(cid:12)
+(cid:12) ≤ ε
+
+(4)
+
+where ˆDreal is an empirical version of the true distribution (with m samples) and ˆDG is an empirical
+version of the generated distribution with polynomial number of samples.
+
+5
+
+In words, generalization in GANs means that the population distance between the true and
+generated distribution is close to the empirical distance between the empirical distributions. Our
+target is to make the former distance small, whereas the latter one is what we can access and
+minimize in practice. We note that for generated distribution we only require polynomial number
+of examples because the training algorithm can generate polynomial number of samples by its own
+in polynomial time.
+
+We also note that we intentionally didn’t specify the quantiﬁers in front of equation (4). The
+strongest version of generalization — the counterpart of uniform convergence in supervised learning
+— would be that for all distribution DG equation (4) holds. A weaker version that takes the
+generator into account is that for all DG that is realizable by the family of generators equation (4)
+holds. One of the weakest versions would only concern about the learnt distribution DG. In the
+rest of the paper, we mostly use the ﬁrst version unless otherwise speciﬁed.
+
+3.2 JS divergence and Wasserstein distance don’t generalize
+
+As a warm-up, we show that JS divergence and Wasserstein distance don’t generalize with any
+polynomial number of examples because the the population distance (divergence) is not reﬂected
+by the empirical distance.
+
+Lemma 1. Let µ be uniform Gaussian distributions N (0, 1
+with m examples. Then we have
+
+d I) and ˆµ be an empirical versions of µ
+
+dJS(µ, ˆµ) = log 2
+dW (µ, ˆµ) ≥ 1.1
+
+There are two consequences of Lemma 1. First, consider the situation where Dreal = DG = µ,
+then we have that dW (Dreal, DG) = 0 but dW ( ˆDreal, ˆDG) > 1 as long as we have polynomial number
+of examples. This violates the generalization deﬁnition equation (4).
+
+Second, consider the case Dreal = µ and DG = ˆDreal = ˆµ, that is, DG memorizes all of the
+training examples in ˆDreal. In this case, since DG is a discrete distribution with ﬁnite supports,
+with enough (polynomial) examples, in ˆDG, eﬀectively we also have that ˆDG ≈ DG. Therefore, we
+have that dW ( ˆDreal, ˆDG) ≈ 0 whereas dW (Dreal, DG) > 1. In other words, with any polynomial
+number of examples, it’s possible to overﬁt to the training examples using Wasserstein distance.
+The same argument also applies to JS divergence. See Theorem A.1 for a formal proof.
+
+We also remark that the result in Lemma 1 holds even if we apply add small noise to the
+d I) with
+log m for some small enough constant c, then dJS(µ, ˜µ) > log 2 − 1/m. See Appendix A.1
+
+distribution ˆµ. That is, if we obtain ˜µ by convolving ˆµ with a Gaussian distribution N (0, σ2
+σ < c/
+for details.
+
+√
+
+We remark that this result doesn’t conﬂict with the experiment of Arjovsky et al. [2017] because
+empirically in the experiment, the paper uses a surrogate for the Wasserstein distance, which, as
+we will show later, indeed generalizes.
+
+Finally, we note that generalization may not be the only thing that we should concern about
+in the setting of GANs (as opposed to the supervised learning setting). See Section 3.4 for more
+discussion.
+
+6
+
+3.3 Generalization bounds for neural net distance
+
+Which distance measure between Dreal and DG the GAN objective is truely minimizing? Can we
+analyze the generalization performance with ﬁnite samples? Towards answering these questions we
+consider the following general distance measure that uniﬁes the distance that uniﬁes JS divergence,
+Wasserstein distance, and the neural net distance that we deﬁne later in this section.
+
+Deﬁnition 1 (F-distance). Let F be a class of functions from Rd to [0, 1] and φ be a concave
+measuring function. Then the F-divergence with respect to φ between two distribution µ and ν
+supported on Rd is deﬁned as
+
+dF ,φ(µ, ν) = sup
+D∈F
+
+(cid:12)
+(cid:12)
+E
+(cid:12)
+(cid:12)
+x∼µ
+
+[φ(D(x))] + E
+x∼ν
+
+(cid:12)
+(cid:12)
+[φ(1 − D(x))]
+(cid:12)
+(cid:12)
+
+− 2φ(1/2)
+
+(5)
+
+When φ(t) = t, we have that dF ,φ is a distance function (or technically, a pseudometric5) , and
+with slightly abuse of notation we write it simply as
+
+dF (µ, ν) = sup
+D∈F
+
+E
+x∼µ
+
+[D(x)] − E
+x∼ν
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:12)
+(cid:12)
+[D(x)]
+(cid:12)
+(cid:12)
+
+.
+
+Example 1. When φ(t) = log(t) and F = {all functions from Rd to [0, 1]}, we have that dF ,φ is
+the same as JS divergence. When φ(t) = t and F = {all 1-Lipschitz functions from Rd to [0, 1]},
+then dF ,φ is the Wasserstein distance.
+
+Example 2. Suppose F is a set of neural networks and φ(t) = log t, then original GAN objective
+function is equivalent to
+
+dF ,φ( ˆDreal, ˆDG) .
+
+min
+G
+
+Suppose F is the set of neural networks, and φ(t) = t, then the objective function used empirically
+in Arjovsky et al. [2017] is equivalent to
+
+dF ( ˆDreal, ˆDG) .
+
+min
+G
+
+(6)
+
+For simplicity, when F is a neural net, we also refer dF to as the neural net distance.
+
+In the next theorem, we address the generalization of GANs by showing that using a class of
+neural nets with p parameters, the GAN learning generalizes in the sense of equation (4) (with a
+uniform convergence) with relatively modest number of examples. We assume that the measuring
+function takes values in [−∆, ∆] is Lφ-Lipschitz. Further, F = {Dv, v ∈ V} is the class of dis-
+criminators that is L-Lipschitz with respect to the parameters v. As usual, we use p to denote the
+number of parameters in v.
+
+Theorem 3.1. In the setting of previous paragraph, let µ, ν be two distributions and ˆµ, ˆν be em-
+pirical versions with at least m samples each. There is a universal constant c such that when
+m ≥ cp∆2 log(LLφp/(cid:15))
+, we have with probability at least 1 − exp(−p) over the randomness of ˆµ and ˆν,
+
+(cid:15)2
+
+5A pseudometric satisﬁes nonnegativity, symmetry and triangle inequality. A metric in addition needs to satisfy
+identity of indiscernibles in the sense that d(x, y) = 0 if and only if x = y. This metric is also known as the integral
+probability metrics[M¨uller, 1997].
+
+|dF ,φ(ˆµ, ˆν) − dF ,φ(µ, ν)| ≤ (cid:15).
+
+7
+
+The proof (in Appendix A.1) uses standard concentration inequalities and a standard (cid:15)-net
+argument: there aren’t too many distinct discriminators, and thus given enough samples the ex-
+pectation over the empirical distribution converges to the expectation over the true distribution for
+all discriminators.
+
+Theorem 3.1 shows that the neural network divergence (and neural network distance) has a much
+better generalization bound than Jensen-Shannon divergence or Wasserstein distance. If the GAN
+successfully minimized the neural network divergence between the empirical distributions, that is,
+d( ˆDreal, ˆDG), then we know the neural network divergence d(Dreal, DG) between the distributions
+Dreal and DG is also small.
+
+One would need to argue that this generalization continues to hold at every iteration of the
+training. While we can resample from DG, it is infeasible to get more fresh samples from Dreal in
+every iteration. The following corollary shows the generalization bound holds for every iteration as
+long as the number of iterations is not too large.
+
+Corollary 3.1. In the setting of Theorem 3.1, suppose G(1), G(2), ..., G(T ) (log t (cid:28) d) be the T
+generators in the T iterations of the training, and assume log T ≤ p. There is a some universal
+constant c such that when m ≥ cp∆2 log(LLφp/(cid:15))
+, with probability at least 1 − exp(−p), for all t ∈ [T ],
+
+(cid:15)2
+
+(cid:12)
+(cid:12)dF ,φ(Dreal, DG(t)) − dF ,φ( ˆDreal, ˆDG(t))
+(cid:12)
+
+(cid:12)
+(cid:12)
+(cid:12) ≤ ε .
+
+The key observation here is that the objective is separated into two parts and the generator is
+not directly related to Dreal. So even though we cannot resample real samples, the generalization
+bound still holds. Detailed proof appear in Appendix A.1.
+
+3.4 Generalization vs Diversity
+
+Note that the ability to generalize also comes with a cost (that might be necessary). For JS
+divergence and Wasserstein distance, when the distance between two distributions µ, ν is small, it
+is safe to conclude that the distributions µ and ν are almost the same. However, the neural net
+distance dN N (µ, ν) can be small even if µ, ν are not very close. As a simple Corollary of Lemma 3.1,
+we obtain:
+
+Corollary 3.2 (Low-capacity discriminators cannot detect lack of diversity). Let ˆµ be the empirical
+version of distribution µ with m samples. There is a some universal constant c such that when
+m ≥ cp∆2 log(LLφp/(cid:15))
+
+, we have that with high probability
+
+(cid:15)2
+
+dF ,φ(µ, ˆµ) ≤ (cid:15).
+
+That is, the neural network distance cannot distinguish between the real distribution µ and an
+empirical distribution with roughly p/(cid:15)2 samples. Thus the discriminator is incapable of detecting
+when the synthetic distribution has low diversity.
+
+4 Expressive power and existence of equilibrium
+
+Section 3 clariﬁed the notion of generalization for GANs: namely, neural-net divergence between
+the generated distribution D and Dreal on the empirical samples closely tracks the divergence on
+
+8
+
+the full distribution (i.e., unseen samples). But this doesn’t explain why in practice the generator
+usually “wins”so that the discriminator is unable to do much better than random guessing at the
+end. In other words, was it sheer luck that so many real-life distributions Dreal turned out to be
+close in neural-net distance to a distribution produced by a fairly compact neural net? This section
+suggests no luck may be needed.
+
+The explanation starts with a thought experiment. Imagine allowing a much more powerful
+generator, namely, an inﬁnite mixture of deep nets, each of size p. So long as the deep net class
+is capable of generating simple gaussians, such mixtures are quite powerful, since a classical result
+says that an inﬁnite mixtures of simple gaussians can closely approximate Dreal. Thus an inﬁnite
+mixture of deep net generators will “win” the GAN game, not only against a discriminator that is
+a small deep net but also against more powerful discriminators (e.g., any Lipschitz function).
+
+The next stage in the thought experiment is to imagine a much less powerful generator, which
+is a mix of only a few deep nets, not inﬁnitely many. Simple counterexamples show that now the
+distribution D will not closely approximate arbitrary Dreal with respect to natural metrics like (cid:96)p.
+Nevertheless, could the generator still win the GAN game against a deep net of bounded capacity
+(i.e., the deep net is unable to distinguish D and Dreal)? We show it can.
+
+informal theorem: If the discriminator is a deep net with p parameters, then a mixture of
+˜O(p log(p/(cid:15))/(cid:15)2) generator nets can produce a distribution D that the discriminator will be unable
+to distinguish from Dreal with probability more than (cid:15). (Here ˜O(·) notation hides some nuisance
+factors.)
+
+This informal theorem is also a component of our result below about the existence of an ap-
+proximate pure equilibrium. With current technique this existence result seems sensitive to the
+measuring function φ, and works for φ(x) = x (i.e., Wasserstein GAN). For other φ we only show
+existence of mixed equilibria with small mixtures.
+
+4.1 General φ: Mixed Equilibrium
+
+For general measuring function φ we can only show the existence of a mixed equilibrium, where we
+allow the discriminator and generator to be ﬁnite mixtures of deep nets.
+
+For a class of generators {Gu, u ∈ U} and a class of discriminators {Dv, v ∈ V}, we can deﬁne
+
+the payoﬀ F (u, v) of the game between generator and discriminator
+
+F (u, v) = E
+
+[φ(Dv(x))] + E
+
+[φ(1 − Dv(x)))].
+
+x∼Dreal
+
+x∼DG
+
+(7)
+
+Of course as we discussed in previous section, in practice these expectations should be with respect
+to the empirical distributions. Our discussions in this section does not depend on the distributions
+Dreal and Dh, so we deﬁne F (u, v) this way for simplicity.
+
+The well-known min-max theorem [v. Neumann, 1928] in game theory shows if both players are
+allowed to play mixed strategies then the game has a min-max solution. A mixed strategy for the
+generator is just a distribution Su supported on U, and one for discriminator is a distribution Sv
+supported on V.
+
+Theorem 4.1 (vonNeumann). There exists a value V , and a pair of mixed strategies (Su,Sv) such
+that
+
+∀v,
+
+[F (u, v)] ≤ V
+
+and ∀u,
+
+[F (u, v)] ≥ V.
+
+E
+u∼Su
+
+E
+v∼Sv
+
+9
+
+Note that this equilibrium involves both parties announcing their strategies Su, Sv at the start,
+such that neither will have any incentive to change their strategy after studying the opponent’s
+strategy. The payoﬀ is generated by the generator ﬁrst sample u ∼ Su, h ∼ Dh, and then generate
+an example x = Gu(h). Therefore, the mixed generator is just a linear mixture of generators. The
+discriminator will ﬁrst sample v ∼ Sv, and then output Dv(x). Note that in general this is very
+diﬀerent from a discriminator D that outputs Ev∼Sv [Dv(x)], because the measuring function φ is
+in general nonlinear. In particular, the correct payoﬀ function for a mixture of discriminator is:
+
+[F (u, v)] = E
+
+E
+v∼Sv
+
+[φ(Dv(x))] + E
+h∼Dh
+v∼Sv
+
+x∼Dreal
+v∼Sv
+
+[φ(1 − Dv(Gu(h)))].
+
+Of course, this equilibrium involving an inﬁnite mixture makes little sense in practice. We
+show that (as is folklore in game theory [Lipton and Young, 1994]) that we can approximate this
+min-max solution with mixture of ﬁnitely many generators and discriminators. More precisely we
+deﬁne (cid:15)-approximate equilibrium:
+
+Deﬁnition 2. A pair of mixed strategies (Su, Sv) is an (cid:15)-approximate equilibrium, if for some value
+V
+
+∀v ∈ V,
+
+[F (u, v)] ≤ V + (cid:15);
+
+∀u ∈ U,
+
+[F (u, v)] ≥ V − (cid:15).
+
+E
+u∼Su
+E
+v∼Sv
+
+If the strategies Su, Sv are pure strategies, then this pair is called an (cid:15)-approximate pure equilibrium.
+
+Suppose φ is Lφ-Lipschitz and bounded in [−∆, ∆], the generator and discriminators are L-
+Lipschitz with respect to the parameters and L(cid:48)-Lipschitz with respect to inputs, in this setting we
+can formalize the above Informal Theorem as follows:
+
+Theorem 4.2. In the settings above, there is a universal constant C > 0 such that for any (cid:15), there
+exists T = C∆2p log(LL(cid:48)Lφ·p/(cid:15))
+generators Gu1, . . . GuT and T discriminators Dv1, . . . DvT , let Su be a
+uniform distribution on ui and Sv be a uniform distribution on vi, then (Su, Sv) is an (cid:15)-approximate
+equilibrium. Furthermore, in this equilibrium the generator “wins,”meaning discriminators cannot
+do better than random guessing.
+
+(cid:15)2
+
+The proof uses a standard probabilistic argument and epsilon net argument to show that if we
+sample T generators and discriminators from inﬁnite mixture, they form an approximate equilib-
+rium with high probability. For the second part, we use the fact that every distribution can be
+approximated by inﬁnite mixture of Gaussians, so the generator must be able to approximate the
+real distribution Dreal and win. Therefore indeed a mixture of ˜O(p) generators can achieve an
+(cid:15)-approximate equilibrium.
+
+4.1.1 φ(x) = x: Pure Equilibrium
+
+Now we consider the special case of Wasserstein-GAN, which is equivalent to setting φ(x) = x
+in Equation (2).
+In this case, it is possible to augment the network structure, and achieve an
+approximate pure equilibrium for the GAN game for networks of size ˜O(p2). This should be
+
+10
+
+interpreted as: if deep nets of size p are capable of generating a Gaussian, then the W-GAN game
+for neural networks of size ˜O(p2) has an approximate equilibrium in which the generator wins. (The
+theorem is stated for RELU gates but also holds for standard activations such as sigmoid.)
+
+Theorem 4.3. Suppose the generator and discriminator are both k-layer neural networks (k ≥ 2)
+with p parameters, and the last layer uses ReLU activation function. In the setting of Theorem 4.2,
+when φ(x) = x there exists k + 1-layer neural networks of generators G and discriminator D
+with O
+parameters, such that there exists an (cid:15)-approximate pure equilibrium.
+Furthermore, if the generator is capable of generating a Gaussian then the value V = 1.
+
+(cid:16) ∆2p2 log(LL(cid:48)Lφ·p/(cid:15))
+(cid:15)2
+
+(cid:17)
+
+To prove this theorem, we consider the mixture of generators and discriminators as in Theo-
+rem 4.2, and show how to fold the mixture into a larger k + 1-layer neural network. We sketch the
+idea; details are in the supplementary.
+
+Mixture of Discriminators Given a mixture of T discriminators Dv1, ..., DvT , we can just deﬁne
+D(x) = 1
+T
+
+i=1 Dvi(x). Because φ(x) = x, we know for any generator Gu
+[D(x)] =
+
+(cid:80)T
+
+[Dvi(x)]
+
+E
+x∼Dreal
+
+E
+h∼Dh
+
+[(1 − D(Gu(h))] =
+
+[(1 − Dvi(Gu(h))].
+
+E
+x∼Dreal,i∈[T ]
+E
+h∼Dh,i∈[T ]
+
+Therefore, the payoﬀ for D is exactly the same as the payoﬀ for the mixture of discriminators.
+Also, the discriminator D is easily implemented as a network T times as large as the original
+network by adding a top layer that averages the output of the T generators Dvi(x).
+
+Mixture of Generators For mixture of generators, we construct a single neural network that
+approximately generates the mixture distribution using the gaussian input it has. To do that, we
+can pass the input h through all the generators Gu1, Gu2, ..., GuT . We then show how to implement
+a “multi-way selector” that will select a uniformly random output from Gui(h) (i ∈ [T ]). The
+selector involves a simple 2-layer network that selects a number i from 1 to T with the appropriate
+probability and “disables”all the neural nets except the ith one by forwarding an appropriate large
+negative input.
+
+Theorem 4.3 suggests that the objective of Wasserstein GAN may have approximate pure equi-
+librium for certain architectures of neural networks, which lends credence that Wasserstein GAN
+may be more robust.
+
+Remark: In practice, GANs use highly structured deep nets, such as convolutional nets. Our
+current proof of existence of pure equilibrium requires introducing less structured elements in the
+net, namely, the multiway selectors that implement the mixture within a single net. It is left for
+future work whether pure equilibria exist for the original structured architectures. In the meantime,
+in practice we recommend using, even for W-GAN, a mixture of structured nets for GAN training,
+and it seems to help in our experiments reported below.
+
+5 MIX+GANs
+
+Theorem 4.2 and Theorem 4.3 show that using a mixture of (pot too many) generators and dis-
+criminators guarantees existence of approximate equilibrium. This suggests that using a mixture
+may lead to more stable training.
+
+11
+
+Of course, it is impractical to use very large mixtures, so we propose mix + gan: use a mixture
+of T components, where T is as large as allowed by size of GPU memory (usually T ≤ 5). Namely,
+train a mixture of T generators {Gui, i ∈ [T ]} and T discriminators {Dvi, i ∈ [T ]}) which share the
+same network architecture but have their own trainable parameters. Maintaining a mixture means
+of course maintaining a weight wui for the generator Gui which corresponds to the probability of
+selecting the output of Gui. These weights are also updated via backpropagation. This heuristic
+can be combined with existing methods like dcgan, w-gan etc., giving us new training methods
+mix+dcgan, mix+w-gan etc.
+
+We use exponentiated gradient [Kivinen and Warmuth, 1997]: store the log-probabilities {αui, i ∈
+
+[T ]}, and then obtain the weights by applying soft-max function on them:
+
+wui =
+
+eαui
+k=1 eαuk
+
+(cid:80)T
+
+,
+
+i ∈ [T ]
+
+Note that our algorithm is maintaining weights on diﬀerent generators and discriminators. This
+is very diﬀerent from the idea of boosting where weights are maintained on samples. AdaGAN [Tol-
+stikhin et al., 2017] uses ideas similar to boosting and maintains weights on training examples.
+
+Given payoﬀ function F , training mix + gan boils down to optimizing:
+
+min
+{ui},{αui }
+
+max
+{vj },{αvj }
+
+E
+i,j∈[T ]
+
+F (ui, vj)
+
+= min
+
+{ui},{αui }
+
+max
+{vj },{αvj }
+
+(cid:88)
+
+i,j∈[T ]
+
+wuiwvj F (ui, vj).
+
+Here the payoﬀ function is the same as Equation (7). We use both measuring functions φ(x) = log x
+(for original GAN) and φ(x) = x (for WassersteinGAN). In our experiments we alternatively update
+generators’ and discriminators’ parameters as well as their corresponding log-probabilities using
+ADAM [Kingma and Ba, 2015], with learning rate lr = 0.0001.
+
+Empirically, it is observed that some components of the mixture tend to collapse and their
+weights diminish during the training. To encourage full use of the mixture capacity, we add to the
+training objective an entropy regularizer term that discourages the weights being too far away from
+uniform:
+
+Rent({wui}, {wvi}) = −
+
+(log(wui) + log(wvi))
+
+1
+T
+
+T
+(cid:88)
+
+i=1
+
+6 Experiments
+
+In this section, we ﬁrst explore the qualitative beneﬁts of mix+gan on image generation tasks:
+MNIST dataset [LeCun et al., 1998] of hand-written digits and the CelebA [Liu et al., 2015] dataset
+of human faces. Then for more quantitative evaluation we use the CIFAR-10 dataset [Krizhevsky
+and Hinton, 2009] and use the Inception Score introduced in Salimans et al. [2016]. MNIST contains
+60,000 labeled 28 × 28-sized images of hand-written digits, CelebA contains over 200K 108 × 108-
+sized images of human faces (we crop the center 64 × 64 pixels for our experiments), and CIFAR-10
+has 60,000 labeled 32 × 32-sized RGB natural images which fall into 10 categories.
+
+12
+
+Table 1: Inception Scores on CIFAR-10. Mixture of DCGANs achieves higher score than any
+single-component DCGAN does. All models except for WassersteinGAN variants are trained with
+labels.
+
+Method
+SteinGAN [Wang and Liu, 2016]
+Improved GAN [Salimans et al., 2016]
+AC-GAN [Odena et al., 2016]
+S-GAN (best variant in [Huang et al., 2017])
+DCGAN (as reported in Wang and Liu [2016])
+DCGAN (best variant in Huang et al. [2017])
+DCGAN (5x size)
+MIX+DCGAN (Ours, with 5 components)
+Wasserstein GAN
+MIX+WassersteinGAN (Ours, with 5 components)
+Real data
+
+Score
+6.35
+8.09±0.07
+8.25 ± 0.07
+8.59± 0.12
+6.58
+7.16±0.10
+7.34±0.07
+7.72±0.09
+3.82±0.06
+4.04±0.07
+11.24±0.12
+
+To reinforce the point that this technique works out of the box, no extensive hyper-parameter
+search or tuning is necessary. Related code is public online at https://github.com/yeezhang/
+MIX-plus-GAN. Please refer to our code for hyper-parameters and experimental setup.
+
+6.1 Qualitative Results
+
+The DCGAN architecture [Radford et al., 2016] uses deep convolutional nets as generators and
+discriminators. We trained mix + dcgan on MNIST and CelebA using the authors’ code as a
+black box, and compared visual qualities of generated images vs DCGAN.
+
+Results on MNIST is shown in Figure 2. In this experiment, the baseline DCGAN consists of a
+pair of a generator and a discriminator, which are 5-layer deconvoluitonal neural networks, and are
+conditioned on image labels. Our MIX+DCGAN model consists of a mixture of such DCGANs so
+that it has 3 generators and 3 discriminators. We observe that mix + dcgan produces somewhat
+cleaner digits than dcgan (pote the fuzziness in the latter). Interestingly, each component of our
+mixture learns a slightly diﬀerent style of strokes.
+
+Figure 3 demonstrates results on CelebA dataset, using the same architecture as for MNIST,
+
+except the models are not conditioned on image labels anymore.
+
+The MIX+DCGAN model generates more faithful and more diverse samples than the baseline
+DCGAN does on both datasets, even though one may need to zoom in to fully perceive the diﬀerence
+since the two datasets are rather easy for a powerful training like DCGAN.
+
+6.2 Quantitative Results
+
+Now we turn to quantitative measurement using Inception Score [Salimans et al., 2016]. Through-
+out, we use mixtures of 5 generators and 5 discriminators. We compare our MIX+DCGAN with
+DCGAN, and our MIX+Wasserstein with Wasserstein GAN. We note that at ﬁrst sight the compar-
+ison dcgan vs mix + dcgan seems unfair because the latter uses as much capacity as 5 dcgan’s,
+with corresponding penalty in running time per epoch. To address, we also compare MIX+DCGAN
+
+13
+
+Figure 2: MNIST Samples. Digits generated from (a) MIX+DCGAN. (b) DCGAN. (c)-(d)-(e)
+From each of 3 components of MIX+DCGAN. (View on-screen with zooming in.)
+
+with larger versions of DCGAN with roughly the same number of parameters, and we found the
+former is consistently better than the later, as shown below.
+
+To construct MIX+DCGAN, we build on top of the DCGAN trained with losses proposed
+by Huang et al. [2017], namely adversarial loss, entropy loss and conditional loss, which is the best
+DCGAN so far without improved training techniques. The same hyper-parameters are used for fair
+comparison. See Huang et al. [2017] for more details. Similarly, for the MIX+WassersteinGAN,
+the base GAN is identical to that proposed by Arjovsky et al. [2017] using their hyper-parameter
+scheme.
+
+Table 1 is a quantitative comparison between our mixture models and other state-of-the-art
+GAN models on the CIFAR-10 dataset, with inception score calculated using 50,000 freshly gen-
+erated samples from each model that are not used in training. To sample a single image from our
+MIX+ models, we ﬁrst select a generator from the mixture according to their assigned weights
+{wui}, and then draw a sample from the selected generator. We ﬁnd surprisingly that, simply
+by applying MIX+ to the baseline models, our MIX+ models achieve 7.72 v.s. 7.16 gain in the
+score on DCGAN, and 4.04 v.s. 3.82 gain on WassersteinGAN. To conﬁrm that the superiority of
+MIX+ models is not solely due to more parameters, we observe that a DCGAN model that has 5
+
+14
+
+Figure 3: CelebA Samples. Faces generated from (a) MIX+DCGAN. (b) DCGAN.(c)-(d)-(e)
+Each of 3 components of MIX+DCGAN. (View on-screen with zooming in.)
+
+times more parameters than the one mentioned above (roughly the same number of parameters as
+a 5-component MIX+DCGAN) gets only 7.34 (labeld as 5x size in Table 1), which is considerably
+lower than that of a MIX+DCGANs. The result of the 5 times larger DCGAN is tuned using a grid
+search over 27 sets of hyper-parameters including learning rates, dropout rates, and regularization
+weights.
+
+Figure 4 shows how Inception Scores of MIX+DCGAN v.s. DCGAN evolve during training.
+MIX+DCGAN outperforms DCGAN throughout the entire training process, showing that it makes
+eﬀective use of the additional capacity.
+
+Arjovsky et al. [2017] shows that (approximated) Wasserstein loss, which is the neural net-
+work divergence by our deﬁnition, is meaningful because it correlates well with visual quality
+of generated samples. Figure 5 shows the training dynamics of neural network divergence of
+MIX+WassersteinGAN v.s. WassersteinGAN, which strongly indicates that MIX+WassersteinGAN
+is capable of achieving a much lower divergence as well as of improving the visual quality of gen-
+erated samples.
+
+15
+
+(a)(b)(c)(d)(e)Figure 4: MIX+DCGAN v.s. DCGAN Training Curve (Inception Score). MIX+DCGAN
+is consistently higher than DCGAN.
+
+7 Conclusions
+
+The notion of generalization for GANs has been clariﬁed by introducing a new notion of distance
+between distributions, the neural net distance. (Whereas popular distances such as Wasserstein
+and JS may not generalize.) Assuming the visual cortex also is a deep net (or some network of
+moderate capacity) generalization with respect to this metric is in principle suﬃcient to make the
+ﬁnal samples look realistic to humans.
+
+One issue raised by our analysis is that the current GANs objectives cannot enforce that the
+synthetic distribution has high diversity. This cannot be ﬁxed by simply providing the discriminator
+with more training examples. Possibly some other change to the GANs setup can ﬁx this.
+
+The paper also made progress on other unexplained issues about GANs, by showing that a pure
+approximate equilibrium exists for a certain natural training objective (Wasserstein) and in which
+the generator wins the game. No assumption about distribution Dreal is needed.
+
+Suspecting that a pure equilibrium may not exist for all objectives, we recommend in practice
+our mix+ gan protocol using a small mixture of discriminators and generators. Our experiments
+show it improves the quality of several existing GAN training methods.
+
+Finally, note that existence of an equilibrium does not imply that a simple algorithm (in this
+
+case, backpropagation) would ﬁnd it easily. That still deﬁes explanation.
+
+Acknowledgements
+
+This paper was done in part while the authors were hosted by Simons Institute. We thank Moritz
+Hardt, Kunal Talwar, Luca Trevisan, and the referees for useful comments. This research was
+supported by NSF, Oﬃce of Naval Research, and the Simons Foundation.
+
+16
+
+Figure 5: MIX+WassersteinGAN v.s. WassersteinGAN Training Curve (Wasserstein
+Objective). MIX+WassersteinGAN is better towards the end but loss drops less smoothly, which
+needs further investigation.
+
+17
+
+References
+
+arXiv:1701.07875, 2017.
+
+November 2016.
+
+report, 2003.
+
+arXiv:1701.00160, 2016.
+
+Mart´ın Abadi and David G Andersen. Learning to protect communications with adversarial neural
+
+cryptography. arXiv preprint arXiv:1610.06918, 2016.
+
+Martin Arjovsky, Soumith Chintala, and L´eon Bottou. Wasserstein gan.
+
+arXiv preprint
+
+I. Durugkar, I. Gemp, and S. Mahadevan. Generative Multi-Adversarial Networks. ArXiv e-prints,
+
+Jayanta K Ghosh, RVJK Ghosh, and RV Ramamoorthi. Bayesian nonparametrics. Technical
+
+Ian Goodfellow.
+
+Nips 2016 tutorial: Generative adversarial networks.
+
+arXiv preprint
+
+Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair,
+Aaron Courville, and Yoshua Bengio. Generative adversarial nets. In Advances in neural infor-
+mation processing systems, pages 2672–2680, 2014.
+
+Arthur Gretton, Karsten M Borgwardt, Malte J Rasch, Bernhard Sch¨olkopf, and Alexander Smola.
+
+A kernel two-sample test. Journal of Machine Learning Research, 13(Mar):723–773, 2012.
+
+Xun Huang, Yixuan Li, Omid Poursaeed, John Hopcroft, and Serge Belongie. Stacked generative
+
+adversarial networks. In Computer Vision and Patter Recognition, 2017.
+
+D. Jiwoong Im, H. Ma, C. Dongjoo Kim, and G. Taylor. Generative Adversarial Parallelization.
+
+ArXiv e-prints, December 2016.
+
+Diederik Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In International
+
+Conference on Learning Representations, 2015.
+
+Jyrki Kivinen and Manfred K Warmuth. Exponentiated gradient versus gradient descent for linear
+
+predictors. Information and Computation, 132(1):1–63, 1997.
+
+Alex Krizhevsky and Geoﬀrey Hinton. Learning multiple layers of features from tiny images.
+
+Technical report, 2009.
+
+digits, 1998.
+
+Yann LeCun, Corinna Cortes, and Christopher JC Burges. The mnist database of handwritten
+
+Richard J Lipton and Neal E Young. Simple strategies for large zero-sum games with applications
+to complexity theory. In Proceedings of the twenty-sixth annual ACM symposium on Theory of
+computing, pages 734–740. ACM, 1994.
+
+Ziwei Liu, Ping Luo, Xiaogang Wang, and Xiaoou Tang. Deep learning face attributes in the wild.
+In Proceedings of the IEEE International Conference on Computer Vision, pages 3730–3738,
+2015.
+
+Alfred M¨uller. Integral probability metrics and their generating classes of functions. Advances in
+
+Applied Probability, 29(02):429–443, 1997.
+
+18
+
+Augustus Odena, Christopher Olah, and Jonathon Shlens. Conditional image synthesis with aux-
+
+iliary classiﬁer gans. arXiv preprint arXiv:1610.09585, 2016.
+
+Alec Radford, Luke Metz, and Soumith Chintala. Unsupervised representation learning with deep
+convolutional generative adversarial networks. In International Conference on Learning Repre-
+sentations, 2016.
+
+Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen.
+Improved techniques for training gans. In Advances in Neural Information Processing Systems,
+2016.
+
+Ilya Tolstikhin, Sylvain Gelly, Olivier Bousquet, Carl-Johann Simon-Gabriel, and Bernhard
+
+Sch¨olkopf. Adagan: Boosting generative models. arXiv preprint arXiv:1701.02386, 2017.
+
+Luca Trevisan, Madhur Tulsiani, and Salil Vadhan. Regularity, boosting, and eﬃciently simulating
+every high-entropy distribution. In Computational Complexity, 2009. CCC’09. 24th Annual IEEE
+Conference on, pages 126–136. IEEE, 2009.
+
+J v. Neumann. Zur theorie der gesellschaftsspiele. Mathematische annalen, 100(1):295–320, 1928.
+
+Dilin Wang and Qiang Liu. Learning to draw samples: With application to amortized mle for
+
+generative adversarial learning. Technical report, 2016.
+
+19
+
+A Omitted Proofs
+
+In this section we give detailed proofs for the theorems in the main document.
+
+A.1 Omitted Proofs for Section 3
+
+We ﬁrst show that JS divergence and Wasserstein distances can lead to overﬁtting.
+
+Lemma 2 (Lemma 1 restated). Let µ be uniform Gaussian distributions N (0, 1
+empirical versions of µ with m examples. Then we have
+
+d I) and ˆµ be an
+
+dJS(µ, ˆµ) = log 2
+dW (µ, ˆµ) ≥ 1.1
+
+Proof. For Jensen-Shannon divergence, observe that µ is a continuous distribution and ˆµ is discrete,
+therefore dJS(µ, ˆµ) = log 2.
+
+For Wasserstein distance, let x1, x2, ..., xm be the empirical samples (ﬁxed arbitrarily). For
+
+y ∼ N (0, 1
+
+d I), by standard concentration and union bounds, we have
+
+Pr[∀i ∈ [m](cid:107)y − xi(cid:107) ≥ 1.2] ≥ 1 − m exp(−Ω(d)) ≥ 1 − o(1).
+
+Therefore, using the earth-mover interpretation of Wasserstein distance, we know dW (µ, ˆµ) ≥
+1.2 Pr[∀i ∈ [m](cid:107)y − xi(cid:107) ≥ 1.2] ≥ 1.1.
+
+Next we consider sampling for both the generated distribution and the real distribution, and
+
+show that the JS divergence or Wasserstein distance do not generalize.
+
+Theorem A.1. Let µ, ν be uniform Gaussian distributions N (0, 1
+versions of µ, ν with m samples. Then with probability at least 1 − m2 exp(−Ω(d)) we have
+
+d I). Suppose ˆµ, ˆν are empirical
+
+Further, let ˜µ, ˜ν be the convolution of ˆµ, ˆν with a Gaussian distribution N (0, σ2
+σ < c√
+
+for small enough constant c, we have with probability at least 1 − m2 exp(−Ω(d)).
+
+d I), as long as
+
+log m
+
+dJS(µ, ν) = 0,dJS(ˆµ, ˆν) = log 2.
+dW (µ, ν) = 0,dW (ˆµ, ˆν) ≥ 1.1.
+
+dJS(˜µ, ˜ν) > log 2 − 1/m.
+
+Proof. For the Jensen-Shannon divergence, we know with probability 1 the supports of ˆµ, ˆν are
+disjoint, therefore dJS(ˆµ, ˆν) = 1.
+
+For Wasserstein distance, note that for two random Gaussian vectors x, y ∼ N (0, 1
+
+d I), their
+
+diﬀerence is also a Gaussian with expected square norm 2. Therefore we have
+
+Pr[(cid:107)x − y(cid:107)2 ≤ 2 − (cid:15)] ≤ exp(−Ω((cid:15)2d)).
+
+As a result, setting (cid:15) to be a ﬁxed constant (0.1 suﬃces), with probability 1 − m2 exp(−Ω(d)),
+we can union bound over all the m2 pairwise distances for points in support of ˆµ and support of
+ˆν. With high probability, the closest pair between ˆµ and ˆν has distance at least 1, therefore the
+Wasserstein distance dW (ˆµ, ˆν) ≥ 1.1.
+
+20
+
+Finally we prove that even if we add noise to the two distributions, the JS divergence is still
+2ρ1(x)
+ρ1(x)+ρ2(x) +
+
+large. For distributions ˜µ, ˜ν, let ρ1, ρ2 be their density functions. Let g(x) = ρ1(x) log
+
+ρ2(x) log
+
+ρ1(x)+ρ2(x) , we can rewrite the JS divergence as
+
+2ρ2(x)
+
+dJS(˜µ, ˜ν) =
+
+g(x)dx.
+
+(cid:90) 1
+2
+
+Let zx be a Bernoulli variable with probability ρ1(x)/(ρ1(x) + ρ2(x)) of being 1. Note that g(x) =
+(ρ1(x) + ρ2(x))(log 2 − H(zx)) where H(zx) is the entropy of zx. Therefore 0 ≤ g(x) ≤ (ρ1(x) +
+ρ2(x)) log 2. Let X be the union of radius-0.2 balls near the 2m samples in ˆµ and ˆν. Since with
+high probability, all these samples have pairwise distance at least 1, by Gaussian density function
+we know (a) the balls do not intersect; (b) within each ball max{d1(x),d2(x)}
+min{d1(x),d2(x)} ≥ m2; (c) the union of
+these balls take at least 1 − 1/2m fraction of the density in (ˆµ + ˆν)/2.
+Therefore for every x ∈ X , we know H(zx) ≤ o(1/m), therefore
+
+dJS(˜µ, ˜ν) =
+
+g(x)dx
+
+(cid:90) 1
+2
+
+(cid:90)
+
+(cid:90)
+
+≥
+
+≥
+
+x∈X
+
+x∈X
+
+1
+2
+
+g(x)dx
+
+(ρ1(x) + ρ2(x))(log 2 − o(1/m))dx
+
+≥ log 2 − 1/2m − o(1/m) ≥ log 2 − 1/m.
+
+Next we prove the neural network distance does generalize, given enough samples. Let us ﬁrst
+recall the settings here: we assume that the measuring function takes values in [−∆, ∆] is Lφ-
+Lipschitz. Further, F = {Dv, v ∈ V} is the class of discriminators that is L-Lipschitz with respect
+to the parameters v. As usual, we use p to denote the number of parameters in v.
+
+Theorem A.2 (Theorem 3.1 restated). In the setting described in the previous paragraph, let µ, ν
+be two distributions and ˆµ, ˆν be empirical versions with at least m samples each. There is a universal
+constant c such that when m ≥ cp∆2 log(LLφp/(cid:15))
+, we have with probability at least 1 − exp(−p) over
+the randomness of ˆµ and ˆν,
+
+(cid:15)2
+
+|dF ,φ(ˆµ, ˆν) − dF ,φ(µ, ν)| ≤ (cid:15).
+
+Proof. The proof uses concentration bounds. We show that with high probability, for every dis-
+criminator Dv,
+
+| E
+x∼µ
+
+[φ(Dv(x))] − E
+x∼ˆµ
+[φ(1 − Dv(x))]| ≤ (cid:15)/2.
+
+[φ(Dv(x))]| ≤ (cid:15)/2,
+
+| E
+x∼ν
+
+[φ(1 − Dv(x))] − E
+x∼ˆν
+
+(8)
+
+(9)
+
+21
+
+If dF ,φ(µ, ν) = t, let Dv be the optimal discriminator, we then have
+
+dF ,φ(µ, ν) ≥ E
+x∼ˆµ
+≥ E
+x∼µ
+− | E
+x∼µ
+− | E
+x∼ν
+≥ t − (cid:15).
+
+[φ(Dv(x))] + E
+x∼ˆν
+[φ(Dv(x))] + E
+x∼ν
+
+[φ(Dv(x))].
+
+[φ(Dv(x))]
+
+[φ(Dv(x))] − E
+x∼ˆµ
+
+[φ(Dv(x))]|
+
+[φ(1 − Dv(x))] − E
+x∼ˆν
+
+[φ(1 − Dv(x))]|
+
+The other direction is similar.
+
+Now we prove the claimed bounds (8) (proof of (9) is identical). Let X be a ﬁnite set such that
+every point in V is within distance (cid:15)/8LLφ of a point in X (a so-called (cid:15)/8LLφ-net). Standard
+constructions give an X satisfying log |X | ≤ O(p log(LLφp/(cid:15))). For every v ∈ X , by Chernoﬀ bound
+we know
+
+Pr[| E
+x∼µ
+
+[φ(Dv(x))] − E
+x∼ˆµ
+
+[φ(Dv(x))]| ≥
+
+] ≤ 2 exp(−
+
+(cid:15)
+4
+
+(cid:15)2m
+2∆2 ).
+
+Therefore, when m ≥ Cp∆2 log(LLφp/(cid:15))
+for large enough constant C, we can union bound over all
+v ∈ X . With high probability (at least 1 − exp(−p)), for all v ∈ X we have | Ex∼µ[φ(Dv(x))] −
+Ex∼ˆµ[φ(Dv(x))]| ≥ (cid:15)
+4 .
+
+(cid:15)2
+
+Now, for every v ∈ V, we can ﬁnd a v(cid:48) ∈ X such that (cid:107)v − v(cid:48)(cid:107) ≤ (cid:15)/8LLφ. Therefore
+
+| E
+x∼µ
+≤| E
+x∼µ
++ | E
+x∼µ
++ | E
+x∼ˆµ
+
+[φ(Dv(x))] − E
+x∼ˆµ
+[φ(Dv(cid:48)(x))] − E
+x∼ˆµ
+
+[φ(Dv(x))]|
+
+[φ(Dv(cid:48)(x))]|
+
+[φ(Dv(cid:48)(x))] − E
+x∼µ
+[φ(Dv(cid:48)(x))] − E
+x∼ˆµ
+
+[φ(Dv(x))]|
+
+[φ(Dv(x))]|
+
+≤(cid:15)/4 + (cid:15)/8 + (cid:15)/8
+
+≤(cid:15)/2.
+
+This ﬁnishes the proof of (8).
+
+Finally, we generalize the above Theorem to hold for all generators in a family.
+
+Corollary A.1 (Corollary 3.1 restated). In the setting of Theorem 3.1, suppose G(1), G(2), ..., G(T )
+be the T generators in the T iterations of the training, and assume log T ≤ p. There is a some
+universal constant c such that when m ≥ cp∆2 log(LLφp/(cid:15))
+, with probability at least 1 − exp(−p), for
+all t ∈ [T ],
+
+(cid:15)2
+
+(cid:12)
+(cid:12)
+(cid:12)dF ,φ(Dreal, DG(t)) − dF ,φ( ˆDreal, ˆDG(t))
+(cid:12)
+(cid:12)
+(cid:12) ≤ ε .
+
+Proof. This follows from the proof of Theorem 3.1. Note that we have fresh samples for every
+generator distribution, so Equation (9) is true with high probability by union bound. For the real
+distribution, notice that Equation (8) does not depend on the generator, so it is also true with high
+probability.
+
+22
+
+A.2 Omitted Proof for Section 4: Expressive power and existence of equilibrium
+
+Mixed Equilibrium We ﬁrst show there is a ﬁnite mixture of generators and discriminators that
+approximates the equilibrium of inﬁnite mixtures.
+
+Again we recall the settings here: suppose φ is Lφ-Lipschitz and bounded in [−∆, ∆], the
+generator and discriminators are L-Lipschitz with respect to the parameters and L(cid:48)-Lipschitz with
+respect to inputs.
+
+Theorem A.3 (Theorem 4.2 restated). In the settings described in the previous paragraph, there
+is a large enough constant C > 0 such that for any (cid:15), there exists T = C∆2p log(LL(cid:48)Lφ·p/(cid:15))
+generators
+Gu1, . . . GuT and T discriminators Dv1, . . . DvT , let Su be a uniform distribution on ui and Sv be a
+uniform distribution on vi, then (Su, Sv) is an (cid:15)-approximate equilibrium.
+
+(cid:15)2
+
+Further, if the class of generator can generate a Gaussian, and the class of discriminator in-
+cludes constant functions, then the value of the game V = 2φ(1/2) (where φ is the connection
+function in (2)).
+
+u,S (cid:48)
+
+Proof. Let (S (cid:48)
+v) be the pair of optimal mixed strategies as in Theorem 4.1 and V be the optimal
+value. We will show that randomly sampling T generators and discriminators from these two
+distributions gives the desired mixture with high probability.
+
+Construct (cid:15)/4LL(cid:48)Lφ-nets U, V for U and V. By standard construction, the sizes of these (cid:15)-nets
+satisfy log(|U | + |V |) ≤ C(cid:48)n log(LL(cid:48)Lφ · p/(cid:15)) for some constant C(cid:48). Let u1, u2, ..., uT be independent
+samples from Du, and v1, v2, ..., vT be independent samples from Dv. By Chernoﬀ bound, for any
+u ∈ U , we know
+
+Pr[ E
+i∈[T ]
+When T = C∆2p log(L·Lφ·p/(cid:15))
+
+[F (u, vi)] ≤ E
+v∈V
+
+[F (u, v)] − (cid:15)/2] ≤ exp(−
+
+(cid:15)2T
+2∆2 ).
+
+and the constant C is large enough (C ≥ 2C(cid:48)), with high probability
+this inequality is true for all u ∈ U . Now, for any u ∈ U, let u(cid:48) be the closest point in the (cid:15)-net. By
+the construction of the net, (cid:107)u−u(cid:48)(cid:107) ≤ (cid:15)/4LL(cid:48)Lφ. It is easy to check that F (u, v) is 2LL(cid:48)Lφ-Lipschitz
+in both u and v, therefore
+
+(cid:15)2
+
+Combining the two inequalities we know for any u(cid:48) ∈ U,
+
+E
+i∈[T ]
+
+[F (u(cid:48), vi)] ≥ E
+i∈[T ]
+
+[F (u, vi)] − (cid:15)/2.
+
+E
+i∈[T ]
+
+[F (u(cid:48), vi)] ≥ V − (cid:15).
+
+This ﬁnishes the proof for the second inequality. The proof for the ﬁrst inequality is identical.
+
+By probabilistic argument we know there must exist such generators and discriminators.
+
+Finally, we prove the fact that the value V must be equal to 2φ(1/2). For the discriminator,
+one strategy is to just output 1/2. This strategy has payoﬀ 2φ(1/2) no matter what the generator
+does, so V ≥ 2φ(1/2). For the generator, consider the distribution Dζ = Dreal + ζN (0, I), which is
+the convolution of Dreal and a Gaussian of variance ζI. For any ζ, Dζ can be expressed as a inﬁnite
+mixture of Gaussians and is therefore a mixed strategy of the generator. The Wasserstein distance
+between Dζ and Dreal is O(ζ). Since the discriminator is L(cid:48)-Lipschitz, it cannot distinguish between
+Dζ and Dreal. In particular we know for any discriminator Dv
+
+| E
+x∼Dζ
+
+[φ(1 − Dv(x))] − E
+
+[φ(1 − Dv(x))]| ≤ O(LφL(cid:48)ζ).
+
+x∼Dreal
+
+23
+
+Therefore,
+
+max
+v∈V
+
+E
+x∼Dreal
+≤O(LφL(cid:48)ζ) + max
+v∈V
+
+[φ(Dv(x))] + E
+x∼Dζ
+[φ(Dv(x)) + φ(1 − Dv(x))]
+
+[φ(1 − Dv(x))]
+
+E
+x∼Dreal
+
+≤2φ(1/2) + O(LφL(cid:48)ζ).
+
+Here the last step uses the assumption that φ is concave. Therefore the value is upperbounded by
+V ≤ 2φ(1/2) + O(LφL(cid:48)ζ) for any ζ. Taking limit of ζ to 0, we have V = 2φ(1/2).
+
+Pure equilibrium Now we show for Wasserstein objective, there exists an approximate pure
+equilibrium
+
+Theorem A.4 (Theorem 4.3 restated). Suppose the generator and discriminator are both k-layer
+neural networks (k ≥ 2) with p parameters, and the last layer uses ReLU activation function. In the
+setting of Theorem 4.2 there exists k + 1-layer neural networks of generators G and discriminator
+D with O
+parameters, such that there exists an (cid:15)-approximate pure equilibrium.
+Furthermore, if the generator is capable of generating a Gaussian then the value V = 1.
+
+(cid:16) ∆2p2 log(LL(cid:48)Lφ·p/(cid:15))
+(cid:15)2
+
+(cid:17)
+
+In order to prove this theorem, the major step is to construct a generator that works as a
+
+mixture of generators.
+
+Mixture of Generators For mixture of generators, we need to construct a single neural network
+that approximately generates the mixture distribution using the gaussian input it has. To do
+that, we can pass the input h through all the generators Gu1, Gu2, ..., GuT . We then show how to
+implement a “multi-way selector” that will select a uniformly random output from Gui(h) (i ∈ [T ]).
+In order to do that, we ﬁrst observe that it is possible to compute a step function using a two
+
+layer neural network. This is fairly standard for many activation functions.
+
+Lemma 3. Fix an arbitrary q ∈ N and z1 < z2 < · · · < zq. For any 0 < δ < min{zi+1 − zi}, there
+is a two-layer neural network with a single input h ∈ R that outputs q + 1 numbers x1, x2, ..., xq+1
+such that (i) (cid:80)q+1
+i=1 xi = 1 for all h; (ii) when h ∈ [zi−1 + δ/2, zi − δ/2], xi = 1 and all other xj’s
+are 06.
+
+Proof. Using a two layer neural network, we can compute the function fi(h) = max{ h−zi−δ/2
+, 0} −
+max{ h−zi+δ/2
+, 0}. This function is 0 for all h < zi − δ/2, 1 for all h ≥ zi + δ/2 and change
+linearly in between. Now we can write x1 = 1 − f1(h), xq+1 = fq(h), and for all i = 2, 3, ..., q,
+xq = fi(h) − fi−1(h). It is not hard to see that these functions satisfy our requirements.
+
+δ
+
+δ
+
+Using these step functions, we can essentially select one output from the T generators.
+
+(cid:16) ∆2p2 log(LL(cid:48)Lφ·p/(cid:15))
+(cid:15)2
+
+Lemma 4. In the setting of Theorem 4.3, for any δ > 0, there is a k + 1-layer neural network with
+parameters that can generate a distribution that is within δ total variational
+O
+diﬀerence with the mixture of Gu1, Gu2, ..., GuT .
+
+(cid:17)
+
+6When h ≤ z1 − δ/2 only x1 is 1 and when h ≥ zq + δ/2 only xq+1 = 1
+
+24
+
+The idea is simple: since we have implemented step functions from Lemma 3, we can just pass
+through the input through all the generators Gu1, ..., GuT . For the last layer of Gui, we add a
+large multiple of −(1 − xi) where xi is the i-th output from the network in Lemma 3. Clearly, if
+xi = 0 this is going to eﬀectively disable the neural network; if xi = 1 this will have no eﬀect. By
+properties of xi’s we know most of the time only one xi = 1, hence only one generator is selected.
+
+Proof. Suppose the input for the generator is (h0, h) ∼ N (0, 1) × Dh (i.e. h0 is sampled from a
+Gaussian, h is sampled according to Dh independently). We pass the input h through the generators
+and gets outputs Gui(h), then we use h0 to select one as the true output.
+
+Let z1, z2, ..., zT −1 be real numbers that divides the probability density of a Gaussian into T
+equal parts. Pick δ(cid:48) = δ/100T in Lemma 3, we know there is a 2-layer neural network that computes
+step functions x1, ..., xT . Moreover, the probability that (x1, ..., xT ) has more than 1 nonzero entry
+is smaller than δ. Now, for the output of Gui(h), in each output ReLU gate, we add a very large
+multiple of −(1 − xi) (larger than the maximum possible output). This essentially “disables” the
+output when xi = 0 because before the result before ReLU is always negative. On the other hand,
+when xi = 1 this preserves the output. Call the modiﬁed network ˆGui, we know ˆGui = Gui when
+xi = 1 and ˆGui = 0 when xi = 0. Finally we add a layer that outputs the sum of ˆGui. By
+construction we know when (x1, ..., xT ) has only one nonzero entry, the network correctly outputs
+the corresponding Gui(xi). The probability that this happens is at least 1−δ so the total variational
+distance with the mixture is bounded by δ.
+
+Using the generator and discriminators we constructed, it is not hard to prove Theorem 4.3.
+The only thing to notice here is that when the generator is within δ total variational distance to
+the true mixture, the payoﬀ F (u, v) can change by at most 2∆δ.
+
+Proof of Theorem 4.3. Let T be large enough so that there exists an (cid:15)/2-approximate mixed equilib-
+rium. Let the new set of discriminators be the convex combination of T discriminators {Dv, v ∈ V}.
+Let the new set of generators be constructed as in Lemma 4 with δ ≤ (cid:15)/4∆ and Gu1, ..., GuT from
+the original set of generators. Let D be the discriminator which is the average of the T discrim-
+inators from the approximate mixed equilibrium, and G be the generator constructed by the T
+generators from the approximate mixed equilibrium. Deﬁne F (cid:63)(G, D) be the payoﬀ of the new
+two-player game. Now, for any discriminator D(cid:48), think of it as a distribution of Gv, we know
+
+F (cid:63)(G, D(cid:48)) ≥
+
+F (ui, v)
+
+E
+i∈[T ],v∈D(cid:48)
+− |F (cid:63)(G, D(cid:48)) −
+
+E
+i∈[T ],v∈D(cid:48)
+
+F (ui, v)|
+
+≥ V − (cid:15)/2 − 2∆
+
+≥ V − (cid:15).
+
+(cid:15)
+4∆
+
+The bound from the ﬁrst term comes from Theorem 4.2, and the fact that the expectation is smaller
+than the max. The bound for the second term comes from the fact that changing a δ fraction of
+probability mass can change the payoﬀ F by at most 2∆δ.
+
+25
+
+Similarly, for any generator G(cid:48), we know it is close to a mixture of generators Gu, therefore
+
+F (cid:63)(G(cid:48), D) ≤
+
+F (u, vi)
+
+E
+i∈[T ],u∈G(cid:48)
++ |F (cid:63)(G(cid:48), D) −
+
+E
+i∈[T ],u∈G(cid:48)
+
+F (u, vi)|
+
+≤ V + (cid:15)/2 + 2∆
+
+≤ V + (cid:15).
+
+(cid:15)
+4∆
+
+This ﬁnishes the proof.
+
+B Examples when best response fail
+
+In this section we construct simple generators and discriminators and show that if both generators
+and discriminators are trained to optimal with respect to Equation (2), the solution will cycle and
+cannot converge. For simplicity, we will show this when the connection function is φ, but it is
+possible to show similar result even when φ is the traditional log function.
+
+We consider a simple example where we try to generate points on a circle. The true distribution
+Dtrue has 1/3 probability to generate a point at angle 0, 2π/3, 4π/3. Let us ﬁrst consider a case
+when the generator does not have enough capacity to generate the true distribution.
+
+Deﬁnition 3 (Example 1). The generator G has one parameter θ ∈ [0, 2π), and always generates a
+point at angle θ. The discriminator D has a parameter φ ∈ [0, 2π), and Dφ(τ ) = exp(−10d(τ, φ)2).
+Here d(τ, φ) is the angle between τ and φ and is always between [0, π].
+
+We will analyze the “best response” procedure (as in Algorithm 1). We say the procedure
+
+converges if limi→∞ φi and limi→∞ θi exist.
+
+Algorithm 1 Best Response
+
+Initialize θ0.
+for i = 1 to T do
+
+Let φi = arg maxφ Eτ ∼Dtrue[Dφ(τ )] − Eτ ∼G(θ)[Dφ(τ )].
+Let θi = arg minθ − Eτ ∼G(θ)[Dφ(τ )].
+
+end for
+
+Theorem B.1. For generator G and discriminator D in Example 1, for every choice of parameter
+θ, there is a choice of φ such that Dφ(θ) ≤ 0.001 and Eτ ∼D(cid:116)∇(cid:117)(cid:101)[Dφ(τ )] ≥ 1/3. On the other hand,
+for every choice of φ, there is always a θ such that Dφ(θ) = 1. As a result, the sequence of best
+response cannot converge.
+
+Proof. For any θ, we can just choose φ to be the farthest point in {0, 2π/3, 4π/3}. Clearly the
+distance is at least 2π/3 and therefore Dφ(θ) ≤ exp(−10) ≤ 0.001. On the other hand, for the true
+distribution, it has 1/3 probability of generating the point φ, therefore Eτ ∼D(cid:116)∇(cid:117)(cid:101)[Dφ(τ )] ≥ 1/3.
+For every φ, we can always choose θ = φ, and we have Dφ(θ) = 1.
+
+By the construction of φi and θi in Algorithm 1, we know for any i Dφi(θi) = 1, but Eτ ∼Dtrue[Dφ(τ )]−
+
+Dφi−1(θi) ≥ 1/4. Therefore |Dφi(θi) − Dφi−1(θi)| ≥ 1/4 for all i and the sequences cannot con-
+verge.
+
+26
+
+Figure 6: Optimization problem for φ
+
+This may not be very surprising as the generator does not even have the capacity to generate the
+true distribution. One might hope that once we use a large enough neural network, the generator
+will be able to generate the true distribution. However, our next example shows even in that case
+the best response algorithm may not converge.
+
+Deﬁnition 4 (Example 2). Let θ, φ ∈ [0, 2π)3 will be 3 -dimensional vectors. The generator G(θ)
+generates the uniform distribution over points θ1, θ2, θ3. The discriminator function is chosen to be
+Dφ(τ ) = 1
+3
+
+i=1 exp(−10d(τ, φi)2).
+
+(cid:80)3
+
+Clearly in this example, the true distribution can be generated by the generator (just by choosing
+θ = (0, 2π/3, 4π/3)). However we will show that the best response algorithm still cannot always
+converge.
+
+Theorem B.2. Suppose the generator and discriminator are described as in Example 2, and θ0 =
+(0, 0, 0), then we have: (1) In every iteration the three points for generator θi
+1,2,3 are equal to each
+other. (2) In every iteration θi
+1 is 0.1-close to one of the true points {0, 2π/3, 4π/3}, and its closest
+point is diﬀerent from the previous iteration.
+
+1
+
+2, θt
+
+1, θt
+
+, φt+1
+2
+
+, φt+1
+3
+
+Before giving detailed calculations, we ﬁrst give an intuitive argument. In this example, we
+will use induction to prove that at every iteration t, two properties are preserved: 1. The three
+points of the generator (θt
+3) are close to the same real example (0, 2π/3 or 4π/3); 2. The
+three points of the discriminator (φt+1
+) will be close to the other two real examples. To
+go from 1 to 2, notice that in this case the three φ values can be optimized independently (and
+the ﬁnal objective is the sum of the three), so it suﬃces to argue for one of them. For one φ, by
+our construction the objective function is really close to the sum of two Gaussians at the other two
+real examples, minus twice of a Gaussian at the real example that θt
+i’s are close to (see Figure 6).
+From the Figure it is clear that the maximum of this function is close to one of the real examples
+i.Now all the three φt+1
+that is diﬀerent from θt
+’s will be close to one of the two real examples, so
+i
+one of them is going to get at least two φt+1
+’s. In the next iteration, as the generator is trying
+to maximize the output of discriminator, all three θt+1
+’s will be close to the real example with at
+least two φt+1
+
+’s.
+
+i
+
+i
+
+i
+
+Now we make this intuition formal through calculations.
+
+27
+
+Proof. The optimization problems here are fairly simple and we can argue about the solutions
+directly. Throughout the proof we will use the fact that exp(−10∗(2π/3)2) < 1e−4 and exp(1+(cid:15)) ≈
+1 + (cid:15). The following claim describes the properties we need:
+
+Claim 1. If θ1 = θ2 = θ3 and θ1 is 0.1-close to one of {0, 2π/3, 4π/3}, then the optimal φ must
+satisfy φ1, φ2, φ3 be 0.05-close to the other two points in {0, 2π/3, 4π/3}.
+
+We ﬁrst prove the Theorem with the claim. We will do this by induction. The induction
+hypothesis is that for every j ≤ t, we have θj
+1 is 0.1-close to one
+of the true points {0, 2π/3, 4π/3}. This is clearly true for t = 0. Now let us assume this is true for
+t and consider iteration t + 1.
+
+1,2,3 are equal to each other, and θj
+
+Without loss of generality we assume θt
+
+1 is close to 0. Now by Claim we know φt
+
+2, φt
+1, φt
+3 are
+0.05-close to either 2π/3 or 4π/3. Without loss of generality assume there are more φt
+i’s close
+to 2π/3 (the number of φt
+i’s).
+Now, by property of Gaussians, we know Dφt(τ ) has a unique maximum that is within 0.1 of 2π/3
+(the inﬂuence from the other point is much smaller than 0.05). Since the generator is trying to
+maximize Eτ ∼G(θ)[Dφ(τ )], all three θt
+i(i = 1, 2, 3) should be at this maximizer. This ﬁnishes the
+induction.
+
+i’s close to the two point has to be diﬀerent because there are 3 φt
+
+Now we prove the claim.
+
+Proof. The objective function is
+
+(cid:32)
+
+max
+φ
+
+1
+3
+
+E
+τ ∼Dtrue
+
+[
+
+3
+(cid:88)
+
+i=1
+
+exp(−10d(τ, φi)2)] − E
+
+exp(−10d(τ, φi)2)]
+
+.
+
+(cid:33)
+
+3
+(cid:88)
+[
+τ ∼G(θ)
+
+i=1
+
+In this objective function φi’s do not interact with each other, so we can break the objective function
+into three (one for each φi). Without loss of generality, assume θ1,2,3 are 0.1-close to 0, we are trying
+to maximize
+
+(cid:32)
+
+1
+3
+
+3
+(cid:88)
+
+i=1
+
+max
+φ
+
+exp(−10d(φ, i · 2π/3)2)] − exp(−10d(θ, φ)2)
+
+.
+
+(cid:33)
+
+Clearly, if φ is not 0.05 close to either 2π/3 or 4π/3, we have D ≤ 1/3 − 10 · 0.052 + exp(−10) ≤
+1/3 − 0.02. On the other hand, when φ = 2π/3 or 4π/3, we have D ≥ 1/3 − exp(−10). Therefore
+the maximum must be 0.05-close to one of the two points.
+
+Note that this example is very similar to the mode collapse problem mentioned in NIPS 2016
+
+GAN tutorial[Goodfellow, 2016].
+
+28
+
+

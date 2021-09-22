@@ -1,0 +1,1345 @@
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+Guillaume Gautier 1 2 R´emi Bardenet 1 Michal Valko 2
+
+Abstract
+Determinantal point processes (DPPs) are distri-
+butions over sets of items that model diversity us-
+ing kernels. Their applications in machine learn-
+ing include summary extraction and recommen-
+dation systems. Yet, the cost of sampling from
+a DPP is prohibitive in large-scale applications,
+which has triggered an effort towards efﬁcient
+approximate samplers. We build a novel MCMC
+sampler that combines ideas from combinatorial
+geometry, linear programming, and Monte Carlo
+methods to sample from DPPs with a ﬁxed sam-
+ple cardinality, also called projection DPPs. Our
+sampler leverages the ability of the hit-and-run
+MCMC kernel to efﬁciently move across convex
+bodies. Previous theoretical results yield a fast
+mixing time of our chain when targeting a distri-
+bution that is close to a projection DPP, but not a
+DPP in general. Our empirical results demon-
+strate that this extends to sampling projection
+DPPs, i.e., our sampler is more sample-efﬁcient
+than previous approaches which in turn translates
+to faster convergence when dealing with costly-
+to-evaluate functions, such as summary extrac-
+tion in our experiments.
+
+1. Introduction
+
+Determinantal point processes (DPPs) are distributions
+over conﬁgurations of points that encode diversity through
+a kernel function. DPPs were introduced by Macchi (1975)
+and have then found applications in ﬁelds as diverse as
+probability (Hough et al., 2006), number theory (Rud-
+nick & Sarnak, 1996), statistical physics (Pathria & Beale,
+2011), Monte Carlo methods (Bardenet & Hardy, 2016),
+and spatial statistics (Lavancier et al., 2015). In machine
+learning, DPPs over ﬁnite sets have been used as a model
+of diverse sets of items, where the kernel function takes the
+
+1Univ. Lille, CNRS, Centrale Lille, UMR 9189 — CRIStAL
+2INRIA Lille — Nord Europe, SequeL team. Correspondence to:
+Guillaume Gautier <g.gautier@inria.fr>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+form of a ﬁnite matrix, see Kulesza & Taskar (2012) for a
+comprehensive survey. Applications of DPPs in machine
+learning (ML) since this survey also include recommenda-
+tion tasks (Kathuria et al., 2016; Gartrell et al., 2017), text
+summarization (Dupuy & Bach, 2016), or models for neu-
+ral signals (Snoek et al., 2013).
+
+Sampling generic DPPs over ﬁnite sets is expensive.
+Roughly speaking, it is cubic in the number r of items
+in a DPP sample. Moreover, generic DPPs are sometimes
+speciﬁed through an n × n kernel matrix that needs diag-
+onalizing before sampling, where n is the number of items
+to pick from. In text summarization, r would be the de-
+sired number of sentences for a summary, and n the num-
+ber of sentences of the corpus to summarize. Thus, sam-
+pling quickly becomes intractable for large-scale applica-
+tions (Kulesza & Taskar, 2012). This has motivated re-
+search on fast sampling algorithms. While fast exact al-
+gorithms exist for speciﬁc DPPs such as uniform span-
+ning trees (Aldous, 1990; Broder, 1989; Propp & Wil-
+son, 1998), generic DPPs have so far been addressed with
+approximate sampling algorithms, using random projec-
+tions (Kulesza & Taskar, 2012), low-rank approximations
+(Kulesza & Taskar, 2011; Gillenwater et al., 2012; Affandi
+et al., 2013), or using Markov chain Monte Carlo tech-
+niques (Kang, 2013; Li et al., 2016a; Rebeschini & Kar-
+basi, 2015; Anari et al., 2016; Li et al., 2016b). In partic-
+ular, there are polynomial bounds on the mixing rates of
+natural MCMC chains with arbitrary DPPs as their limiting
+measure; see Anari et al. (2016) for cardinality-constrained
+DPPs, and Li et al. (2016b) for the general case.
+
+In this paper, we contribute a non-obvious MCMC chain
+to approximately sample from projection DPPs, which are
+DPPs with a ﬁxed sample cardinality. Leveraging a combi-
+natorial geometry result by Dyer & Frieze (1994), we show
+that sampling from a projection DPP over a ﬁnite set can be
+relaxed into an easier continuous sampling problem with a
+lot of structure.
+In particular, the target of this continu-
+ous sampling problem is supported on the volume spanned
+by the columns of the feature matrix associated to the pro-
+jection DPP, a convex body also called a zonotope. This
+zonotope can be partitioned into tiles that uniquely corre-
+spond to DPP realizations, and the relaxed target distribu-
+tion is ﬂat on each tile. Previous MCMC approaches to
+sampling projections DPPs can be viewed as attempting
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+moves between neighboring tiles. Using linear program-
+ming, we propose an MCMC chain that moves more freely
+across this tiling. Our chain is a natural transformation of a
+fast mixing hit-and-run Markov chain (Lov´asz & Vempala,
+2003) on the underlying zonotope; this empirically results
+in more uncorrelated MCMC samples than previous work.
+While the results of Anari et al. (2016) and their general-
+ization by Li et al. (2016b) apply to projection DPPs, our
+experiments support the fact that our chain mixes faster.
+
+The rest of the paper is organized as follows.
+In Sec-
+tion 2, we introduce projection DPPs and review existing
+approaches to sampling. In Section 3, we introduce zono-
+topes and we tailor the hit-and-run algorithm to our needs.
+In Section 4, we empirically investigate the performance of
+our MCMC kernel on synthetic graphs and on a summary
+extraction task, before concluding in Section 5.
+
+2. Sampling Projections DPPs
+
+In this section, we introduce projection DPPs in two equiv-
+alent ways, respectively following Hough et al. (2006),
+Kulesza & Taskar (2012), and Lyons (2003). Both deﬁ-
+nitions shed a different light on the algorithms in Section 3.
+
+2.1. Projection DPPs as Particular DPPs
+
+Let E = [n] (cid:44) {1, . . . n}. Let also K be a real symmetric
+positive semideﬁnite n × n matrix, and for I ⊂ E, write
+KI for the square submatrix of K obtained by keeping only
+rows and columns indexed by I ⊂ E. The random subset
+X ⊂ E is said to follow a DPP on E = {1, . . . , n} with
+kernel K if
+
+P [I ⊂ X] = det KI ,
+
+∀I ⊂ E.
+
+(1)
+
+Existence of the DPP described by (1) is guaranteed pro-
+vided K has all its eigenvalues in [0, 1], see e.g., Kulesza
+& Taskar (2012, Theorem 2.3). Note that (1) encodes
+the repulsiveness of DPPs. In particular, for any distinct
+i, j ∈ [n],
+
+P [{i, j} ⊂ X] =
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+Kii Kij
+Kji Kjj
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+= P [{i} ∈ X] P [{j} ∈ X] − K2
+ij
+≤ P [{i} ∈ X] P [{j} ∈ X] .
+
+In other words, Kij encodes departure from independence.
+Similarly, for constant Kii, Kjj, the larger K2
+ij, the less
+likely it is to have items i and j co-occur in a sample.
+
+Projection DPPs are the DPPs such that the eigenvalues of
+K are either 0 or 1, that is, K is the matrix of an orthogo-
+nal projection. Projection DPPs are also sometimes called
+elementary DPPs (Kulesza & Taskar, 2012). One can show
+
+that samples from a projection DPP with kernel matrix K
+almost surely contain r = Tr(K) points and that general
+DPPs are mixtures of projection DPPs, see e.g., Kulesza &
+Taskar (2012, Theorem 2.3).
+
+2.2. Building Projection DPPs from Linear Matroids
+
+Let r < n, and let A be a full-rank r × n real matrix with
+columns (aj)j∈[n]. The linear matroid M [A] is deﬁned as
+the pair (E, B), with E = [n] and
+
+(cid:110)
+
+B =
+
+B ⊂ [n] : |B| = r, {aj}j∈B are independent
+
+. (2)
+
+(cid:111)
+
+A set of indices B ⊂ [n] is in B if and only if it indexes
+a basis of the columnspace of A. Because of this analogy,
+elements of B are called bases of the matroid M [A]. Note
+that elementary algebra yields that for all B1, B2 ∈ B and
+x ∈ B1 \ B2, there exists an element y ∈ B2 \ B1 such that
+
+(B1 \ {x}) ∪ {y} ∈ B.
+
+(3)
+
+Property (3) is known as the basis-exchange property. It is
+used in the deﬁnition of general matroids (Oxley, 2003).
+
+Lyons (2003) deﬁnes a projection DPP as the probabil-
+ity measure on B that assigns to B ∈ B a mass propor-
+tional to | det B|2, where B (cid:44) A:B is the square matrix
+formed by the r columns of A indexed by B. Note that this
+squared determinant is also the squared volume of the par-
+allelotope spanned by the columns indexed by B. In this
+light, sampling a projection DPP is akin to volume sam-
+pling (Deshpande & Rademacher, 2010). Finally, observe
+that the Cauchy-Binet formula gives the normalization
+
+|det A:B|2 = det AAT,
+
+(cid:88)
+
+B∈B
+
+so that the probability mass assigned to B is
+
+det AT
+
+B: det A:B
+
+(cid:104)
+
+= det
+
+AT [AAT]−1 A
+
+det AAT
+
+(cid:105)
+
+.
+
+B
+
+Letting
+
+K = AT [AAT]−1 A,
+
+(4)
+
+gives the equivalence between Sections 2.1 and 2.2.
+
+A fundamental example of DPP deﬁned by a matroid is the
+random set of edges obtained from a uniform spanning tree
+(Lyons, 2003). Let G be a connected graph with r + 1 ver-
+tices and n edges {ei}i∈[n]. Let now A be the ﬁrst r rows
+of the vertex-edge incidence matrix of G. Then B ⊂ [n]
+is a basis of M [A] if and only if {ei}i∈B form a spanning
+tree of G (Oxley, 2003). The transfer current theorem of
+Burton & Pemantle (1993) implies that the uniform distri-
+bution on B is a projection DPP, with kernel matrix (4).
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+2.3. On Projection DPPs and k-DPPs in ML
+
+Projection DPPs are DPPs with realizations of constant car-
+dinality k = r, where r is the rank of K. This constant
+cardinality is desirable when DPPs are used in summary
+extraction (Kulesza & Taskar, 2012; Dupuy & Bach, 2016)
+and the size of the required output is predeﬁned. Another
+way of constraining the cardinality of a DPP is to condition
+on the event |X| = k, which leads to the so-called k-DPPs
+(Kulesza & Taskar, 2012). Projection DPPs and k-DPPs
+are in general different objects. In particular, a k-DPP is
+not a DPP in the sense of (1) unless its kernel matrix K
+is a projection. In that sense, k-DPPs are non-DPP objects
+that generalize projection DPPs. In this paper, we show that
+projection DPPs can beneﬁt from fast sampling methods. It
+is not obvious how to generalize our algorithm to k-DPPs.
+
+In ML practice, using projection DPPs is slightly different
+from using a k-DPP. In some applications, typically with
+graphs, the DPP is naturally a projection, such as uniform
+spanning trees described in Section 2.2. But quite often,
+kernels are built feature-by-feature. That is, for each data
+item i ∈ [n], a normalized vector of features φi ∈ Rr is
+chosen, a marginal relevance qi is assigned to item i, and a
+matrix L is deﬁned as
+
+√
+
+√
+
+Lij =
+
+qiφiφj
+
+qj.
+
+(5)
+
+In text summarization, for instance, items i, j could be sen-
+tences, qi the marginal relevance of sentence i to the user’s
+query, and φi features such as tf-idf frequencies of a choice
+of words, and one could draw from a k-DPP associated to
+L through P [X = I] ∝ det LI , see e.g., Kulesza & Taskar
+(2012, Section 4.2.1).
+
+√
+
+Alternately, let A be the matrix with columns (
+qiφi)i∈[r],
+and assume r < n and A is full-rank. The latter can be en-
+sured in practice by adding a small i.i.d. Gaussian noise to
+each entry of A. The projection DPP with kernel K in (4)
+will yield samples of cardinality r, almost surely, and such
+that the corresponding columns of A span a large volume,
+hence feature-based diversity. Thus, if the application re-
+quires an output of length p, one can pick r = p, as we
+do in Section A. Alternatively, if we want an output of size
+approximately p, we can pick r ≥ p and independently
+thin the resulting sample, which preserves the DPP struc-
+ture (Lavancier et al., 2015).
+
+2.4. Exact Sampling of Projection DPPs
+
+Hough et al. (2006) give an algorithm to sample general
+DPPs, which is based on a subroutine to sample projection
+DPPs. Consider a projection DPP with kernel K such that
+Tr(K) = r, Hough et al.’s (2006) algorithm follows the
+chain rule to sample a vector (x1, . . . , xr) ∈ [n]r with suc-
+cessive conditional densities
+p (x(cid:96)+1 = i|x1 = i1, . . . , x(cid:96) = i(cid:96)) ∝ Kii−Ki,I(cid:96) K−1
+I(cid:96)
+
+KI(cid:96),i,
+
+where I(cid:96) = {i1, . . . , i(cid:96)}. Forgetting order, {x1, . . . , xr}
+are a draw from the DPP (Hough et al., 2006, Proposition
+19), see also Kulesza & Taskar (2012, Theorem 2.3) for a
+detailed treatment of DPPs on [n].
+
+While exact, this algorithm runs in O(nr3) operations and
+requires computing and storing the n×n matrix K. Storage
+can be diminished if one has access to A in (4), through
+QR decomposition of AT. Still, depending on n and r,
+sampling can become intractable. This has sparked interest
+in fast approximate sampling methods for DPPs, which we
+survey in Section 2.5.
+
+Interestingly, there exist fast and exact methods for sam-
+pling some speciﬁc DPPs, which are not based on the ap-
+proach of Hough et al. (2006). We introduced the DPP be-
+hind uniform spanning trees on a connected graph G in
+Section 2.2. Random walk algorithms such as the ones
+by Aldous (1990), Broder (1989), and Propp & Wilson
+(1998) sample uniform spanning trees in time bounded by
+the cover time of the graph, for instance, which is O(r3)
+and can be o(r3) (Levin et al., 2009), where G has r + 1
+vertices. This compares favorably with the algorithm of
+Hough et al. (2006) above, since each sample contains r
+edges. The Aldous-Broder algorithm, for instance, starts
+from an empty set T = ∅ and an arbitrary node x0, and
+samples a simple random walk (Xt)t∈N on the edges of
+G, starting from X0 = x0, and adding edge [Xt, Xt+1] to
+T the ﬁrst time it visits vertex Xt+1. The algorithm stops
+when each vertex has been seen at least once, that is, at the
+cover time of the graph.
+
+2.5. Approximate Sampling of Projection DPPs
+
+There are two main sets of methods for approximate sam-
+pling from general DPPs. The ﬁrst set uses the general-
+purpose tools from numerical algebra and the other is based
+on MCMC sampling.
+
+Consider K = CTC with C of size d × n, for some
+d (cid:28) n (Kulesza & Taskar, 2011), but still too large for
+exact sampling using the method of Hough et al. (2006),
+then Gillenwater et al. (2012) show how projecting C can
+give an approximation with bounded error. When this de-
+composition of the kernel is not possible, Affandi et al.
+(2013) adapt Nystr¨om sampling (Williams & Seeger, 2001)
+to DPPs and bound the approximation error for DPPs and
+k-DPPs, which thus applies to projection DPPs.
+
+Apart from general purpose approximate solvers, there ex-
+ist MCMC-based methods for approximate sampling from
+projection DPPs. In Section 2.2, we introduced the basis-
+exchange property, which implies that once we remove an
+element from a basis B1 of a linear matroid, any other ba-
+sis B2 has an element we can take and add to B1 to make
+it a basis again. This means we can construct a connected
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+Algorithm 1 basisExchangeSampler
+
+3. Hit-and-run on Zonotopes
+
+Input: Either A or K
+Initialize i ← 0 and pick B0 ∈ B as deﬁned in (2)
+while Not converged do
+Draw u ∼ U [0,1]
+if u < 1
+
+2 then
+
+Draw s ∼ U Bi and t ∼ U [n]\Bi
+P ← (Bi \ {s}) ∪ {t}
+Draw u(cid:48) ∼ U [0,1]
+if u(cid:48) <
+then
+
+Vol2(Bi)+Vol2(A:P ) =
+
+Vol2(A:P )
+
+Our main contribution is the construction of a fast-mixing
+Markov chain with limiting distribution a given projection
+DPP. Importantly, we assume to know A in (4).
+
+Assumption 1. We know a full-rank r × n matrix A such
+that K = AT(AAT)−1A.
+
+det KP
+det KBi +det KP
+
+As discussed in Section 2.3, this is not an overly restrictive
+assumption, as many ML applications start with building
+the feature matrix A rather than the similarity matrix K.
+
+Bi+1 ← P
+
+else
+
+Bi+1 ← Bi
+
+end if
+
+else
+
+Bi+1 ← Bi
+
+end if
+i ← i + 1
+
+end while
+
+graph Gbe with B as vertex set, and we add an edge between
+two bases if their symmetric difference has cardinality 2.
+Gbe is called the basis-exchange graph. Feder & Mihail
+(1992) show that the simple random walk on Gbe has lim-
+iting distribution the uniform distribution on B and mixes
+fast, under conditions that are satisﬁed by the matroids in-
+volved by DPPs.
+
+If the uniform distribution on B is not the DPP we want to
+sample from,1 we can add an accept-reject step after each
+move to make the desired DPP the limiting distribution of
+the walk. Adding such an acceptance step and a probability
+to stay at the current basis, Anari et al. (2016); Li et al.
+(2016b) give precise polynomial bounds on the mixing time
+of the resulting Markov chains. This Markov kernel on B
+is given in Algorithm 1. Note that we use the acceptance
+ratio of Li et al. (2016b). In the following, we make use of
+the notation Vol deﬁned as follows. For any P ⊂ [n],
+
+3.1. Zonotopes
+
+We deﬁne the zonotope Z(A) of A as the r-dimensional
+volume spanned by the column vectors of A,
+
+Z(A) = A[0, 1]n.
+
+(7)
+
+As an afﬁne transformation of the unit hypercube, Z(A)
+is a r-dimensional polytope. In particular, for a basis B ∈
+B of the matroid M [A], the corresponding Z(B) is a r-
+dimensional parallelotope with volume Vol(B) = |det B|,
+see Figure 1(a). On the contrary, any P ⊂ [n], such that
+|P | = r, P /∈ B also yields a parallelotope Z(A:P ), but
+its volume is null. In the latter case, the exchange move in
+Algorithm 1 will never be accepted and the state space of
+the corresponding Markov chain is indeed B.
+
+Our algorithm relies on the proof of the following.
+
+Proposition 1 (see Dyer & Frieze, 1994 for details).
+
+Vol(Z(A)) =
+
+Vol(B) =
+
+|det B|
+
+(8)
+
+(cid:88)
+
+B∈B
+
+(cid:88)
+
+B∈B
+
+Proof. In short, for a good choice of c ∈ Rn, Dyer &
+Frieze (1994) consider for any x ∈ Z(A), the following
+linear program (LP) noted Px(A, c),
+
+cTy
+
+min
+y∈Rn
+s.t. Ay = x
+
+0 ≤ y ≤ 1.
+
+(9)
+
+Vol2(A:P ) (cid:44) det AT
+
+P :A:P ∝ det KP ,
+
+(6)
+
+Standard LP results (Luenberger & Ye, 2008) yield that the
+unique optimal solution y∗ of Px(A, c) takes the form
+
+which corresponds to the squared volume of the parallelo-
+tope spanned by the columns of A indexed by P . In partic-
+ular, for subsets P such that |P | > r or such that |P | = r,
+P /∈ B we have Vol2(A:P ) = 0. However, for B ∈ B,
+Vol2(B) = | det A:B|2 > 0.
+
+We now turn to our contribution, which ﬁnds its place in
+this category of MCMC-based approximate DPP samplers.
+
+1It may not even be a DPP (Lyons, 2003, Corollary 5.5).
+
+y∗ = Aξ(x) + Bxu,
+
+(10)
+
+with u ∈ [0, 1]r and ξ(x) ∈ {0, 1}n such that ξ(x)i = 0
+for i ∈ Bx. In case the choice of Bx is ambiguous, Dyer &
+Frieze (1994) take the smallest in the lexicographic order.
+Decomposition (10) allows locating any point x ∈ Z(A)
+as falling inside a uniquely deﬁned parallelotope Z(Bx)
+shifted by ξ(x). Manipulating the optimality conditions of
+(9), Dyer & Frieze (1994) prove that each basis B can be
+realized as a Bx for some x, and that x(cid:48) ∈ Z(Bx) ⇒ Bx =
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+(a)
+
+(b)
+
+(c)
+
+Figure 1. (a) The dashed blue lines deﬁne the contour of Z(A) where A = ( 1 2 0 −1
+0 1 2 1 ). Each pair of column vectors corresponds to a
+parallelogram, the green one is associated to Z(B) with B = {2, 4}. (b) A step of hit-and-run on the same zonotope. (c) Representation
+of πv for the same zonotope.
+
+Bx(cid:48). This allows to write Z(A) as the tiling of all Z(B),
+B ∈ B, with disjoint interiors. This leads to Proposition 1.
+
+Note that c is used to ﬁx the tiling of the zonotope, but the
+map x (cid:55)→ Bx depends on this linear objective. Therefore,
+the tiling of Z(A) is may not be unique. An arbitrary c
+gives a valid tiling, as long as there are no ties when solv-
+ing (9). Dyer & Frieze (1994) use a nonlinear mathematical
+trick to ﬁx c. In practice (Section 4.1), we generate a ran-
+dom Gaussian c once and for all, which makes sure no ties
+appear during the execution, with probability 1.
+Remark 1. We propose to interpret the proof of Proposi-
+tion 1 as a volume sampling algorithm: if one manages to
+sample an x uniformly on Z(A), and then extracts the cor-
+responding basis B = Bx by solving (9), then B is drawn
+with probability proportional to Vol(B) = | det B|.
+
+Remark 1 is close to what we want, as sampling from a pro-
+jection DPP under Assumption 1 boils down to sampling
+a basis B of M [A] proportionally to the squared volume
+| det B|2 (Section 2.2). In the rest of this section, we ex-
+plain how to efﬁciently sample x uniformly on Z(A), and
+how to change the volume into its square.
+
+3.2. Hit-and-run and the Simplex Algorithm
+
+Z(A) is a convex set. Approximate uniform sampling on
+large-dimensional convex bodies is one of the core ques-
+tions in MCMC, see e.g., Cousins & Vempala (2016) and
+references therein. The hit-and-run Markov chain (Turˇcin,
+1971; Smith, 1984) is one of the preferred practical and
+theoretical solutions (Cousins & Vempala, 2016).
+
+We describe the Markov kernel P (x, z) of the hit-and-run
+Markov chain for a generic target distribution π supported
+
+on a convex set C. Sample a point y uniformly on the unit
+sphere centered at x. Letting d = y − x, this deﬁnes the
+line Dx (cid:44) {x + αd ; α ∈ R}. Then, sample z from any
+Markov kernel Q(x, ·) supported on Dx that leaves the re-
+striction of π to Dx invariant.
+In particular, Metropolis-
+Hastings kernel (MH, Robert & Casella 2004) is often used
+with uniform proposal on Dx, which favors large moves
+across the support C of the target, see Figure 1(b). The re-
+sulting Markov kernel leaves π invariant, see e.g., Ander-
+sen & Diaconis (2007) for a general proof. Furthermore,
+the hit-and-run Markov chain has polynomial mixing time
+for log concave π (Lov´asz & Vempala, 2003, Theorem 2.1).
+
+To implement Remark 1, we need to sample from πu ∝
+1Z(A). In practice, we can choose the secondary Markov
+kernel Q(x, ·) to be MH with uniform proposal on Dx, as
+long as we can determine the endpoints x + αm(y − x) and
+x + αM (y − x) of Dx ∩ Z(A). In fact, zonotopes are tricky
+convex sets, as even an oracle saying whether a point be-
+longs to the zonotope requires solving LPs (basically, it is
+Phase I of the simplex algorithm). As noted by Lov´asz &
+Vempala (2003, Section 4.4), hit-and-run with LP is the
+state-of-the-art for computing the volume of large-scale
+zonotopes. Thus, by deﬁnition of Z(A), this amounts to
+solving two more LPs: αm is the optimal solution to the
+linear program
+
+α
+
+min
+λ∈Rn,α∈R
+s.t.
+
+x + αd = Aλ
+0 ≤ λ ≤ 1,
+
+(11)
+
+while αM is the optimal solution of the same linear pro-
+gram with objective −α. Thus, a combination of hit-and-
+run and LP solvers such as Dantzig’s simplex algorithm
+(Luenberger & Ye, 2008) yields a Markov kernel with in-
+variant distribution 1Z(A), summarized in Algorithm 2.
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+Algorithm 2 unifZonoHitAndRun
+
+Algorithm 4 volZonoHitAndRun
+
+Input: A
+Initialization:
+i ← 0
+x0 ← Au with u ∼ U [0,1]n
+while Not converged do
+
+Draw d ∼ U Sr−1 and let Dxi
+Draw (cid:101)x ∼ U Dxi ∩Z(A)
+xi+1 ← (cid:101)x
+i ← i + 1
+
+end while
+
+(cid:44) xi + Rd
+#Solve 2 LPs, see (11)
+
+Algorithm 3 extractBasis
+Input: A, c, x ∈ Z(A)
+Compute y∗ the opt. solution of Px(A, c) #1 LP, see (9)
+B ← {i ; y∗
+return B
+
+i ∈]0, 1[}
+
+The acceptance in MH is 1 due to our choice of the pro-
+posal and the target. By the proof of Proposition 1, running
+Algorithm 2, taking the output chain (xi) and extracting
+the bases (Bxi) with Algorithm 3, we obtain a chain on B
+with invariant distribution proportional to the volume of B.
+
+In terms of theoretical performance, this Markov chain in-
+herits Lov´asz & Vempala’s (2003) mixing time as it is a
+simple transformation of hit-and-run targeting the uniform
+distribution on a convex set. We underline that this is not
+a pathological case and it already covers a range of appli-
+cations, as changing the feature matrix A yields another
+zonotope, but the target distribution on the zonotope stays
+uniform. Machine learning practitioners do not use volume
+sampling for diversity sampling yet, but nothing prevents
+it, as it already encodes the same feature-based diversity as
+squared volume sampling (i.e., DPPs). Nevertheless, our
+initial goal was to sample from a projection DPP with ker-
+nel K under Assumption 1. We now modify the Markov
+chain just constructed to achieve that.
+
+3.3. From Volume to Squared Volume
+
+Consider the probability density function on Z(A)
+
+πv(x) =
+
+|det Bx|
+det AAT
+
+1Z(A)(x),
+
+represented on our example in Figure 1(c). Observe, in
+particular, that πv is constant on each Z(B). Running
+the hit-and-run algorithm with this target instead of πu in
+Section 3.2, and extracting bases using Algorithm 3 again,
+we obtain a Markov chain on B with limiting distribution
+ν(B) proportional to the squared volume spanned by col-
+umn vectors of B, as required. To see this, note that ν(B)
+is the volume of the “skyscraper” built on top of Z(B) in
+Figure 1(c), that is Vol(B) × Vol(B).
+
+Input: A, c, x, B
+Draw d ∼ U Sr−1 and let Dx (cid:44) x + Rd
+Draw (cid:101)x ∼ U Dx∩Z(A)
+(cid:101)B ← extractBasis(A, c, (cid:101)x)
+Draw u ∼ U [0,1]
+if u < Vol( (cid:101)B)
+Vol(B) =
+
+det A: (cid:101)B
+det A:B
+
+(cid:12)
+(cid:12)
+(cid:12) then
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+#Solve 2 LPs, see (11)
+
+#Solve 1 LP, see (9)
+
+return (cid:101)x, (cid:101)B
+
+return x, B
+
+else
+
+end if
+
+Algorithm 5 zonotopeSampler
+
+Input: A, c
+Initialization:
+i ← 0
+xi ← Au, with u ∼ U [0,1]n
+Bi ← extractBasis(A, c, xi)
+while Not converged do
+
+xi+1, Bi+1 ← volZonoHitAndRun(A, c, xi, Bi)
+i ← i + 1
+
+end while
+
+The resulting algorithm is shown in Algorithm 5. Note the
+acceptance ratio in the subroutine Algorithm 4 compared to
+Algorithm 2, since the target of the hit-and-run algorithm
+is not uniform anymore.
+
+3.4. On Base Measures
+
+√
+
+√
+
+As described in Section 2.3, it is common in ML to specify
+a marginal relevance qi of each item i ∈ [n], i.e., the base
+measure of the DPP. Compared to a uniform base measure,
+this means replacing A by (cid:101)A with columns (cid:101)ai =
+qiai.
+Contrary to A, in Algorithm 4, both the zonotope and the
+acceptance ratio are scaled by the corresponding products
+qis. We could equally well deﬁne (cid:101)A by multiplying
+of
+each column of A by qi instead of its square root, and
+leave the acceptance ratio in Algorithm 4 use columns of
+the original A. By the arguments in Section 3.3, the chain
+(Bi) would leave the same projection DPP invariant.
+In
+particular, we have some freedom in how to introduce the
+marginal relevance qi, so we can choose the latter solution
+that simply scales the zonotope and its tiles to preserve
+outer angles, while using unscaled volumes to decide ac-
+ceptance. This way, we do not create harder-to-escape or
+sharper corners for hit-and-run, which could lead the algo-
+rithm to be stuck for a while (Cousins & Vempala, 2016,
+Section 4.2.1). Finally, since hit-and-run is efﬁcient at
+moving across convex bodies (Lov´asz & Vempala, 2003),
+the rationale is that if hit-and-run was empirically mixing
+fast before scaling, its performance should not decrease.
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+4. Experiments
+
+We investigate the behavior of our Algorithm 5 on synthetic
+graphs in Section 4.1, in summary extraction in Section 4.2,
+and on MNIST in Appendix A.
+
+4.1. Non-uniform Spanning Trees
+
+We compare Algorithm 1 studied by Anari et al. (2016); Li
+et al. (2016b) and our Algorithm 5 on two types of graphs,
+in two different settings. The graphs we consider are the
+complete graph K10 with 10 vertices (and 45 edges) and
+a realization BA(20, 2) of a Barab´asi-Albert graph with 20
+vertices and parameter 2. We chose BA as an example of
+structured graph, as it has the preferential attachment prop-
+erty present in social networks (Barab´asi & Albert, 1999).
+The input matrix A is a weighted version of the vertex-edge
+incidence matrix of each graph for which we keep only
+the 9 (resp. 19) ﬁrst rows, so that it satisﬁes Assumption 1.
+For more generality, we introduce a base measure, as de-
+scribed in Section 2.3 and 3.4, by reweighting the columns
+of A with i.i.d. uniform variables in [0, 1]. Samples from
+the corresponding projection DPP are thus spanning trees
+drawn proportionally to the products of their edge weights.
+
+For Algorithm 5, a value of the linear objective c is drawn
+once and for all, for each graph, from a standard Gaussian
+distribution. This is enough to make sure no ties appear
+during the execution, as mentioned in Section 3.1. This
+linear objective is kept ﬁxed throughout the experiments
+so that the tiling of the zonotope remains the same. We
+run both algorithms for 70 seconds, which corresponds to
+roughly 50 000 iterations of Algorithm 5. Moreover, we
+run 100 chains in parallel for each of the two algorithms.
+For each of the 100 repetitions, we initialize the two al-
+gorithms with the same random initial basis, obtained by
+solving (9) once, with x = Au and u ∼ U [0,1]n . For both
+graphs, the total number |B| of bases is of order 108, so
+computing total variation distances is impractical. We in-
+stead compare Algorithms 1 and 5 based on the estima-
+tion of inclusion probabilities P [S ⊂ B] for various sub-
+sets S ⊂ [n] of size 3. We observed similar behaviors
+across 3-subsets, so we display here the typical behavior
+on a 3-subset.
+
+The inclusion probabilities are estimated via a running av-
+erage of the number of bases containing the subsets S. Fig-
+ures 2(a) and 3(a) show the behavior of both algorithms
+vs. MCMC iterations for the complete graph K10 and a re-
+alization of BA(20, 2), respectively. Figures 2(b) and 3(b)
+show the behavior of both algorithms vs. wall-clock time
+for the complete graph K10 and a realization of BA(20, 2),
+respectively. In these four ﬁgures, bold curves correspond
+to the median of the relative errors, whereas the frontiers
+of colored regions indicate the ﬁrst and last deciles of the
+relative errors.
+
+In Figures 2(c) and 3(c) we compute the Gelman-Rubin
+statistic (Gelman & Rubin, 1992), also called the potential
+scale reduction factor (PSRF). We use the PSRF implemen-
+tation of CODA (Plummer et al., 2006) in R, on the 100 bi-
+nary chains indicating the presence of the typical 3-subset
+in the current basis.
+
+In terms of number of iterations, our Algorithm 5 clearly
+mixes faster. Relatedly, we observed typical acceptance
+rates for our algorithm an order of magnitude larger than
+Algorithm 1, while simultaneously attempting more global
+moves than the local basis-exchange moves of Algorithm 1.
+The high acceptance is partly due to the structure of the
+zonotope:
+the uniform proposal in the hit-and-run algo-
+rithm already favors bases with large determinants, as the
+length of the intersection of Dx in Algorithm 4 with any
+Z(B) is an indicator of its volume, see also Figure 1(b).
+
+Under the time-horizon constraint, see Figures 2(b) and
+3(b), Algorithm 1 has time to perform more than 106 it-
+erations compared to roughly 50 000 steps for our chain.
+The acceptance rate of Algorithm 5 is still 10 times larger,
+but the time required to solve the linear programs at each
+MCMC iteration clearly hinders our algorithm in terms
+of CPU time. Both algorithms are comparable in perfor-
+mance, but given its large acceptance, we would expect our
+algorithm to perform better if it was allowed to do even
+only 10 times more iterations. Now this is implementation-
+dependent, and our current implementation of Algorithm 5
+is relatively naive, calling the simplex algorithm in the
+GLPK (Oki, 2012) solver with CVXOPT (Andersen et al.,
+2008) from Python. We think there are big potential speed-
+ups to realize in the integration of linear programming
+solvers in our code. Moreover, we initialize our simplex
+algorithms randomly, while the different LPs we solve are
+related, so there may be additional smart mathematical
+speed-ups in using the path followed by one simplex in-
+stance to initialize the next.
+
+Finally, we note that the performance of our Algorithm 5
+seems stable and independent of the structure of the graph,
+while the performance of the basis-exchange Algorithm 1
+seems more graph-dependent.
+Further investigation is
+needed to make stronger statements.
+
+4.2. Text Summarization
+
+Looking at Figures 2 and 3, our algorithm will be most
+useful when the bottleneck is mixing vs. number of itera-
+tions rather than CPU time. For instance, when integrat-
+ing a costly-to-evaluate function against a projection DPP,
+the evaluation of the integrand may outweigh the cost of
+one iteration. To illustrate this, we adapt an experiment of
+Kulesza & Taskar (2012, Section 4.2.1) on minimum Bayes
+risk decoding for summary extraction. The idea is to ﬁnd a
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+(a) Relative error vs. MCMC iterations.
+
+(b) Relative error vs. wall-clock time.
+Figure 2. Comparison of Algorithms 1 and 5 on the complete graph K10.
+
+(c) PSRF vs. MCMC iterations.
+
+(a) Relative error vs. MCMC iterations.
+
+(b) Relative error vs. wall-clock time.
+
+(c) PSRF vs. MCMC iterations.
+
+Figure 3. Comparison of Algorithms 1 and 5 on a realization of BA(20, 2).
+
+subset Y of sentences of a text that maximizes
+
+1
+R
+
+R
+(cid:88)
+
+r=1
+
+ROUGE-1F (Y, Yr) ,
+
+(12)
+
+where (Yr)r are sampled from a projection DPP. ROUGE-
+1F is a measure of similarity of two sets of sentences. We
+summarize this 64-sentence article as a subset of 11 sen-
+tences. In this setting, evaluating once ROUGE-1F in the
+sum (12) takes 0.1s on a modern laptop, while one itera-
+tion of our algorithm is 10−3s. Our Algorithm 5 can thus
+compute (12) for R = 10 000 in about the same CPU time
+as Algorithm 1, an iteration of which costs 10−5s. We
+show in Figure 4 the value of (12) for 3 possible summaries
+(cid:0)Y (i)(cid:1)3
+i=1 chosen uniformly at random in B, over 50 inde-
+pendent runs. The variance of our estimates is smaller, and
+the number of different summaries explored is about 50%,
+against 10% for Algorithm 1. Evaluating (12) using our al-
+gorithm is thus expected to be closer to the maximum of
+the underlying integral. Details are given in Appendix B.
+
+5. Discussion
+
+We proposed a new MCMC kernel with limiting distribu-
+tion being an arbitrary projection DPP. This MCMC kernel
+leverages optimization algorithms to help making global
+moves on a convex body that represents the DPP. We pro-
+vided empirical results supporting its fast mixing when
+compared to the state-of-the-art basis-exchange chain of
+Anari et al. (2016); Li et al. (2016b). Future work will fo-
+cus on an implementation: while our MCMC chain mixes
+faster, when compared based on CPU time our algorithm
+suffers from having to solve linear programs at each iter-
+
+Figure 4. Summary extraction results
+
+ation. We note that even answering the question whether
+a given point belongs to a zonotope involves linear pro-
+gramming, so that chord-ﬁnding procedures used in slice
+sampling (Neal, 2003, Sections 4 and 5) would not provide
+signiﬁcant computational savings.
+
+We also plan to investigate theoretical bounds on the mix-
+ing time of our Algorithm 4. We can build upon the work
+of Anari et al. (2016), as our Algorithm 4 is also a weighted
+extension of our Algorithm 2, and the polynomial bounds
+for the vanilla hit-and-run algorithm (Lov´asz & Vempala,
+2003) already apply to the latter. Note that while not tar-
+geting a DPP, our Algorithm 2 already samples items with
+feature-based repulsion, and could be used independently
+if the determinantal aspect is not crucial to the application.
+
+Acknowledgments The research presented was supported by
+French Ministry of Higher Education and Research, CPER Nord-
+Pas de Calais/FEDER DATA Advanced data science and tech-
+nologies 2015-2020, and French National Research Agency
+projects EXTRA-LEARN (n.ANR-14-CE24-0010-01) and BOB
+(n.ANR-16-CE23-0003).
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+References
+
+Affandi, R. H., Kulesza, A., Fox, E. B., and Taskar,
+B. Nystr¨om approximation for large-scale determinantal
+processes. International Conference on Artiﬁcial Intelli-
+gence and Statistics, 31:85–98, 2013.
+
+Aldous, D. J. The random walk construction of uniform
+spanning trees and uniform labelled trees. SIAM Journal
+on Discrete Mathematics, 3(4):450–465, 1990.
+
+Anari, N., Gharan, S. O., and Rezaei, A. Monte-Carlo
+Markov chain algorithms for sampling strongly Rayleigh
+distributions and determinantal point processes. In Con-
+ference on Learning Theory, pp. 23–26, 2016.
+
+Andersen, H. C. and Diaconis, P. W. Hit and run as a uni-
+fying device. Journal de la Soci´et´e Franc¸aise de Statis-
+tique, 148(4):5–28, 2007.
+
+Andersen, M., Dahl, J., and Vandenberghe, L. CVXOPT:
+
+A python package for convex optimization, 2008.
+
+Barab´asi, A.-L. and Albert, R. Emergence of scaling in
+
+random networks. Science, 286:11, 1999.
+
+Bardenet, R. and Hardy, A. Monte-Carlo with determinan-
+tal point processes. arXiv preprint arXiv:1605.00361,
+2016.
+
+Broder, A. Generating random spanning trees. In Founda-
+tions of Computer Science, 1989., 30th Annual Sympo-
+sium on, pp. 442–447. IEEE, 1989.
+
+Burton, R. and Pemantle, R. Local characteristics, entropy
+and limit theorems for spanning trees and domino tilings
+via transfer impedances. The Annals of Probability, 21:
+1329–1371, 1993.
+
+Cousins, B. and Vempala, S. A practical volume algo-
+rithm. Mathematical Programming Computation, 8(2):
+133–160, 2016.
+
+Deshpande, A. and Rademacher, L. Efﬁcient volume sam-
+pling for row/column subset selection. In Foundations of
+Computer Science, 2010.
+
+Dupuy, C. and Bach, F.
+
+point processes in sublinear time.
+arXiv:1610.05925, 2016.
+
+Learning determinantal
+arXiv preprint
+
+Dyer, M. and Frieze, A. Random walks, totally unimodu-
+lar matrices, and a randomised dual simplex algorithm.
+Mathematical Programming, 64(1-3):1–16, 1994.
+
+Feder, T. and Mihail, M. Balanced matroids. Proceedings
+of the twenty-fourth annual ACM, pp. 26–38, 1992.
+
+Gartrell, M., Paquet, U., and Koenigstein, N. Low-rank
+factorization of determinantal point processes for rec-
+In AAAI Conference on Artiﬁcial Intel-
+ommendation.
+ligence, pp. 1912–1918, 2017.
+
+Gelman, A. and Rubin, D. B. Inference from iterative sim-
+ulation using multiple sequences. Statist. Sci., 7(4):457–
+472, 11 1992.
+
+Gillenwater, J., Kulesza, A., and Taskar, B. Discovering
+diverse and salient threads in document collections. In
+Joint Conference on Empirical Methods in Natural Lan-
+guage Processing and Computational Natural Language
+Learning, pp. 710–720, 2012.
+
+Hough, J. B., Krishnapur, M., Peres, Y., and Vir´ag, B.
+Determinantal processes and independence. Probability
+surveys, 2006.
+
+Kang, B. Fast determinantal point process sampling with
+application to clustering. In Neural Information Process-
+ing Systems, pp. 2319–2327, 2013.
+
+Kathuria, T., Deshpande, A., and Kohli, P. Batched gaus-
+sian process bandit optimization via determinantal point
+processes. Neural Information Processing Systems, pp.
+pp. 4206–4214, 2016.
+
+Kulesza, A. and Taskar, B. Determinantal point processes
+for machine learning. Foundations and Trends in Ma-
+chine Learning, 5(2-3):123–286, 2012.
+
+Kulesza, A. and Taskar, B. k-dpps: Fixed-size determinan-
+International Conference on Ma-
+
+tal point processes.
+chine Learning, pp. 1193–1200, 2011.
+
+Lavancier, F., Møller, J., and Rubak, E. Determinantal
+Jour-
+point process models and statistical inference.
+nal of the Royal Statistical Society. Series B: Statistical
+Methodology, 77(4):853–877, 2015.
+
+Levin, D. A., Peres, Y., and Wilmer, E. L. Markov chains
+and mixing times. American Mathematical Soc., 2009.
+
+Li, C., Jegelka, S., and Sra, S. Efﬁcient sampling for k-
+determinantal point processes. In Artiﬁcial Intelligence
+and Statistics, pp. 1328–1337, 2016a.
+
+Li, C., Jegelka, S., and Sra, S. Fast mixing markov chains
+for strongly rayleigh measures, dpps, and constrained
+In Neural Information Processing Systems,
+sampling.
+pp. 4188–4196, 2016b.
+
+Liang, D. and Paisley, J. Landmarking manifolds with
+gaussian processes. In International Conference on Ma-
+chine Learning, pp. 466–474, 2015.
+
+Loper, E. and Bird, S. NLTK: The natural language toolkit.
+In Workshop on Effective Tools and Methodologies for
+Teaching Natural Language Processing and Computa-
+tional Linguistics, pp. 63–70, 2002.
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+Lov´asz, L. and Vempala, S. Hit and run is fast and fun.
+
+Technical Report MSR-TR-2003-05, 2003.
+
+a random spanning tree of a directed graph. Journal of
+Algorithms, 27(2):170–217, 1998.
+
+Luenberger, D. G. and Ye, Y. Linear and nonlinear pro-
+
+gramming. Springer, fourth edition, 2008.
+
+Lyons, R. Determinantal probability measures. Publica-
+tions Math´ematiques de l’Institut des Hautes ´Etudes Sci-
+entiﬁques, 2003.
+
+Rebeschini, P. and Karbasi, A. Fast mixing for discrete
+point processes. In Conference on Learning Theory, pp.
+1480–1500, 2015.
+
+Robert, C. P. and Casella, G. Monte-Carlo Statistical Meth-
+
+ods. Springer-Verlag, New York, 2004.
+
+Macchi, O. The coincidence approach to stochastic point
+processes. Advances in Applied Probability, 7(1):83–
+122, 1975.
+
+Rudnick, Z. and Sarnak, P. Zeros of principal L-functions
+and random matrix theory. Duke Mathematical Journal,
+81(2):269–322, 1996.
+
+Neal, R. M. Slice sampling. Annals of statistics, pp. 705–
+
+741, 2003.
+
+Oki, E. Gnu linear programming kit, version 4.61.
+
+In
+Linear Programming and Algorithms for Communica-
+tion Networks - A Practical Guide to Network Design,
+Control, and Management. 2012.
+
+Oxley, J. What is a matroid? Cubo Matem´atica Educa-
+
+cional, 5.3:179–218, 2003.
+
+Pathria, R. K. and Beale, P. D. Statistical Mechanics. 2011.
+
+Plummer, M., Best, N., Cowles, K., and Vines, K. Coda:
+Convergence diagnosis and output analysis for MCMC.
+R News, 6(1):7–11, 2006.
+
+Propp, J. G. and Wilson, D. B. How to get a perfectly ran-
+dom sample from a generic Markov chain and generate
+
+Smith, R. L. Efﬁcient Monte-Carlo procedures for gener-
+ating points uniformly distributed over bounded regions.
+Operations Research, 32:1296–1308, 1984.
+
+Snoek, J., Zemel, R., and Adams, R. P. A determinan-
+tal point process latent variable model for inhibition in
+neural spiking data. In Neural Information Processing
+Systems, pp. 1932–1940, 2013.
+
+Turˇcin, V. F. On the computation of multidimensional inte-
+grals by the monte-carlo method. Theory of Probability
+& Its Applications, 16(4):720–724, 1971.
+
+Williams, C. and Seeger, M. Using the Nystr¨om method to
+speed up kernel machines. In Neural Information Pro-
+cessing Systems, pp. 682–688, 2001.
+
+Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+A. Landmarks on MNIST
+
+To illustrate our Algorithm 5 on a non-synthetic dataset, we take a thousand images of handwritten 1s from MNIST. We
+consider the problem of ﬁnding landmarks among these 1s, see, for example, Liang & Paisley (2015). To obtain a set
+of r = 10 landmarks from a projection DPP, we design r-dimensional feature vectors of our images, the inner products
+of which indicate similarity. Speciﬁcally, we take A to be the coordinates of the projections of our dataset onto the
+ﬁrst r principal directions given by a standard PCA, so that A has rank r if the whole variance is not explained by these
+ﬁrst r eigenvalues. Note that our choice of using standard PCA is arbitrary: For manifold landmarking, we could take the
+coordinates output by a manifold learning algorithm such as ISOMAP.
+
+Running our Algorithm 5 for 10 000 time steps, we obtain bases with squared volumes spanning three orders of magnitude.
+The basis in our MCMC sample with maximum squared volume is shown in the ﬁrst row of Figure 5. The bottom three
+rows show bases drawn uniformly at random from our initial dataset, for visual comparison. The left column gives the log
+of the ratio of the squared volume of the corresponding basis by that of the top row.
+
+Figure 5. Results of the MNIST experiment in Section A: the MAP basis in the ﬁrst row is compared to uniform random bases.
+
+Visual inspection reveals that the projection DPP and our MCMC sample successfully pick up diversity among 1s: Different
+angles, thicknesses, and shapes are selected, while uniform random sampling exhibits less coverage. This is conﬁrmed by
+the log ratios, which are far from the three orders of magnitude within our chain.
+
+B. Extractive Text Summarization
+
+We consider the article2 entitled Scientists, Stop Thinking Explaining Science Will Fix Things. In order to generate an
+11-sentences summary, we build 11 features as follows. For each sentence, we compute its number of characters and its
+number of words. Then, we apply a Porter stemmer (Loper & Bird, 2002) and count again the number of characters and
+words in each sentence. In addition, we sum the tf-idf values of the words in each sentence and compute the average cosine
+distance to all other sentences. Finally, we compute the position of the sentence in the original article and generate binary
+features indicating positions 15. We end up with a feature matrix A of size 11 × 64.
+
+Next, we display 3 summaries of the article, the ﬁrst one is drawn using Algorithm 5 while the 2 others are constructed by
+picking 11 sentences uniformly at random. In both cases, we sort the sentences in the order they originally appear. Samples
+from Algorithm 5 induce a better coverage of the article than uniform draws.
+
+2http://www.slate.com/articles/health_and_science/science/2017/04/explaining_science_won_t_fix_
+
+information_illiteracy.html
+
+-12.3-16.4-9.77Zonotope Hit-and-run for Efﬁcient Sampling from Projection DPPs
+
+One summary drawn with Algorithm 5:
+
+If you are a scientist, this disregard for evidence probably drives you crazy.
+
+So what do you do about it?
+
+Across the country, science communication and advocacy groups report upticks in interest.
+
+In 2010, Dan Kahan, a Yale psychologist, essentially proved this theory wrong.
+
+If the deﬁcit model were correct, Kahan reasoned, then people with increased scientiﬁc literacy, regardless of worldview, should agree
+with scientists that climate change poses a serious risk to humanity.
+
+Scientiﬁc literacy, it seemed, increased polarization.
+
+This lumps scientists in with the nebulous ”left” and, as Daniel Engber pointed out here in Slate about the upcoming March for
+Science, rebrands scientiﬁc authority as just another form of elitism.
+
+Is it any surprise, then, that lectures from scientists built on the premise that they simply know more (even if it’s true) fail to convince
+this audience?
+With that in mind, it may be more worthwhile to ﬁgure out how to talk about science with people they already know, through, say,
+local and community interactions, than it is to try to publish explainers on national news sites.
+
+Goldman also said scientists can do more than just educate the public: The Union of Concerned Scientists, for example, has created
+a science watchdogteam that keeps tabs on the activities of federal agencies.
+
+There’s also a certain irony that, right here in this article, I’m lecturing scientists about what they might not know-in other words,
+I’m guilty of following the deﬁcit model myself.
+
+Two summaries drawn uniformly at random:
+
+If you consider yourself to have even a passing familiarity with science, you likely ﬁnd yourself in a state of disbelief as the president
+of the United States calls climate scientists ”hoaxsters” and pushes conspiracy theories about vaccines.
+
+In fact, it’s so wrong that it may have the opposite eﬀect of what they’re trying to achieve.
+
+Respondents who knew more about science generally, regardless of political leaning, were better able to identify the scientiﬁc consensus-
+in other words, the polarization disappeared.
+
+In fact, well-meaning attempts by scientists to inform the public might even backﬁre.
+
+Psychologists, aptly, dubbed this the ”backﬁre eﬀect.”
+
+But if scientists are motivated to change minds-and many enrolled in science communication workshops do seem to have this goal-they
+will be sorely disappointed.
+
+That’s not to say scientists should return to the bench and keep their mouths shut.
+
+Goldman also said scientists can do more than just educate the public: The Union of Concerned Scientists, for example, has created
+a science watchdogteam that keeps tabs on the activities of federal agencies.
+
+But I’m learning to better challenge scientists’ assumptions about how communication works.
+
+It’s very logical, and my hunch is that it comes naturally to scientists because most have largely spent their lives in school-whether
+as students, professors, or mentors-and the deﬁcit model perfectly explains how a scientist learns science.
+
+So in the spirit of doing better, I’ll not just write this article but also take the time to talk to scientists in person about how to
+communicate science strategically and to explain why it matters.
+
+And it’s not just Trump-plenty of people across the political spectrum hold bizarre and inaccurate ideas about science, from climate
+change and vaccines to guns and genetically modiﬁed organisms.
+
+It seems many scientists would take matters into their own hands by learning how to better communicate their subject to the masses.
+
+I’ve always had a handful of intrepid graduate students, but now, fueled by the Trump administration’s Etch A Sketch relationship to
+facts, record numbers of scientists are setting aside the pipette for the pen.
+
+This is because the way most scientists think about science communication-that just explaining the real science better will help-is
+plain wrong.
+
+Before getting ﬁred up to set the scientiﬁc record straight, scientists would do well to ﬁrst considerthe science of science communication.
+
+If the deﬁcit model were correct, Kahan reasoned, then people with increased scientiﬁc literacy, regardless of worldview, should agree
+with scientists that climate change poses a serious risk to humanity.
+
+Scientiﬁc literacy, it seemed, increased polarization.
+
+Presenting facts that conﬂict with an individual’s worldview, it turns out, can cause people to dig in further.
+
+I spoke with Gretchen Goldman, research director of the Union of Concerned Scientists’ Center for Science and Democracy, which
+oﬀers communication and advocacy workshops.
+
+Communication that appeals to values, not just intellect, research shows, can be far more eﬀective.
+
+I hope they end up doing the same.
+
+

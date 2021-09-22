@@ -1,0 +1,1416 @@
+Multichannel End-to-end Speech Recognition
+
+Tsubasa Ochiai 1 Shinji Watanabe 2 Takaaki Hori 2 John R. Hershey 2
+
+Abstract
+The ﬁeld of speech recognition is in the midst
+of a paradigm shift: end-to-end neural networks
+are challenging the dominance of hidden Markov
+models as a core technology. Using an attention
+mechanism in a recurrent encoder-decoder archi-
+tecture solves the dynamic time alignment prob-
+lem, allowing joint end-to-end training of the
+acoustic and language modeling components. In
+this paper we extend the end-to-end framework
+to encompass microphone array signal process-
+ing for noise suppression and speech enhance-
+ment within the acoustic encoding network. This
+allows the beamforming components to be opti-
+mized jointly within the recognition architecture
+to improve the end-to-end speech recognition ob-
+jective. Experiments on the noisy speech bench-
+marks (CHiME-4 and AMI) show that our mul-
+tichannel end-to-end system outperformed the
+attention-based baseline with input from a con-
+ventional adaptive beamformer.
+
+1. Introduction
+
+Existing automatic speech recognition (ASR) systems are
+based on a complicated hybrid of separate components, in-
+cluding acoustic, phonetic, and language models (Jelinek,
+1976). Such systems are typically based on deep neural
+network acoustic models combined with hidden Markov
+models to represent the language and phonetic context-
+dependent state and their temporal alignment with the
+acoustic signal (DNN-HMM) (Bourlard & Morgan, 1994;
+Hinton et al., 2012). As a simpler alternative, end-to-end
+speech recognition paradigm has attracted great research
+interest (Chorowski et al., 2014; 2015; Chan et al., 2016;
+Graves & Jaitly, 2014; Miao et al., 2015). This paradigm
+simpliﬁes the above hybrid architecture by subsuming it
+
+1Doshisha University, Kyoto, Japan 2Mitsubishi Electric Re-
+search Laboratories (MERL), Cambridge, MA, USA. Correspon-
+dence to: Tsubasa Ochiai <eup1105@mail4.doshisha.ac.jp>,
+Shinji Watanabe <watanabe@merl.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+into a single neural network. Speciﬁcally, an attention-
+based encoder-decoder framework (Chorowski et al., 2014)
+integrates all of those components using a set of recurrent
+neural networks (RNN), which map from acoustic feature
+sequences to character label sequences.
+
+However, existing end-to-end frameworks have focused
+on clean speech, and do not include speech enhancement,
+which is essential to good performance in noisy environ-
+ments. For example, recent industrial applications (e.g.,
+Amazon echo) and benchmark studies (Barker et al., 2016;
+Kinoshita et al., 2016) show that multichannel speech en-
+hancement techniques, using beamforming methods, pro-
+duce substantial improvements as a pre-processor for con-
+ventional hybrid systems, in the presence of strong back-
+ground noise. In light of the above trends, this paper ex-
+tends the existing attention-based encoder-decoder frame-
+work by integrating multichannel speech enhancement.
+Our proposed multichannel end-to-end speech recognition
+framework is trained to directly translate from multichan-
+nel acoustic signals to text.
+
+A key concept of the multichannel end-to-end framework
+is to optimize the entire inference procedure, including
+the beamforming, based on the ﬁnal ASR objectives, such
+as word/character error rate (WER/CER). Traditionally,
+beamforming techniques such as delay-and-sum and ﬁlter-
+and-sum are optimized based on a signal-level loss func-
+tion, independently of speech recognition task (Benesty
+et al., 2008; Van Veen & Buckley, 1988). Their use in ASR
+requires ad-hoc modiﬁcations such as Wiener post-ﬁltering
+or distortionless constraints, as well as steering mecha-
+nisms determine a look direction to focus the beamformer
+on the target speech (W¨olfel & McDonough, 2009). In con-
+trast, our framework incorporates recently proposed neu-
+ral beamforming mechanisms as a differentiable compo-
+nent to allow joint optimization of the multichannel speech
+enhancement within the end-to-end system to improve the
+ASR objective.
+
+Recent studies on neural beamformers can be categorized
+into two types: (1) beamformers with a ﬁlter estimation
+network (Li et al., 2016; Xiao et al., 2016a; Meng et al.,
+2017) and (2) beamformers with a mask estimation net-
+work (Heymann et al., 2016; Erdogan et al., 2016). Both
+methods obtain an enhanced signal based on the formal-
+
+Multichannel End-to-end Speech Recognition
+
+ization of the conventional ﬁlter-and-sum beamformer in
+the time-frequency domain. The main difference between
+them is how the multichannel ﬁlters are produced by the
+neural network. In the former approach, the multichannel
+ﬁlter coefﬁcients are direct outputs of the network. In the
+latter approach, a network ﬁrst estimates time-frequency
+masks, which are used to compute expected speech and
+noise statistics. Then, using these statistics, the ﬁlter co-
+efﬁcients are computed based on the well-known MVDR
+(minimum variance distortionless response) formalization
+(Capon, 1969). In both approaches, the estimated ﬁlter co-
+efﬁcients are then applied to the multichannel noisy signal
+to enhance the speech signal. Note that the mask estimation
+approach has the advantage of leveraging well-known tech-
+niques, but it requires parallel data composed of aligned
+clean and noisy speech, which are usually difﬁcult to ob-
+tain without data simulation.
+
+Recently, it has been reported that the mask estimation-
+based approaches (Yoshioka et al., 2015; Heymann et al.,
+2016; Erdogan et al., 2016) achieve great performance in
+noisy speech recognition benchmarks (e.g., CHiME 3 and
+4 challenges). Although this paper proposes to incorporate
+both mask and ﬁlter estimation approaches in an end-to-end
+framework, motivated by those successes, we focus more
+on the mask estimation, implementing it along with the
+MVDR estimation as a differentiable network. Our MVDR
+formulation estimates the speech image at the reference
+microphone and includes selection of the reference micro-
+phone using an attention mechanism. By using channel-
+independent mask estimation along with this reference se-
+lection, the model can generalize to different microphone
+array geometries (number of channels, microphone loca-
+tions, and ordering), unlike the ﬁlter estimation approach.
+Finally, because the masks are latent variables in the end-
+to-end training, we no longer need parallel clean and noisy
+speech.
+
+The main advantages of our proposed multichannel end-to-
+end speech recognition system are:
+
+1. Overall inference from speech enhancement to recog-
+nition is jointly optimized for the ASR objective.
+
+2. The trained system can be used for input signals with
+
+arbitrary number and order of channels.
+
+3. Parallel clean and noisy data are not required. We
+can optimize the speech enhancement component with
+noisy signals and their transcripts.
+
+2. Overview of attention-based
+encoder-decoder networks
+
+This
+section explains a conventional attention-based
+encoder-decoder framework, which is used to directly deal
+
+Figure 1. The structure of an attention-based encoder-decoder
+framework. The encoder transforms an input sequence O into
+a high-level feature sequence H, and then the decoder generates
+a character sequence Y through the attention mechanism.
+
+with variable length input and output sequences. The
+framework consists of two RNNs, called encoder and de-
+coder respectively, and an attention mechanism, which con-
+nects the encoder and decoder, as shown in Figure 1. Given
+a T -length sequence of input features O = {ot ∈ RDO |t =
+1, · · · , T }, the network generates an N -length sequence of
+output labels Y = {yn ∈ V|n = 1, · · · , N }, where ot is a
+DO-dimensional feature vector (e.g., log Mel ﬁlterbank) at
+input time step t, and yn is a label symbol (e.g., character)
+at output time step n in label set V.
+
+First, given an input sequence O, the encoder network
+transforms it to an L-length high-level feature sequence
+H = {hl ∈ RDH |l = 1, · · · , L}, where hl is a DH-
+dimensional state vector at a time step l of encoder’s top
+layer. In this work, the encoder network is composed of a
+bidirectional long short-term memory (BLSTM) recurrent
+network. To reduce the input sequence length, we apply
+a subsampling technique (Bahdanau et al., 2016) to some
+layers. Therefore, l represents the frame index subsampled
+from t and L is less than T .
+
+Next, the attention mechanism integrates all encoder out-
+puts H into a DH-dimensional context vector cn ∈ RDH
+based on an L-dimensional attention weight vector an ∈
+[0, 1]L, which represents a soft alignment of encoder out-
+puts at an output time step n.
+In this work, we adopt
+a location-based attention mechanism (Chorowski et al.,
+2015), and an and cn are formalized as follows:
+
+fn = F ∗ an−1,
+
+kn,l = wTtanh(VSsn + VHhl + VFfn,l + b),
+
+an,l =
+
+exp(αkn,l)
+l=1 exp(αkn,l)
+
+,
+
+(cid:80)L
+
+cn =
+
+an,lhl,
+
+L
+(cid:88)
+
+l=1
+
+(1)
+
+(2)
+
+(3)
+
+Multichannel End-to-end Speech Recognition
+
+where w ∈ R1×DW , VH ∈ RDW×DH , VS ∈ RDW×DS ,
+VF ∈ RDW×DF are trainable weight matrices, b ∈ RDW
+is a trainable bias vector, F ∈ RDF×1×Df is a trainable
+convolution ﬁlter. sn ∈ RDS is a DS-dimensional hidden
+state vector obtained from an upper decoder network at n,
+and α is a sharpening factor (Chorowski et al., 2015). ∗
+denotes the convolution operation.
+
+Then, the decoder network incrementally updates a hidden
+state sn and generates an output label yn as follows:
+
+sn = Update(sn−1, cn−1, yn−1),
+yn = Generate(sn, cn),
+
+where the Generate(·) and Update(·) functions are com-
+posed of a feed forward network and an LSTM-based re-
+current network, respectively.
+
+Now, we can summarize these procedures as follows:
+
+P (Y |O) =
+
+P (yn|O, y1:n−1),
+
+(cid:89)
+
+n
+
+H = Encoder(O),
+cn = Attention(an−1, sn, H),
+yn = Decoder(cn, y1:n−1),
+
+(4)
+
+(5)
+
+(6)
+
+(7)
+
+(8)
+
+(9)
+
+where Encoder(·) = BLSTM(·), Attention(·) corre-
+sponds to Eqs. (1)-(3), and Decoder(·) corresponds to
+Eqs. (4) and (5). Here, special tokens for start-of-sentence
+(sos) and end-of-sentence (eos) are added to the label set V.
+The decoder starts the recurrent computation with the (sos)
+label and continues to generate output labels until the (eos)
+label is emitted. Figure 1 illustrates such procedures.
+
+Based on the cross-entropy criterion, the loss function is
+deﬁned using Eq. (6) as follows:
+
+(cid:88)
+
+L = − ln P (Y ∗|O) = −
+
+ln P (y∗
+
+n|O, y∗
+
+1:n−1),
+
+(10)
+
+n
+where Y ∗ is the ground truth of a whole sequence of output
+labels and y∗
+1:n−1 is the ground truth of its subsequence
+until an output time step n − 1.
+
+In this framework, the whole networks including the en-
+coder, attention, and decoder can be optimized to generate
+the correct label sequence. This consistent optimization of
+all relevant procedures is the main motivation of the end-
+to-end framework.
+
+3. Neural beamformers
+
+This section explains neural beamformer techniques, which
+are integrated with the encoder-decoder network in the fol-
+lowing section. This paper uses frequency-domain beam-
+formers rather than time-domain ones, which achieve sig-
+niﬁcant computational complexity reduction in multichan-
+nel neural processing (Li et al., 2016; Sainath et al., 2016).
+
+In the frequency domain representation, a ﬁlter-and-sum
+beamformer obtains an enhanced signal by applying a lin-
+ear ﬁlter as follows:
+
+ˆxt,f =
+
+gt,f,cxt,f,c,
+
+(11)
+
+C
+(cid:88)
+
+c=1
+
+where xt,f,c ∈ C is an STFT coefﬁcient of c-th channel
+noisy signal at a time-frequency bin (t, f ). gt,f,c ∈ C is
+a corresponding beamforming ﬁlter coefﬁcient. ˆxt,f ∈ C
+is an enhanced STFT coefﬁcient, and C is the numbers of
+channels.
+
+In this paper, we adopt two types of neural beamformers,
+which basically follow Eq. (11); 1) ﬁlter estimation net-
+work and 2) mask estimation network. Figure 2 illustrates
+the schematic structure of each approach. The main differ-
+ence between them is how to compute the ﬁlter coefﬁcient
+gt,f,c. The following subsections describe each approach.
+
+3.1. Filter estimation network approach
+
+The ﬁlter estimation network directly estimates a time-
+variant ﬁlter coefﬁcients {gt,f,c}T,F,C
+t=1,f =1,c=1 as the outputs
+of the network, which was originally proposed in (Li et al.,
+2016). F is the dimension of STFT features.
+
+This approach uses a single real-valued BLSTM network to
+predict the real and imaginary parts of the complex-valued
+ﬁlter coefﬁcients at an every time step. Therefore, we in-
+troduce multiple (2 × C) output layers to separately com-
+pute the real and imaginary parts of the ﬁlter coefﬁcients
+for each channel. Then, the network outputs time-variant
+f =1 ∈ CF at a time step t
+ﬁlter coefﬁcients gt,c = {gt,f,c}F
+for c-th channel as follows;
+
+Z = BLSTM({¯xt}T
+
+(cid:60)(gt,c) = tanh(W(cid:60)
+(cid:61)(gt,c) = tanh(W(cid:61)
+
+c zt + b(cid:60)
+c zt + b(cid:61)
+
+t=1),
+c ),
+c ),
+
+(12)
+
+(13)
+
+(14)
+
+where Z = {zt ∈ RDZ |t = 1, · · · , T }is a sequence of DZ-
+dimensional output vectors of the BLSTM network. ¯xt =
+{(cid:60)(xt,f,c), (cid:61)(xt,f,c)}F,C
+f =1,c=1 ∈ R2F C is an input feature
+of a 2F C-dimensional real-value vector for the BLSTM
+network. This is obtained by concatenating the real and
+imaginary parts of all STFT coefﬁcients in all channels.
+(cid:60)(gt,c) and (cid:61)(gt,c) is the real and imaginary part of ﬁl-
+c ∈ RF ×DZ are the
+c ∈ RF ×DZ and W(cid:61)
+ter coefﬁcients, W(cid:60)
+weight matrices of the output layer for c-th channel, and
+c ∈ RF are their corresponding bias vec-
+c ∈ RF and b(cid:61)
+b(cid:60)
+tors. Using the estimated ﬁlters gt,c, the enhanced STFT
+coefﬁcients ˆxt,f are obtained based on Eq. (11).
+
+This approach has several possible problems due to its for-
+malization. The ﬁrst issue is the high ﬂexibility of the esti-
+mated ﬁlters {gt,f,c}T,F,C
+t=1,f =1,c=1, which are composed of
+
+Multichannel End-to-end Speech Recognition
+
+(a) ﬁlter estimation
+
+(b) mask estimation
+
+Figure 2. Structures of neural beamformers. (a) Filter estimation
+network, which directly estimates the ﬁlter coefﬁcients. (b) Mask
+estimation network, which estimates time-frequency masks, and
+then get ﬁlter coefﬁcients based on the MVDR formalization.
+
+a large number of unconstrained variables (2T F C) esti-
+mated from few observations. This causes problems such
+as training difﬁculties and over-ﬁtting. The second issue is
+that the network structure depends on the number and order
+of channels. Therefore, a new ﬁlter estimation network has
+to be trained when we change microphone conﬁgurations.
+
+3.2. Mask estimation network approach
+
+The key point of the mask estimation network approach
+is that it constrains the estimated ﬁlters based on well-
+founded array signal processing principles. Here,
+the
+network estimates the time-frequency masks, which are
+used to compute the time-invariant ﬁlter coefﬁcients
+{gf,c}F,C
+f =1,c=1 based on the MVDR formalizations. This
+is the main difference between this approach and the ﬁl-
+ter estimation network approach described in Section 3.1.
+Also, mask-based beamforming approaches have achieved
+great performance in noisy speech recognition benchmarks
+(Yoshioka et al., 2015; Heymann et al., 2016; Erdogan
+et al., 2016). Therefore, this paper proposes to use a mask-
+based MVDR beamformer, where overall procedures are
+formalized as a differentiable network for the subsequent
+end-to-end speech recognition system. Figure 3 summa-
+rizes the overall procedures to compute the ﬁlter coefﬁ-
+cients, which is a detailed ﬂow of Figure 2 (b).
+
+3.2.1. MASK-BASED MVDR FORMALIZATION
+
+One of the MVDR formalizations computes the time-
+c=1 ∈ CC in
+invariant ﬁlter coefﬁcients g(f ) = {gf,c}C
+Eq. (11) as follows (Souden et al., 2010):
+
+g(f ) =
+
+ΦN(f )−1ΦS(f )
+Tr(ΦN(f )−1ΦS(f ))
+
+u,
+
+(15)
+
+where ΦS(f ) ∈ CC×C and ΦN(f ) ∈ CC×C are the cross-
+channel power spectral density (PSD) matrices (also known
+as spatial covariance matrices) for speech and noise signals,
+
+Figure 3. Overall procedures to compute ﬁlter coefﬁcients in
+mask estimation network approach.
+
+respectively. u ∈ RC is the one-hot vector representing a
+reference microphone, and Tr(·) is the matrix trace opera-
+tion. Note that although the formula contains a matrix in-
+verse, the number of channels is relatively small, and so the
+forward pass and derivatives can be efﬁciently computed.
+
+Based on (Yoshioka et al., 2015; Heymann et al., 2016), the
+PSD matrices are robustly estimated using the expectation
+with respect to time-frequency masks as follows:
+
+ΦS(f ) =
+
+ΦN(f ) =
+
+1
+t=1 mS
+t,f
+
+(cid:80)T
+
+1
+t=1 mN
+t,f
+
+(cid:80)T
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+mS
+
+t,f xt,f x†
+
+t,f ,
+
+(16)
+
+mN
+
+t,f xt,f x†
+
+t,f ,
+
+(17)
+
+c=1 ∈ CC is the spatial vector of
+where xt,f = {xt,f,c}C
+an observed signal for each time-frequency bin, mS
+t,f ∈
+[0, 1] and mN
+t,f ∈ [0, 1] are the time-frequency masks for
+speech and noise, respectively. † represents the conjugate
+transpose.
+
+3.2.2. MASK ESTIMATION NETWORK
+
+In the mask estimation network approach, we use two real-
+valued BLSTM networks; one for a speech mask and the
+other for a noise mask. Each network outputs the time-
+frequency mask as follows:
+
+c = BLSTMS({¯xt,c}T
+Z S
+t,c = sigmoid(WSzS
+mS
+c = BLSTMN({¯xt,c}T
+Z N
+t,c = sigmoid(WNzN
+mN
+
+t=1),
+t,c + bS),
+t=1),
+t,c + bN),
+
+(18)
+
+(19)
+
+(20)
+
+(21)
+
+Multichannel End-to-end Speech Recognition
+
+c = {zS
+
+t,c ∈ RDZ|t = 1, · · · , T } is the output se-
+where Z S
+quence of DZ-dimensional vectors of the BLSTM network
+to obtain a speech mask over c-th channel’s input STFTs.
+Z N
+c is the BLSTM output sequence for a noise mask. ¯xt,c =
+f =1 ∈ R2F is an input feature of a
+{(cid:60)(xt,f,c), (cid:61)(xt,f,c)}F
+2F -dimensional real-value vector. This is obtained by con-
+catenating the real and imaginary parts of all STFT features
+f =1 ∈ [0, 1]F and mN
+at c-th channel. mS
+t,c
+are the estimated speech and noise masks for every c-th
+channel at a time step t, respectively. WS, WN ∈ RF ×DZ
+are the weight matrices of the output layers to ﬁnally output
+speech and noise masks, respectively, and bS, bN ∈ RF are
+their corresponding bias vectors.
+
+t,c = {mS
+
+t,f,c}F
+
+After computing the speech and noise masks for each chan-
+nel, the averaged masks are obtained as follows:
+
+mS
+
+t =
+
+mS
+
+t,c, mN
+
+t =
+
+mN
+
+t,c.
+
+(22)
+
+1
+C
+
+C
+(cid:88)
+
+c=1
+
+1
+C
+
+C
+(cid:88)
+
+c=1
+
+We use these averaged masks to estimate the PSD matri-
+ces as described in Eqs. (16) and (17). The MVDR beam-
+former through this BLSTM mask estimation is originally
+proposed in (Heymann et al., 2016), but our neural beam-
+former further extends it with attention-based reference se-
+lection, which is described in the next subsection.
+
+3.2.3. ATTENTION-BASED REFERENCE SELECTION
+
+To incorporate the reference microphone selection in a neu-
+ral beamformer framework, we use a soft-max for the vec-
+tor u in Eq. (15) derived from an attention mechanism. In
+this approach, the reference microphone vector u is esti-
+mated from time-invariant feature vectors qc and rc as fol-
+lows:
+
+f,c,c(cid:48) ∈ C is the entry in c-th row and c(cid:48)-th column
+where φS
+of the speech PSD matrix ΦS(f ) in Eq. (16). The PSD ma-
+trix represents correlation information between channels.
+To select a reference microphone, the spatial correlation re-
+lated to speech signals is more informative, and therefore,
+we only use the speech PSD matrix ΦS(f ) as a feature.
+
+Note that, in this mask estimation based MVDR beam-
+former, masks for each channel are computed separately
+using the same BLSTM network unlike Eq. (12), and the
+mask estimation network is independent of channels. Simi-
+larly, the reference selection network is also independent of
+channels, and the beamformer deals with input signals with
+arbitrary number and order of channels without re-training
+or re-conﬁguration of the network.
+
+4. Multichannel end-to-end ASR
+
+In this work, we propose a multichannel end-to-end speech
+recognition, which integrates all components with a single
+neural architecture. We adopt neural beamformers (Section
+3) as a speech enhancement part, and the attention-based
+encoder-decoder (Section 2) as a speech recognition part.
+
+The entire procedure to generate the sequence of output la-
+bels ˆY from the multichannel inputs {Xc}C
+c=1 is formalized
+as follows:
+
+c=1),
+
+ˆX = Enhance({Xc}C
+ˆO = Feature( ˆX),
+ˆH = Encoder( ˆO),
+ˆcn = Attention(ˆan−1, ˆsn, ˆH),
+ˆyn = Decoder(ˆcn, ˆy1:n−1).
+
+(27)
+
+(28)
+
+(29)
+
+(30)
+
+(31)
+
+˜kc = vTtanh(VQqc + VRrc + ˜b),
+
+uc =
+
+exp(β˜kc)
+c=1 exp(β˜kc)
+
+,
+
+(cid:80)C
+
+(23)
+
+(24)
+
+Enhance(·) is a speech enhancement function realized by
+the neural beamformer based on Eq. (11) with the ﬁlter or
+mask estimation network (Section 3.1 or 3.2).
+
+where v ∈ R1×DV , VZ ∈ RDV×2DZ, VR ∈ RDV×2F are
+trainable weight parameters, ˜b ∈ RDV is a trainable bias
+vector. β is the sharpening factor. We use two types of
+features; 1) the time-averaged state vector qc ∈ R2DZ ex-
+tracted from the BLSTM networks for speech and noise
+masks in Eqs. (18) and (20), i.e.,
+
+qc =
+
+{zS
+
+t,c, zN
+
+t,c},
+
+T
+(cid:88)
+
+1
+T
+
+(25)
+
+t=1
+and 2) the PSD feature rc ∈ R2F , which incorporates the
+spatial information into the attention mechanism. The fol-
+lowing equation represents how to compute rc:
+
+rc =
+
+1
+C − 1
+
+C
+(cid:88)
+
+c(cid:48)=1,c(cid:48)(cid:54)=c
+
+{(cid:60)(φS
+
+f,c,c(cid:48)), (cid:61)(φS
+
+f,c,c(cid:48))}F
+
+f =1,
+
+(26)
+
+Feature(·) is a feature extraction function. In this work,
+we use a normalized log Mel ﬁlterbank transform to obtain
+ˆot ∈ RDO computed from the enhanced STFT coefﬁcients
+ˆxt ∈ CF as an input of attention-based encoder-decoder:
+
+pt = {(cid:60)(ˆxt,f )2 + (cid:61)(ˆxt,f )2}F
+ˆot = Norm(log(Mel(pt))),
+
+f =1,
+
+(32)
+
+(33)
+
+where pt ∈ RF is a real-valued vector of the power spec-
+trum of the enhanced signal at a time step t, Mel(·) is
+the operation of DO × F Mel matrix multiplication, and
+Norm(·) is the operation of global mean and variance nor-
+malization so that its mean and variance become 0 and 1.
+
+Encoder(·), Attention(·), and Decoder(·) are deﬁned in
+Eqs. (7), (8), and (9), respectively, with the sequence of the
+enhanced log Mel ﬁlterbank like features ˆO as an input.
+
+Multichannel End-to-end Speech Recognition
+
+Thus, we can build a multichannel end-to-end speech
+recognition system, which converts multichannel speech
+signals to texts with a single network. Note that because all
+procedures, such as enhancement, feature extraction, en-
+coder, attention, and decoder, are connected with differ-
+entiable graphs, we can optimize the overall inference to
+generate a correct label sequence.
+
+Relation to prior works
+
+There have been several related studies of neural beam-
+formers based on the ﬁlter estimation (Li et al., 2016; Xiao
+et al., 2016a; Meng et al., 2017) and the mask estimation
+(Heymann et al., 2016; Erdogan et al., 2016; Xiao et al.,
+2016b). The main difference is that such preceding studies
+use a component-level training objective within the conven-
+tional hybrid frameworks, while our work focuses on the
+entire end-to-end objective. For example, Heymann et al.,
+2016; Erdogan et al., 2016 use a signal-level objective (bi-
+nary mask classiﬁcation or regression) to train a network
+given parallel clean and noisy speech data. Li et al., 2016;
+Xiao et al., 2016a; Meng et al., 2017; Xiao et al., 2016b
+use ASR objectives (HMM state classiﬁcation or sequence
+discriminative training), but they are still based on the hy-
+brid approach. Speech recognition with raw multichannel
+waveforms (Hoshen et al., 2015; Sainath et al., 2016) can
+also be seen as using a neural beamformer, where the ﬁl-
+ter coefﬁcients are represented as network parameters, but
+again these methods are still based on the hybrid approach.
+
+As regards end-to-end speech recognition, all existing stud-
+ies are based on a single channel setup. For example, most
+studies focus on a standard clean speech recognition setup
+without speech enhancement.
+(Chorowski et al., 2014;
+Graves & Jaitly, 2014; Chorowski et al., 2015; Chan et al.,
+2016; Miao et al., 2015; Zhang et al., 2016; Kim et al.,
+2017; Lu et al., 2016). Amodei et al., 2016 discusses end-
+to-end speech recognition in a noisy environment, but this
+method deals with the noise robustness by preparing vari-
+ous types of simulated noisy speech for training data, and
+does not incorporate multichannel speech enhancement in
+their networks.
+
+5. Experiments
+
+We study the effectiveness of our multichannel end-to-
+end system compared to a baseline end-to-end system with
+noisy speech or beamformed inputs. We use the two mul-
+tichannel speech recognition benchmarks, CHiME-4 (Vin-
+cent et al., 2016) and AMI (Hain et al., 2007).
+
+CHiME-4 is a speech recognition task in public noisy en-
+vironments, consisting of speech recorded using a tablet
+device with 6-channel microphones. It consists of real and
+simulated data. The training set consists of 3 hours of real
+
+speech data uttered by 4 speakers and 15 hours of simula-
+tion speech data uttered by 83 speakers. The development
+set consists of 2.9 hours of real and simulation speech data
+uttered by 4 speakers, respectively. The evaluation set con-
+sists of 2.2 hours of real and simulation speech data uttered
+by 4 speakers, respectively. We excluded the 2nd channel
+signals, which is captured at the microphone located on the
+backside of the tablet, and used 5 channels for the follow-
+ing multichannel experiments (C = 5).
+
+AMI is a speech recognition task in meetings, consisting
+of speech recorded using 8-channel circular microphones
+(C = 8). It consists of only real data. The training set con-
+sists of about 78 hours of speech data uttered by 135 speak-
+ers. The development and evaluation sets consist of about 9
+hours of speech data uttered by 18 and 16 speakers, respec-
+tively. The amount of training data (i.e., 78 hours) is larger
+than one for CHiME-4 (i.e., 18 hours), and we mainly used
+CHiME-4 data to demonstrate our experiments.
+
+5.1. Conﬁgurations
+
+5.1.1. ENCODER-DECODER NETWORKS
+
+We used 40-dimensional log Mel ﬁlterbank coefﬁcients as
+an input feature vector for both noisy and enhanced speech
+signals (DO = 40). In this experiment, we used 4-layer
+BLSTM with 320 cells in the encoder (DH = 320), and
+1-layer LSTM with 320 cells in the decoder (DS = 320).
+In the encoder, we subsampled the hidden states of the ﬁrst
+and second layers and used every second of hidden states
+for the subsequent layer’s inputs. Therefore, the number
+of hidden states at the encoder’s output layer is reduced to
+L = T /4. After every BLSTM layer, we used a linear
+projection layer with 320 units to combine the forward and
+backward LSTM outputs. For the attention mechanism, 10
+centered convolution ﬁlters (DF = 10) of width 100 (Df =
+100) were used to extract the convolutional features. We
+set the attention inner product dimension as 320 (DW =
+320), and used the sharpening factor α = 2. To boost the
+optimization in a noisy environment, we adopted a joint
+CTC-attention multi-task loss function (Kim et al., 2017),
+and set the CTC loss weight as 0.1.
+
+For decoding, we used a beam search algorithm similar to
+(Sutskever et al., 2014) with the beam size 20 at each out-
+put step to reduce the computation cost. CTC scores were
+also used to re-score the hypotheses with 0.1 weight. We
+adopted a length penalty term (Chorowski et al., 2015) to
+the decoding objective and set the penalty weight as 0.3. In
+the CHiME-4 experiments, we only allowed the hypothe-
+ses whose length were within 0.3 × L and 0.75 × L during
+decoding, while the hypothesis lengths in the AMI exper-
+iments were automatically determined based on the above
+scores. Note that we pursued a pure end-to-end setup with-
+out using any external lexicon or language models, and
+
+Multichannel End-to-end Speech Recognition
+
+Table 1. Character error rate [%] for CHiME-4 corpus.
+
+Table 2. Character error rate [%] for AMI corpus.
+
+MODEL
+
+DEV
+SIMU
+
+DEV
+REAL
+
+EVAL
+SIMU
+
+EVAL
+REAL
+
+NOISY
+BEAMFORMIT
+
+FILTER NET
+MASK NET (REF)
+MASK NET (ATT)
+
+25.0
+21.5
+
+19.1
+15.5
+15.3
+
+24.5
+19.3
+
+20.3
+18.6
+18.2
+
+34.7
+31.2
+
+28.2
+23.7
+23.7
+
+35.8
+28.2
+
+32.7
+28.8
+26.8
+
+used CER as an evaluation metric.
+
+5.1.2. NEURAL BEAMFORMERS
+
+256 STFT coefﬁcients and the offset were computed from
+25ms-width hamming window with 10ms shift (F = 257).
+Both ﬁlter and mask estimation network approaches used
+similar a 3-layer BLSTM with 320 cells (DZ = 320) with-
+out the subsampling technique. For the reference selec-
+tion attention mechanism, we used the same attention in-
+ner product dimension (DV = 320) and sharpening factor
+β = 2 as those of the encoder-decoder network.
+
+5.1.3. SHARED CONFIGURATIONS
+
+All the parameters are initialized with the range [-0.1, 0.1]
+of a uniform distribution. We used the AdaDelta algorithm
+(Zeiler, 2012) with gradient clipping (Pascanu et al., 2013)
+for optimization. We initialized the AdaDelta hyperparam-
+eters ρ = 0.95 and (cid:15) = 1−8. Once the loss over the
+validation set was degraded, we decreased the AdaDelta
+hyperparameter (cid:15) by multiplying it by 0.01 at each subse-
+quent epoch. The training procedure was stopped after 15
+epochs. During the training, we adopted multi-condition
+training strategy, i.e., in addition to the optimization with
+the enhanced features through the neural beamformers, we
+also used the noisy multichannel speech data as an input
+of encoder-decoder networks without through the neural
+beamformers. Preliminary experiments showed that the
+multi-condition training is essential to improve the robust-
+ness of the encoder-decoder networks. Note that we trained
+the entire network from scratch without any pre-training
+procedures. All the above networks are implemented by
+using Chainer (Tokui et al., 2015).
+
+5.2. Results
+
+Table 1 shows the recognition performances of CHiME-
+4 with the ﬁve systems: NOISY, BEAMFORMIT, FIL-
+TER NET, MASK NET (REF), and MASK NET (ATT).
+NOISY and BEAMFORMIT were the baseline single-
+channel end-to-end systems, which did not include the
+speech enhancement part in their frameworks. Their end-
+to-end networks were trained only with noisy speech data
+by following a conventional multi-condition training strat-
+
+MODEL
+
+DEV
+
+EVAL
+
+NOISY
+BEAMFORMIT
+
+41.8
+44.9
+
+45.3
+51.3
+
+MASK NET (ATT)
+
+35.7
+
+39.0
+
+egy (Vincent et al., 2016). During decoding, NOISY used
+single-channel noisy speech data from ’isolated 1ch track’
+in CHiME-4 as an input, while BEAMFORMIT used the
+enhanced speech data obtained from 5-channel signals with
+BeamformIt (Anguera et al., 2007), which is well-known
+delay-and-sum beamformer, as an input.
+
+FILTER NET, MASK NET (REF), and MASK NET
+(ATT) were the multichannel end-to-end systems described
+in Section 4. To evaluate the validity of the reference selec-
+tion, we prepared MASK NET (ATT) based on the mask-
+based beamformer with attention-based reference selection
+described in Section 3.2.3, and MASK NET (REF) with
+5-th channel as a ﬁxed reference microphone, which is lo-
+cated on the center front of the tablet device.
+
+Table 1 shows
+that BEAMFORMIT, FILTER NET,
+MASK NET (REF), and MASK NET (ATT) outperformed
+NOISY, which conﬁrms the effectiveness of combining
+speech enhancement with the attention-based encoder-
+decoder framework.
+The comparison of MASK NET
+(REF) and MASK NET (ATT) validates the use of the
+attention-based mechanism for reference selection. FIL-
+TER NET, which is based on the ﬁlter estimation network
+described in Section 3.1, also improved the performance
+compared to NOISY, but worse than MASK NET (ATT).
+This is because it is difﬁcult to optimize the ﬁlter estima-
+tion network due to a lack of restriction to estimate ﬁlter
+coefﬁcients, and it needs some careful optimization, as sug-
+gested by (Xiao et al., 2016a). Finally, MASK NET (ATT)
+achieved better recognition performance than BEAMFOR-
+MIT, which proves the effectiveness of our joint integration
+rather than a pipe-line combination of speech enhancement
+and (end-to-end) speech recognition.
+
+To further investigate the effectiveness of our proposed
+multichannel end-to-end framework, we also conducted
+the experiment on the AMI corpus. Table 2 compares
+the recognition performance of the three systems: NOISY,
+BEAMFORMIT, and MASK NET (ATT). In NOISY, we
+used noisy speech data from the 1st channel in AMI as
+an input to the system. Table 2 shows that, even in
+the AMI, our proposed MASK NET (ATT) achieved bet-
+ter recognition performance than the attention-based base-
+lines (NOISY and BEAMFORMIT), which also conﬁrms
+the effectiveness of our proposed multichannel end-to-end
+
+Multichannel End-to-end Speech Recognition
+
+Table 3. CHiME-4 validation accuracies [%] for MASK NET
+(ATT) with different numbers and orders of channels.
+
+MODEL
+
+CHANNEL
+
+DEV
+
+NOISY
+
+ISOLATED 1CH TRACK
+
+87.9
+
+MASK NET (ATT)
+MASK NET (ATT)
+
+MASK NET (ATT)
+MASK NET (ATT)
+
+5 6 4 3 1
+3 4 1 5 6
+
+5 6 4 1
+5 6 4
+
+91.2
+91.2
+
+91.1
+90.9
+
+framework. Note that BEAMFORMIT was worse than
+NOISY even with the enhanced signals. This phenomenon
+is sometimes observed in noisy speech recognition that the
+distortion caused by sole speech enhancement degrades the
+performance without re-training. Our end-to-end system
+jointly optimizes the speech enhancement part with the
+ASR objective, and can avoid such degradations.
+
+5.3. Inﬂuence on the number and order of channels
+
+As we discussed in Section 3.2, one unique character-
+istic of our proposed MASK NET (ATT) is the robust-
+ness/invariance against the number and order of channels
+without re-training. Table 3 shows an inﬂuence of the
+CHiME-4 validation accuracies on the number and order
+of channels. The validation accuracy was computed con-
+ditioned on the ground truth labels y∗
+1:n−1 in Eq. (10) dur-
+ing decoder’s recursive character generation, which has a
+strong correlation with CER. The second column of the ta-
+ble represents the channel indices, which were used as an
+input of the same MASK NET (ATT) network.
+
+Comparison of 5 6 4 3 1 and 3 4 1 5 6 shows that the or-
+der of channels did not affect the recognition performance
+of MASK NET (ATT) at all, as we expected. In addition,
+even when we used fewer three or four channels as an in-
+put, MASK NET (ATT) still outperformed NOISY (single
+channel). These results conﬁrm that our proposed multi-
+channel end-to-end system can deal with input signals with
+arbitrary number and order of channels, without any re-
+conﬁguration and re-training.
+
+5.4. Visualization of beamformed features
+
+To analyze the behavior of our developed speech enhance-
+ment component with a neural beamformer, Figure 4 vi-
+sualizes the spectrograms of the same CHiME-4 utter-
+ance with the 5-th channel noisy signal, enhanced signal
+with BeamformIt, and enhanced signal with our proposed
+MASK NET (ATT). We could conﬁrm that the Beamfor-
+mIt and MASK NET (ATT) successfully suppressed the
+noises comparing to the 5-th channel signal by eliminat-
+ing blurred red areas overall. In addition, by focusing on
+
+Figure 4. Comparison of the log-magnitude spectrograms of the
+same CHiME-4 utterance .
+
+the insides of black boxes, the harmonic structure, which
+was corrupted in the 5-th channel signal, was recovered in
+BeamformIt and MASK NET (ATT).
+
+This result suggests that our proposed MASK NET (ATT)
+successfully learned a noise suppression function similar
+to the conventional beamformer, although it is optimized
+based on the end-to-end ASR objective, without explicitly
+using clean data as a target.
+
+6. Conclusions
+
+In this paper, we extended an existing attention-based
+encoder-decoder framework by integrating a neural beam-
+former and proposed a multichannel end-to-end speech
+recognition framework.
+It can jointly optimize the over-
+all inference in multichannel speech recognition (i.e., from
+speech enhancement to speech recognition) based on the
+end-to-end ASR objective, and it can generalize to different
+numbers and conﬁgurations of microphones. Our proposed
+architecture will potentially expand the scope of applica-
+tion of existing single-channel sequence-to-sequence prob-
+lems to multichannel sequence-to-sequence problems. The
+experimental results on challenging noisy speech recogni-
+tion benchmarks, CHiME-4 and AMI, show that the pro-
+posed framework outperformed the end-to-end baseline
+with noisy and delay-and-sum beamformed inputs.
+
+The current system still has data sparseness issues due to
+the lack of lexicon and language models, unlike the con-
+ventional hybrid approach. Therefore, the results reported
+in the paper did not reach the state-of-the-art performance
+in these benchmarks, but they are still convincing to show
+the effectiveness of the proposed framework. Our most im-
+portant future work is to overcome these data sparseness is-
+sues by developing adaptation techniques of an end-to-end
+framework with the incorporation of linguistic resources.
+
+Multichannel End-to-end Speech Recognition
+
+Acknowledgements
+
+Tsubasa Ochiai was supported by JSPS Grants-in-Aid
+for Scientiﬁc Research No. 26280063. Shinji Watanabe,
+Takaaki Hori, and John Hershey were supported by MERL.
+
+References
+
+Amodei, Dario, Anubhai, Rishita, Battenberg, Eric, Case,
+Carl, Casper, Jared, Catanzaro, Bryan, Chen, Jingdong,
+Chrzanowski, Mike, Coates, Adam, Diamos, Greg, et al.
+Deep speech 2: End-to-end speech recognition in En-
+International Conference on Ma-
+glish and Mandarin.
+chine Learning (ICML), pp. 173–182, 2016.
+
+Anguera, Xavier, Wooters, Chuck, and Hernando, Javier.
+Acoustic beamforming for speaker diarization of meet-
+IEEE Transactions on Audio, Speech, and Lan-
+ings.
+guage Processing, 15(7):2011–2022, 2007.
+
+Bahdanau, Dzmitry, Chorowski, Jan, Serdyuk, Dmitriy,
+Brakel, Philemon, and Bengio, Yoshua. End-to-end
+attention-based large vocabulary speech recognition. In
+IEEE International Conference on Acoustics, Speech
+and Signal Processing (ICASSP), pp. 4945–4949, 2016.
+
+Barker, Jon, Marxer, Ricard, Vincent, Emmanuel, and
+Watanabe, Shinji. The third ’CHiME’ speech separa-
+tion and recognition challenge: Analysis and outcomes.
+Computer Speech & Language, 2016.
+
+Benesty, Jacob, Chen, Jingdong, and Huang, Yiteng. Mi-
+crophone array signal processing, volume 1. Springer
+Science & Business Media, 2008.
+
+Bourlard, Herv´e and Morgan, Nelson.
+
+Connectionist
+speech recognition: A hybrid approach. Kluwer Aca-
+demic Publishers, 1994.
+
+Capon, Jack.
+
+High-resolution frequency-wavenumber
+spectrum analysis. Proceedings of the IEEE, 57(8):
+1408–1418, 1969.
+
+Chan, William, Jaitly, Navdeep, Le, Quoc, and Vinyals,
+Oriol.
+Listen, attend and spell: A neural network
+for large vocabulary conversational speech recognition.
+IEEE International Conference on Acoustics, Speech
+and Signal Processing (ICASSP), pp. 4960–4964, 2016.
+
+Chorowski, Jan, Bahdanau, Dzmitry, Cho, Kyunghyun, and
+Bengio, Yoshua. End-to-end continuous speech recog-
+nition using attention-based recurrent NN: First results.
+arXiv preprint arXiv:1412.1602, 2014.
+
+Chorowski, Jan K, Bahdanau, Dzmitry, Serdyuk, Dmitriy,
+Cho, Kyunghyun, and Bengio, Yoshua. Attention-based
+models for speech recognition. In Advances in Neural
+Information Processing Systems (NIPS), pp. 577–585,
+2015.
+
+Erdogan, Hakan, Hershey, John R, Watanabe, Shinji, Man-
+del, Michael, and Le Roux, Jonathan. Improved MVDR
+beamforming using single-channel mask prediction net-
+works. In Interspeech, pp. 1981–1985, 2016.
+
+Graves, Alex and Jaitly, Navdeep. Towards end-to-end
+speech recognition with recurrent neural networks.
+In
+International Conference on Machine Learning (ICML),
+pp. 1764–1772, 2014.
+
+Hain, Thomas, Burget, Lukas, Dines, John, Garau, Giu-
+lia, Wan, Vincent, Karaﬁ, Martin, Vepa, Jithendra, and
+Lincoln, Mike. The AMI system for the transcription of
+speech in meetings. In IEEE International Conference
+on Acoustics, Speech and Signal Processing (ICASSP),
+pp. 357–360, 2007.
+
+Heymann, Jahn, Drude, Lukas, and Haeb-Umbach, Rein-
+hold. Neural network based spectral mask estimation
+for acoustic beamforming. In IEEE International Con-
+ference on Acoustics, Speech and Signal Processing
+(ICASSP), pp. 196–200, 2016.
+
+Hinton, Geoffrey, Deng, Li, Yu, Dong, Dahl, George E,
+Mohamed, Abdel-rahman, Jaitly, Navdeep, Senior, An-
+drew, Vanhoucke, Vincent, Nguyen, Patrick, Sainath,
+Tara N, et al. Deep neural networks for acoustic mod-
+eling in speech recognition: The shared views of four
+research groups. IEEE Signal Processing Magazine, 29
+(6):82–97, 2012.
+
+Hoshen, Yedid, Weiss, Ron J, and Wilson, Kevin W.
+Speech acoustic modeling from raw multichannel wave-
+In IEEE International Conference on Acous-
+forms.
+tics, Speech and Signal Processing (ICASSP), pp. 4624–
+4628, 2015.
+
+Jelinek, Frederick. Continuous speech recognition by sta-
+tistical methods. Proceedings of the IEEE, 64(4):532–
+556, 1976.
+
+Kim, Suyoun, Hori, Takaaki, and Watanabe, Shinji. Joint
+CTC-attention based end-to-end speech recognition us-
+In IEEE International Con-
+ing multi-task learning.
+ference on Acoustics, Speech and Signal Processing
+(ICASSP), pp. 4835–4839, 2017.
+
+Kinoshita, Keisuke, Delcroix, Marc, Gannot, Sharon, Ha-
+bets, Emanu¨el AP, Haeb-Umbach, Reinhold, Keller-
+mann, Walter, Leutnant, Volker, Maas, Roland,
+Nakatani, Tomohiro, Raj, Bhiksha, et al. A summary of
+the REVERB challenge: state-of-the-art and remaining
+challenges in reverberant speech processing research.
+EURASIP Journal on Advances in Signal Processing,
+2016(1):1–19, 2016.
+
+Multichannel End-to-end Speech Recognition
+
+analysis of environment, microphone and data simula-
+tion mismatches in robust speech recognition. Computer
+Speech & Language, 2016.
+
+W¨olfel, Matthias and McDonough, John. Distant speech
+
+recognition. John Wiley & Sons, 2009.
+
+Xiao, Xiong, Watanabe, Shinji, Erdogan, Hakan, Lu,
+Liang, Hershey,
+John, Seltzer, Michael L, Chen,
+Guoguo, Zhang, Yu, Mandel, Michael, and Yu, Dong.
+Deep beamforming networks for multi-channel speech
+In IEEE International Conference on
+recognition.
+Acoustics, Speech and Signal Processing (ICASSP), pp.
+5745–5749, 2016a.
+
+Xiao, Xiong, Xu, Chenglin, Zhang, Zhaofeng, Zhao,
+Shengkui, Sun, Sining, and Watanabe, Shinji. A study of
+learning based beamforming methods for speech recog-
+nition. In CHiME 2016 workshop, pp. 26–31, 2016b.
+
+Yoshioka, Takuya, Ito, Nobutaka, Delcroix, Marc, Ogawa,
+Atsunori, Kinoshita, Keisuke, Fujimoto, Masakiyo, Yu,
+Chengzhu, Fabian, Wojciech J, Espi, Miquel, Higuchi,
+Takuya, et al. The NTT CHiME-3 system: Advances in
+speech enhancement and recognition for mobile multi-
+In IEEE Workshop on Automatic
+microphone devices.
+Speech Recognition and Understanding (ASRU), pp.
+436–443, 2015.
+
+Zeiler, Matthew D. ADADELTA: an adaptive learning rate
+
+method. arXiv preprint arXiv:1212.5701, 2012.
+
+Zhang, Yu, Chan, William, and Jaitly, Navdeep. Very deep
+convolutional networks for end-to-end speech recogni-
+tion. arXiv preprint arXiv:1610.03022, 2016.
+
+Li, Bo, Sainath, Tara N, Weiss, Ron J, Wilson, Kevin W,
+and Bacchiani, Michiel. Neural network adaptive beam-
+forming for robust multichannel speech recognition. In
+Interspeech, pp. 1976–1980, 2016.
+
+Lu, Liang, Zhang, Xingxing, and Renals, Steve. On train-
+ing the recurrent neural network encoder-decoder for
+large vocabulary end-to-end speech recognition. In IEEE
+International Conference on Acoustics, Speech and Sig-
+nal Processing (ICASSP), pp. 5060–5064, 2016.
+
+Meng, Zhong, Watanabe, Shinji, Hershey, John R, and Er-
+dogan, Hakan. Deep long short-term memory adaptive
+beamforming networks for multichannel robust speech
+In IEEE International Conference on
+recognition.
+Acoustics, Speech and Signal Processing (ICASSP), pp.
+271–275, 2017.
+
+Miao, Yajie, Gowayyed, Mohammad, and Metze, Florian.
+EESEN: End-to-end speech recognition using deep RNN
+models and WFST-based decoding. In IEEE Workshop
+on Automatic Speech Recognition and Understanding
+(ASRU), pp. 167–174, 2015.
+
+Pascanu, Razvan, Mikolov, Tomas, and Bengio, Yoshua.
+On the difﬁculty of training recurrent neural networks.
+International Conference on Machine Learning (ICML),
+pp. 1310–1318, 2013.
+
+Sainath, Tara N, Narayanan, Arun, Weiss, Ron J, Vari-
+ani, Ehsan, Wilson, Kevin W, Bacchiani, Michiel, and
+Shafran, Izhak. Reducing the computational complex-
+ity of multimicrophone acoustic models with integrated
+feature extraction. In Interspeech, pp. 1971–1975, 2016.
+
+Souden, Mehrez, Benesty, Jacob, and Affes, Soﬁ`ene.
+On optimal frequency-domain multichannel linear ﬁlter-
+IEEE Transactions on audio,
+ing for noise reduction.
+speech, and language processing, 18(2):260–276, 2010.
+
+Sutskever, Ilya, Vinyals, Oriol, and Le, Quoc V. Sequence
+to sequence learning with neural networks. In Advances
+in neural information processing systems (NIPS), pp.
+3104–3112, 2014.
+
+Tokui, Seiya, Oono, Kenta, Hido, Shohei, and Clayton,
+Justin. Chainer: a next-generation open source frame-
+In Proceedings of Workshop
+work for deep learning.
+on Machine Learning Systems (LearningSys) in NIPS,
+2015.
+
+Van Veen, Barry D and Buckley, Kevin M. Beamform-
+ing: A versatile approach to spatial ﬁltering. IEEE ASSP
+Magazine, 5(2):4–24, 1988.
+
+Vincent,
+
+Shinji, Nugraha,
+Aditya Arie, Barker, Jon, and Marxer, Ricard. An
+
+Emmanuel, Watanabe,
+
+

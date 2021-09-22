@@ -1,0 +1,1848 @@
+Projection-free Distributed Online Learning in Networks
+
+Wenpeng Zhang 1 Peilin Zhao 2 Wenwu Zhu 1 Steven C. H. Hoi 3 Tong Zhang 4
+
+Abstract
+
+The conditional gradient algorithm has regained
+a surge of research interest in recent years due
+to its high efﬁciency in handling large-scale ma-
+chine learning problems. However, none of ex-
+isting studies has explored it in the distributed
+online learning setting, where locally light com-
+putation is assumed. In this paper, we ﬁll this gap
+by proposing the distributed online conditional
+gradient algorithm, which eschews the expensive
+projection operation needed in its counterpart al-
+gorithms by exploiting much simpler linear op-
+timization steps. We give a regret bound for
+the proposed algorithm as a function of the net-
+work size and topology, which will be smaller on
+smaller graphs or ”well-connected” graphs. Ex-
+periments on two large-scale real-world datasets
+for a multiclass classiﬁcation task conﬁrm the
+computational beneﬁt of the proposed algorithm
+and also verify the theoretical regret bound.
+
+1. Introduction
+
+The conditional gradient algorithm (Frank & Wolfe,
+1956) (also known as Frank-Wolfe) is historically the ear-
+liest algorithm for solving general constrained convex op-
+timization problems. Due to its projection-free property
+and ability to handle structural constraints, it has regained
+a signiﬁcant amount of interest in recent years. Different
+properties concerning the algorithm, such as the sparsity
+property (Clarkson, 2010) and the primal-dual convergence
+rate (Jaggi, 2013), have been analyzed in details. Many
+different algorithm variants, such as the composite vari-
+ant (Harchaoui et al., 2015), the online and stochastic vari-
+
+1Department of Computer Science and Technology, Tsinghua
+University, Beijing, China 2Artiﬁcial Intelligence Department,
+Ant Financial Services Group, Hangzhou, China 3School of Infor-
+mation Systems, Singapore Management University, Singapore
+4Tencent AI Lab, Shenzhen, China. Correspondence to: Wenwu
+Zhu <wwzhu@tsinghua.edu.cn>, Wenpeng Zhang <zhangwen-
+peng0@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+ants (Hazan & Kale, 2012) (Hazan, 2016) (Hazan & Luo,
+2016), faster variants over special types of convex domains,
+i.e. spectrahedron (Garber, 2016) and polytope (Garber &
+Hazan, 2016), have also been proposed.
+
+However, despite this great ﬂourish of research on condi-
+tional gradient, its distributed online variant over networks
+has rarely been investigated. In comparison to this situation
+is the popularity of the variants of its gradient descent and
+dual averaging counterparts—distributed online gradient
+descent (D-OGD) (Ram et al., 2010) (Yan et al., 2013) and
+distributed online dual averaging (D-ODA) (Duchi et al.,
+2012) (Hosseini et al., 2013) (Lee et al., 2015), which have
+been successfully applied in handling large-scale stream-
+ing data in decentralized computational architectures (e.g.,
+sensor networks and smart phones). Despite the success of
+these algorithms, the projection operation required in them
+still limits their further applicability in many settings of
+practical interests. For example, in matrix learning (Dud´ık
+et al., 2012), multiclass classiﬁcation (Hazan & Luo, 2016)
+and many other related problems, where the convex domain
+is the set of all matrices with bounded nuclear norm, the
+projection operation amounts to computing the full singu-
+lar value decomposition (SVD) of a matrix, too expensive
+an operation that does not meet the need of locally light
+computation in distributed online learning. To avoid this
+kind of expensive operation, the distributed online variant
+of conditional gradient is desired since it is expected to be
+able to eschew the projection operation by using a linear
+minimization step instead. In the aforementioned case, the
+linear step amounts to ﬁnding the top singular vector of a
+matrix, which is at least one order of magnitude simpler.
+However, how to design and analyze this variant remains
+an open problem.
+
+To ﬁll this gap, in this work, we present the distributed on-
+line conditional gradient (D-OCG) algorithm as the desired
+variant. This algorithm is a novel extension of the previous
+online variant (Hazan, 2016), in which each local learner
+communicates its dual variables with its neighbors to coop-
+erate with each other. We present highly non-trivial anal-
+ysis of the regret bound for the proposed algorithm, which
+can capture the intuition that the algorithm’s regret bound
+should be larger on graphs with more nodes and should be
+smaller on ”well-connected” graphs (e.g., complete graphs)
+than on ”poorly connected” graphs (e.g., cycle graphs). We
+
+Projection-free Distributed Online Learning in Networks
+
+evaluate the performance of the D-OCG algorithm on two
+large-scale real-world datasets for a multiclass classiﬁca-
+tion task. The experimental results show that D-OCG runs
+signiﬁcantly faster than both D-OGD and D-ODA. This il-
+lustrates that although the regret bound for D-OCG is in
+higher order O(T 3/4) than those in order O(T 1/2) for D-
+OGD and D-ODA, its lower computational cost per itera-
+tion outweighs the increased number of iterations, making
+it overall a faster algorithm. The theoretical results regard-
+ing the algorithm’s regret bound for different graphs are
+also well conﬁrmed.
+
+2. Preliminaries
+
+In this section, we ﬁrst give a formal deﬁnition of the dis-
+tributed online convex optimization problem, and then re-
+view the two algorithms that our algorithm are built upon.
+
+2.1. Distributed Online Convex Optimization
+
+Let G = (V, E) denote an undirected graph with vertex
+set V = {1, · · · , n} and edge set E ⊂ V × V . In dis-
+tributed online convex optimization deﬁned over G (see the
+book (Sayed et al., 2014) and the survey (Hazan, 2016) for
+more details), each node i ∈ V is associated with a sep-
+arate agent or learner. At each round t = 1, · · · , T , each
+learner i ∈ V is required to generate a decision point xi(t)
+from a convex compact set K ⊆ Rm. Then the adversary
+replies each learner’s decision with a convex loss function
+ft,i : K → R and each learner suffers the loss ft,i(xi(t)).
+The communication between learners is speciﬁed by the
+graph G: learner i can only communicate directly with its
+immediate neighbors N (i) = {j ∈ V |(i, j) ∈ E}. The
+goal of the learners is to generate a sequence of decision
+points xi(t), i ∈ V so that the regret with respect to each
+learner i regarding any ﬁxed decision x ∈ K in hindsight,
+
+RT (xi,x) =
+
+(ft,j(xi(t)) − ft,j(x)),
+
+n
+(cid:88)
+
+T
+(cid:88)
+
+j=1
+
+t=1
+
+is sublinear in T .
+
+We make the following assumptions:
+(1) each function
+ft,i(x) is L-Lipschitz with respect to the L2 norm (cid:107)·(cid:107) on
+K, i.e. ∀ x, y ∈ K, |ft,i(x) − ft,i(y)| ≤ L (cid:107)x − y(cid:107) . Note
+that the Lipschitz condition implies that for any x ∈ K and
+any ∇ft,i(x) ∈ ∂ft,i(x), we have (cid:107)∇ft,i(x)(cid:107) ≤ L. (2) the
+Euclidean diameter of K is bounded by D, i.e. ∀ x, y ∈ K,
+(cid:107)x − y(cid:107) ≤ D.
+
+Two deﬁnitions are important for deriving useful proper-
+ties. We say that a function f is β-smooth if ∀ x, y ∈ K,
+we have
+
+f (y) ≤ f (x) + (cid:104)∇f (x) , y − x(cid:105) +
+
+(cid:107)y − x(cid:107)2.
+
+β
+2
+
+We say that a function f is σ-strongly convex if ∀ x, y ∈
+K, we have
+
+f (y) ≥ f (x) + (cid:104)∇f (x) , y − x(cid:105) +
+
+(cid:107)y − x(cid:107)2.
+
+σ
+2
+
+A σ-strongly convex function f has a very important prop-
+erty: if x∗ = arg minx∈Kf (x), then for any x ∈ K, we
+have
+
+f (x) − f (x∗) ≥
+
+(cid:107)x − x∗(cid:107)2.
+
+σ
+2
+
+2.2. Distributed Online Dual Averaging
+
+In the distributed online dual averaging algorithm (Duchi
+et al., 2012) (Hosseini et al., 2013), each learner i ∈ V
+maintains a sequence of iterates xi(t) and a sequence
+of dual variables zi(t). At each round t = 1, · · · , T ,
+each learner i ﬁrst computes the new dual variable zi(t +
+1) from a weighted combination of its new subgradient
+gi(t) and other dual variables {zj(t), j ∈ N (i)} received
+then updates the iterate xi(t + 1)
+from its neighbors,
+via a proximal projection (cid:81)ψ
+K(zi(t + 1), αi(t)), where
+αi(t) is a positive number from a non-increasing se-
+quence, ψ(x) : K → R is a proximal function and
+α ψ(x)(cid:9) denotes
+(cid:81)ψ
+the projection onto K operator speciﬁed by z, α and
+ψ(x) (see (Nesterov, 2009) (Xiao, 2010) for more details).
+The communication between learners is modeled by a dou-
+bly stochastic symmetric matrix P , which satisﬁes (1)
+(cid:54)= j) or i = j; (2)
+Pij > 0 only if (i, j) ∈ E (i
+∀ i ∈ V , (cid:80)n
+j∈N (i) Pij = 1 and ∀ j ∈ V ,
+(cid:80)n
+i=1 Pij = (cid:80)
+
+K(z, α) = arg minx∈K
+
+j=1 Pij = (cid:80)
+
+i∈N (j) Pij = 1.
+
+(cid:8)(cid:104)z , x(cid:105) + 1
+
+parameters {αi(t)}, ∀ i ∈ V
+
+Algorithm 1 Distributed Online Dual Averaging (D-ODA)
+1: Input: convex set K, maximum round number T ,
+2:
+3: Initialize: xi(1) ∈ K, zi(1) = 0, ∀ i ∈ V
+4: for t = 1, · · · , T do
+5:
+6:
+7:
+8:
+
+The adversary reveals ft,i, ∀ i ∈ V
+Compute subgradients gi(t) ∈ ∂ft,i(xi(t)), ∀ i ∈ V
+for Each Learner i ∈ V do
+
+zi(t + 1) = (cid:80)
+xi(t + 1) = (cid:81)ψ
+
+j∈N (i) pijzj(t)+gi(t)
+K(zi(t + 1), αi(t))
+
+9:
+10:
+11: end for
+
+end for
+
+2.3. Online Conditional Gradient
+
+The standard online conditional gradient algorithm (Hazan
+& Kale, 2012) (Hazan, 2016) eschews the computational
+expensive projection operation by using a simple linear op-
+timization step instead and is thus much more efﬁcient for
+many computationally intensive tasks.
+
+Projection-free Distributed Online Learning in Networks
+
+parameters η and {σt}
+
+Algorithm 2 Online Conditional Gradient (OCG)
+1: Input: convex set K, maximum round number T ,
+2:
+3: Initialize: x1 ∈ K
+4: for t = 1, · · · , T do
+5:
+6:
+7:
+8:
+9:
+10: end for
+
+The adversary reveals ft
+Compute a subgradient gt ∈ ∂ft(xt)
+Ft(x) = η (cid:80)t−1
+vt = arg minx∈K {(cid:104)∇Ft(xt) , x(cid:105)}
+xt+1 = xt + σt(vt − xt)
+
+i=1 (cid:104)gi , x(cid:105) + (cid:107)x − x1(cid:107)2
+
+3. Distributed Online Conditional Gradient
+
+In this section, we ﬁrst present the proposed distributed on-
+line conditional gradient algorithm, and then give the theo-
+retical analysis of its regret bound.
+
+3.1. Algorithm
+
+Algorithm 3 Distributed Online Conditional Gradient (D-
+OCG)
+1: Input: convex set K, maximum round number T ,
+parameters {ηi} and{σt,i}, ∀ i ∈ V
+2:
+3: Initialize: xi(1) ∈ K, zi(1) = 0, ∀ i ∈ V
+4: for t = 1, · · · , T do
+5:
+6:
+7:
+8:
+9:
+10:
+11:
+12:
+13: end for
+
+Ft,i(x) = ηi (cid:104)zi(t) , x(cid:105) + (cid:107)x − x1(1)(cid:107)2
+vi(t) = arg minx∈K {(cid:104)∇Ft,i(xi(t)) , x(cid:105)}
+xi(t + 1) = xi(t) + σt,i(vi(t) − xi(t))
+zi(t + 1) = (cid:80)
+
+The adversary reveals ft,i, ∀ i ∈ V
+Compute subgradients gi(t) ∈ ∂ft,i(xi(t)), ∀ i ∈ V
+for Each Learner i ∈ V do
+
+j∈N (i) pijzj(t)+gi(t)
+
+end for
+
+3.2. Analysis
+
+Theorem 1. The D-OCG algorithm with parameters ηi =
+for any i ∈ V
+
+n−1)σ2(P ))LT 3/4 and σt,i = 1√
+2(
+and any t = 1, · · · , T attains the following regret bound
+
+(1−σ2(P ))D
+
+n+1+(
+
+√
+
+√
+
+t
+
+RT (xi,x) ≤ 8nLDT 3/4
+√
+
+6
+
+n + 1 − σ2(P )
+
+√
+√
+
+n + 1 + (
+n + 1 + (
+
+n − 1)σ2(P ))
+n − 1)σ2(P ))
+
+√
+√
+
+4(
+2(
+
++
+
++
+
+LDT 1/4
+
+LDT 3/4,
+
+1 − σ2(P )
+
+OCG (Hazan, 2016). (2) Since the connectivity of a graph
+is captured by its spectral gap value 1−σ2(P ) (Duchi et al.,
+2012) (Colin et al., 2016): the better the connectivity of a
+graph is, the larger the spectral gap value will be, it is easy
+to verify that this theorem captures the intuition that the
+D-OCG’s regret bound will be larger on larger graphs (the
+regret bound will be larger when the node size n is larger
+for all T ) and will be smaller on ”well-connected” graphs
+than on ”poorly connected” graphs (the regret bound will
+be smaller when the spectral gap value is larger for certain
+large T ).
+
+To analyze the regret bound for D-OCG, we ﬁrst establish
+its connection to D-ODA. To this end, we consider the fol-
+lowing points
+
+x∗
+
+i (t) = arg min
+x∈K
+
+Ft,i(x),
+
+where Ft,i(x) are the functions deﬁned in line 8 in D-OCG.
+Actually, these points are exactly the iterates of D-ODA
+with regularization ψ(x) = (cid:107)x − x1(1)(cid:107)2 applied to the
+following loss functions
+
+˜ft,i(x) = ft,i(x + (xi(t) − x∗
+
+i (t))).
+
+Note that these loss functions are not the same as the orig-
+inal ft,i(x) in D-OCG. The reason is that the subgradients
+used in the aforementioned D-ODA are ∂ft,i(xi(t)) rather
+than ∂ft,i(x∗
+i (t)). Indeed, in this algorithm, the subgradi-
+ents are evaluated at the points x∗
+i (t), thus the correspond-
+ing loss functions ˜ft,i(x) should satisfy
+
+∂ ˜ft,i(x∗
+
+i (t)) = ∂ft,i(xi(t)).
+
+This clearly holds by deﬁnition of ˜ft,i(x).
+
+Based on the above preparation, we can now present the
+following lemma.
+
+Lemma 1. For any ﬁxed i ∈ V , the following bound holds
+for any j ∈ V and any x ∈ K
+
+T
+(cid:88)
+
+t=1
+
+(ft,j(x∗
+
+i (t)) − ft,j(x))
+
+≤ 2L
+
+(cid:13)
+(cid:13)xj(t) − x∗
+
+j (t)(cid:13)
+
+(cid:13) +
+
+( ˜ft,j(x∗
+
+i (t)) − ˜ft,j(x)).
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+where σ2(P ) denotes the second largest eigenvalue of ma-
+trix P and 1 − σ2(P ) denotes the corresponding spectral
+gap value.
+
+Remark.
+(1) The regret bound for D-OCG is in the
+similar order O(T 3/4) to that of its centralized variant
+
+Proof. By deﬁnition of ˜ft,j(x) and the Lipschitz-ness of
+ft,j(x), for any x ∈ K, we have
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:12)
+(cid:12) ≤ L (cid:13)
+˜ft,j(x) − ft,j(x)
+(cid:12)
+
+(cid:13)xj(t) − x∗
+
+j (t)(cid:13)
+(cid:13) .
+
+Then by plugging in two auxiliary terms in each difference
+
+≤ 2L
+
+(cid:13)
+(cid:13)xj(t) − x∗
+
+j (t)(cid:13)
+
+(cid:13) +
+
+( ˜ft,j(x∗
+
+i (t)) − ˜ft,j(x)).
+
+Next, by deﬁnition of ht+1,i and the optimality of x∗
+we have
+
+i (t),
+
+Projection-free Distributed Online Learning in Networks
+
+ft,j(x∗
+
+i (t)) − ft,j(x), we obtain
+
+By the optimality of vi(t), we have
+
+(ft,j(x∗
+
+i (t)) − ˜ft,j(x∗
+
+i (t)) + ˜ft,j(x) − ft,j(x)
+
+(cid:104)∇Ft,i(xi(t)) , x∗
+
+i (t) − xi(t)(cid:105) ≤ Ft,i(x∗
+
+i (t))−Ft,i(xi(t)).
+
+(ft,j(x∗
+
+i (t)) − ft,j(x))
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+=
+
+t=1
++ ˜ft,j(x∗
+T
+(cid:88)
+
+(cid:12)
+(cid:12)ft,j(x∗
+(cid:12)
+
+t=1
+
+≤
+
+i (t)) − ˜ft,j(x))
+
+i (t)) − ˜ft,j(x∗
+
+i (t))
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+˜ft,j(x) − ft,j(x)
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+( ˜ft,j(x∗
+
+i (t)) − ˜ft,j(x))
+
++
+
++
+
+(cid:12)
+(cid:12)
+(cid:12)
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+Notice that the last summation in the above bound is ex-
+actly the part of the regret of D-ODA incurred by learner
+j with respect to learner i. Thus, to proceed, we require
+lemmas that allow us to relate the iterates xi(t) to the it-
+erates x∗
+i (t). Let ht,i(x) = Ft,i(x) − Ft,i(x∗
+i (t)) and
+ht,i = ht,i(xi(t)).
+In the following, we ﬁrst present a
+lemma that establishes the recursion between ht+1,i and
+ht,i.
+Lemma 2. The following recursion between ht+1,i and
+ht,i holds for any i ∈ V and any t = 1, · · · , T
+
+ht+1,i ≤ (1 − σt,i)ht,i + σ2
+
+t,iD2
+
++ ηi (cid:107)zi(t + 1) − zi(t)(cid:107) (cid:112)ht+1,i,
+
+where zi(t) denotes the dual variable deﬁned in D-OCG.
+
+Proof. Using the deﬁnitions of ht,i(x) and xi(t + 1), the
+fact that Ft,i(x) are 2-smooth and the boundedness of K,
+we obtain
+
+ht,i(xi(t + 1)) = Ft,i(xi(t) + σt,i(vi(t) − xi(t)))
+
+(cid:104)∇Ft,i(xi(t)) , vi(t)(cid:105) ≤ (cid:104)∇Ft,i(xi(t)) , x∗
+
+i (t)(cid:105) .
+
+By the convexity of Ft,i(x), we have
+
+Putting the above three inequalities together, we obtain
+
+ht,i(xi(t + 1)) ≤ Ft,i(xi(t)) − Ft,i(x∗
+
+i (t))
+i (t)) − Ft,i(xi(t)))
+
++ σt,i(Ft,i(x∗
+t,iD2
++ σ2
+
+= (1 − σt,i)(Ft,i(xi(t)) − Ft,i(x∗
+
+i (t)))
+
++ σ2
+
+t,iD2
+
+= (1 − σt,i)ht,i + σ2
+
+t,iD2.
+
+ht+1,i = Ft+1,i(xi(t + 1)) − Ft+1,i(x∗
+= Ft,i(xi(t + 1)) − Ft,i(x∗
+
+i (t + 1))
+
+i (t + 1))
+
++ (Ft+1,i(xi(t + 1)) − Ft,i(xi(t + 1)))
+− (Ft+1,i(x∗
+i (t + 1)))
+
+i (t + 1)) − Ft,i(x∗
+
+≤ Ft,i(xi(t + 1)) − Ft,i(x∗
+
+i (t))
+
++ (Ft+1,i(xi(t + 1)) − Ft,i(xi(t + 1)))
+− (Ft+1,i(x∗
+i (t + 1))).
+
+i (t + 1)) − Ft,i(x∗
+
+Then, by deﬁnition of Ft+1,i(x) and Ft,i(x), we have
+
+Ft+1,i(x) − Ft,i(x) = ηi (cid:104) zi(t + 1) − zi(t), x(cid:105) .
+
+Thus,
+
+ht+1,i ≤ ht,i(xi(t + 1))
+
++ ηi (cid:104) zi(t + 1) − zi(t), xi(t + 1)(cid:105)
+− ηi (cid:104) zi(t + 1) − zi(t), x∗
+i (t + 1)(cid:105)
+= ht,i(xi(t + 1))
++ ηi (cid:104) zi(t + 1) − zi(t), xi(t + 1) − x∗
+≤ ht,i(xi(t + 1))
++ ηi (cid:107)zi(t + 1) − zi(t)(cid:107) (cid:107)xi(t + 1) − x∗
+
+i (t + 1)(cid:105)
+
+i (t + 1)(cid:107) .
+
+− Ft,i(x∗
+
+i (t))
+
+≤ Ft,i(xi(t)) − Ft,i(x∗
+
+i (t))
+
++ σt,i (cid:104)∇Ft,i(xi(t)) , vi(t) − xi(t)(cid:105)
++ σ2
+
+t,i (cid:107)vi(t) − xi(t)(cid:107)2
+≤ Ft,i(xi(t)) − Ft,i(x∗
+
+i (t))
+
++ σt,i (cid:104)∇Ft,i(xi(t)) , vi(t) − xi(t)(cid:105)
++ σ2
+
+t,iD2.
+
+The last inequality follows from the Cauchy-Schwarz in-
+equality.
+
+Now, we derive the bound for (cid:107)xi(t + 1) − x∗
+i (t + 1)(cid:107).
+By deﬁnition, Ft,i(x) are 2-strongly convex and x∗
+i (t) =
+arg minx∈K Ft,i(x). Thus, using the property of strongly
+convex functions, for any x ∈ K, we have
+
+(cid:107)x − x∗
+
+i (t)(cid:107)2 ≤ Ft,i(x) − Ft,i(x∗
+
+i (t)).
+
+Projection-free Distributed Online Learning in Networks
+
+t−1
+(cid:88)
+
+r=1
+
+=
+
+≤
+
+t−1
+(cid:88)
+
+r=1
+
+t−1
+(cid:88)
+
+r=1
+
+Analogously, it is easy to deduce that
+
+(cid:107)xi(t + 1) − x∗
+
+i (t + 1)(cid:107) ≤ (cid:112)ht+1,i.
+
+Now we try to bound the L1 norm sum in the above in-
+equality. By plugging in an all-ones column vector and
+then using the properties of norm functions, we obtain
+
+Combining this bound and the above two bounds for ht+1,i
+and ht,i(xi(t + 1)) yields the stated recursion.
+
+(cid:13)
+(cid:13)P t−r
+
+i − P t−r−1
+
+i
+
+(cid:13)
+(cid:13)1
+
+To make the above recursion more concrete, it remains to
+bound the deviation term (cid:107)zi(t + 1) − zi(t)(cid:107), which mea-
+sures the stability of local dual variables over each node.
+
+Lemma 3. For any i ∈ V and any t = 1, · · · , T , the dual
+variables zi(t) and zi(t + 1) speciﬁed in D-OCG satisfy
+the following bound
+
+(cid:107)zi(t + 1) − zi(t)(cid:107) ≤
+
+√
+
+1 + σ2(P )
+1 − σ2(P )
+
+nL + L.
+
+Proof. Let P r denote the r-th power of matrix P and P r
+ij
+denote the j-th entry of the i-th row of P r. Then, via a bit
+of algebra, we can get the following generalized recursion
+
+zi(t + 1) =
+
+P t+1−s
+
+ij
+
+zj(s) +
+
+P t−r
+
+ij gj(r)
+
+t−1
+(cid:88)
+
+n
+(cid:88)
+
+r=s
+
+j=1
+
+n
+(cid:88)
+
+j=1
++ gi(t).
+
+(cid:13)
+(cid:13)(P t−r
+
+i − 1/n) − (P t−r−1
+
+i
+
+− 1/n)(cid:13)
+(cid:13)1
+
+((cid:13)
+(cid:13)P t−r
+
+i − 1/n(cid:13)
+
+(cid:13)1 + (cid:13)
+
+(cid:13)P t−r−1
+i
+
+− 1/n(cid:13)
+
+(cid:13)1).
+
+To proceed, we introduce a useful property of stochas-
+tic matrices (Duchi et al., 2012). Let ∆n = {x ∈
+Rn |x (cid:23) 0, (cid:80)n
+i=1 xi = 1 } denote the n-dimensional prob-
+ability simplex. Then for any positive integer s = 1, · · ·
+and any x ∈ ∆n, the following inequality holds
+
+(cid:107)P sx − 1/n(cid:107)1 ≤ σ2(P )s√
+
+n.
+
+Taking x to be the i-th canonical basis vector ei in Rn, we
+have
+
+(cid:107)P sei − 1/n(cid:107)1 ≤ σ2(P )s√
+
+n.
+
+Note that this inequality also holds for s = 0 since
+
+Clearly, this recursion reduces to the standard dual variable
+update in D-OCG when s = t. Next, since zj(1) = 0, by
+setting s = 1, we can obtain
+
+(cid:13)P 0ei − 1/n(cid:13)
+(cid:13)
+
+(cid:13)1 =
+
+2(n − 1)
+n
+
+√
+
+≤
+
+n,
+
+for any n = 1, · · · . In addition, it is easy to verify that
+
+zi(t + 1) =
+
+P t−r
+
+ij gj(r) + gi(t).
+
+(cid:107)P s
+
+i − 1/n(cid:107)1 = (cid:107)P sei − 1/n(cid:107)1.
+
+Thus, we have
+
+t−1
+(cid:88)
+
+n
+(cid:88)
+
+r=1
+
+j=1
+
+t−1
+(cid:88)
+
+n
+(cid:88)
+
+r=1
+
+j=1
+
+Then by assuming P 0 to be the identity matrix In, we have
+
+zi(t+1)−zi(t) =
+
+(P t−r
+
+ij − P t−r−1
+
+ij
+
+)gj(r)+gi(t).
+
+Using the fact that (cid:107)gi(t)(cid:107) ≤ L, the properties of norm
+functions and the symmetry of matrix P , we obtain
+
+(P t−r
+
+ij − P t−r−1
+
+ij
+
+(cid:13)
+(cid:13)
+(cid:13)
+)gj(r) + gi(t)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:12)
+(cid:12)P t−r
+
+ij − P t−r−1
+
+ij
+
+(cid:12)
+(cid:12)
+
+(cid:13)
+(cid:13)gj(r)(cid:13)
+
+(cid:13) + (cid:107)gi(t)(cid:107)
+
+(cid:107)zi(t + 1) − zi(t)(cid:107)
+
+t−1
+(cid:88)
+
+n
+(cid:88)
+
+r=1
+
+j=1
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+t−1
+(cid:88)
+
+n
+(cid:88)
+
+r=1
+
+j=1
+
+=
+
+≤
+
+≤ L
+
+t−1
+(cid:88)
+
+r=1
+
+(cid:13)
+(cid:13)P t−r
+
+i − P t−r−1
+
+i
+
+(cid:13)
+(cid:13)1 + L,
+
+where P r
+
+i denotes the i-th column of matrix P r.
+
+((cid:13)
+(cid:13)P t−r
+
+i − 1/n(cid:13)
+
+(cid:13)1 + (cid:13)
+
+(cid:13)P t−r−1
+i
+
+− 1/n(cid:13)
+
+(cid:13)1)
+
+t−1
+(cid:88)
+
+r=1
+
+t−1
+(cid:88)
+
+≤
+
+=
+
+≤
+
+r=1
+1 + σ2(P )
+1 − σ2(P )
+1 + σ2(P )
+1 − σ2(P )
+
+√
+
+n.
+
+(σ2(P )t−r + σ2(P )t−r−1)
+
+√
+
+n
+
+(1 − σ2(P )t−1)
+
+√
+
+n
+
+The above equation and the last inequality follow respec-
+tively from the summation formula of geometric series and
+the fact that σ2(P ) < 1 when P is a doubly stochastic ma-
+trix (Berman & Plemmons, 1979).
+
+Combining the above together yields the stated bound.
+
+Combining the results in Lemma 2 and Lemma 3, we can
+obtain a more concrete recursion between ht+1,i and ht,i,
+and then deduce the bound for ht,i.
+
+Projection-free Distributed Online Learning in Networks
+
+Lemma 4. Assume that the parameters ηi and σt,i in D-
+n+1)L(cid:112)ht+1,i ≤
+OCG are chosen such that ηi( 1+σ2(P )
+1−σ2(P )
+σ2
+t,iD2. Then the following bound for ht,i holds for any
+i ∈ V and any t = 1, · · · , T
+
+√
+
+ht,i ≤ 4D2σt,i.
+
+This lemma can be easily proved using mathematical in-
+duction and we place its detailed proof in the Appendix.
+Now we can deduce the bound for the deviation between
+xi(t) and x∗
+Lemma 5. For any ﬁxed i ∈ V , the iterates xi(t) and
+x∗
+
+i (t) satisfy the following bound
+
+i (t).
+
+T
+(cid:88)
+
+t=1
+
+(cid:107)xi(t) − x∗
+
+i (t)(cid:107) ≤
+
+DT 3/4.
+
+8
+3
+
+Proof. As is given in the proof of Lemma 2, for any x ∈ K,
+we have
+
+(cid:107)x − x∗
+
+i (t)(cid:107)2 ≤ Ft,i(x) − Ft,i(x∗
+
+i (t)).
+
+It then follows that
+
+(cid:107)xi(t) − x∗
+
+i (t)(cid:107) ≤
+
+Ft,i(xi(t)) − Ft,i(x∗
+
+i (t))
+
+(cid:113)
+
+= (cid:112)ht,i
+√
+σt,i
+≤ 2D
+= 2Dt−1/4.
+
+The last inequality follows from the bound in Lemma 4 and
+the last equation follows from the deﬁnition of σt,i. Thus,
+summing over t = 1, · · · , T , we obtain
+
+T
+(cid:88)
+
+t=1
+
+(cid:107)xi(t) − x∗
+
+i (t)(cid:107) ≤ 2D
+
+t−1/4
+
+T
+(cid:88)
+
+t=1
+
+≤ 2D(1 +
+
+t−1/4dt)
+
+(cid:90) T
+
+1
+4
+3
+
+T
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+1
+1
+3
+
+)
+
+= 2D(1 +
+
+t3/4
+
+)
+
+≤ 2D(
+
+T 3/4 −
+
+4
+3
+DT 3/4.
+
+=
+
+8
+3
+
+Note that the dual variables used in the above deﬁnition are
+exactly those speciﬁed in D-OCG. Then, as for the devi-
+ation between the local dual variable zi(t) and the global
+dual variable ¯z(t), we have the following lemma.
+Lemma 6. For any i ∈ V and any t = 1, · · · , T , the dual
+variable zi(t) deﬁned in D-OCG and their averages ¯z(t)
+over all nodes satisfy the following bound
+
+(cid:107)zi(t) − ¯z(t)(cid:107) ≤
+
+√
+
+nL
+1 − σ2(P )
+
+.
+
+Two similar bounds for (cid:107)zi(t) − ¯z(t)(cid:107) in D-ODA are re-
+ported in (Duchi et al., 2012) (Hosseini et al., 2013)1. Our
+bound is tighter than both of them. The proof is a little bit
+similar to that in Lemma 3 and is presented in detail in the
+Appendix.
+
+We can now give the regret bound for the D-ODA algorithm
+in the following lemma.
+Lemma 7. The D-ODA algorithm with regularization
+ψ(x) = (cid:107)x − x1(1)(cid:107)2 and parameters αi(t) = η, ∀ i ∈
+V , applied to the loss functions ˜ft,j(x) attains the follow-
+ing regret bound
+
+Ra
+
+T (xi,x) ≤
+
+√
+6
+
+n + 1 − σ2(P )
+2(1 − σ2(P ))
+
+ηL2T +
+
+D2.
+
+1
+η
+
+Using our tighter bound for (cid:107)zi(t) − ¯z(t)(cid:107), this lemma can
+be easily deduced from the general regret bound for the D-
+ODA algorithm (Hosseini et al., 2013). The detailed proof
+is presented in the Appendix.
+
+Now, we are ready to prove our theorem.
+
+Proof of Theorem 1. By plugging in two auxiliary terms
+in each difference ft,j(xi(t)) − ft,j(x), we have
+
+(ft,j(xi(t)) − ft,j(x))
+
+(ft,j(xi(t)) − ft,j(x∗
+
+i (t)) + ft,j(x∗
+
+i (t)) − ft,j(x))
+
+|ft,j(xi(t)) − ft,j(x∗
+
+i (t))|
+
+(ft,j(x∗
+
+i (t)) − ft,j(x)).
+
+T
+(cid:88)
+
+t=1
+
+=
+
+≤
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
++
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+Before proceeding with the ﬁnal proof of Theorem 1, we
+present the regret bound of the D-ODA algorithm applied to
+the loss functions ˜ft,j(x). To this end, we ﬁrst introduce an
+auxiliary sequence which are composed of the centralized
+averages of dual variables over all nodes at each iteration
+
+¯z(t) =
+
+zi(t).
+
+1
+n
+
+n
+(cid:88)
+
+i=1
+
+Using the Lipschitz-ness of ft,j(x), we can obtain the fol-
+lowing bound for the ﬁrst summation
+
+|ft,j(xi(t)) − ft,j(x∗
+
+i (t))| ≤ L
+
+(cid:107)xi(t) − x∗
+
+i (t)(cid:107) .
+
+T
+(cid:88)
+
+t=1
+
+1Strictly, the norm utilized in them is the general dual norm.
+
+Projection-free Distributed Online Learning in Networks
+
+Recall that Lemma 1 provides the bound for the second
+summation. Combining these two bounds together, we
+have
+
+4. Experiments
+
+(ft,j(xi(t)) − ft,j(x))
+
+≤ L
+
+(cid:107)xi(t) − x∗
+
+i (t)(cid:107) + 2L
+
+(cid:13)
+(cid:13)xj(t) − x∗
+
+j (t)(cid:13)
+(cid:13)
+
+T
+(cid:88)
+
+t=1
+
++
+
+( ˜ft,j(x∗
+
+i (t)) − ˜ft,j(x)).
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+Hence,
+
+RT (xi,x) =
+
+(ft,j(xi(t)) − ft,j(x))
+
+≤ nL
+
+(cid:107)xi(t) − x∗
+
+i (t)(cid:107)
+
+n
+(cid:88)
+
+T
+(cid:88)
+
+j=1
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
++ 2L
+
+n
+(cid:88)
+
+T
+(cid:88)
+
+j=1
+
+t=1
+
+n
+(cid:88)
+
+T
+(cid:88)
+
++
+
+j=1
+
+t=1
+
+(cid:13)
+(cid:13)xj(t) − x∗
+
+j (t)(cid:13)
+(cid:13)
+
+( ˜ft,j(x∗
+
+i (t)) − ˜ft,j(x)).
+
+Note that, as the parameters are set to be η1 = · · · = ηn =
+η, the last term in the right side is exactly the regret of the
+D-ODA algorithm applied to ˜ft,j(x).
+In addition, using
+the results in Lemma 5, the sum of the ﬁrst and the second
+terms is further bounded by 8nLDT 3/4. Thus, we have
+
+RT (xi,x) ≤ 8nLDT 3/4 + Ra
+T (xi,x)
+√
+6
+
+≤ 8nLDT 3/4 +
+
+n + 1 − σ2(P )
+2(1 − σ2(P ))
+
+ηL2T
+
++
+
+D2.
+
+1
+η
+
+(1−σ2(P ))D
+
+√
+
+2(
+
+Let η =
+n−1)σ2(P ))LT 3/4 . Then via a bit of
+analysis, we can verify that the choice of ηi satisﬁes the
+constraint required in Lemma 4
+
+n+1+(
+
+√
+
+ηi(
+
+1 + σ2(P )
+1 − σ2(P )
+
+√
+
+n + 1)L(cid:112)ht+1,i ≤ σ2
+
+t,iD2.
+
+The detailed veriﬁcation is presented in the Appendix.
+
+We thus ﬁnally obtain
+
+RT (xi,x) ≤ 8nLDT 3/4
+√
+
+6
+
+n + 1 − σ2(P )
+
+√
+√
+
+n + 1 + (
+n + 1 + (
+
+n − 1)σ2(P ))
+n − 1)σ2(P ))
+
+√
+√
+
+4(
+2(
+
++
+
++
+
+LDT 1/4
+
+LDT 3/4.
+
+1 − σ2(P )
+
+To evaluate the performance of the proposed D-OCG al-
+gorithm, we conduct simulation experiments for a popular
+machine learning problem: multiclass classiﬁcation.
+
+4.1. Experimental Setup
+
+Multiclass Classiﬁcation In the distributed online learn-
+ing setting, the problem is as follows. At each round
+t = 1, · · · , T , each learner i is presented with a data ex-
+ample ei(t) ∈ Rk which belongs to one of the classes
+C = {1, · · · , h} and is required to generate a decision ma-
+h ] ∈ Rh×k that predicts the class
+trix X i(t) = [xT
+1 ; · · · ; xT
+label with arg max(cid:96)∈C xT
+(cid:96) ei(t). Then the adversary reveals
+the true class labels yi(t) and each learner i suffers a con-
+vex multivariate logistic loss
+
+ft,i(X i(t)) = log
+
+1+
+
+(cid:16)
+
+(cid:88)
+
+exp(xT
+
+(cid:96) ei(t) − xT
+
+(cid:17)
+yi(t)ei(t))
+
+.
+
+(cid:96)(cid:54)=yi(t)
+
+The convex domain of the decision matrices is K = {X ∈
+Rh×k| (cid:107)X(cid:107)tr ≤ τ }, where (cid:107)·(cid:107)tr denotes the nuclear norm
+of matrices. In this case, the linear minimization required
+in each iteration of D-OCG amounts to compute a ma-
+trix’s top singular vector, an operation that can be done in
+time near linear to the number of non-zeros in the matrix,
+whereas the projection onto K operation needed in tradi-
+tional distributed online algorithms amounts to perform-
+ing a full SVD, an O(hk min(h, k)) time operation that is
+much more expensive.
+
+Datasets We use two multiclass datasets selected from
+the LIBSVM2 repository with relatively large number of
+instances, which is summarized in Table 1.
+
+dataset
+news20
+aloi
+
+# features
+62,061
+128
+
+# classes
+20
+1,000
+
+# instances
+15,935
+108,000
+
+Table 1. Summary of the multiclass datasets
+
+Network Topology To investigate the inﬂuence of net-
+work topology, we conduct our experiments on three types
+of graphs, which represent different levels of connectivity.
+
+• Complete graph. This represents the highest level of
+connectivity in our experiments: all nodes are con-
+nected to each other.
+
+• Cycle graph. This represents the lowest level of con-
+nectivity in our experiments: each node has only two
+immediate neighbors.
+
+• Watts-Strogatz. This random graph generation tech-
+nique (Watts & Strogatz, 1998) has two tunable pa-
+
+2https://www.csie.ntu.edu.tw/ cjlin/libsvmtools/datasets/
+
+Projection-free Distributed Online Learning in Networks
+
+Figure 1. Comparison of D-OCG, D-OGD and D-ODA on two
+multiclass datasets on a complete graph with 9 nodes
+
+Figure 2. (a): Comparison of D-OCG on graphs with different
+sizes; (b): Comparison of D-OCG on graphs with different topol-
+ogy and ﬁxed 16 nodes (both on the aloi dataset)
+
+rameters: the average degree of the graph k and the
+rewiring probability p.
+In general, the higher the
+rewiring probability, the better the connectivity of the
+graph (Colin et al., 2016). We tune the parameters
+k = 4 and p = 0.3 to achieve an intermediate level of
+connectivity in our experiments.
+
+Compared Algorithms To evaluate the performance
+beneﬁt of D-OCG over its counterparts with projection op-
+eration, we compare it with two classic algorithms: D-
+OGD (Yan et al., 2013) and D-ODA (Hosseini et al., 2013).
+To verify that performing online conditional gradient in the
+distributed setting does not lose much quality compared
+with that in the centralized setting, we also compare D-
+OCG with OCG, i.e. D-OCG with 1 node.
+
+Parameter Settings We set most of the parameters in
+these algorithms as what their corresponding theories sug-
+gest. For instance, the parameters σt,i in D-OCG are
+strictly set to be 1√
+and the learning rates in D-OGD are
+t
+set to be the typical decaying sequence 1√
+. We use the
+t
+method utilized in (Duchi et al., 2012) to generate the dou-
+bly stochastic matrices and ﬁx the nuclear norm bound τ to
+50 throughout.
+
+4.2. Experimental Results
+
+We measure the running time of the D-OGD, D-ODA and
+D-OCG algorithms run on a complete graph with 9 nodes
+and see how fast the average losses decrease. From the
+results shown in Figure 1, we can clearly observe that D-
+OCG is signiﬁcantly faster than both D-OGD and D-ODA,
+which illustrates the necessity and usefulness of using con-
+ditional gradient in distributed online learning.
+
+We then investigate how the number of nodes affects the
+performance of D-OCG by running experiments on com-
+plete graphs with varying number of nodes. From the re-
+sults shown in Figure 2(a), we can make the following
+two main observations. First, the average losses decrease
+
+more slowly on larger graphs than on smaller graphs, which
+nicely conﬁrms our theoretical results. Second, D-OCG is
+able to yield comparable results to the centralized OCG.
+
+We ﬁnally test the inﬂuence of network topology on the al-
+gorithm’s performance. We run experiments on the afore-
+mentioned three types of graphs with 16 nodes using the
+aloi dataset. As shown in Figure 2(b), graphs with better
+connectivity lead to slightly faster convergence, which il-
+lustrates good agreement of empirical results with our the-
+oretical predictions.
+
+5. Conclusion
+
+In this paper, we propose the distributed online condi-
+tional gradient algorithm for projection-free distributed on-
+line learning in networks. We give detailed analysis of the
+regret bound for the proposed algorithm, which depends on
+both the network size and the network topology. We evalu-
+ate the efﬁcacy of the proposed algorithm on two real-world
+datasets for a multiclass classiﬁcation task and ﬁnd that
+it runs signiﬁcantly faster than the counterpart algorithms
+with projection. The theoretical results regarding the regret
+bound for different graphs have also been veriﬁed.
+
+Acknowledgements
+
+This work is supported by National Program on Key Ba-
+sic Research Project No. 2015CB352300 and National
+Natural Science Foundation of China Major Project No.
+U1611461. It is also supported by the National Research
+Foundation, Prime Ministers Ofﬁce, Singapore under its
+International Research Centres in Singapore Funding Ini-
+tiative. We thank Zheng Xiong for helping constructing the
+networks and thank Wei Liu for his kind help in prepar-
+ing the submission and the rebuttal. We ﬁnally acknowl-
+edge anonymous reviewers for their insightful comments
+on comparison and explanation of the regret bound.
+
+Projection-free Distributed Online Learning in Networks
+
+References
+
+Berman, Abraham and Plemmons, Robert J. Nonnegative
+Matrices in the Mathematical Sciences. Academic Press,
+1979.
+
+Clarkson, Kenneth L. Coresets, sparse greedy approxima-
+tion, and the frank-wolfe algorithm. ACM Transactions
+on Algorithms (TALG), 6(4):63, 2010.
+
+Colin,
+
+Igor, Bellet, Aurelien, Salmon,
+
+Joseph, and
+Cl´emenc¸on, St´ephan. Gossip dual averaging for decen-
+tralized optimization of pairwise functions. In Interna-
+tional Conference on Machine Learning, pp. 1388–1396,
+2016.
+
+Duchi, John C, Agarwal, Alekh, and Wainwright, Mar-
+tin J. Dual averaging for distributed optimization: con-
+vergence analysis and network scaling. IEEE Transac-
+tions on Automatic Control, 57(3):592–606, 2012.
+
+Dud´ık, Miroslav, Malick, J´erˆome, et al. Lifted coordinate
+descent for learning with trace-norm regularization. In
+International Conference on Artiﬁcial Intelligence and
+Statistics, pp. 327–336, 2012.
+
+Hosseini, Saghar, Chapman, Airlie, and Mesbahi, Mehran.
+In
+Online distributed optimization via dual averaging.
+IEEE Conference on Decision and Control, pp. 1484–
+1489. IEEE, 2013.
+
+Jaggi, Martin. Revisiting frank-wolfe: projection-free
+sparse convex optimization. In International Conference
+on Machine Learning, pp. 427–435, 2013.
+
+Lee, Soomin, Nedic, Angelia, and Raginsky, Maxim.
+Decentralized online optimization with global ob-
+arXiv preprint
+jectives and local communication.
+arXiv:1508.07933, 2015.
+
+Nesterov, Yurii. Primal-dual subgradient methods for con-
+vex problems. Mathematical programming, 120(1):221–
+259, 2009.
+
+Ram, S Sundhar, Nedi´c, Angelia, and Veeravalli, Venu-
+gopal V. Distributed stochastic subgradient projection
+algorithms for convex optimization. Journal of optimiza-
+tion theory and applications, 147(3):516–545, 2010.
+
+Sayed, Ali H et al. Adaptation, learning, and optimization
+over networks. Foundations and Trends R(cid:13) in Machine
+Learning, 7(4-5):311–801, 2014.
+
+Frank, Marguerite and Wolfe, Philip.
+
+An algorithm
+for quadratic programming. Naval Research Logistics
+Quarterly, 3(1-2):95–110, 1956.
+
+Watts, Duncan J and Strogatz, Steven H. Collective dy-
+namics of small-worldnetworks. nature, 393(6684):440–
+442, 1998.
+
+Garber, Dan. Faster projection-free convex optimization
+over the spectrahedron. In Advances In Neural Informa-
+tion Processing Systems, pp. 874–882, 2016.
+
+Xiao, Lin. Dual averaging methods for regularized stochas-
+tic learning and online optimization. Journal of Machine
+Learning Research, 11(Oct):2543–2596, 2010.
+
+Yan, Feng, Sundaram, Shreyas, Vishwanathan, SVN, and
+Qi, Yuan. Distributed autonomous online learning: Re-
+grets and intrinsic privacy-preserving properties. IEEE
+Transactions on Knowledge and Data Engineering, 25
+(11):2483–2493, 2013.
+
+Garber, Dan and Hazan, Elad. A linearly convergent vari-
+ant of the conditional gradient algorithm under strong
+convexity, with applications to online and stochastic op-
+timization. SIAM Journal on Optimization, 26(3):1493–
+1528, 2016.
+
+Harchaoui, Zaid,
+
+Juditsky, Anatoli, and Nemirovski,
+Arkadi.
+Conditional gradient algorithms for norm-
+regularized smooth convex optimization. Mathematical
+Programming, 152(1-2):75–112, 2015.
+
+Hazan, Elad. Introduction to online convex optimization.
+Foundations and Trends R(cid:13) in Optimization, 2(3-4):157–
+325, 2016.
+
+Hazan, Elad and Kale, Satyen. Projection-free online learn-
+ing. In International Conference on Machine Learning,
+pp. 521–528, 2012.
+
+Hazan, Elad and Luo, Haipeng. Variance-reduced and
+projection-free stochastic optimization. In International
+Conference on Machine Learning, pp. 235–243, 2016.
+
+

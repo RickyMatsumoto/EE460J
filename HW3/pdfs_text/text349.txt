@@ -1,0 +1,1485 @@
+Deep Spectral Clustering Learning
+
+Marc T. Law 1 Raquel Urtasun 1 Richard S. Zemel 1 2
+
+Abstract
+Clustering is the task of grouping a set of exam-
+ples so that similar examples are grouped into
+the same cluster while dissimilar examples are
+in different clusters. The quality of a cluster-
+ing depends on two problem-dependent factors
+which are i) the chosen similarity metric and
+ii) the data representation. Supervised cluster-
+ing approaches, which exploit labeled partitioned
+datasets have thus been proposed, for instance to
+learn a metric optimized to perform clustering.
+However, most of these approaches assume that
+the representation of the data is ﬁxed and then
+learn an appropriate linear transformation. Some
+deep supervised clustering learning approaches
+have also been proposed. However, they rely on
+iterative methods to compute gradients resulting
+in high algorithmic complexity.
+In this paper,
+we propose a deep supervised clustering met-
+ric learning method that formulates a novel loss
+function. We derive a closed-form expression
+for the gradient that is efﬁcient to compute: the
+complexity to compute the gradient is linear in
+the size of the training mini-batch and quadratic
+in the representation dimensionality. We further
+reveal how our approach can be seen as learn-
+ing spectral clustering. Experiments on standard
+real-world datasets conﬁrm state-of-the-art Re-
+call@K performance.
+
+1. Introduction
+
+Clustering is a widely used technique with applications in
+machine learning, statistics, speech processing, computer
+vision.
+It consists in grouping a set of examples so that
+“similar” examples are in the same cluster while “dissimi-
+lar” examples are in different clusters. In most applications,
+the vector representation of examples is given as input and
+
+1Department of Computer Science, University of Toronto,
+Toronto, Canada 2CIFAR Senior Fellow. Correspondence to:
+Marc T. Law <law@cs.toronto.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Figure 1. Our approach learns a nonlinear embedding function in
+a supervised way so that elements in the same category (here with
+the same color) are organized into the same cluster.
+
+a key step is then to determine an appropriate similarity
+metric so that similar and dissimilar objects can be easily
+identiﬁed. In some cases, experts with domain knowledge
+may help determine an appropriate distance metric. How-
+ever, in high-dimensional problems, determining an effec-
+tive metric becomes increasingly difﬁcult even for an ex-
+pert, and standard metrics such as the Euclidean distance
+can lead to very poor results.
+
+Many approaches that learn an appropriate similarity met-
+ric (Xing et al., 2002; Lajugie et al., 2014; Law et al.,
+2016) or a nonlinear embedding function (Schroff et al.,
+2015; Sohn, 2016; Song et al., 2017) in a supervised way
+have thus been proposed. They assume the availability
+of a training dataset that “shares the same metric” as the
+test dataset that they want to partition (e.g. the datasets
+represent the same concepts such as birds species or car
+models). As both datasets share the same metric, the
+model learned from training examples is expected to cor-
+rectly compare test examples. The approaches can roughly
+be divided into four groups based on two criteria: semi-
+supervised/supervised setting and shallow/deep architec-
+ture.
+In the semi-supervised setting (Xing et al., 2002;
+Chopra et al., 2005), the training data is given as a small set
+of example pairs that are expected to be in the same or dif-
+ferent clusters. On the other hand, supervised approaches
+(Lajugie et al., 2014; Law et al., 2016) assume the avail-
+ability of labeled datasets for which the ground truth parti-
+tions are provided during training. A model is then learned
+so that some clustering algorithm will produce a partition
+similar to the ground truth partition on the training dataset.
+The supervised clustering setting can be seen as the spe-
+
+cluster centerRepresentationLearningInitialRepresentationof ExamplesLearned Representationneighborhood of centerDeep Spectral Clustering Learning
+
+cial case of semi-supervised setting where all the pairwise
+similarity relations between training examples are given. In
+particular, supervised clustering is a speciﬁc classiﬁcation
+problem where the model is learned so that the representa-
+tions of training examples are closer to the representative
+vector of their category than to the representative vector of
+any other category. In this paper, we propose a novel metric
+learning approach whose rationale is illustrated in Fig. 1.
+In particular, we leverage deep nonlinear and hierarchical
+architectures to learn complex representations that better
+reﬂect similarity relations among examples.
+
+Many deep metric learning approaches (Schroff et al.,
+2015; Song et al., 2016) extend the ideas introduced in the
+shallow metric learning literature (Xing et al., 2002; Wein-
+berger et al., 2006) to learn deep neural networks on large
+datasets. The main difﬁculty is how to implement these
+ideas so that they are scalable and avoid memory bottle-
+neck. For instance, many approaches have proposed hard
+negative mining strategies to limit the number of training
+constraints. A deep supervised clustering approach was
+proposed in (Song et al., 2017): to compute its gradient,
+the approach uses an iterative greedy algorithm whose al-
+gorithmic complexity is high.
+
+Contributions: In this paper, we propose a metric learning
+framework that optimizes an embedding function so that
+the learned representations of similar examples are grouped
+into the same cluster, and dissimilar examples are in differ-
+ent clusters. To this end, we relax the problem of partition-
+ing a dataset with Bregman divergences (Banerjee et al.,
+2005), and we formulate our problem so that the gradient
+is efﬁcient to compute. In particular, the gradient can be
+expressed in closed-form, and the algorithmic complexity
+to compute it is linear in the size of the training mini-batch
+and quadratic in the representation dimensionality, which
+is better than the complexity of existing iterative methods.
+Our method is also simple to implement and obtains state-
+of-the-art performance on standard datasets.
+
+2. Preliminaries
+
+In this section, we provide some technical background
+about clustering, and set up the notation throughout. We re-
+formulate in matrix form the problem of clustering a set of
+examples with Bregman divergences (Banerjee et al., 2005)
+and write it as an optimization problem w.r.t. one variable
+in Eq. (2).
+Notation: We note (cid:104)A, B(cid:105) := tr(AB(cid:62)), the Frobenius
+inner product where A and B are real-valued matrices; and
+(cid:107)A(cid:107) := (cid:112)tr(AA(cid:62)), the Frobenius norm of A. 1 is the
+vector of all ones with appropriate dimensionality. A† is the
+Moore-Penrose pseudoinverse of A. ri(F) is the relative
+interior of the set F.
+
+Data: We consider that we are given a set of n examples
+f1, · · · , fn ∈ F which may be represented as a single ma-
+trix F = [f1, · · · , fn](cid:62) ∈ F n. In the following, we con-
+sider that F ⊆ Rd, and thus F n ⊆ Rn×d.
+
+Bregman divergence: Any Bregman divergence dφ : F ×
+ri(F) → [0, +∞) is deﬁned as dφ(x, y) = φ(x) − φ(y) −
+(cid:104)x − y, ∇φ(y)(cid:105) where φ : F → R is a continuously-
+differentiable and strictly convex function, ∇φ(y) ∈ Rd
+represents the gradient vector of φ at y. The most com-
+monly used Bregman divergences for clustering are the
+squared Euclidean distance deﬁned with φ(x) = (cid:107)x(cid:107)2
+2, the
+KL-divergence (Dhillon et al., 2003) or the Itakura-Saito
+distance (Buzo et al., 1980). We refer the reader to (Baner-
+jee et al., 2005; Nielsen & Nock, 2009) for details.
+
+Clustering: Partitioning the n observations in F =
+[f1, · · · , fn](cid:62) ∈ F n into k clusters is equivalent to de-
+termining an assignment matrix ˆY ∈ {0, 1}n×k such that
+ˆYic = 1 if fi is assigned to cluster c and 0 otherwise. In this
+paper, we assume that each example is assigned to one and
+only one cluster (i.e. the sum of each row of ˆY is 1) and that
+there is no empty cluster (which corresponds to adding the
+constraint rank( ˆY ) = k). Therefore, ˆY is in the following
+set of assignment matrices:
+
+Y n×k := { ˆY ∈ {0, 1}n×k : ˆY 1 = 1, rank( ˆY ) = k}
+
+We assume as in (Banerjee et al., 2005) that each cluster c
+is represented by a single representative vector zc ∈ ri(F)
+and that an example fi is assigned to cluster c only if
+∀b (cid:54)= c, dφ(fi, zc) ≤ dφ(fi, zb) where dφ is the chosen
+Bregman divergence. To simplify the notations, we con-
+sider that zc ∈ F, and we concatenate the k representative
+vectors into a single matrix Z = [z1, · · · , zk](cid:62) ∈ F k. The
+problem of partitioning the n examples in F ∈ F n with dφ
+can then be formulated as minimizing the energy function:
+
+min
+ˆY ∈Y n×k,Z∈F k
+
+n
+(cid:88)
+
+k
+(cid:88)
+
+i=1
+
+c=1
+
+ˆYic · dφ(fi, zc)
+
+(1)
+
+=
+
+min
+ˆY ∈Y n×k,Z∈F k
+
+1(cid:62)Φ(F )−1(cid:62)Φ( ˆY Z)−(cid:104)F − ˆY Z, ∇Φ( ˆY Z)(cid:105)
+
+where we have used the deﬁnition of Bregman divergences
+and we note: ∀A = [a1, · · · , an](cid:62) ∈ F n, Φ(A) =
+[φ(a1), · · · , φ(an)](cid:62) ∈ Rn is the concatenation into a
+single vector of the different φ(ai) ∈ R, and ∇Φ(A) =
+[∇φ(a1), · · · , ∇φ(an)](cid:62) ∈ Rn×d is the concatenation into
+a single matrix of the different gradients ∇φ(ai) ∈ Rd.
+
+Banerjee et al. (2005) demonstrated that, for any value of
+ˆY ∈ Y n×k, the minimizer of zc in Eq. (1) is unique and
+is the mean vector of all the examples in F assigned to
+cluster c if and only if dφ is a Bregman divergence.
+In
+matrix form, this means that Z = ( ˆY (cid:62) ˆY )−1 ˆY (cid:62)F = ˆY †F
+
+Deep Spectral Clustering Learning
+
+is the unique global minimizer of Z in Eq. (1). We then
+deﬁne the set P = { ˆY ˆY † : ˆY ∈ Y n×k} and rewrite Eq. (1)
+as a minimization problem w.r.t. one variable:
+
+1(cid:62)Φ(F ) − 1(cid:62)Φ( ˆCF ) − (cid:104)F − ˆCF, ∇Φ( ˆCF )(cid:105) (2)
+
+min
+ˆC∈P
+
+if dφ is the squared Euclidean dis-
+As an illustration,
+tance, then Eq. (2) reduces to: (cid:107)F (cid:107)2 − (cid:107) ˆCF (cid:107)2 − (cid:104)F −
+ˆCF, 2 ˆCF (cid:105) = (cid:107)F (cid:107)2 + (cid:107) ˆCF (cid:107)2 − 2(cid:104)F, ˆCF (cid:105) = (cid:107)F − ˆCF (cid:107)2.
+We then obtain the formulation mentioned in (Lajugie
+et al., 2014)[Section 2.2] of the usual kmeans algorithm:
+
+min
+ˆC∈P
+
+(cid:107)F − ˆCF (cid:107)2 ⇔ max
+ˆC∈P
+
+(cid:104) ˆC, F F (cid:62)(cid:105)
+
+(3)
+
+by using the fact that all the matrices in P are orthogonal
+projection matrices (i.e. symmetric and idempotent): we
+then have ∀ ˆC ∈ P, (cid:107) ˆCF (cid:107)2 = tr( ˆC 2F F (cid:62)) = tr( ˆCF F (cid:62)).
+
+3. Deep Spectral Clustering Learning
+
+In this section, we introduce our method that we call Deep
+Spectral Clustering Learning (DSCL). We ﬁrst relax the
+clustering problem in Eq. (2) and consider the set of solu-
+tions of the relaxed problem as the prediction function of
+our model. Then, we present our large margin supervised
+clustering problem and its efﬁcient solver. Finally, we ex-
+plain the connection of our approach with spectral cluster-
+ing learning.
+
+3.1. Constraint Relaxation
+
+Optimizing Eq. (2) is a NP-hard problem (Aloise et al.,
+2009), we then approximate it. Following (Shi & Malik,
+2000; Zha et al., 2001; Ng et al., 2002; Peng & Wei, 2007),
+we now present a spectral relaxation of this problem. In
+particular, we extend the domain of Eq. (2) so that the set
+of solutions of the resulting problem can be formulated in
+a convenient way.
+We propose to relax the constraint ˆC ∈ P in Eq. (2) with
+the constraint ˆC ∈ Cn,k where the set Cn,k includes P and
+is deﬁned as the set of n × n rank-k orthogonal projec-
+tion matrices Cn,k := { ˆC ∈ Rn×n : ˆC 2 = ˆC, ˆC (cid:62) =
+ˆC, rank( ˆC) = k}. The set of solutions of the resulting
+relaxed version of Eq. (2) can then be formulated:
+
+f (F ) := arg max
+ˆC∈Cn,k
+
+1(cid:62)Φ( ˆCF ) + (cid:104)F − ˆCF, ∇Φ( ˆCF )(cid:105) (4)
+
+where the terms that do not depend on ˆC are omitted.
+
+The solutions in Eq. (4) can be found in closed-form. Let us
+note s = rank(F ), we show in the supplementary material
+that if s ≤ k, then the set of solutions of Eq. (4) is f (F ) =
+{ ˆC ∈ Cn,k : ˆCF = F } = { ˆC ∈ Cn,k : ˆC = F F † +
+
+V V (cid:62), V V (cid:62) ∈ Cn,(k−s), V V (cid:62)F = 0}. In particular, if
+s = k, then V V (cid:62) = 0 and we have f (F ) = {F F †}.
+
+In the following, we consider only the case where the di-
+mensionality d of training examples is not greater than k so
+that the property s ≤ k is satisﬁed. Nonetheless, if s > k,
+the set of solutions can be considered as f (F ) = {F F †}.
+
+3.2. Structured output prediction
+
+In the following, we consider that we are given n exam-
+ples xi ∈ X (e.g. n images) and an embedding function
+ϕθ : X → F whose set of parameters is θ and such that
+∀i ∈ {1, · · · , n}, ϕθ(xi) = fi (e.g. fi can be the output of
+a convolutional neural network). All these representations
+are concatenated into a single matrix F = [f1, · · · , fn](cid:62) ∈
+F n. We are also given a ground truth assignment matrix
+Y ∈ Y n×k which indicates the desired partition for the n
+examples. In other words, let C = Y Y † ∈ P be the ground
+truth clustering matrix of F , we would like to learn the em-
+bedding function ϕθ so that the matrix predicted with the
+(relaxed) clustering problem f (F ) ⊆ Cn,k in Eq. (4) is as
+close as possible to the ground truth clustering matrix C.
+
+Different evaluation metrics such as purity, rand index and
+normalized mutual information exist to evaluate cluster-
+ing (see (Manning et al., 2008) [Chapter 16.3] for details).
+As in (Hubert & Arabie, 1985; Bach & Jordan, 2004; La-
+jugie et al., 2014; Law et al., 2016), we choose the Frobe-
+nius norm which has many advantages. As explained in
+(Lajugie et al., 2014)[Section 3.2], unlike rand index, the
+Frobenius norm between clustering (orthogonal projection)
+matrices takes into account the size of the different clusters
+(i.e. its value is not dominated by the performance on the
+largest clusters) and thus optimizes intra-class variance that
+is a rescaled indicator.
+
+3.2.1. PROBLEM FORMULATION
+
+In the following, we consider that the matrix F is a vari-
+able (that depends on ϕθ). The problem of minimizing the
+discrepancy between the ground truth clustering C ∈ P of
+the matrix F and the (relaxed) clustering ˆC predicted with
+f (F ) in Eq. (4) can be formulated as the following empiri-
+cal risk minimization problem:
+
+min
+F ∈F n
+
+max
+ˆC∈f (F )
+
+(cid:107)C − ˆC(cid:107)2
+
+As all the matrices in f (F ) have the same rank, we can
+rewrite Eq. (5): (cid:107)C − ˆC(cid:107)2 = (cid:107)C(cid:107)2 + (cid:107) ˆC(cid:107)2 − 2 tr(C ˆC)
+where (cid:107) ˆC(cid:107)2 = tr( ˆC) = rank( ˆC) = k is a constant.
+Eq. (5) is then equivalent to the problem:
+
+(5)
+
+(6)
+
+max
+F ∈F n
+
+min
+ˆC∈f (F )
+
+tr(C ˆC)
+
+Deep Spectral Clustering Learning
+
+Algorithm 1 Deep Spectral Clustering Learning (DSCL)
+input : Set of training examples (e.g. images) in X , embedding function ϕθ, number of iterations τ , learning rates η1, · · · , ητ
+1: for iteration t = 1 to τ do
+2:
+3:
+4:
+5:
+6: end for
+
+Randomly sample n training examples x1, · · · , xn ∈ X
+Create representation matrix F ← [f1, · · · , fn](cid:62) ∈ F n s.t. ∀i ∈ {1, · · · , n}, fi = ϕθ(xi)
+Create rescaled gradient G ← (I −F F †)C(F †)(cid:62) (see Eq. (9)) where C = Y Y † is the desired partition matrix of the n examples
+Update the set of parameters θ of ϕθ by exploiting the rescaled gradient G and perform gradient step with learning rate ηt
+
+which is naturally lower bounded by (see details in supple-
+mentary material):
+
+max
+F ∈F n
+
+min
+ˆC∈f (F )
+
+tr(C ˆCF F †) = max
+F ∈F n
+
+tr(CF F †)
+
+(7)
+
+where we use the fact that ∀ ˆC ∈ f (F ), ˆCF F † = F F †.
+We note that Eq. (7) equals Eq. (6) if rank(F ) = k.
+
+The difﬁculty of optimizing the problem in Eq. (7) is that it
+depends on both F and F †. If we assume that rank(F ) is a
+constant (with F not necessarily full rank) in Eq. (7), then
+the problem is differentiable (Golub & Pereyra, 1973) and
+the gradient of Eq. (7) w.r.t. F is:
+
+∇F = 2(I − F F †)C(F †)(cid:62)
+
+(8)
+
+where I is the identity matrix. Details on the gradient can
+be found in the supplementary material. Our matrix F is
+always full rank in our experiments1, so the constant rank
+condition along the iterations is satisﬁed.
+
+3.2.2. LOW ALGORITHMIC COMPLEXITY
+
+We now show that in addition to having a closed-form ex-
+pression, computing our gradient ∇F is efﬁcient: the com-
+plexity to compute it is linear in n and quadratic in d.
+We note C = Y Y † ∈ P the ground truth partition matrix
+where the matrix Y ∈ Y n×k is given: let yc be the c-th
+column of Y , then the c-th column of (Y †)(cid:62) can be written
+c 1} yc. The complexity to compute (Y †)(cid:62) is linear
+max{1,y(cid:62)
+in n due to the sparsity of Y . (Y †)(cid:62) is also sparse (i.e. it
+contains n nonzero elements). We can then write ∇F
+
+1
+
+2 as:
+
+G :=
+
+∇F
+2
+
+= (cid:0)Y − F [F †Y ](cid:1) [F †(Y †)(cid:62)](cid:62)
+
+(9)
+
+where [·] indicates d × k matrices which are computed efﬁ-
+ciently due to the sparsity of Y . The complexity to compute
+F † is O(nd min{n, d}) (i.e. O(nd2) as we assume d ≤ n).
+
+3.2.3. DIRECT LOSS MINIMIZATION
+
+Our method computes in closed-form the gradient of the
+structured output prediction problem in Eq. (5) when
+rank(F ) = k, and its algorithmic complexity is low.
+
+1In our experiments, since the number of rows of F is greater
+
+than its number of colums, F has full column rank.
+
+To the best of our knowledge, although we exploit clas-
+sic spectral relaxation results, our method is the ﬁrst ap-
+proach that includes the closed-form solution of the relaxed
+kmeans problem (see Section 3.1) within a large margin
+method for structured output. Even Mahalanobis metric
+learning methods (Lajugie et al., 2014) cannot use such a
+simpliﬁcation due to the nature of their model, and the for-
+mulation of their subgradient is then different.
+
+relaxed
+closed-form solution of
+Including the
+kmeans algorithm results in a simple problem formula-
+tion (see Eq. (7)). The resulting large margin optimization
+problem is easy to optimize as we do not have to perform
+loss-augmented inference during training.
+
+the
+
+3.3. Learning deep models
+
+Our method can be used to learn neural networks with con-
+ventional gradient-based methods by exploiting chain rule.
+Our approach is illustrated in Algorithm 1.
+In detail, we note a mini-batch matrix F = [f1, · · · , fn](cid:62) ∈
+F n the concatenation into a single matrix of the n differ-
+ent embedding representations ϕθ(xi) = fi, where, for in-
+stance, ϕθ : X → F is a neural network embedding func-
+tion and xi ∈ X is an image. We can rewrite Eq. (7) as
+a minimization problem by deﬁning our loss function as a
+function of the mini-batch representation matrix:
+
+Loss(F ) := k − tr(CF F †)
+
+(10)
+
+which is nonnegative and where C = Y Y † ∈ P is the
+ground truth clustering matrix of F . The neural network ϕθ
+is then learned via backpropagation as illustrated in Algo-
+rithm 1 (i.e. using stochastic gradient descent with rescaled
+gradient −G where G is deﬁned in Eq. (9)).
+
+We note that the structure of the learned neural network
+is not limited to the case where F is Rd. For instance,
+if the goal is to partition probability distributions with
+KL-divergence, the set F can be constrained to be the d-
+dimensional simplex {x ∈ [0, 1]d : x(cid:62)1 = 1} by using a
+softmax regression at the last layer of the neural network.
+
+Regression problem: It is worth noting that ∇F is also the
+gradient w.r.t. F of the nonlinear least squares problem:
+
+max
+F ∈F n
+
+−
+
+1
+2
+
+(cid:107)F F † − C(cid:107)2
+
+(11)
+
+Deep Spectral Clustering Learning
+
+where we assume that the rank of F is constant (otherwise,
+the problem is not differentiable). Our solver can then be
+seen as a gradient-based solver for the nonlinear regression
+problem that iteratively decreases the distance (cid:107)F F † − C(cid:107).
+In particular, the spectral relaxation proposed in Section 3.1
+allows to write the set of predicted clusterings f (F ) as a
+function of F F †, and the choice of the Frobenius norm to
+compare clusterings makes our problem similar to a least
+squares problem.
+
+Given the least squares formulation of Eq. (11), one can see
+that our problem focuses more on the similarity between
+the matrices C and F F † than between C and the individ-
+ual matrix F . Our problem can then be seen as a spectral
+clustering algorithm as explained in the following.
+
+3.4. Connection with spectral clustering
+
+We now explain how our proposed method can be seen as
+learning spectral clustering in a supervised way.
+
+As explained in (Bach & Jordan, 2004; Von Luxburg,
+2007), spectral clustering does not refer to one particu-
+lar method but to a family of methods (e.g. (Shi & Ma-
+lik, 2000)) that partition a dataset by exploiting the leading
+eigenvectors of a similarity matrix. They rely on the eigen-
+structure of a similarity matrix to partition examples into
+disjoint clusters, with examples in the same cluster having
+high similarity and examples in different clusters having
+low similarity. In our case, as can be seen in Eq. (7), the
+(kernel) similarity matrix is K = F F † = U U (cid:62) where
+U ∈ Rn×s is a matrix whose columns are the left-singular
+vectors of F corresponding to its nonzero singular values
+and where s = rank(F ). By deﬁnition, these left-singular
+vectors of F are also the s leading eigenvectors of K.
+
+It is worth noting that our approach is different from classic
+spectral clustering approaches that perform clustering by
+exploiting some Laplacian matrix of the similarity matrix.
+Our approach directly performs clustering by exploiting the
+leading eigenvectors of the similarity matrix K.
+By increasing the value tr(CF F †) = tr(CU U (cid:62)) at
+each backpropagation iteration, the leading eigenvectors of
+U U (cid:62) = K become more similar to the leading eigen-
+vectors of C. As C and K = U U (cid:62) are both orthogonal
+projection matrices, in the ideal case, tr(CU U (cid:62)) is max-
+imized when the column space of one of the two matri-
+ces C or (U U (cid:62)) is included in the column space of the
+In particular, if rank(C) = rank(U U (cid:62)),
+other matrix.
+then tr(CU U (cid:62)) is maximized iff C = U U (cid:62) (Fan, 1949).
+In this ideal case, we have arg max ˆC∈P (cid:104) ˆC, U U (cid:62)(cid:105) = {C},
+which corresponds to the solution of Eq. (3) when replac-
+ing F by U ; in other words, partitioning the rows of U with
+kmeans will return the desired clustering matrix C.
+
+It is then clear that comparing the similarity between the
+
+rows of U (i.e. using spectral clustering) is at least as rel-
+evant as comparing the rows of F to partition the dataset.
+In our experiments, our method obtains better performance
+when the left-singular vectors of the test set matrix are used
+for partitioning rather than the learned features.
+
+4. Experiments
+
+The goal of metric learning is to learn a metric that can
+be used to compare new examples, possibly from cate-
+gories that were not in the training dataset. In this context,
+the model is learned on a training dataset and tested on a
+dataset that shares the same “semantical” metric and repre-
+sents similar concepts. This allows to evaluate the gener-
+alization ability of the model. Following the experimental
+protocol described in (Song et al., 2016; 2017), we evaluate
+our method on the following ﬁne-grained datasets and use
+the exact same train/test splits:
+
+• The Caltech-UCSD Birds (CUB-200-2001) dataset (Wah
+et al., 2011) is composed of 11,788 images of birds from
+200 different species/categories. We split the ﬁrst 100 cat-
+egories for training (5,864 images) and the rest for test
+(5,924 images).
+
+• The CARS196 dataset (Krause et al., 2013) is composed
+of 16,185 images of cars from 196 model categories. The
+ﬁrst 98 categories are used for training (8,054 images), the
+rest for test (8,131 images).
+
+• The Stanford Online Product (Song et al., 2016) dataset is
+composed of 120,253 images from 22,634 online product
+categories. It is partitioned into 59,551 images from 11,318
+categories for training and 60,502 images from 11,316 cat-
+egories for test.
+
+In these experiments, the categories for training and the cat-
+egories for testing are disjoint although they belong to the
+same context (i.e. they all represent birds, cars or products).
+This makes the problem challenging as deep models may
+overﬁt on the training categories2. In the same way as the
+baselines, we then perform early stopping.
+
+4.1. Implementation details
+
+We closely follow the experimental setup described in
+(Song et al., 2016; 2017). In particular, we implemented
+our method with the Tensorﬂow package (Abadi et al.,
+2016) and used the Inception (Szegedy et al., 2015) net-
+work with batch normalization (Ioffe & Szegedy, 2015)
+pretrained on ImageNet/ILSVRC 2012-CLS (Russakovsky
+et al., 2015), we ﬁne-tuned the network on the training
+datasets. We perform two types of ﬁne-tuning:
+
+2For instance, our model obtains more than 90% performance
+for all the evaluation metrics on the training categories after 1000
+iterations.
+
+Deep Spectral Clustering Learning
+
+Algorithm 2 DSCL Normalized Spectral Clustering
+input : Test set Ft ∈ F nt , nt is the number of test examples
+1: Create Mt ∈ Rnt×d by mean centering Ft
+2: Create r = rank(Mt)
+3: Create Ut = [u1, · · · , unt ](cid:62) ∈ Rnt×r s.t. MtM †
+4: Create T = [t1, · · · , tnt ](cid:62) ∈ Rnt×r s.t. ∀i, ti = 1
+5: partition the rows of T into k clusters with kmeans
+
+(cid:107)ui(cid:107)2
+
+t = UtU (cid:62)
+t
+ui
+
+• end-to-end: we ﬁne-tune the model and update the pa-
+rameters of all the layers of the neural network during back-
+propagation. In this case, we perform 100 iterations of gra-
+dient descent.
+
+• last layer: we freeze all the parameters of the neural
+network (pretrained on ImageNet) except those in the last
+layer. Only the parameters in the last layer of the model are
+updated. We perform 200 iterations of gradient descent.
+
+F nt where ϕθ is the learned embedding function, and then
+applying a partition algorithm. The partition algorithm can
+either be a standard clustering algorithm as described in
+(Banerjee et al., 2005), or can exploit the connection of our
+method with spectral clustering as explained in Section 3.4.
+
+The spectral clustering (SC) algorithm that we use, which is
+inspired by (Ng et al., 2002), is illustrated in Algorithm 2:
+we ﬁrst mean center Ft (the mean of each column of the
+resulting matrix Mt is zero), then we extract the matrix Ut
+that contains the leading left-singular vectors of the result-
+ing matrix Mt, the rows of Ut are then (cid:96)2-normalized and
+partitioned with the usual kmeans algorithm.
+
+To test our method without spectral clustering, we (cid:96)2-
+normalize the output representations as done in (Song et al.,
+2017) and then apply the usual kmeans algorithm with the
+squared Euclidean distance.
+
+In both cases, we remove the softmax function at the end
+of the last layer.
+
+4.3. Quantitative results
+
+The images are ﬁrst resized to square size (256 × 256) and
+cropped at 227 × 227. For the dataset augmentation, we
+use a random horizontal mirroring for training and a single
+center crop for test. As in (Song et al., 2017) and unlike
+(Sohn, 2016), we use a single crop per image.
+
+We ran our experiments on a single Tesla P100 GPU with
+16GB RAM, and used a standard Stochastic Gradient opti-
+mizer. Our batch size is set to n = o×p = 18×70 = 1260,
+our method backpropagates the loss in Eq. (10) for all
+the examples in the batch. As Inception is a large model
+and to ﬁt into memory, we iteratively compute submatri-
+ces Fi ∈ F o and concatenate them into a single matrix
+p ](cid:62) ∈ F n. Our method then computes
+F = [F (cid:62)
+1 , · · · , F (cid:62)
+p ](cid:62) ∈ Rn×d deﬁned
+the gradient matrix G = [G(cid:62)
+in Eq. (9), and minimizes the loss function (cid:104)F, −G(cid:105) =
+(cid:80)p
+i=1(cid:104)Fi, −Gi(cid:105) with gradient descent where −G is ﬁxed.
+∈
+Different
+{64, 128, 256, 512} are tested in (Song et al., 2016),
+it is reported that d does not play a crucial role.
+In our
+case, we then set our dimensionality d to be equal to the
+number of categories k for the Birds and Cars datasets.
+
+dimensionality
+
+1 , · · · , G(cid:62)
+
+embedding
+
+values d
+
+For the Products dataset which contains more than 10k cat-
+egories, we observed as in (Sohn, 2016) that the larger the
+value of d, the better the results. We then set d = 512 in
+order to be fair with the other models and randomly sub-
+sample 512 training categories.
+
+4.2. Partitioning a test dataset
+Partitioning a test dataset Xt = [x1, · · · , xnt](cid:62) ∈ X nt
+(where xi ∈ X is an image in these experiments, and nt is
+the number of test examples) is done by ﬁrst computing the
+test representation matrix Ft = [ϕθ(x1), · · · , ϕθ(xnt)](cid:62) ∈
+
+We compare our method to current state-of-the-art metric
+learning approaches in Tables 1 to 3 by evaluating the Nor-
+malized Mutual Information (NMI) and Recall@K perfor-
+mances. In particular, Recall@1 is a useful metric in zero-
+shot learning contexts, it allows to assign the category of
+a test image to the category of its nearest neighbor, it then
+evaluates the generalization performance of a model to new
+similar concepts. The scores for the following baselines
+(Schroff et al., 2015; Song et al., 2016; Sohn, 2016; Song
+et al., 2017) are reported from (Song et al., 2017) where the
+methods are tested in a similar setup. As explained in the
+related work (Section 5), the NMI-based approach (Song
+et al., 2017) is the only baseline that is explicitly learned to
+optimize a clustering criterion.
+
+of
+
+the
+
+the
+
+also
+
+report
+
+performance
+
+vanilla
+We
+GoogLeNet/Inception features pretrained on ImageNet,
+and GoogLeNet features ﬁne-tuned for classiﬁcation with
+softmax regression.
+In both cases, we report the results
+obtained with Spectral Clustering (SC) as illustrated in
+Algorithm 2, and without SC (as explained in the last
+paragraph of Section 4.2). We report
+the scores for
+(cid:96)2-normalized features as they obtain better performance
+than unnormalized features in our experiments.
+
+Recognition performance: Our spectral clustering ap-
+proach obtains state-of-the-art Recall@K performance on
+all the datasets. Only the method in (Song et al., 2017)
+obtains better NMI performance on Birds and Products,
+this can be expected as the model in (Song et al., 2017) is
+speciﬁcally learned to optimize the NMI evaluation metric.
+Our choice to optimize the Frobenius norm which allows
+to compute a gradient in closed-form then seems to be a
+good trade-off for scalability as it obtains competitive NMI
+results and state-of-the-art Recall@K performance.
+
+Deep Spectral Clustering Learning
+
+Table 1. NMI and Recall@K evaluation on the Birds (CUB-200-
+2011) dataset
+
+Method
+
+NMI
+
+R@1
+
+R@2
+
+R@4
+
+R@8
+
+Triplet s.h. (Schroff et al., 2015)
+Lifted struct (Song et al., 2016)
+Npairs (Sohn, 2016)
+NMI-based (Song et al., 2017)
+
+Vanilla GoogLeNet (with SC)
+Vanilla GoogLeNet (without SC)
+Softmax regression (with SC)
+Softmax regression (without SC)
+
+Ours (end-to-end/with SC)
+Ours (end-to-end/without SC)
+Ours (last layer/with SC)
+Ours (last layer/without SC)
+
+Triplet s.h. (Schroff et al., 2015)
+Lifted struct (Song et al., 2016)
+Npairs (Sohn, 2016)
+NMI-based (Song et al., 2017)
+
+Vanilla GoogLeNet (with SC)
+Vanilla GoogLeNet (without SC)
+Softmax regression (with SC)
+Softmax regression (without SC)
+
+Ours (end-to-end/with SC)
+Ours (end-to-end/without SC)
+Ours (last layer/with SC)
+Ours (last layer/without SC)
+
+55.38
+56.50
+57.24
+59.23
+
+53.53
+50.28
+55.91
+55.74
+
+58.12
+56.99
+59.16
+56.87
+
+53.35
+56.88
+57.79
+59.04
+
+44.53
+47.99
+53.13
+52.13
+
+58.04
+56.08
+64.25
+61.12
+
+42.59
+43.57
+45.37
+48.18
+
+42.56
+40.11
+45.49
+46.00
+
+49.78
+47.57
+53.22
+50.08
+
+51.54
+52.98
+53.90
+58.11
+
+35.37
+35.56
+50.11
+48.75
+
+59.37
+57.08
+73.07
+67.54
+
+55.03
+56.55
+58.41
+61.44
+
+55.55
+53.17
+58.64
+58.03
+
+62.56
+59.66
+66.09
+62.24
+
+63.78
+65.70
+66.76
+70.64
+
+47.32
+47.27
+60.49
+58.52
+
+71.25
+69.23
+82.19
+77.77
+
+66.44
+68.59
+69.51
+71.83
+
+67.86
+66.02
+70.65
+69.32
+
+73.55
+71.57
+76.70
+73.38
+
+73.52
+76.01
+77.75
+80.27
+
+60.60
+59.37
+71.68
+70.97
+
+80.62
+79.39
+89.01
+85.74
+
+77.23
+79.63
+79.49
+81.92
+
+78.39
+76.59
+79.17
+78.28
+
+82.78
+81.28
+85.33
+82.38
+
+82.41
+84.27
+86.35
+87.81
+
+71.69
+72.16
+80.14
+78.37
+
+88.32
+87.46
+92.99
+90.95
+
+Table 2. NMI and Recall@K evaluation on the Cars196 dataset
+
+Method
+
+NMI
+
+R@1
+
+R@2
+
+R@4
+
+R@8
+
+Table 3. NMI and Recall@K evaluation on the Products (Stan-
+ford Online Products) dataset
+
+Method
+
+NMI
+
+R@1
+
+R@10
+
+R@100
+
+Triplet s.h. (Schroff et al., 2015)
+Lifted struct (Song et al., 2016)
+Npairs (Sohn, 2016)
+NMI-based (Song et al., 2017)
+
+Vanilla GoogLeNet (with SC)
+Vanilla GoogLeNet (without SC)
+Softmax regression (with SC)
+Softmax regression (without SC)
+
+Ours (end-to-end/with SC)
+Ours (end-to-end/without SC)
+Ours (last layer/with SC)
+Ours (last layer/without SC)
+
+89.46
+88.65
+89.37
+89.48
+
+56.01
+55.32
+63.53
+63.10
+
+89.40
+88.70
+88.75
+86.95
+
+66.67
+62.46
+66.41
+67.02
+
+44.09
+43.73
+51.95
+51.65
+
+67.59
+64.52
+65.30
+64.90
+
+82.39
+80.81
+83.24
+83.65
+
+61.32
+60.84
+69.83
+69.75
+
+83.71
+81.53
+81.50
+78.05
+
+91.85
+91.93
+93.00
+93.23
+
+77.82
+76.54
+85.36
+85.32
+
+93.25
+92.35
+92.40
+91.50
+
+The usual kmeans algorithm applied on the representa-
+tions of our learned model obtains worse results than our
+proposed spectral clustering (SC) approach. It obtains bet-
+ter performance than most baselines on Birds and Cars, but
+also poor results on the Products dataset. This may be ex-
+plained by the fact that there are only 5.3 images per cat-
+egory in this dataset, which is 10 times less than for the
+other datasets. Some categories also contain only 2 images,
+which is hard to generalize on. Our approach is then more
+appropriate when the categories are large (i.e. more than 50
+images) than when there are many (very) small clusters.
+
+We also note that when our model updates only the last
+layer during ﬁne-tuning, it obtains state-of-the-art perfor-
+mance on Birds and Cars, but not as good as our fully
+learned model on the Products dataset. The strong results
+on the former two is likely due to their small size (fewer
+than 10k training images); which makes learning all the
+layers prone to overﬁtting. Learning in all layers seems
+beneﬁcial on larger datasets such as Products.
+
+We observe that most baselines (Schroff et al., 2015; Sohn,
+2016; Song et al., 2017) and our spectral method obtain
+comparable results on the Products dataset. There is then
+not a clear way to learn deep models in contexts with small
+categories. On the other hand, there is a huge gap in
+Recall@K performance on the other datasets between ap-
+proaches that optimize clustering and approaches that do
+not. The largest performance gap is observed on the Cars
+dataset which contains the largest number of images per
+category (more than 80).
+
+It is also worth noting that unlike usual softmax regression
+for classiﬁcation that promotes centroids to be one-hot vec-
+tors in the ideal case, our approach takes as input the cur-
+rent representations and tries to group similar examples to-
+gether without ﬁxing the desired centroids. It can then be
+easily combined with other approaches.
+
+Training time: Once the matrix representation of the mini-
+batch F ∈ F n has been computed, computing the gradient
+G takes 1 second (with n = 1280 and d = 100). Since
+we backpropagate our loss for all the examples in the mini-
+batch, each iteration takes about 50 seconds due to the large
+architecture of Inception. Nevertheless, multiple GPUs can
+be used in parallel to speed up training.
+
+Qualitative results: t-SNE (Van Der Maaten, 2014) plots
+are available in the supplementary material.
+
+5. Related work
+
+As explained in Section 1, many approaches have been pro-
+posed to learn a similarity metric (Xing et al., 2002; Bar-
+Hillel et al., 2005; Lajugie et al., 2014; Law et al., 2016;
+2017b) or a nonlinear embedding function (Schroff et al.,
+2015; Song et al., 2017) optimized to perform clustering.
+However, most of them belong to the semi-supervised set-
+ting (Xing et al., 2002; Bar-Hillel et al., 2005; Schroff et al.,
+2015), i.e. they are designed to learn from small sets of
+pairwise or triplet-wise relations and do not account for
+the global clustering performance on the training dataset.
+In pairwise approaches, the model is given pairs of exam-
+ples (xi, xj) which are either similar (e.g. the examples are
+in the same category) or dissimilar (e.g. the examples are
+in different categories), the model is then learned so that
+the distances between representations of similar objects
+are smaller than the distances between dissimilar objects.
+
+Deep Spectral Clustering Learning
+
+In the triplet-wise approach (Schultz & Joachims, 2003;
+i , x−
+Weinberger et al., 2006), triplets of examples (xi, x+
+i )
+are provided and the model is learned so that the distance
+between the representations of the pair (xi, x+
+i ) is smaller
+than for the pair (xi, x−
+i ). We focus on the supervised clus-
+tering setting which considers all the possible similar and
+dissimilar pairs and takes into account the global clustering
+structure of the training dataset (here a mini-batch).
+
+In the shallow metric learning literature, (Lajugie et al.,
+2014; Law et al., 2016) learn a linear transformation in the
+supervised clustering setting so that the partition obtained
+when using kmeans on a dataset is as close as possible to
+the desired partition. However, they both consider that the
+data representation is ﬁxed and are limited by the complex-
+ity of their linear model. Moreover, their solvers are very
+different from ours. Lajugie et al. (2014) propose an ex-
+tension of the structural SVM (Tsochantaridis et al., 2005)
+for Mahalanobis distances, and their projected subgradient
+method thus has high complexity. Law et al. (2016) pro-
+pose a closed-form solver but the method is limited to the
+case where there is a single training dataset and they do not
+provide gradient-based strategies to optimize other types of
+models such as neural networks.
+
+In the deep learning literature, Song et al. (2016) proposed
+to approximate a loss function that considers all the positive
+and negative pairs. To this end, they iteratively randomly
+sample a few similar pairs, and then actively add their difﬁ-
+cult neighbors to the training mini-batch. This idea is sim-
+ilar to the idea of active set of constraints used in (Wein-
+berger & Saul, 2009; Law et al., 2017a) to limit the num-
+ber of active constraints (i.e. the number of constraints that
+have nonzero subgradients) and be able to optimize over
+large numbers of triplets. Although their approach con-
+siders most of the similarity relations, it is not optimized to
+group all the similar examples into the same unique cluster.
+Indeed, each category can be divided in multiple subclus-
+ters as explained in (Song et al., 2017).
+
+Sohn (2016) proposed to tackle the problem of slow con-
+vergence of triplet-wise approaches (caused by hard nega-
+tive mining) by optimizing losses over (n + 1)-tuplets. In
+particular, an efﬁcient batch construction method is pro-
+posed to require 2n examples instead of the na¨ıve (n + 1)n
+to build n tuplets of length (n + 1). The loss func-
+tion recruits multiple distances between dissimilar exam-
+ples from different categories and approximates the ideal
+loss that minimizes the distances between similar examples
+while maximizing the distances between dissimilar exam-
+ples. This approach considers the global structure of the
+representation of mini-batches better than triplet-wise ap-
+proaches. However, although it does take into account most
+distances in the mini-batch, it does not explicitly optimize
+the model so that it obtains good clustering performance.
+
+In the deep metric learning literature, the most similar ap-
+proach to ours is (Song et al., 2017). They select for
+each category one unique example that will be the medoid
+(i.e. representative example). The choice of the medoids
+is not discussed and may be problematic if there is noise
+in the labels. In contrast, our centroids are learned so that
+they are the mean vectors of the training examples. Indeed,
+our set of centroids is written Z = ˆY †F where F ∈ F n is
+the representation of our mini-batch and ˆY is implicitly in-
+cluded in the formulation of the set Cn,k. Our optimization
+problem then learns a data representation such that training
+examples are projected close to their respective centroids.
+Moreover, the gradient in (Song et al., 2017) requires an it-
+erative greedy algorithm and each iteration of their greedy
+algorithm has higher complexity than the complexity of
+computing our gradient (we set the dimensionality d of
+our learned representations to be k). Each iteration of the
+greedy algorithm is linear in the size of the mini-batch and
+cubic in the number of categories in the mini-batch.
+
+Deep learning was also used in (Ionescu et al., 2015) to
+learn a convolutional neural network optimized for cluster-
+ing. However, it is applied to unsupervised image segmen-
+tation with normalized cuts (Shi & Malik, 2000). We are
+interested in this paper in the supervised clustering setting
+where the ground truth partition is provided. Another deep
+clustering approach was proposed in (Hershey et al., 2016).
+However, their model is not optimized to be robust to the
+size of the different clusters as discussed in Section 3.2.
+
+6. Conclusion
+
+We have presented a novel deep learning approach opti-
+mized for the supervised clustering task. Our method is
+simple to implement and scalable thanks to its low algorith-
+mic complexity. It also obtains state-of-the-art recall@K
+performance on different standard ﬁne-grained datasets.
+Future work includes improving our proposed solver by ex-
+ploiting the results in (Ionescu et al., 2015) which take into
+account the structure of the neural network instead of using
+a standard stochastic gradient descent solver.
+
+Acknowledgments: We thank David Duvenaud, Stavros
+Tsogkas, Dimitris Vlitas and the anonymous reviewers for their
+helpful comments. This work was supported by Samsung and the
+Intelligence Advanced Research Projects Activity (IARPA) via
+Department of Interior/Interior Business Center (DoI/IBC) con-
+tract number D16PC00003. The U.S. Government is authorized
+to reproduce and distribute reprints for Governmental purposes
+notwithstanding any copyright annotation thereon.
+Disclaimer: The views and conclusions contained herein are
+those of the authors and should not be interpreted as necessar-
+ily representing the ofﬁcial policies or endorsements, either ex-
+pressed or implied, of IARPA, DoI/IBC, or the U.S. Government.
+
+Deep Spectral Clustering Learning
+
+References
+
+Abadi, Mart´ın, Agarwal, Ashish, Barham, Paul, Brevdo,
+Eugene, Chen, Zhifeng, Citro, Craig, Corrado, Greg S,
+Davis, Andy, Dean, Jeffrey, Devin, Matthieu, et al. Ten-
+sorﬂow: Large-scale machine learning on heterogeneous
+distributed systems. arXiv preprint arXiv:1603.04467,
+2016.
+
+Aloise, Daniel, Deshpande, Amit, Hansen, Pierre, and
+Popat, Preyas. Np-hardness of euclidean sum-of-squares
+clustering. Machine learning, 75(2):245–248, 2009.
+
+Bach, Francis and Jordan, Michael. Learning spectral clus-
+
+tering. NIPS, 16:305–312, 2004.
+
+Banerjee, Arindam, Merugu, Srujana, Dhillon, Inderjit S,
+and Ghosh, Joydeep. Clustering with bregman diver-
+gences. Journal of machine learning research, 6(Oct):
+1705–1749, 2005.
+
+Bar-Hillel, Aharon, Hertz, Tomer, Shental, Noam, and
+Weinshall, Daphna.
+Learning a Mahalanobis met-
+ric from equivalence constraints. Journal of Machine
+Learning Research, 6(6):937–965, 2005.
+
+Buzo, Andr´es, Gray, A, Gray, R, and Markel, John. Speech
+coding based upon vector quantization. IEEE Transac-
+tions on Acoustics, Speech, and Signal Processing, 28
+(5):562–574, 1980.
+
+Chopra, Sumit, Hadsell, Raia, and LeCun, Yann. Learning
+a similarity metric discriminatively, with application to
+face veriﬁcation. In Computer Vision and Pattern Recog-
+nition, 2005. CVPR 2005. IEEE Computer Society Con-
+ference on, volume 1, pp. 539–546. IEEE, 2005.
+
+Dhillon, Inderjit S, Mallela, Subramanyam, and Kumar,
+Rahul. A divisive information-theoretic feature cluster-
+ing algorithm for text classiﬁcation. Journal of machine
+learning research, 3(Mar):1265–1287, 2003.
+
+Fan, Ky. On a theorem of weyl concerning eigenvalues
+of linear transformations i. Proceedings of the National
+Academy of Sciences of the United States of America, 35
+(11):652, 1949.
+
+Golub, Gene H and Pereyra, Victor. The differentiation
+of pseudo-inverses and nonlinear least squares problems
+whose variables separate. SIAM Journal on numerical
+analysis, 10(2):413–432, 1973.
+
+Hershey, John R, Chen, Zhuo, Le Roux, Jonathan, and
+Watanabe, Shinji. Deep clustering: Discriminative em-
+beddings for segmentation and separation. In Acoustics,
+Speech and Signal Processing (ICASSP), 2016 IEEE In-
+ternational Conference on, pp. 31–35. IEEE, 2016.
+
+Hubert, Lawrence and Arabie, Phipps. Comparing parti-
+tions. Journal of classiﬁcation, 2(1):193–218, 1985.
+
+Ioffe, Sergey and Szegedy, Christian. Batch normalization:
+Accelerating deep network training by reducing internal
+covariate shift. arXiv preprint arXiv:1502.03167, 2015.
+
+Ionescu, Catalin, Vantzos, Orestis, and Sminchisescu, Cris-
+tian. Matrix backpropagation for deep networks with
+structured layers. In Proceedings of the IEEE Interna-
+tional Conference on Computer Vision, pp. 2965–2973,
+2015.
+
+Krause, Jonathan, Stark, Michael, Deng, Jia, and Fei-Fei,
+Li. 3d object representations for ﬁne-grained categoriza-
+In Proceedings of the IEEE International Con-
+tion.
+ference on Computer Vision Workshops, pp. 554–561,
+2013.
+
+Lajugie, R., Bach, F., and Arlot, S. Large margin metric
+learning for constrained partitioning problems. Proc. In-
+ternational Conference on Machine Learning, 2014.
+
+Law, Marc Teva, Yu, Yaoliang, Cord, Matthieu, and Xing,
+Eric Poe. Closed-form training of mahalanobis distance
+for supervised clustering. In CVPR. IEEE, 2016.
+
+Law, Marc Teva, Thome, Nicolas, and Cord, Matthieu.
+Learning a distance metric from relative compar-
+IJCV, 121(1):
+isons between quadruplets of images.
+65–94, 2017a.
+10.1007/
+doi:
+ISSN 1573-1405.
+s11263-016-0923-4. URL http://dx.doi.org/
+10.1007/s11263-016-0923-4.
+
+Law, Marc Teva, Yu, Yaoliang, Urtasun, Raquel, Zemel,
+Richard, and Xing, Eric Poe. Efﬁcient multiple instance
+metric learning using weakly supervised data. In Com-
+puter Vision and Pattern Recognition (CVPR), 2017b.
+
+Manning, Christopher D, Raghavan, Prabhakar, Sch¨utze,
+Hinrich, et al. Introduction to information retrieval, vol-
+ume 1. Cambridge university press Cambridge, 2008.
+
+Ng, Andrew Y, Jordan, Michael I, Weiss, Yair, et al. On
+spectral clustering: Analysis and an algorithm. In NIPS,
+volume 14, pp. 849–856, 2002.
+
+Nielsen, Frank and Nock, Richard. Sided and symmetrized
+IEEE transactions on Information
+
+bregman centroids.
+Theory, 55(6):2882–2904, 2009.
+
+Peng, J. and Wei, Y. Approximating k-means-type clus-
+tering via semideﬁnite programming. SIAM Journal on
+Optimization, 18:186–205, 2007.
+
+Russakovsky, Olga, Deng, Jia, Su, Hao, Krause, Jonathan,
+Satheesh, Sanjeev, Ma, Sean, Huang, Zhiheng, Karpa-
+thy, Andrej, Khosla, Aditya, Bernstein, Michael, et al.
+
+Deep Spectral Clustering Learning
+
+Imagenet large scale visual recognition challenge. Inter-
+national Journal of Computer Vision, 115(3):211–252,
+2015.
+
+Schroff, Florian, Kalenichenko, Dmitry, and Philbin,
+James. Facenet: A uniﬁed embedding for face recogni-
+tion and clustering. In Proceedings of the IEEE Confer-
+ence on Computer Vision and Pattern Recognition, pp.
+815–823, 2015.
+
+Weinberger, Kilian Q, Blitzer, John, and Saul, Lawrence.
+Distance metric learning for large margin nearest neigh-
+bor classiﬁcation. Advances in neural information pro-
+cessing systems, 18:1473, 2006.
+
+Xing, Eric P, Jordan, Michael I, Russell, Stuart, and Ng,
+Andrew Y. Distance metric learning with application to
+clustering with side-information. In NIPS, pp. 505–512,
+2002.
+
+Schultz, Matthew and Joachims, Thorsten. Learning a dis-
+In NIPS, vol-
+
+tance metric from relative comparisons.
+ume 1, pp. 2, 2003.
+
+Zha, Hongyuan, He, Xiaofeng, Ding, Chris, Gu, Ming, and
+Simon, Horst D. Spectral relaxation for k-means cluster-
+ing. In NIPS, pp. 1057–1064, 2001.
+
+Shi, Jianbo and Malik, Jitendra. Normalized cuts and im-
+age segmentation. IEEE Transactions on pattern analy-
+sis and machine intelligence, 22(8):888–905, 2000.
+
+Sohn, Kihyuk. Improved deep metric learning with multi-
+class n-pair loss objective. In Advances in Neural Infor-
+mation Processing Systems, pp. 1849–1857, 2016.
+
+Song, Hyun Oh, Xiang, Yu, Jegelka, Stefanie, and
+Savarese, Silvio. Deep metric learning via lifted struc-
+In Proceedings of the IEEE
+tured feature embedding.
+Conference on Computer Vision and Pattern Recogni-
+tion, pp. 4004–4012, 2016.
+
+Song, Hyun Oh, Jegelka, Stefanie, Rathod, Vivek, and
+Murphy, Kevin. Deep metric learning via facility lo-
+In Computer Vision and Pattern Recognition
+cation.
+(CVPR), 2017.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet,
+Pierre, Reed, Scott, Anguelov, Dragomir, Erhan, Du-
+mitru, Vanhoucke, Vincent, and Rabinovich, Andrew.
+In Proceedings of
+Going deeper with convolutions.
+the IEEE Conference on Computer Vision and Pattern
+Recognition, pp. 1–9, 2015.
+
+Tsochantaridis, Ioannis, Joachims, Thorsten, Hofmann,
+Thomas, and Altun, Yasemin. Large margin methods for
+structured and interdependent output variables. Journal
+of machine learning research, 6(Sep):1453–1484, 2005.
+
+Van Der Maaten, Laurens. Accelerating t-sne using tree-
+based algorithms. Journal of machine learning research,
+15(1):3221–3245, 2014.
+
+Von Luxburg, Ulrike. A tutorial on spectral clustering.
+
+Statistics and computing, 17(4):395–416, 2007.
+
+Wah, Catherine, Branson, Steve, Welinder, Peter, Perona,
+Pietro, and Belongie, Serge. The caltech-ucsd birds-200-
+2011 dataset. 2011.
+
+Weinberger, Kilian Q and Saul, Lawrence K. Distance met-
+ric learning for large margin nearest neighbor classiﬁca-
+tion. JMLR, 10:207–244, 2009.
+
+

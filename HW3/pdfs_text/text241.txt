@@ -1,0 +1,1435 @@
+Faster Greedy MAP Inference for Determinantal Point Processes
+
+Insu Han 1 Prabhanjan Kambadur 2 Kyoungsoo Park 1 Jinwoo Shin 1
+
+Abstract
+
+Determinantal point processes (DPPs) are popu-
+lar probabilistic models that arise in many ma-
+chine learning tasks, where distributions of di-
+verse sets are characterized by matrix determi-
+nants. In this paper, we develop fast algorithms
+to ﬁnd the most likely conﬁguration (MAP) of
+large-scale DPPs, which is NP-hard in general.
+Due to the submodular nature of the MAP ob-
+jective, greedy algorithms have been used with
+empirical success. Greedy implementations re-
+quire computation of log-determinants, matrix
+inverses or solving linear systems at each itera-
+tion. We present faster implementations of the
+greedy algorithms by utilizing the complemen-
+tary beneﬁts of two log-determinant approxima-
+tion schemes: (a) ﬁrst-order expansions to the
+matrix log-determinant function and (b) high-
+order expansions to the scalar log function with
+stochastic trace estimators. In our experiments,
+our algorithms are signiﬁcantly faster than their
+competitors for large-scale instances, while sac-
+riﬁcing marginal accuracy.
+
+1. Introduction
+
+Determinantal point processes (DPPs) are elegant proba-
+bilistic models, ﬁrst introduced by (Macchi, 1975), who
+called them ‘fermion processes’. Since then, DPPs have
+been extensively studied in the ﬁelds of quantum physics
+and random matrices (Johansson, 2006), giving rise to a
+beautiful theory (Daley & Vere-Jones, 2007). The charac-
+teristic of DPPs is repulsive behavior, which makes them
+useful for modeling diversity.
+
+Recently, they have been applied in many machine learning
+tasks such as summarization (Gong et al., 2014), human
+
+1School of Electrical Engineering, Korea Advanced Institute
+of Science and Technology (KAIST), Daejeon, Republic of Ko-
+2Bloomberg LP, 731 Lexington Avenue, New York, NY,
+rea.
+10069. Correspondence to: Jinwoo Shin <jinsoos@kaist.ac.kr>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+pose detection (Kulesza et al., 2012), clustering (Kang,
+2013) and tweet time-line generation (Yao et al., 2016).
+In particular, their computational advantage compared to
+other probabilistic models is that many important infer-
+ence tasks are computationally tractable. For example,
+conditioning, sampling (Kang, 2013) and marginalization
+of DPPs admit polynomial-time/efﬁcient algorithms, while
+those on popular graphical models (Jordan, 1998) do not,
+i.e., they are NP-hard. One exception is the MAP infer-
+ence (ﬁnding the most likely conﬁguration), which is our
+main interest; the MAP computation is known to be NP-
+hard even for DPPs (Kulesza et al., 2012).
+
+The distribution of diverse sets under DPPs is characterized
+by determinants of submatrices formed by their features,
+and the corresponding MAP inference reduces to ﬁnding a
+submatrix that maximizes its determinant. It is well known
+that the matrix log-determinant is a submodular function;
+that is, the MAP inference of DPPs is a special instance of
+submodular maximization (Kulesza et al., 2012). Greedy
+algorithms have been shown to have the best worst-case ap-
+proximation guarantees for many instances of submodular
+maximization; for example, (1 − 1/e)-approximation for
+monotone functions. Furthermore, it has been often empir-
+ically observed that greedy algorithms provide near optimal
+solutions (Krause et al., 2008). Hence, greedy algorithms
+have been also applied for the DPP task (Kulesza et al.,
+2012; Yao et al., 2016; Zhang & Ou, 2016). Known imple-
+mentations of greedy selection on DPP require computa-
+tion of log-determinants, matrix inversions (Kulesza et al.,
+2012) or solving linear systems (Li et al., 2016b). Conse-
+quently, they run in O(d4) time where d is the total number
+of items (see Section 2.3). In this paper, we propose faster
+greedy implementations that run in O(d3) time.
+
+Contribution. Our high-level idea is to amortize greedy
+operations by utilizing log-determinant approximation
+schemes. A greedy selection requires computation of
+marginal gains of log-determinants; we consider their ﬁrst-
+order (linear) approximations. We observe that the compu-
+tation of multiple marginal gains can be amortized into a
+single run of a linear solver, in addition to multiple vector
+inner products. We choose the popular conjugate gradient
+descent (CG) (Saad, 2003) as a linear solver. In addition,
+for improving the quality of ﬁrst-order approximations, we
+partition remaining items into p ≥ 1 sets (via some cluster-
+
+Faster Greedy MAP Inference for Determinantal Point Processes
+
+ing algorithm), and apply the ﬁrst-order approximations in
+each partition. The resulting approximate computation of
+multiple marginal gains at each greedy selection requires
+2p runs of CG under the Schur complement, and the over-
+all running time of the proposed greedy algorithm becomes
+O(d3) under the choice of p = O(1) (see Section 3).
+
+Next, for larger-scale DPPs, we develop an even faster
+greedy algorithm using a batch strategy. In addition to us-
+ing the ﬁrst-order approximations of log-determinants un-
+der a partitioning scheme, we add k > 1 elements instead
+of a single element to the current set, where we sample
+some candidates among all possible k elements to relax the
+expensive cost of computing all marginal gains. Intuitively,
+the random batch selection makes the algorithm k times
+faster, while potentially hurting the approximation quality.
+Now, we suggest running the recent fast log-determinant
+approximation scheme (LDAS) (Han et al., 2015) p times,
+instead of running CG pk times under the Schur comple-
+ment, where LDAS utilizes high-order, i.e., polynomial, ap-
+proximations to the scalar log function with stochastic trace
+estimators. Since the complexities of running LDAS and CG
+are comparable, running the former p times is faster than
+running the latter pk times if k > 1.
+
+Finally, we discovered a novel scheme for boosting the
+approximation quality by sharing random vectors among
+many runs of LDAS, and also establish theoretical justiﬁ-
+cation why this helps. Our experiments on both synthetic
+and real-world dataset show that the proposed algorithms
+are signiﬁcantly faster than competitors for large-scale in-
+stances, while losing marginal approximation ratio.
+
+Related work. To the best of our knowledge, this is the
+ﬁrst work that aims for developing faster greedy algorithms
+specialized for the MAP inference of DPP, while there has
+been several efforts on those for general submodular max-
+imization. An accelerated greedy algorithm, called lazy
+evaluation, was ﬁrst proposed by (Minoux, 1978) which
+maintains the upper bounds on the marginal gains instead
+In each iteration, only el-
+of recomputing exact values.
+ements with the maximal bound compute the exact gain,
+which still bounds on the exact value due to submodularity.
+For the DPP case, we also observe that the lazy algorithm
+is signiﬁcantly faster than the standard greedy one, while
+the outputs of both are equal. Hence, we compare our al-
+gorithms with the lazy one (see Section 5).
+
+Another natural approach is on stochastic greedy selec-
+tions computing marginal gains of randomly selected el-
+ements. Its worst-case approximation guarantee was also
+studied (Mirzasoleiman et al., 2015), under the standard,
+non-batch, greedy algorithm. The idea of stochastic se-
+lections can be also applied to our algorithms, where we
+indeed apply it for designing our faster batch greedy algo-
+rithm as mentioned earlier. Recently, (Buchbinder et al.,
+
+2015) proposed a ‘one-pass’ greedy algorithm where each
+greedy selection requires computing only a single marginal
+gain, i.e., the number of marginal gains necessary to com-
+pute can be signiﬁcantly reduced. However, this algorithm
+is attractive only for the case when evaluating a marginal
+gain does not increase with respect to the size of the cur-
+rent set, which does not hold for the DPP case. As reported
+in Section 5, it performs signiﬁcantly worse than ours in
+both their approximation qualities and running times.
+
+There have been also several efforts to design paral-
+lel/distributed implementations of greedy algorithms: (Pan
+et al., 2014) use parallel strategies for the above one-pass
+greedy algorithm and (Kumar et al., 2015) adapt a MapRe-
+duce paradigm for implementing greedy algorithms in dis-
+tributed settings. One can also parallelize our algorithms
+easily since they require independent runs of matrix-vector
+(or vector inner) products, but we do not explore this as-
+pect in this paper. Finally, we remark that a non-greedy
+algorithm was studied in (Gillenwater et al., 2012) for bet-
+ter MAP qualities of DPP, but it is much slower than ours
+as reported in Section 5.
+
+2. Preliminaries
+
+We start by deﬁning a necessary notation. Our algorithms
+for determinantal point processes (DPPs) select elements
+from the ground set of d items Y = [d] := {1, 2, . . . , d}
+and denote the set of all subsets of Y by 2Y . For any pos-
+itive semideﬁnite matrix L ∈ Rd×d, we denote λmin and
+λmax to be the smallest and the largest eigenvalues of L.
+Given subset X, Y ⊆ Y, we use LX,Y to denote the sub-
+matrix of L obtained by entries in rows and columns in-
+dexed by X and Y , respectively. For notational simplic-
+ity, we let LX,X = LX and LX,{i} = LX,i for i ∈ Y.
+In addition, LX is deﬁned as the average of LX∪{i} for
+i ∈ Y \ X. Finally, (cid:104)·, ·(cid:105) means the matrix/vector inner
+product or element-wise product sum.
+
+In Section 2.1, we introduce the maximum a posteriori
+(MAP) inference of DPP, then the standard greedy op-
+timization scheme and its na¨ıve implementations are de-
+scribed in Section 2.2 and Section 2.3, respectively.
+
+2.1. Determinantal Point Processes
+
+DPPs are probabilistic models for subset selection of a ﬁ-
+nite ground set Y = [d] that captures both quality and di-
+versity. Formally, it deﬁnes the following distribution on
+2Y : for random variable X ⊆ Y drawn from given DPP,
+we have
+
+Pr [X = X] ∝ det (LX ) ,
+where L ∈ Rd×d is a positive deﬁnite matrix called an
+L-ensemble kernel. Under the distribution, several proba-
+bilistic inference tasks are required for real-world applica-
+
+Faster Greedy MAP Inference for Determinantal Point Processes
+
+tions, including MAP (Gong et al., 2014; Gillenwater et al.,
+2012; Yao et al., 2016), sampling (Kathuria & Deshpande,
+2016; Kang, 2013; Li et al., 2016a), marginalization and
+conditioning (Gong et al., 2014). In particular, we are in-
+terested in the MAP inference, i.e., ﬁnding the most diverse
+subset Y of Y that achieves the highest probability, i.e.,
+arg maxY ⊆Y det(LY ), possibly under some constraints on
+Y . Unlike other inference tasks on DPP, it is known that
+MAP is a NP-hard problem (Kulesza et al., 2012).
+
+2.2. Greedy Submodular Maximization
+
+A set function f : 2Y → R is submodular if its marginal
+gains are decreasing, i.e.,
+
+f (X ∪ {i}) − f (X) ≥ f (Y ∪ {i}) − f (Y ),
+
+for every X ⊆ Y ⊂ Y and every i ∈ Y \ Y . We say
+f is monotone if f (X) ≤ f (Y ) for every X ⊆ Y .
+It
+is well known that DPP has the submodular structure, i.e.,
+f = log det is submodular.
+
+The submodular maximization task is to ﬁnd a subset max-
+imizing a submodular function f , which corresponds to the
+MAP inference task in the DPP case. Hence, it is NP-hard
+and a popular approximate scheme is the following greedy
+procedure (Nemhauser et al., 1978): initially, X ← ∅ and
+iteratively update X ← X ∪ {imax} for
+
+imax = argmax
+i∈Y\X
+
+f (X ∪ {i}) − f (X),
+
+(1)
+
+as long as f (X ∪ {imax}) > f (X). For the monotone
+case, it guarantees (1 − 1/e)-approximation (Nemhauser
+et al., 1978). Under some modiﬁcations of the standard
+greedy procedure, 2/5-approximation can be guaranteed
+even for non-monotone functions (Feige et al., 2011). Ir-
+respectively of such theoretical guarantees, it has been em-
+pirically observed that greedy selection (1) provides near
+optimal solutions in practice (Krause et al., 2008; Sharma
+et al., 2015; Yao et al., 2016; Zhang & Ou, 2016).
+
+2.3. Na¨ıve Implementations of Greedy Algorithm
+
+Since the exact computations of
+
+Log-determinant or related computations, which are at the
+heart of greedy algorithms for MAP inference of DPPs,
+are critical to compute the marginal gain log det LX∪{i} −
+log det LX .
+log-
+determinants might be slow, i.e., requires O(d3) time for
+d-dimensional matrices, we introduce recent efﬁcient log-
+determinant approximation schemes (LDAS). The log-
+determinant of a symmetric positive deﬁnite matrix A can
+be approximated by combining (a) Chebyshev polynomial
+expansion of scalar log function and (b) matrix trace esti-
+mators via Monte Carlo methods:
+
+log det A = tr (log A)
+
+(a)
+≈ tr (pn(A))
+
+(b)
+≈
+
+v(t)(cid:62)pn(A)v(t).
+
+1
+m
+
+m
+(cid:88)
+
+t=1
+
+Here, pn(x) is a polynomial expansion of degree n approx-
+imating log x and v(1), . . . , v(m) are random vectors used
+for estimating the trace of pn(A). Several polynomial ex-
+pansions, including Taylor (Boutsidis et al., 2015), Cheby-
+shev (Han et al., 2015) and Legendre (Peng & Wang, 2015)
+have been studied. For trace estimation, several random
+vectors have been also studied (Avron & Toledo, 2011),
+e.g., the Hutchinson method (Hutchinson, 1990) chooses
+elements of v as i.i.d. random numbers in {−1, +1} so that
+E (cid:2)v(cid:62)Av(cid:3) = tr (A). In this paper, we use LDAS using the
+Chebyshev polynomial and Hutchinson method (Han et al.,
+2015), but one can use other alternatives as well.
+
+Log-determinant Approximation Scheme (LDAS)
+et al., 2015)
+
+(Han
+
+Input: symmetric matrix A ∈ Rd×d with eigenvalues in
+[δ, 1 − δ], sampling number m and polynomial degree n
+Initialize: Γ ← 0
+cj ← j-th coefﬁcient of Chebyshev expansion of log x
+on [δ, 1 − δ] for 0 ≤ j ≤ n.
+for i = 1 to m do
+
+Draw a random vector v(i) ∈ {−1, +1}d whose en-
+tries are uniformly distributed.
+w(i)
+u ← c0w(i)
+for j = 2 to n do
+2 ← 4
+
+0 ← v(i) and w(i)
+0 + c1w(i)
+
+1−2δ Av(i) − 1
+
+1 − w(i)
+
+1−2δ Aw(i)
+
+1−2δ w(i)
+
+1 ← 2
+
+1−2δ v(i)
+
+1 − 2
+
+1
+
+0
+
+w(i)
+u ← u + cj w(i)
+2
+w(i)
+0 ← w(i)
+end for
+Γ ← Γ + v(i)(cid:62)u/m
+
+end for
+Output: Γ
+
+1 and w(i)
+
+1 ← w(i)
+
+2
+
+Observe that LDAS only requires matrix-vector multiplica-
+tions and its running time is Θ (cid:0)d2(cid:1) for constants m, n =
+O(1). One can directly use LDAS for computing (1) and the
+resulting greedy algorithm runs in Θ(d · T 3
+GR) time where
+the number of greedy updates on the current set X is TGR.
+Since TGR = O(d), the complexity is simply O(d4). An al-
+ternative way to achieve the same complexity is to use the
+Schur complement (Ouellette, 1981):
+log det LX∪{i} − log det LX = log (cid:0)Li,i − Li,X L−1
+
+(cid:1) .
+
+X LX,i
+(2)
+
+This requires a linear solver to compute L−1
+X LX,i; conju-
+gate gradient descent (CG) (Greenbaum, 1997) is a popular
+choice in practice. Hence, if one applies CG to compute the
+max-marginal gain (1), the resulting greedy algorithm runs
+in Θ(d · T 3
+GR · TCG) time, where TCG denotes the number of
+iterations of each CG run. In the worst case, CG converges
+to the exact solution when TCG grows with the matrix di-
+mension, but for practical purposes, it typically provides a
+
+Faster Greedy MAP Inference for Determinantal Point Processes
+
+very accurate solution in few iterations, i.e., TCG = O(1).
+Recently, Gauss quadrature via Lanczos iteration is used
+for efﬁcient computing of Li,X L−1
+X LX,i (Li et al., 2016b).
+Although it guarantees rigorous upper/lower bounds, CG is
+faster and accurate enough for most practical purposes.
+
+In summary, the greedy MAP inference of DPP can be im-
+plemented efﬁciently via LDAS or CG. The faster implemen-
+tations proposed in this paper smartly employ both of them
+as key components utilizing their complementary beneﬁts.
+
+3. Faster Greedy DPP Inference
+
+In this section, we provide a faster greedy submodular max-
+imization scheme for the MAP inference of DPP. We ex-
+plain our key ideas in Section 3.1 and then, provide the
+formal algorithm description in Section 3.2.
+
+3.1. Key Ideas
+
+First-order approximation of log-determinant. The
+main computational bottleneck of a greedy algorithm is to
+evaluate the marginal gain (1) for every element not in the
+current set. To reduce the time complexity, we consider
+the following ﬁrst-order, i.e., linear, approximation of log-
+determinant as:1
+
+argmax
+i∈Y\X
+
+= argmax
+i∈Y\X
+
+≈ argmax
+i∈Y\X
+
+log det LX∪{i} − log det LX
+
+log det LX∪{i} − log det LX
+
+(cid:68)
+
+L
+
+−1
+X , LX∪{i} − LX
+
+(cid:69)
+
+,
+
+(3)
+
+where we recall that LX is the average of LX∪{i}. Observe
+that computing (3) requires the vector inner product of a
+−1
+X and LX∪{i} − LX because
+single column (or row) of L
+LX∪{i} and LX share almost all entries except a single row
+and a column.
+
+−1
+To obtain a single column of L
+X , one can solve a linear
+system using the CG algorithm. More importantly, it suf-
+ﬁces to run CG once for computing (3), while the na¨ıve
+greedy implementation in Section 2.3 has to run CG |Y \ X|
+times. As we mentioned earlier, after obtaining the single
+−1
+column of L
+X using CG, one has to perform |Y \ X| vector
+inner products in (3), but it is much cheaper than |Y \ X|
+CG runs requiring matrix-vector multiplications.
+
+Partitioning.
+In order to further improve the quality of
+ﬁrst-order approximation (3), we partition Y \ X into p
+distinct subsets so that
+
+(cid:107)LX∪{i} − LX (cid:107)F (cid:29) (cid:107)LX∪{i} − L
+
+(j)
+X (cid:107)F ,
+
+where an element i is in the partition j ∈ [p], L
+
+(j)
+X is the
+
+1 ∇X log det X = (cid:0)X −1(cid:1)(cid:62)
+
+average of LX∪{i} for i in the partition j, and (cid:107)·(cid:107)F is the
+Frobenius norm. Since LX∪{i} becomes closer to the aver-
+(j)
+age L
+X , one can expect that the ﬁrst-order approximation
+quality in (3) is improved. But, we now need a more ex-
+pensive procedure to approximate the marginal gain:
+
+log det LX∪{i} − log det LX
+
+=
+
+≈
+
+(j)
+log det LX∪{i} − log det L
+X
+(cid:29)
+(cid:28)(cid:16)
+
+(cid:17)−1
+
+, LX∪{i} − L
+
+(j)
+X
+
+L
+
+(j)
+X
+
+(cid:16)
+
+(cid:124)
+
+(cid:123)(cid:122)
+(a)
+
+(cid:17)
+
+(cid:16)
+
++
+
+log det L
+
+(j)
+X − log det LX
+
+(cid:17)
+
++
+
+log det L
+
+(j)
+X − log det LX
+
+(cid:16)
+
+(cid:124)
+
+(cid:125)
+
+(cid:123)(cid:122)
+(b)
+
+.
+
+(cid:17)
+
+(cid:125)
+
+(1)
+X , . . . , L
+
+The ﬁrst term (a) can be computed efﬁciently as we ex-
+plained earlier, but we have to run CG p times for computing
+(p)
+single columns of L
+X . The second term (b) can
+be also computed using CG similarly to (2) under the Schur
+complement. Hence, one has to run CG 2p times in total.
+If p is large, the overall complexity becomes larger, but the
+approximation quality improves as well. We also note that
+one can try various clustering algorithms, e.g., k-means or
+Gaussian mixture. Instead, we use a simple random parti-
+tioning scheme because it is not only the fastest method but
+it also works well in our experiments.
+
+3.2. Algorithm Description and Guarantee
+
+The formal description of the proposed algorithm is de-
+scribed in Algorithm 1.
+
+Algorithm 1 Faster Greedy DPP Inference
+1: Input: kernel matrix L ∈ Rd×d and number of parti-
+
+tions p
+
+2: Initialize: X ← ∅
+3: while Y \ X (cid:54)= ∅ do
+4:
+5:
+
+Partition Y \ X randomly into p subsets.
+for j = 1 to p do
+
+6:
+
+7:
+
+8:
+9:
+10:
+
+11:
+
+L
+
+(j)
+X ← average of LX∪{i} for i in the partition j
+
+z(j) ← (|X| + 1)-th column of
+(j)
+X − log det LX
+
+Γj ← log det L
+
+(cid:17)−1
+
+(cid:16)
+
+L
+
+(j)
+X
+
+end for
+for i ∈ Y \ X do
+
+(cid:68)
+
+X , Mat (cid:0)z(j)(cid:1)(cid:69) 2 + Γj
+∆i ←
+where element i is included in partition j.
+
+LX∪{i} − L
+
+(j)
+
+end for
+imax ← argmaxi∈Y\X ∆i
+if log det LX∪{imax} − log det LX < 0 then
+
+12:
+13:
+14:
+15:
+16:
+17: X ← X ∪ {imax}
+18: end while
+
+return X
+
+end if
+
+Faster Greedy MAP Inference for Determinantal Point Processes
+
+GR+d·T 2
+
+GR) = Θ(T 3
+
+As we explained in Section 3.1, the lines 7, 8 require to run
+CG. Hence, the overall complexity becomes Θ(T 3
+GR ·TCG ·p+
+d·T 2
+GR), where we choose p, TCG = O(1).
+Since TGR = O(d), it is simply O(d3) and better than the
+complexity O(d4) of the na¨ıve implementations described
+in Section 2.3. In particular, if kernel matrix L is sparse,
+i.e., number of non-zeros of each column/row is O(1), ours
+has the complexity Θ(T 2
+GR + d · TGR) while the na¨ıve ap-
+proaches are still worse having the complexity Θ(d · T 2
+GR).
+
+We also provide the following approximation guarantee of
+Algorithm 1 for the monotone case, where its proof is given
+in the supplementary material.
+
+Theorem 1. Suppose the smallest eigenvalue of L is
+greater than 1. Then, it holds that
+
+log det LX ≥ (1 − 1/e)
+
+max
+Z⊆Y,|Z|=|X|
+
+log det LZ − 2|X|ε.
+
+where
+
+ε = max
+
+log
+
+X⊆Y,i∈Y\X
+j∈[p]
+
+det LX∪{i}
+
+det L
+
+(j)
+X
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:28)(cid:16)
+
+−
+
+(cid:17)−1
+
+L
+
+(j)
+X
+
+, LX∪{i} − L
+
+(j)
+X
+
+(cid:29)(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+and X is the output of Algorithm 1.
+
+The above theorem captures the relation between the ﬁrst-
+order approximation error ε > 0 in (3) and the worst-case
+approximation ratio of the algorithm.
+
+4. Faster Batch-Greedy DPP Inference
+
+In this section, we present an even faster greedy algorithm
+for the MAP inference task of DPP, in particular for large-
+scale tasks. On top of ideas described in Section 3.1, we
+use a batch strategy, i.e., add k elements instead of a sin-
+gle element to the current set, where LDAS in Section 2.3 is
+now used as a key component. The batch strategy acceler-
+ates our algorithm. We ﬁrst provide the formal description
+of the batch greedy algorithm in Section 4.1. In Section
+4.2, we describe additional ideas on applying LDAS as a
+subroutine of the proposed batch algorithm.
+
+4.1. Algorithm Description
+
+The formal description of the proposed algorithm is de-
+scribed in Algorithm 2.
+Similar to the line 7 in Al-
+gorithm 1, the line 8 of Algorithm 2 can be solved by
+the CG algorithms. However,
+the line 9 of Algorithm
+2 uses the LDAS and we remind that it runs in Θ(d2)
+time.
+In addition, the line 12 requires the vector inner
+products ks times. Thus, the total complexity becomes
+Θ (cid:0)T 3
+(cid:1) = Θ(T 3
+GR)
+
+GR · (cid:0)TCG + mn
+2For Z ∈ Rd×k, Mat(Z) ∈ Rd×d is deﬁned whose the last k
+columns and rows are equal to Z and Z (cid:62), respectively, and other
+entries set to 0.
+
+(cid:1) · p + s · T 2
+
+GR + s · TCG
+
+k
+
+Algorithm 2 Faster Batch-Greedy DPP Inference
+1: Input: kernel matrix L ∈ Rd×d, number of partitions
+p, batch size k and the number of batch samples s
+
+2: Initialize: X ← ∅
+3: while Y \ X is not empty do
+4:
+5:
+6:
+
+Ii ← Randomly draw a batch of size k for i ∈ [s].
+Partition [s] randomly into p subsets.
+for j = 1 to p do
+
+(j)
+L
+X ← average of LX∪Ii for i in the partition j
+Z (j) ← (|X| + 1) to (|X| + k)-th columns of
+(cid:16)
+
+(cid:17)−1
+
+7:
+8:
+
+9:
+10:
+11:
+
+12:
+
+L
+
+(j)
+X
+
+Γj ← log det L
+
+end for
+for i = 1 to s do
+i ←
+
+∆Batch
+
+(cid:68)
+
+(j)
+X using LDAS.
+
+LX∪Ii − L
+
+(j)
+
+X , Mat (cid:0)Z (j)(cid:1)(cid:69) 2 + Γj
+
+where a batch index i is included in j-th partition.
+
+i
+
+end for
+imax ← argmaxi∈[s] ∆Batch
+if log det LX∪Iimax
+
+13:
+14:
+15:
+16:
+17:
+18: X ← X ∪ Iimax
+19: end while
+
+return X
+
+end if
+
+− log det LX < 0 then
+
+where TGR is the number of greedy updates on the current
+set X and we choose all parameters p, TCG, k, s, m, n =
+O(1). We note that Algorithm 2 is expected to perform
+faster than Algorithm 1 when both TGR and d are large. This
+is primarily because the size of the current set X increases
+by k > 1 for each greedy iteration. A larger choice of k
+speeds up the algorithm up to k times, but it might hurt its
+output quality. We explain more details of key components
+of the batch algorithm below.
+
+Batch selection. The essence of Algorithm 2 is adding k >
+1 elements, called batch, simultaneously to the current set
+with an improved marginal gain. Formally, it starts from
+the empty set and recursively updates X ← X ∪ Imax for
+
+Imax = argmax
+
+log det LX∪I .
+
+(4)
+
+I⊆Y\X,|I|=k
+
+until no gain is attained. The non-batch greedy proce-
+dure (1) corresponds to k = 1. Such batch greedy algo-
+rithms have been also studied for submodular maximiza-
+tion (Nemhauser et al., 1978; Hausmann et al., 1980) and
+recently, (Liu et al., 2016) studied their theoretical guar-
+antees showing that they can be better than their non-batch
+counterparts under some conditions. The main drawback of
+the standard batch greedy algorithms is that ﬁnding the op-
+timal batch of size k requires computing too many marginal
+(cid:1) subsets. To address the issue, we sample
+gains of (cid:0)|Y\X|
+
+k
+
+Faster Greedy MAP Inference for Determinantal Point Processes
+
+k
+
+s (cid:28) (cid:0)|Y\X|
+(cid:1) bunches of batch subsets randomly and com-
+pute approximate batch marginal gains using them. (Mirza-
+soleiman et al., 2015) ﬁrst propose an uniformly random
+sampling to the standard non-batch greedy algorithm. The
+authors show that it guarantees (1 − 1/e − O(e−s)) ap-
+proximation ratio in expectation and report that it performs
+well in many applications. In our experiments, we choose
+s = 50 batch samples.
+
+High-order approximation of log-determinant. Recall
+that for Algorithm 1, we suggest using the CG algorithm
+under the Schur complement for computing
+
+log det L
+
+(j)
+X − log det LX .
+
+(5)
+
+One can apply the same strategy for Algorithm 2, which
+requires running the CG algorithm k times for (5). Instead,
+we suggest running LDAS (using polynomial/high-order ap-
+proximations of the scalar log function) only once, i.e., the
+line 9, which is much faster if k is large. We remind that the
+asymptotic complexities of CG and LDAS are comparable.
+
+4.2. Sharing Randomness in Trace Estimators
+
+To improve the approximation quality of Algorithm 2, we
+further suggest running LDAS using the same random vec-
+tors v(1), . . . , v(m) across j ∈ [p]. This is because we are
+(j)
+interested in relative values log det L
+X for j ∈ [p] instead
+of their absolute ones.
+
+Figure 1. Log-determinant estimation qualities of LDAS for shar-
+ing and independent random vectors.
+
+Our intuition is that different random vectors have differ-
+ent bias, which hurt the comparison task. Figure 1 demon-
+(j)
+strates an experiment on the estimation of log det L
+X
+when random vectors are shared and independent, re-
+spectively.
+This implies that sharing random vectors
+might be worse for estimating the absolute values of log-
+determinants, but better for comparing them.
+
+We also formally justify the idea of sharing random vectors
+as stated in the follows theorem whose proof is given in the
+supplementary material.
+
+Theorem 2. Suppose A, B are positive deﬁnite matrices
+whose eigenvalues are in [δ, 1 − δ] for δ > 0. Let ΓA, ΓB
+
+be the estimations of log det A, log det B by LDAS using
+the same random vectors v(1), . . . , v(m) for both. Then, it
+holds that
+
+Var [ΓA − ΓB] ≤
+
+32M 2ρ2 (ρ + 1)2
+m (ρ − 1)6 (1 − 2δ)2 (cid:107)A − B(cid:107)2
+
+F
+
+where M = 5 log (2/δ) and ρ = 1 +
+
+2√
+
+2/δ−1−1
+
+.
+
+Without sharing random vectors, the variance should grow
+F + (cid:107)B(cid:107)2
+linearly with respect to (cid:107)A(cid:107)2
+F . In our case, matri-
+(j)
+X , and (cid:107)A − B(cid:107)2
+ces A and B correspond to some of L
+F is
+signiﬁcantly smaller than (cid:107)A(cid:107)2
+F . We believe that
+our idea of sharing randomness might be of broader inter-
+est in many applications of LDAS or its variants, requiring
+multiple log-determinant computations.
+
+F + (cid:107)B(cid:107)2
+
+5. Experimental Results
+
+In this section, we evaluate our proposed algorithms for the
+MAP inference on synthetic and real-world DPP instances.
+3
+
+Setups. The experiments are performed using a machine
+with a hexa-core Intel CPU (Core i7-5930K, 3.5 GHz) and
+32 GB RAM. We compare our algorithms with following
+competitors: the lazy greedy algorithm (LAZY) (Minoux,
+1978), double greedy algorithm (DOUBLE) (Buchbinder
+et al., 2015) and softmax extension (SOFTMAX) (Gillen-
+water et al., 2012). In all our experiments, LAZY is signiﬁ-
+cantly faster than the na¨ıve greedy algorithms described in
+Section 2.3, while they produce the same outputs. Hence,
+we use LAZY as the baseline of evaluation.
+
+Unless stated otherwise, we choose parameters of p = 5,
+k = 10, s = 50, m = 20 and n = 15, regardless matrix
+dimension, for our algorithms. We also run CG until it
+achieves convergence error less than 10−10 and typically
+TCG ≤ 30.
+
+Additional tricks for boosting accuracy. For boosting ap-
+proximation qualities of our algorithms, we use the simple
+trick in our experiments: recompute top (cid:96) marginal gains
+exactly (using CG) where they are selected based on esti-
+mated marginal gains, i.e., ∆i for Algorithm 1 and ∆Batch
+for Algorithm 2. Then, our algorithms choose the best el-
+ement among (cid:96) candidates, based on their exact marginal
+gains. Since we choose small (cid:96) = 20 in our experiments,
+this additional process increases the running times of our
+algorithms marginally, but makes them more accurate. In
+fact, the trick is inspired from (Minoux, 1978) where the
+authors also recompute the exact marginal gains of few el-
+In addition, for boosting further approximation
+ements.
+
+i
+
+3The codes are available in https://github.com/
+
+insuhan/fastdppmap.
+
+truesharingindependent0−1.5−1.0−0.50partition index5101520Faster Greedy MAP Inference for Determinantal Point Processes
+
+(a)
+
+(b)
+
+Figure 2. Plot of (a) log-probability ratio and (b) speedup for SOFTMAX, DOUBLE, Algorithm 1 and Algorithm 2 compared to LAZY.
+Algorithm 1 is about 3 times faster the lazy greedy algorithm (LAZY) while loosing only 0.2% accuracy at d = 10, 000. Algorithm 2
+has 2% loss on accuracy but 9 times faster than LAZY at d = 10, 000. If dimension is d = 40, 000, it runs 19 times faster.
+
+order approximations tighter. Figure 3(b) shows the perfor-
+mance trend of Algorithm 2 as the batch size k increases,
+which shows that a larger batch might hurt its accuracy.
+Based on these experiments, we choose p = 5, k = 10 in
+order to target 0.01 approximation ratio loss compared to
+LAZY.
+
+qualities of Algorithm 2, we also run Algorithm 1 in par-
+allel and choose the largest one among {∆i, ∆Batch
+} given
+the current set. Hence, at most iterations, the batch with the
+maximal ∆Batch
+is chosen and increases the current set size
+by k (i.e., making speed-up) as like Algorithm 2, and the
+non-batch with the maximal ∆i is chosen at very last iter-
+ations, which ﬁne-tunes the solution quality. We still call
+the synthesized algorithm by Algorithm 2 in this section.
+
+i
+
+i
+
+Performance metrics. For the performance measure on
+approximation qualities of algorithms, we use the follow-
+ing ratio of log-probabilities:
+
+log det LX /log det LXLAZY .
+
+where X and XLAZY are the outputs of an algorithm and
+LAZY, respectively. Namely, we compare outputs of algo-
+rithms with that of LAZY since the exact optimum is hard
+to compute. Similarly, we report the running time speedup
+of each algorithm over LAZY.
+
+5.1. Synthetic Dataset
+
+In this section, we use synthetic DPP datasets generated
+as follows. As (Kulesza & Taskar, 2011; Kulesza et al.,
+2012) proposed, a kernel matrix L for DPP can be re-
+parameterized as
+
+Li,j = qiφ(cid:62)
+
+i φjqj,
+
+where qi ∈ R+ is considered as the quality of item i and
+φi ∈ Rd is the normalized feature vector of item i so that
+φ(cid:62)
+i φj measures the similarity between i and j. We use
+qi = exp (β1xi + β2) for the quality measurement xi ∈ R
+and choose β1 = 0.01, β2 = 0.2. We choose each entry of
+φi and xi drawn from the normal distribution N (0, 1) for
+all i ∈ [d], and then normalize φi so that (cid:107)φi(cid:107)2 = 1.
+We ﬁrst show how much the number of clusters p and the
+batch size k are sensitive for Algorithm 1 and Algorithm 2,
+respectively. Figure 3(a) shows the accuracy of Algorithm
+1 with different numbers of clusters. It indeed conﬁrms that
+a larger cluster improves its accuracy since it makes ﬁrst-
+
+(a)
+
+(b)
+
+Figure 3. Log-probability ratios compared to LAZY: (a) Algo-
+rithm 1 changing the number of clusters p and (b) Algorithm
+2 varying the batch size k. These experiments are done under
+d = 1, 000.
+
+We generate synthetic kernel matrices with varying dimen-
+sion d up to 40, 000, and the performances of tested algo-
+rithms are reported in Figure 2(a). One can observe that
+LAZY seems to be near-optimal, where only SOFTMAX of-
+ten provides marginally larger log-probabilities than LAZY
+Interestingly, we found that
+under small dimensions.
+DOUBLE has the strong theoretical guarantee for general
+submodular maximization (Buchbinder et al., 2015), but its
+practical performance for DPP is worst among evaluating
+algorithms. Moverover, it is slightly slower than LAZY.
+In summary, one can conclude that our algorithms can be
+at orders of magnitude faster than LAZY, DOUBLE and
+SOFTMAX, while loosing 0.01-approximation ratio. For
+example, Algorithm 2 is 19 times faster than LAZY for
+d = 40, 000, and the gap should increase for larger dimen-
+sion d.
+
+5.2. Real Dataset
+
+We use real-world datasets of the following two tasks of
+matched and video summarizations.
+
+SoftmaxLazyDoubleAlgorithm 1Algorithm 2log prob. ratio (vs. Lazy)0.850.900.951.00matrix dimension5,00010,000SoftmaxLazyDoubleAlgorithm 1Algorithm 2speedup (vs. Lazy)0510matrix dimension5,00010,000SoftmaxLazyDoublespeedup (vs. Lazy)0.11matrix dimension5,00010,000LazyAlgorithm 2speedup (vs. Lazy)5101520matrix dimension20,00040,000LazyAlgorithm 1log prob. ratio (vs. Lazy)0.9920.9940.9960.9981.000number of clusters20406080100LazyAlgorithm 2log prob. ratio (vs. Lazy)0.9850.9900.9951.000batch size5101520Faster Greedy MAP Inference for Determinantal Point Processes
+
+(a)
+
+(b)
+
+(a)
+
+(b)
+
+Figure 4. Plot of log-probability ratio and speedup (log-scale) of
+Algorithm 2, compared to LAZY, for matched summarization un-
+der 2016 Republican presidential primaries.
+
+Matched summarization. We evaluate our proposed al-
+gorithms for matched summarization that is ﬁrst proposed
+by (Gillenwater et al., 2012). This task gives useful infor-
+mation for comparing the texts addressed at different times
+by the same speaker. Suppose we have two different doc-
+uments and each one consists of several statements. The
+goal is to apply DPP for ﬁnding statement pairs that are
+similar to each other, while they summarize (i.e., diverse)
+well the two documents. We use transcripts of debates in
+2016 US Republican party presidential primaries speeched
+by following 8 participates: Bush, Carson, Christie, Ka-
+sich, Paul, Trump, Cruz and Rubio.4
+
+We follow similar pre-processing steps of (Gillenwater
+et al., 2012). First, every sentence is parsed and only nouns
+except the stopwords are extracted via NLTK (Bird, 2006).
+Then, we remove the ‘rare’ words occurring less than
+10% of the whole debates, and then ignore each statement
+which contains more ‘rare’ words than ’frequent’ ones in it.
+This gives us a dataset containing 3, 406 distinct ‘frequent’
+words and 1, 157 statements. For each statement pair (i, j),
+feature vector φ(i,j) = wi + wj ∈ R3406 where wi is gen-
+erated as a frequency of words in the statement i. Then, we
+normalize φ(i,j). The match quality x(i,j) is measured as
+the cosine similarity between two statements i and j, i.e.,
+x(i,j) = w(cid:62)
+i wj, and we remove statement pairs (i, j) such
+that its match quailty x(i,j) is smaller than 15% of the maxi-
+mum one. Finally, by choosing q(i,j) = exp (cid:0)0.01 · x(i,j)
+(cid:1),
+we obtain (cid:0)8
+(cid:1) = 28 kernel matrices of dimension d from
+2
+516 to 4, 000.
+
+Figure 4 reports log-probability ratios and speedups of Al-
+gorithm 2 under the 28 kernels. We observe that Algorithm
+2 looses 0.03-approximation ratio on average, compared to
+LAZY, under the real-world kernels. Interestingly, SOFT-
+MAX runs much slower than even LAZY, while our algo-
+rithm runs faster than LAZY for large dimension, e.g., 8
+times faster for d = 4, 000 corresponding to transcripts of
+Bush and Rubio.
+
+4Details of the primaries are provided in http://www.
+
+presidency.ucsb.edu/debates.php.
+
+(c)
+
+Figure 5. Plot of (a) F-scores for Algorithm 1 compared to LAZY
+and (b) speedup of both algorithms. (c) shows the summaries of
+YouTube video of index 99. Images in the ﬁrst row are summaries
+produced by LAZY and the second row images illustrate those
+produced by Algorithm 1. The bottom 2 rows reﬂect ‘real’ user
+summaries.
+
+Video summarization. We evaluate our proposed algo-
+rithms video summarization. We use 39 videos from a
+Youtube dataset (De Avila et al., 2011), and the trained
+DPP kernels from (Gong et al., 2014). Under the kernels,
+we found that the numbers of selected elements from al-
+gorithms are typically small (less than 10), and hence we
+use Algorithm 1 instead of its batch version Algorithm 2.
+For performance evaluation, we use an F-score based on
+ﬁve sets of user summaries where it measures the quality
+across two summaries.
+
+Figure 5(a) illustrates F-score for LAZY and Algorithm 1
+and Figure 5(b) reports its speedup. Our algorithm achieves
+over 13 times speedup in this case, while it produces F-
+scores that are very similar to those of LAZY. For some
+video, it achieves even better F-score, as illustrated in 5(c).
+
+6. Conclusion
+
+We have presented fast algorithms for the MAP inference
+task of large-scale DPPs. Our main idea is to amortize com-
+mon determinant computations via linear algebraic tech-
+niques and recent log-determinant approximation meth-
+ods. Although we primarily focus on a special matrix op-
+timization, we expect that several ideas developed in this
+paper would be useful for other related matrix computa-
+tional problems, in particular, involving multiple determi-
+nant computations.
+
+LazyAlgorithm 2log prob. ratio (vs. Lazy)0.80.91.0matrix dimension1000200030004000LazyAlgorithm 2speedup (vs. Lazy)246810matrix dimension1000200030004000LazyAlgorithm 1F-score00.51.0video index102030LazyAlgorithm 1speedup (vs. Lazy)0510matrix dimension200400600800Faster Greedy MAP Inference for Determinantal Point Processes
+
+Acknowledgements
+
+This work was supported in part by the ICT R&D Program
+of MSIP/IITP, Korea, under [2016-0-00563, Research on
+Adaptive Machine Learning Technology Development for
+Intelligent Autonomous Digital Companion].
+
+References
+
+Han, Insu, Malioutov, Dmitry, and Shin, Jinwoo. Large-
+scale log-determinant computation through stochastic
+chebyshev expansions. In ICML, pp. 908–917, 2015.
+
+Hausmann, Dirk, Korte, Bernhard, and Jenkyns, TA. Worst
+case analysis of greedy type algorithms for indepen-
+dence systems. In Combinatorial Optimization, pp. 120–
+131. Springer, 1980.
+
+Avron, Haim and Toledo, Sivan. Randomized algorithms
+for estimating the trace of an implicit symmetric positive
+semi-deﬁnite matrix. Journal of the ACM (JACM), 58(2):
+8, 2011.
+
+Hutchinson, Michael F. A stochastic estimator of the trace
+of the inﬂuence matrix for laplacian smoothing splines.
+Communications in Statistics-Simulation and Computa-
+tion, 19(2):433–450, 1990.
+
+Bird, Steven. Nltk: the natural language toolkit. In Pro-
+ceedings of the COLING/ACL on Interactive presenta-
+tion sessions, pp. 69–72. Association for Computational
+Linguistics, 2006.
+
+Boutsidis, Christos, Drineas, Petros, Kambadur, Prab-
+hanjan, and Zouzias, Anastasios. A randomized al-
+gorithm for approximating the log determinant of a
+arXiv preprint
+symmetric positive deﬁnite matrix.
+arXiv:1503.00374, 2015.
+
+Buchbinder, Niv, Feldman, Moran, Sefﬁ, Joseph, and
+Schwartz, Roy. A tight linear time (1/2)-approximation
+SIAM
+for unconstrained submodular maximization.
+Journal on Computing, 44(5):1384–1402, 2015.
+
+Daley, Daryl J and Vere-Jones, David. An introduction to
+the theory of point processes: volume II: general the-
+ory and structure. Springer Science & Business Media,
+2007.
+
+De Avila, Sandra Eliza Fontes, Lopes, Ana Paula Brand˜ao,
+da Luz, Antonio, and de Albuquerque Ara´ujo, Arnaldo.
+Vsumm: A mechanism designed to produce static video
+summaries and a novel evaluation method. Pattern
+Recognition Letters, 32(1):56–68, 2011.
+
+Feige, Uriel, Mirrokni, Vahab S, and Vondrak, Jan. Max-
+SIAM
+
+imizing non-monotone submodular functions.
+Journal on Computing, 40(4):1133–1153, 2011.
+
+Gillenwater, Jennifer, Kulesza, Alex, and Taskar, Ben.
+Near-optimal map inference for determinantal point pro-
+cesses. In Advances in Neural Information Processing
+Systems, pp. 2735–2743, 2012.
+
+Gong, Boqing, Chao, Wei-Lun, Grauman, Kristen, and
+Sha, Fei. Diverse sequential subset selection for super-
+vised video summarization. In Advances in Neural In-
+formation Processing Systems, pp. 2069–2077, 2014.
+
+Greenbaum, Anne. Iterative methods for solving linear sys-
+
+tems. SIAM, 1997.
+
+Johansson, Kurt. Course 1 random matrices and determi-
+
+nantal processes. Les Houches, 83:1–56, 2006.
+
+Jordan, Michael Irwin. Learning in graphical models, vol-
+ume 89. Springer Science & Business Media, 1998.
+
+Kang, Byungkon. Fast determinantal point process sam-
+In Advances in
+pling with application to clustering.
+Neural Information Processing Systems, pp. 2319–2327,
+2013.
+
+Kathuria, Tarun and Deshpande, Amit. On sampling and
+greedy map inference of constrained determinantal point
+processes. arXiv preprint arXiv:1607.01551, 2016.
+
+Krause, Andreas, Singh, Ajit, and Guestrin, Carlos. Near-
+optimal sensor placements in gaussian processes: The-
+ory, efﬁcient algorithms and empirical studies. Journal
+of Machine Learning Research, 9(Feb):235–284, 2008.
+
+Kulesza, Alex and Taskar, Ben. Learning determinantal
+In In Proceedings of UAI. Citeseer,
+
+point processes.
+2011.
+
+Kulesza, Alex, Taskar, Ben, et al. Determinantal point pro-
+cesses for machine learning. Foundations and Trends R(cid:13)
+in Machine Learning, 5(2–3):123–286, 2012.
+
+Kumar, Ravi, Moseley, Benjamin, Vassilvitskii, Sergei, and
+Vattani, Andrea. Fast greedy algorithms in mapreduce
+and streaming. ACM Transactions on Parallel Comput-
+ing, 2(3):14, 2015.
+
+Li, Chengtao, Jegelka, Stefanie, and Sra, Suvrit. Efﬁcient
+In Pro-
+sampling for k-determinantal point processes.
+ceedings of the 19th International Conference on Artiﬁ-
+cial Intelligence and Statistics, pp. 1328–1337, 2016a.
+
+Li, Chengtao, Sra, Suvrit, and Jegelka, Stefanie. Gaussian
+quadrature for matrix inverse forms with applications.
+In Proceedings of The 33rd International Conference on
+Machine Learning, pp. 1766–1775, 2016b.
+
+Faster Greedy MAP Inference for Determinantal Point Processes
+
+Liu, Yajing, Zhang, Zhenliang, Chong, Edwin KP, and
+Performance bounds for the k-batch
+Pezeshki, Ali.
+greedy strategy in optimization problems with curva-
+ture. In American Control Conference (ACC), 2016, pp.
+7177–7182. IEEE, 2016.
+
+Macchi, Odile. The coincidence approach to stochastic
+point processes. Advances in Applied Probability, 7(01):
+83–122, 1975.
+
+Minoux, Michel. Accelerated greedy algorithms for maxi-
+mizing submodular set functions. In Optimization Tech-
+niques, pp. 234–243. Springer, 1978.
+
+Mirzasoleiman, Baharan, Badanidiyuru, Ashwinkumar,
+Karbasi, Amin, Vondr´ak, Jan, and Krause, Andreas.
+Lazier than lazy greedy. In Twenty-Ninth AAAI Confer-
+ence on Artiﬁcial Intelligence, 2015.
+
+Nemhauser, George L, Wolsey, Laurence A, and Fisher,
+Marshall L. An analysis of approximations for maximiz-
+ing submodular set functionsi. Mathematical Program-
+ming, 14(1):265–294, 1978.
+
+Ouellette, Diane Valerie. Schur complements and statistics.
+Linear Algebra and its Applications, 36:187–295, 1981.
+
+Pan, Xinghao, Jegelka, Stefanie, Gonzalez, Joseph E,
+Bradley, Joseph K, and Jordan, Michael I. Parallel dou-
+In Advances in
+ble greedy submodular maximization.
+Neural Information Processing Systems, pp. 118–126,
+2014.
+
+Peng, Wei and Wang, Hongxia.
+
+Large-scale log-
+determinant computation via weighted l 2 polynomial
+approximation with prior distribution of eigenvalues. In
+International Conference on High Performance Comput-
+ing and Applications, pp. 120–125. Springer, 2015.
+
+Saad, Yousef. Iterative methods for sparse linear systems.
+
+SIAM, 2003.
+
+Sharma, Dravyansh, Kapoor, Ashish, and Deshpande,
+In ICML,
+
+Amit. On greedy maximization of entropy.
+pp. 1330–1338, 2015.
+
+Yao, Jin-ge, Fan, Feifan, Zhao, Wayne Xin, Wan, Xiao-
+jun, Chang, Edward, and Xiao, Jianguo. Tweet timeline
+generation with determinantal point processes. In Pro-
+ceedings of the Thirtieth AAAI Conference on Artiﬁcial
+Intelligence, pp. 3080–3086. AAAI Press, 2016.
+
+Zhang, Martin J and Ou, Zhijian. Block-wise map infer-
+ence for determinantal point processes with application
+to change-point detection. In Statistical Signal Process-
+ing Workshop (SSP), 2016 IEEE, pp. 1–5. IEEE, 2016.
+
+

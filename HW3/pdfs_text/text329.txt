@@ -1,0 +1,1515 @@
+SplitNet: Learning to Semantically Split Deep Networks
+for Parameter Reduction and Model Parallelization
+
+Juyong Kim * 1 Yookoon Park * 1 Gunhee Kim 1 Sung Ju Hwang 2 3
+
+Abstract
+We propose a novel deep neural network that
+is both lightweight and effectively structured for
+model parallelization. Our network, which we
+name as SplitNet, automatically learns to split
+the network weights into either a set or a hier-
+archy of multiple groups that use disjoint sets
+of features, by learning both the class-to-group
+and feature-to-group assignment matrices along
+with the network weights. This produces a tree-
+structured network that involves no connection
+between branched subtrees of semantically dis-
+parate class groups. SplitNet thus greatly re-
+duces the number of parameters and required
+computations, and is also embarrassingly model-
+parallelizable at test time, since the evaluation
+for each subnetwork is completely independent
+except for the shared lower layer weights that
+can be duplicated over multiple processors, or
+assigned to a separate processor. We validate
+our method with two different deep network
+models (ResNet and AlexNet) on two datasets
+(CIFAR-100 and ILSVRC 2012) for image clas-
+siﬁcation, on which our method obtains networks
+with signiﬁcantly reduced number of parameters
+while achieving comparable or superior accura-
+cies over original full deep networks, and accel-
+erated test speed with multiple GPUs.
+
+1. Introduction
+
+Recently, deep neural networks have shown impressive per-
+formances on a multitude of tasks, including visual recog-
+nition (Krizhevsky et al., 2012; Szegedy et al., 2015; He
+et al., 2016), speech recognition (Hinton et al., 2012), and
+
+*Equal contribution 1Seoul National University, Seoul, South
+Korea 2UNIST, Ulsan, South Korea 3AITrics, Seoul, South Korea.
+Correspondence to: Sung Ju Hwang <sjhwang@unist.ac.kr>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+Codes
+
+at http://vision.snu.ac.kr/
+
+available
+
+projects/splitnet.
+
+natural language processing (Bengio et al., 2003; Sutskever
+et al., 2014). However, such remarkable performances are
+achieved at the cost of increased computational complexity
+at both training and test time compared to traditional ma-
+chine learning models including shallow neural networks.
+This increased complexity of deep networks can be prob-
+lematic if the model and the task size becomes very large
+(e.g. classifying tens of thousands of object classes), or the
+application is time-critical (e.g. real-time object detection).
+
+There exist various solutions to tackle this complexity is-
+sue. One way is to reduce the number of model parame-
+ters; this could be achieved either by training a new smaller
+network while maintaining similar behavior as the origi-
+nal network (Ba & Caruana, 2014; Hinton et al., 2014),
+or by disconnecting unnecessary weights through pruning
+or sparsity regularization (Reed, 1993; Han et al., 2015;
+Collins & Kohli, 2014; Wen et al., 2016; Alvarez & Salz-
+mann, 2016). Another approach to speed up deep networks
+is distributed machine learning (Dean et al., 2012; Chilimbi
+et al., 2014; Zhang et al., 2015); however most research ef-
+fort has been made on the systems and optimization sides,
+without consideration of the ways to obtain network struc-
+ture that is intrinsically scalable.
+
+In this work, we aim to learn a deep neural network that
+not only reduces the number of model parameters, but also
+is effectively structured for model parallelization. How can
+we then achieve these seemingly disjoint goals in a single,
+uniﬁed learning framework? We focus on the observation
+that as the number of classes increases, semantically dis-
+parate classes (or tasks) can be represented by largely dis-
+joint sets of features. For example, features describing ani-
+mals may be quite different from those describing vehicles,
+whereas low-level features such as stripes, dots, and colors
+are likely be shared across all classes. It implicates that we
+can cluster classes into mutually exclusive groups based on
+the features they use. Such grouping of concepts based on
+semantic proximity also agrees with the way that our brain
+stores semantic concepts, where semantically related con-
+cepts activate similar part of the brain (Huth et al., 2012),
+in a highly localized manner.
+
+Based on this intuition, we propose a novel deep network
+architecture named SplitNet that automatically performs
+
+SplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+2. Related Work
+
+Parameter reduction for deep neural networks. Achiev-
+ing test-time efﬁciency is an active research topic in deep
+learning. One straightforward approach is to remove weak
+connections during the training, usually implemented us-
+ing the (cid:96)1-norm (Collins & Kohli, 2014). However, the (cid:96)1-
+norm often results in a model that trades-off the accuracy
+with the efﬁciency. Han et al. (2015) presented an iterative
+weight pruning technique that repeatedly retrains the net-
+work while removing of weak connections, which achieves
+a superior performance over (cid:96)1-regularization. Recently,
+the group sparsity using (cid:96)2,1-norm has been explored for
+learning a compact model. Alvarez & Salzmann (2016)
+applied (2,1)-norm regularization at each layer to eliminate
+the hidden units that are not shared across upper-level units,
+thus automatically deciding how many neurons to use at
+each layer. Wen et al. (2016) used the same group spar-
+sity to select unimportant channels and spatial features in
+a CNN, and let the network to automatically decide how
+many layers to use. However, they assume that all classes
+share the same set of features, which is restrictive when the
+number of classes is very large. On the contrary, our pro-
+posed SplitNet enforces feature sharing only within a group
+of related classes, and thus semantically reduce the num-
+ber of parameters and computations for large-scale prob-
+lems. Recently, Shankar et al. (2016) also addressed the
+use of symmetrical split at mid-level convolutional layers
+in CNNs for architecture reﬁnement. However, they did not
+learn the splits but predeﬁne them, as opposed to SplitNet
+which learns semantic splits along with network weights.
+
+Parallel and distributed deep learning. As deep net-
+works and training data become increasingly larger, re-
+searchers are exploring parallelization and distribution
+techniques to speed up the training process. Most par-
+allelization techniques exploit either 1) data parallelism,
+where the training data is distributed across multiple com-
+putational nodes, or 2) model parallelism, where the model
+parameters are distributed. Dean et al. (2012) used both
+data and model parallelism to train a large-scale deep neu-
+ral network on a computing cluster with thousands of ma-
+chines. For CNNs, Krizhevsky et al. (2012) used both data
+and model parallelism to train separate convolutional ﬁl-
+ters from disjoint datasets. Krizhevsky (2014) later pro-
+posed to vertically split the network, exploiting the differ-
+ent time/memory characteristics of the convolutional and
+fully connected layers. Chilimbi et al. (2014) proposed a
+server-client architecture where each client computes par-
+tial gradients of parameters, that are stored and communi-
+cated from the global model parameter server. Zhang et al.
+(2015) proposed a GPU-based distributed deep learning,
+with greatly reduced the communication overheads. How-
+ever, all these are systems-based approaches that work un-
+der the assumption that the model structure is given and
+
+Figure 1. Concept. Our network automatically learns to split the
+classes and associated features into multiple groups at multiple
+network layers, obtaining a tree-structured network. Given a base
+network in (a), (b) our algorithm optimizes network weights as
+well as class-to-group and feature-to-group assignments. Colors
+indicate the group assignments of classes and features. (c) Af-
+ter learning to split the network, the model can be distributed to
+multiple GPUs to accelerate training and inference.
+
+deep splitting of the network into a set of subnetworks or
+a hierarchy of subnetworks sharing common lower layers,
+such that classes in each group share a common subset of
+features, that is completely disjoint from the features for
+other class groups. We train such a network by addition-
+ally learning classes-to-group assignments and feature-to-
+group assignments along with the network weights, while
+regularizing them to be disjoint across groups. Figure 1
+illustrates the key idea of our proposed approach.
+
+Our splitting algorithm is fairly generic, and is applica-
+ble to any general deep neural networks including feed-
+forward and convolutional networks. We test our method
+with ResNet (He et al., 2016; Zagoruyko & Komodakis,
+2016) and AlexNet (Krizhevsky et al., 2012) on CIFAR-
+100 and ILSVRC 2012 datasets, on which our networks
+respectively achieve 32% and 56% parameter reduction,
+while obtaining comparable or even superior performance
+to the full base network. We further perform test-time par-
+allelization of our network with multiple GPUs, where it
+achieved 1.73
+speedup to naive parallelization method
+with 2 GPUs. Our contributions in this work are threefold.
+
+×
+
+•
+
+•
+
+•
+
+We propose a novel deep neural network named Split-
+Net, which is organized as a tree of disjoint subnet-
+works with greatly reduced the number of parame-
+ters and computations in terms of FLOPs, that obtains
+comparable accuracies to fully-connected networks.
+
+We propose an efﬁcient algorithm for automati-
+cally training such a tree-structured network, which
+learns class-to-group and feature-to-group assign-
+ments along with the network weights.
+
+The networks trained by our approach are embarrass-
+ingly model-parallelizable; in distributed learning set-
+ting, we show that our networks scale well to an in-
+creased number of processors.
+
+(b) Splitting DeepNeural Network(a) Base Network(c) Our Network(SplitNet)GPU 2GPU 1PlantInteriorOutdoorMammalNon-mammalLivingNon-livingSplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+ﬁxed. Our approach, on the other hand, leverages semantic
+knowledge of class relatedness to learn a network structure
+that is well-ﬁtted to a distributed machine learning setting.
+
+Tree-structured deep networks. There have been some
+efforts to exploit hierarchical class structures for improv-
+ing the performance of deep networks. To list a few recent
+work, Warde-Farley et al. (2014) proposed to group classes
+based on their weight similarity, and augmented the orig-
+inal deep network with the softmax loss for ﬁne-grained
+classiﬁcation for classifying classes within each group. Yan
+et al. (2015) proposed a convolutional network that com-
+bines predictions from separate sub-networks for coarse-
+and ﬁne-grained category predictions, which share com-
+mon lower-layers. Goo et al. (2016) exploited the hierar-
+chical structure among the classes to learn common and
+discriminative features across classes, by adding in simple
+feature pooling layers. Murdock et al. (2016) generalized
+dropout to stochastically assign nodes to clusters which re-
+sults in obtaining a hierarchical structure. However, all of
+these methods focus on improving the model accuracy, at
+the expense of increased computational complexity. On the
+contrary, SplitNet is focused on improving memory/time
+efﬁciency and parallelization performance of the model.
+
+3. Approach
+
+Given a base network, our goal is to obtain a tree-structured
+network that contains either a set or a hierarchy of sub-
+networks, where the leaf-level subnetworks are associated
+with a speciﬁc group of classes, as in Figure 1. Then what
+is the optimal way to split the classes? A key insight to
+our approach is that classes within each group should share
+features as much as possible, since grouping of disparate
+classes may result in learning redundant features over mul-
+tiple groups, and may waste network capacity as a result.
+Thus, to maximize the utility of this splitting process, we
+need to cluster classes together into groups so that each
+group uses a subset of features that are completely disjoint
+from the ones used by other groups. One straightforward
+way to obtain such mutually exclusive groupings of classes
+is to leverage a semantic taxonomy, since semantically sim-
+ilar classes are likely to share features, whereas dissimilar
+classes are unlikely to do so. However, in practice, such
+semantic taxonomy may not be available, or may not agree
+with actual hierarchical grouping based on what features
+each class uses. Another simple approach is to perform (hi-
+erarchical) clustering on the weights learned in the original
+network, which is also based on actual feature uses. Yet,
+this grouping may be still suboptimal since the groups are
+highly likely to overlap, and is inefﬁcient since it requires
+training the network twice.
+
+In the following sections, we will describe how to learn
+such groups with disjoint set of classes and features, along
+
+with the network weights in a deep learning framework.
+
+3.1. Problem Statement
+
+N
+
+{
+
+D
+
+=
+
+i=1, where xi ∈
+1, . . . , K
+}
+
+Rd is an
+Given a dataset
+xi, yi}
+is a class label for
+input data instance and yi ∈ {
+K classes, our goal is to learn a network whose weight at
+each layer l, W (l) is a block-diagonal matrix, where each
+block W (l)
+, where
+is associated with a class group g
+is the set of all groups. Such a block-diagonal W (l) en-
+G
+sures that each disjoint group of classes has exclusive fea-
+tures associated with it, such that no other groups use those
+features; this allows the network to be split across multiple
+class groups, for faster computation and parallelization.
+
+∈ G
+
+g
+
+In order to obtain such a block diagonal weight matrix
+W (l), we propose a novel splitting algorithm that learns
+a feature-group and class-group assignment along with the
+network weights. We ﬁrst illustrate our splitting method on
+the parameters for the softmax classiﬁer in Section 3.2, and
+then describe how to extend this to other layers of DNNs in
+Section 3.3.
+
+g
+
+≤
+
+≤
+
+We assume that the number of groups G, is given. Let pgi
+be a binary variable indicating whether feature i is assigned
+to group g (1
+G), and qgj be a binary variable in-
+dicating whether class j is assigned to group g. We deﬁne
+ZD
+2 as a feature group assignment vector for group
+pg ∈
+and D is the dimension of features.
+g, where Z2 =
+0, 1
+{
+ZK
+2 denotes a class group assignment vec-
+Similarly, qg ∈
+tor for group g. That is, pg and qg deﬁne a group g together,
+where pg represents features associated with the group and
+qg indicates a set of classes assigned to the group.
+
+}
+
+g pg = 1D and (cid:80)
+
+We assume that there is no overlap between groups, either
+in features or classes, i.e. (cid:80)
+g qg =
+1K, where 1D and 1K are the vectors with all-one el-
+ements. While this assumption imposes hard regulariza-
+tions on group assignments, it enables the weight matrix
+K to be sorted into a block-diagonal matrix,
+W
+since each class is assigned to a group and each group de-
+pends on a disjoint subset of features. This greatly reduces
+the number of parameters, and at the same time, the multi-
+plication W Tx can be decomposed into smaller and faster
+block matrix multiplications.
+
+RD
+
+∈
+
+×
+
+The objective for training our SplitNet is then deﬁned as:
+
+L
+(cid:88)
+
+l=1
+
+L
+(cid:88)
+
+l=S
+
+min
+ω,P ,Q
+
+L(ω, X, y) +
+
+λ||W (l)||2
+
+2 +
+
+Ω(W (l), P (l), Q(l)),
+
+(1)
+(W , X, y) is the cross entropy loss on the training
+where
+L
+W (1), . . . , W (L)
+is the set of network weights
+data, ω =
+{
+2
+2 is the weight decay regularizer with
+at all layers,
+(cid:107)
+a hyperparameter λ, S is the layer where splitting starts,
+Ω(W , P , Q) is the regularizer for splitting the network,
+and P (l) and Q(l) are the set of feature-to-group and class-
+
+W
+
+(cid:107)
+
+}
+
+SplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+We empirically observe that the softmax form results in
+more semantically meaningful grouping. However, the di-
+rect optimization of sum-to-one constraint often leads to
+faster convergence than the softmax formulation.
+
+Let Pg = diag(pg) and Qg = diag(qg) be the feature
+and class group assignment matrix for group g respectively.
+Then PgW Qg represents the weight parameters associated
+with group g, i.e. intra-group connections between features
+and classes. Since our goal is to prune out inter-group con-
+nections to obtain block-diagonal weight matrices, we min-
+imize off block-diagonal entries as follows:
+
+∗||2
+
+j||2
+
+(4)
+
+RW (W , P , Q) =
+
+((I
+
+||
+
+−
+
+Pg) W Qg))i
+
+(cid:88)
+
+(cid:88)
+
+g
+(cid:88)
+
+i
+(cid:88)
+
++
+
+(Pg W (I
+
+Qg))
+
+j
+
+||
+
+g
+and (M )
+∗
+
+−
+where (M )i
+j denote i-th row and j-th column
+∗
+of M . Eq.(4) imposes row/column-wise (cid:96)2,1-norm on the
+inter-group connections. Figure 2 illustrates this regular-
+ization, where the portions of the weights to which the reg-
+ularization is applied are colored differently. 1
+
+∗
+
+We observe that this regularization yields groups that are
+fairly similar to semantic groups. One caution is to avoid
+uniform initialization on group assignments, i.e. pi =
+1/G, in which case the objective reduces to row/column-
+wise (cid:96)2,1-norm and some row/column weight vectors may
+die out before appropriate group assignments are obtained.
+
+Figure 2. Group Assignment and Group Weight Regulariza-
+tion. (Left) An example of group assignment with G = 3. Col-
+ors indicate groups. Each row of matrix P , Q is group assign-
+ment vectors for group g: pg, qg. (Right) Visualization of matrix
+(I − Pg)W Qg. The group assignment vectors work as soft in-
+dicators for inter-group connections. As the groupings converge,
+(cid:96)2,1-norm is concentrated on inter-group connections.
+
+to-group assignment vectors respectively, for each layer l.
+
+In the next section, we propose a novel regularization Ω
+that automatically ﬁnds appropriate disjoint group assign-
+ments with no external semantic information. The objec-
+tive of Eq.(1) are jointly optimized using (stochastic) gra-
+dient descent, starting with a full weight matrix, and an
+unknown group assignment. As we jointly optimize the
+cross entropy loss and the group regularization, our method
+automatically obtains appropriate grouping and prune out
+inter-group connections. Once the grouping is learned, the
+weight matrix can be explicitly split into block diagonal
+matrices to reduce number of parameters, which in turn al-
+lows for much faster inference at test time.
+
+3.2. Learning to Split Network Weights into Disjoint
+
+3.2.2. DISJOINT GROUP ASSIGNMENT
+
+Groups
+
+Our regularization assigns features and classes into disjoint
+groups; it consists of three objectives as follows:
+
+For the group assignment vectors to be completely mutu-
+ally exclusive, they should be orthogonal; i.e. they should
+= j.
+satisfy the condition pi ·
+We introduce an additional orthogonal regularization term:
+
+pj = 0 and qi ·
+
+qj = 0,
+
+∀
+
+i
+
+Ω(W , P , Q) = γ1RW (W , P , Q)
+
++ γ2RD(P , Q) + γ3RE(P , Q)
+
+(2)
+
+(cid:88)
+
+(cid:88)
+
+RD(P , Q) =
+
+pi ·
+where the inequalities avoid the duplicative dot products.
+
+qi ·
+
+pj +
+
+qj.
+
+i<j
+
+i<j
+
+(5)
+
+where γ1, γ2, γ3 controls the strength of each regulariza-
+tion, which will be discussed in following subsections.
+
+3.2.1. GROUP WEIGHT REGULARIZATION
+
+To make the numerical optimization tractable, we ﬁrst re-
+lax the binary variables pgi and qgj to have real values in
+the interval of [0, 1] with the constraints (cid:80)
+g pg = 1D and
+(cid:80)
+g qg = 1K. These sum-to-one constraints can be di-
+rectly optimized using reduced gradient algorithm (Rako-
+tomamonjy et al., 2008), which yields sparse solutions. Or,
+we can perform soft assignments, by reparamterizing pgi
+and qgj with unconstrained variables αgi and βgj in the
+softmax form:
+
+pgi = eαgi/
+
+eαgi, qgj = eβgj /
+
+(cid:88)
+
+g
+
+(cid:88)
+
+eβgj .
+
+(3)
+
+g
+
+3.2.3. BALANCED GROUP ASSIGNMENT
+
+The disjoint group assignment objective in Eq.(5) alone
+may drive one group to dominate over all other groups; that
+is, one group includes all features and classes, while other
+groups do not. Therefore, we also constrain the group as-
+signments to be balanced, by regularizing the squared sum
+of elements in each group assignment vector.
+
+RE(P , Q) =
+
+(cid:88)
+
+(cid:16)
+
+(cid:88)
+(
+
+pgi)2 + (
+
+(cid:88)
+
+qgj)2(cid:17)
+
+.
+
+(6)
+
+g
+
+i
+
+j
+
+1When using group weight regularization followed by batch
+the weights tend to decrease their magnitudes
+normalization,
+while the scale parameters of BN layers increase. To prevent this
+effect, we use (cid:96)2-normalized weights W /||W ||2, instead of W
+in RW , or simply deactivate the scale parameters of BN layers.
+
+P2RG⇥DQ2RG⇥KW2RD⇥KKDpgqgW||((I Pg)WQg)i⇤||2iDK(cid:54)
+SplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+Algorithm 1 Splitting Deep Neural Networks
+
+Input: Number of groups G, layers to split S ≤ L and hyper-
+paramaters γ1, γ2, γ3
+Initialize weights and group assignments
+while groupings have not converged do
+
+Optimize the objective using SGD with a learning rate η
+
+L(ω, X, Y ) + λ
+
+||W(l)||2
+
+2 + γ1
+
+RW (W (l), P (l), Q(l))
+
+L
+(cid:80)
+l=1
+
+L
+(cid:80)
+l=S
+
++γ2
+
+L
+(cid:80)
+l=S
+
+RE(P (l), Q(l))
+
+RD(P (l), Q(l)) + γ3
+
+L
+(cid:80)
+l=S
+end while
+Split the network using the obtained group assignments and
+weight matrices
+while validation accuracy improves do
+Optimize L(ω, X, Y ) + λ (cid:80)L
+
+2 using SGD
+
+l=1 ||W(l)||2
+
+end while
+
+g pg = 1D and (cid:80)
+
+Due to the constraints (cid:80)
+g qg = 1K, the
+objective of Eq.(6) is minimized when sums of elements
+in each group assignment vector are even; i.e. each group
+has identical number of elements. Since the dimensions of
+feature and class group assignment vectors may differ, we
+scale the two terms with appropriate weights. See Figure 4
+to see the effect of balanced group regularization.
+
+3.3. Splitting Deep Neural Networks
+
+Our weight-splitting method in section 3.2 can be applied
+to deep neural networks (DNN), which has two types of
+layers: 1) the input and hidden layers that produce a feature
+vector for a given input, and 2) the output fully-connected
+(FC) layer on which the softmax classiﬁer produces class
+probabilities. The output FC layer can be split by directly
+applying our method in section 3.2 on the output FC weight
+matrix W (L). Our splitting framework can be further ex-
+tended into deep splits, involving either multiple consecu-
+tive layers or recursive hierarchical group assignments. Al-
+gorithm 1 describes the deep splitting process.
+
+3.3.1. DEEP SPLIT
+
+The lower layers of a DNN learn low-level, generic repre-
+sentations, which are likely to be shared across all classes.
+The higher level representations, on the contrary, are more
+likely to be speciﬁc to the classes in a particular group.
+Therefore we do not split all layers but split layers down to
+S-th layer (S
+L), while maintaining lower layers (l < S)
+to be shared across class groups.
+
+≤
+
+Each layer consists of input and output nodes with the
+weights W (l) that connects between them, and P (l)
+g , Q(l)
+g
+for input-to-group and output-to-group assignments. Since
+the output nodes of each layer correspond to the input
+nodes of the next layer, the grouping assignment are shared
+as q(l)
+. This enforces that no signal is passed
+across different groups of layers, so that forward and back-
+
+g = p(l+1)
+
+g
+
+ward propagation in each group is independent from the
+processes in other groups. This allows the computations for
+each group to be parallelized, except for the softmax layer.
+The softmax layer includes a normalizing operation over
+all classes which requires aggregating logits over groups;
+however, during inference it sufﬁces to identify the class
+with the maximum logit, which can be simply obtained
+by ﬁrst identifying the class with maximum logit in each
+group, and then selecting the class with maximum logit
+among the identiﬁed group-speciﬁc maximums. This re-
+quires minimal communication overhead.
+
+The objective function for deep split is the same with the
+weight-splitting method in section 3.2 (i.e. Eq.(1)–(2)), ex-
+cept for the previously explained alignment constraints.
+
+×
+
+×
+
+N
+
+D
+
+RM
+
+When applied to CNNs, the proposed group splitting pro-
+cess can be performed in the same manner on the con-
+volutional ﬁlters. Suppose that a weight of a convolu-
+K, where
+tional layer is a 4-D tensor Wc ∈
+M, N denote height and width of receptive ﬁelds and D, K
+denote the number of input and output convolutional ﬁl-
+ters. We reduce the 4-D weight tensor Wc into a 2-D
+K by taking the root sum squared of
+matrix W (cid:48)c ∈
+elements over height and width dimensions of Wc, i.e.
+m,n w2
+. Then the weight
+W (cid:48)c =
+regularization objective for the convolutional weight is ob-
+tained by Eq.(4), using W (cid:48)c instead.
+
+w(cid:48)dk}
+
+mndk}
+
+(cid:113)(cid:80)
+
+RD
+
+=
+
+{
+
+{
+
+×
+
+×
+
+3.3.2. HIERARCHICAL GROUPING
+
+There often exist natural semantic hierarchies of classes:
+for example, The group dog and the group cat are sub-
+groups of mammal. We can easily extend our deep split
+method to obtain multi-level hierarchies of categories. Fig-
+ure 1 shows an example of such a hierachical split.
+
+g q(l)
+
+Assume that the grouping branches at the l-th layer and the
+output nodes of the l-th layer are grouped by G supergroup
+g with (cid:80)
+assignment vectors q(l)
+g = 1D. Suppose
+that in the next layer, for each supergroup g
+1, ..., G
+}
+there are corresponding S subgroup assignment vectors
+p(l+1)
+= 1D. As aforementioned, the
+gs
+input nodes to the l+1-th layer corresponds to the output
+nodes of l-th layer. By deﬁning p(l+1)
+, we
+can map subgroup assignments into corresponding super-
+group assignments. This allows us to impose the constraint
+g = p(l+1)
+q(l)
+
+as in Deep Split.
+
+s,g p(l+1)
+
+s p(l+1)
+
+with (cid:80)
+
+= (cid:80)
+
+∈ {
+
+gs
+
+gs
+
+g
+
+g
+
+3.4. Parallelization of SplitNet
+
+Our learning algorithm produces a tree-structured network
+whose subnetworks have no inter-group connections. This
+results in an embarrassingly model-parallel network where
+we can simply assign the obtained subnetworks to each
+
+SplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+Table 1. Comparison of Test Errors According to Depths of Splitting (row) and Splitting Methods (column) on CIFAR-100.
+Postﬁx S, C and R denote SplitNet variants – Semantic, Clustering and Random, respectively.
+
+WRN-16-8 (BASELINE)
+WRN-16-8 (DROPOUT)
+METHOD
+FC SPLIT
+SHALLOW SPLIT
+DEEP SPLIT (DROPOUT)
+HIER. SPLIT (DROPOUT)
+
+SPLIT DEPTH
+1
+6
+11
+11
+
+G
+4
+2
+2
+2-4
+
+SPLITNET-S
+23.80
+24.46
+25.04
+24.92
+
+SPLITNET-C
+23.72
+24.54
+26.04
+25.98
+
+SPLITNET-R
+24.30
+25.46
+27.12
+26.78
+
+24.28
+24.52
+SPLITNET
+24.26
+23.96
+24.62
+24.80
+
+Table 2. Comparison of Parameter/Computation Reduction and Test Errors on CIFAR-100.
+
+NETWORK
+WRN-16-8 (BASELINE)
+FC SPLIT
+SHALLOW SPLIT
+DEEP SPLIT (DROPOUT)
+HIER. SPLIT (DROPOUT)
+
+PARAMS(106) % REDUCED
+0.0
+0.35
+32.54
+46.39
+62.58
+
+11.0
+11.0
+7.42
+5.90
+4.12
+
+FLOPS(109) % REDUCED
+0.0
+0.0
+14.63
+31.97
+39.29
+
+3.10
+3.10
+2.64
+2.11
+1.88
+
+TEST ERROR(%)
+24.28
+24.26
+23.96
+24.66
+24.80
+
+processor, or a machine. In our implementation, we con-
+sider two approaches for model parallelization: 1) Assign-
+ing both the lower-layers and group-speciﬁc upper lay-
+ers to each node. At the test time the lower layers are
+not changed; thus this approach is acceptable, although it
+causes unnecessary redundant computations across the pro-
+cessors. 2) Assigning the lower layer to a separate proces-
+sor. This eliminates redundancies in the lower layer but in-
+curs communication overhead between the lower layer and
+the upper layers.
+
+Training-time parallelization is currently done only at the
+ﬁnetuning step, after group assignments have been decided.
+We leave the parallelization from the initial network train-
+ing stage as future work.
+
+4. Experiments
+
+Datasets. We validate our method for image classiﬁcation
+tasks on two benchmark datasets.
+
+1) CIFAR-100. The CIFAR-100 dataset contains 32
+32
+pixel images from 100 generic object classes. For each
+class, there are 500 images for training and 100 images for
+test. We set aside 50 images for each class from the train-
+ing dataset as a validation set for cross-validation. Note that
+the test errors are not directly comparable to (Zagoruyko &
+Komodakis, 2016), as we use only 45,000 training images.
+
+×
+
+2) ImageNet-1K. The ImageNet 1K dataset (Deng et al.,
+2009) that consists of 1.2 million images from 1, 000
+generic object classes. For each class, there are 1K
+1.3K
+images for training and 50 images for validation, which we
+use for test, following the standard procedure.
+
+−
+
+Baselines. To compare different ways to obtain grouping,
+we test multiple variants of our SplitNet and baselines.
+
+1) Base Network. Base networks with full network
+weights. For experiments on the CIFAR-100, we use Wide
+Residual Network (WRN) (Zagoruyko & Komodakis,
+
+2016), which is one of the state-of-the-art networks of the
+dataset. We use AlexNet (Krizhevsky et al., 2012) and
+ResNet-18 (He et al., 2016) variants as the base network
+for the ILSVRC2012.
+
+2) SplitNet-Semantic. A variant of our SplitNet that ob-
+tains class grouping from a provided semantic taxonomy.
+Before training, we split the networks according to the tax-
+onomy, evenly splitting layers and assigning subnetworks
+to each group, and train it from scratch. We use the same
+approach for SplitNet-Clustering and SplitNet-Random.
+
+3) SplitNet-Clustering. A variant of our SplitNet, where
+classes are split (hierarchical) performing spectral cluster-
+ing of the pre-trained base network weights.
+
+4) SplitNet-Random. SplitNet using random class splits.
+
+5) SplitNet. Our proposed SplitNet, that is trained using
+the proposed automatic splitting of weight matrices.
+
+All SplitNet variants and other baselines are implemented
+using TensorFlow (Abadi et al., 2016).
+
+4.1. Parameter Reduction and Accuracies
+
+Experimental results below validate the two key beneﬁts of
+our SplitNet: 1) Reducing the number of parameters with-
+out losing the prediction accuracy, and 2) obtaining a better
+structure for model-parallelization.
+
+CIFAR-100. Table 1 summarizes split structures and test
+errors of different SplitNet variants and baselines. See the
+supplementary material for more details of used models.
+SplitNet variants using semantic taxonomy provided by the
+dataset (–S) and spectral clustering (–C) are better than ran-
+dom grouping (–R), showing that the appropriate grouping
+is critical for splitting DNNs. The SplitNet with learned
+splits outperforms all other variants, although it does not
+require any additional semantic information or pretrained
+network weights as with semantic or clustering split.
+
+SplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+Table 3. Comparison of Parameter/Computation Reduction and Test Errors of AlexNet variants on ILSVRC2012. The number
+of splits indicates the split in fc6, fc7 and fc8 layer, respectively. In 2×5 split, we split from conv4 to fc8 with G = 2.
+
+NETWORK
+ALEXNET(BASELINE)
+
+SPLITNET
+
+SPLITNET-R
+
+SPLITS
+0
+1-1-3
+1-2-5
+2-4-8
+2×5
+1-1-3
+1-2-5
+2-4-8
+2×5
+
+PARAMS(106) % REDUCED
+0
+4.38
+18.72
+56.17
+48.76
+4.38
+18.70
+56.17
+48.79
+
+62.37
+59.64
+50.69
+27.34
+31.96
+59.64
+50.70
+27.34
+31.94
+
+FLOPS(109) % REDUCED
+0
+0.21
+1.00
+3.05
+18.95
+0.21
+0.99
+3.05
+18.93
+
+2.278
+2.273
+2.256
+2.209
+1.847
+2.273
+2.256
+2.209
+1.846
+
+TEST ERROR(%)
+41.72
+42.07
+42.21
+43.02
+44.60
+42.20
+43.20
+43.35
+44.99
+
+Table 4. Comparison of Parameter/Computation Reduction and Test Errors of ResNet-18 variants(ResNet-18x2) on
+ILSVRC2012. The number of splits indicates the split in conv4-1&2, conv5-1&2 and the last fc layer, respectively.
+
+NETWORK
+RESNET-18X2
+
+SPLITNET
+
+SPLITNET-R
+
+SPLITS
+0
+1-1-3
+1-2-2
+2-2-2
+1-1-3
+1-2-2
+2-2-2
+
+SPLIT DEPTH
+0
+1
+6
+11
+1
+6
+11
+
+PARAMS(106) % REDUCED
+0
+1.49
+37.84
+47.00
+1.49
+37.86
+47.14
+
+45.67
+44.99
+28.39
+24.21
+44.99
+28.38
+24.14
+
+FLOPS(109) % REDUCED
+0
+0.01
+11.72
+23.42
+0.01
+11.72
+23.46
+
+14.04
+14.04
+12.39
+10.75
+14.03
+12.39
+10.75
+
+TEST ERROR(%)
+25.58
+24.90
+25.48
+26.45
+25.86
+26.41
+28.61
+
+Table 2 compares test errors, parameter reduction, and
+computation (FLOPs) reduction of SplitNets against the
+base network WRN-16-8: a 16 layer residual network with
+widening factor k = 8. Most of parameters in WRNs exist
+in convolutional layers, especially in higher layers due to
+the large number of ﬁlters. Thus, FC Split yields minimal
+parameter reduction. On the other hand, Shallow Split of
+the last 5 convolutional layers signiﬁcantly reduces the net-
+work parameters by 32.44% while even slightly improving
+the accuracy. Deep and Hierarchical Split further reduce
+parameters and FLOPs at the cost of minor accuracy drop.
+
+Shallow Split shows even better performance than the base-
+line with signiﬁcantly fewer parameters. We attribute it to
+the fact that SplitNet starts from a full network and learns
+and cuts unnecessary connections between different groups
+for inner layers, imposing regularization effect on the lay-
+ers. In addition, splitting layers can be regarded as a form
+of variable selection: each group in the layer parsimo-
+niously selects only a needed group of input nodes.
+
+ImageNet-1K. Table 3 and 4 summarize the results of Im-
+ageNet experiments with two base networks: AlexNet and
+ResNet-18x2, a variant of ResNet-18 where the numbers
+of ﬁlters are doubled, respectively. Refer to supplementary
+materials for model description. Using AlexNet as a base
+model, SplitNet greatly reduces the number of parameters
+concentrated in fc layers. However, most of the FLOPs
+come from lower conv layers, yielding only minor FLOPs
+reduction. We observe that SplitNet on AlexNet shows mi-
+nor test accuracy drop with signiﬁcant parameter reduction.
+
+SplitNet based on ResNet-18x2 shows similar results as
+
+Table 5. Model Parallelization Benchmark of SplitNet on Mul-
+tiple GPUs. We measure evaluation time performance of our
+SplitNet over 50,000 CIFAR-100 images with batch size 100 on
+TITAN X Pascal. Baseline implements layer-wise parallelization
+where sequential blocks of layers are distributed on GPUs.
+
+NETWORK
+BASELINE
+BASELINE-HORZ.
+BASELINE-VERT.
+BASELINE-VERT.
+SHALLOW SPLIT
+DEEP SPLIT
+HIER. SPLIT
+DEEP SPLIT 3-WAY
+
+GPUS
+
+TIME(S) SPEEDUP(×)
+1.00
+0.52
+1.20
+1.08
+1.37
+1.73
+1.71
+2.22
+
+1 24.27 ± 0.35
+2 46.70 ± 0.48
+2 20.15 ± 0.67
+3 22.45 ± 0.77
+2 17.78 ± 0.23
+2 14.03 ± 0.13
+2 14.22 ± 0.05
+3 10.92 ± 0.44
+
+WRN-16-8 on CIFAR-100. With all split schemes, Split-
+Net outperforms SplitNet-Random. Further, with 1-2-2
+split that splits the last FC layer and two residual blocks, the
+network parameters are signiﬁcantly reduced by 37.86%
+while the test error is improved.
+
+4.2. Test-time Model Parallelization
+
+As illustrated in Figure 1, splitting DNNs yields speedup
+not only by reducing parameters, but also by utilizing the
+split structure for model parallelization. Thus we further
+validate parallelization performance of SplitNet at evalu-
+ation time, with multiple GPUs. Table 5 summarizes the
+run-time performance of SplitNet with model paralleliza-
+tion. We test two approaches: 1) Redundant assignment of
+lower layers (Deep and Hier. Split), and 2) assignment of
+lower layers to a separate GPU (Deep Split 3-way). With
+redundant assignment, the speedup becomes larger with
+
+SplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+Figure 3. Learned Groups and Block-diagonal Weight Matri-
+ces. Visualization of the weight matrices along with correspond-
+ing group assignments learned in in AlexNet 2-4-8 split. Obtained
+block-diagonal weights are split for faster multiplication. Note the
+hierarchical grouping structure.
+
+Figure 4. Effect of Balanced Group Regularization RE(P , Q).
+The above ﬁgures show group-to-class assignment matrix Q(f c8)
+for different values of γ3 on ImageNet-1K with G = 3
+
+×
+
+×
+
+deeper splits, up to 1.73
+. Assigning lower layers to a
+third GPU eliminates redundant computation and achieves
+speedup. We compare against model-parallel ap-
+2.22
+proaches with both horizontal split (Baseline-Horz.) that
+splits the network horizontally as our split method but with-
+out pruning connections between two subnetworks, and
+vertical split (Baseline-Vert.) that splits the network into
+blocks of sequential layers. With vertical split, computa-
+tions on GPUs are done asynchronously using queues to
+maintain intermediate activations. Horizontal split obtains
+much worse performance to original network due to exces-
+sive communication overhead. Vertical splitting scheme
+makes more sense with full networks, but the communi-
+cation overhead is still large and it yields only 1.20
+and
+1.08
+
+×
+speedup with two and three GPUs respectively.
+
+×
+
+4.3. Qualitative Analysis
+
+Figure 3 visualizes the weight matrices and correspond-
+ing group assignments obtained in AlexNet 2-4-8 split on
+ImageNet-1K. Both group assignments of classes and fea-
+tures, P and Q, are sparse, and the weight matrices W of
+all layers are block diagonal. It indicates that grouping has
+converged with inter-group connections zeroed out.
+
+Figure 4 shows the effect of balanced group regularization
+on the group size. With large regularization, groups be-
+comes almost uniform in size, which is desirable for param-
+eter reduction and model parallelization. Relaxing this reg-
+ularization grants some ﬂexibility on the individual group
+sizes. Setting γ3 to be too small causes all classes and
+features to collapse into a single group, which may more
+
+Figure 5. Learned Groups. Visualization of grouping learned in
+FC SplitNet on CIFAR-100. Rows denote learned groups, while
+columns denote semantic groups provided by CIFAR-100 dataset,
+each of which includes 5 classes. The brightness of a cell shows
+the agreement between learned groups and semantic groups.
+
+closely resemble semantic taxonomies. In experiments, we
+enforced the models to be balanced, as our focus is more
+on efﬁciency and load balancing.
+
+Figure 5 compares the learned group assignments in FC
+SplitNet (G = 4) with supercategories provided by the
+CIFAR-100. Each supercategory (column) includes ﬁve
+classes. For example, supercategory people includes baby,
+boy, girl, man and woman, which are grouped together by
+our algorithm into Group 2. Note that we have at least three
+classes from the same supercategory in each group. This
+shows that groupings learned by our method bear some re-
+semblance to semantic categories even when no external
+semantic information is given.
+
+The supplementary ﬁle presents the experimental results
+with varying G, the number of groups. Interestingly, with
+Shallow SplitNet on CIFAR-100, a higher G=4 achieves a
+better test accuracy with a parameter reduction of 48.66%.
+
+5. Conclusion
+
+We proposed a novel solution to split deep network into
+a tree of subnetworks, to not only reduce the number of
+parameters and computations, but to also enable straight-
+forward model-parallelization. Speciﬁcally, we proposed
+an algorithm to cluster the classes into groups that ﬁt to
+exclusive sets of features, which results in obtaining block-
+diagonal weight matrices. Our splitting algorithm is seam-
+lessly integrated into the network training procedure as a
+regularization term, and thus allows the network weights
+and splitting to be trained at the same time. We validated
+our method on two classiﬁcation tasks with two different
+CNN architectures, on which it greatly reduced the num-
+ber of parameters over the base networks, while obtain-
+ing superior performance over networks with semantic or
+clustering-based groups. Moreover, our network obtained
+superior parallelization performance against the base net-
+works at test time. As future work, we plan to explore
+ways to efﬁciently train SplitNet on multi-GPU or multi-
+processor environments from the initial training stage.
+
+Acknowledgements This work was supported by Sam-
+sung Research Funding Center of Samsung Electronics un-
+der project number SRFC-IT150203.
+
+W(fc8)W(fc7)W(fc6)P(fc7)P(fc8)P(fc6)Q(fc7)Q(fc8)Q(fc6)(a)Q(fc8)when 2=10 4(b)Q(fc8)when 2=10 5(c)Q(fc8)when 2=10 6large carnivoreslarge omni/herbivoresmedium mammalssmall mammalsfruit and vegetablesnatural outdoor scenesinsectspeopletreesvehicles 2vehicles 1household furnitureaquatic mammalsoutdoor thingsfishreptileshousehold devicesfood containersinvertebratesflowersGroup1Group2Group3Group4012345SplitNet: Learning to Semantically Split Deep Networks for Parameter Reduction and Model Parallelization
+
+References
+
+Abadi, Mart´ın, Agarwal, Ashish, Barham, Paul, Brevdo,
+Eugene, Chen, Zhifeng, Citro, Craig, Corrado, Greg S,
+Davis, Andy, Dean, Jeffrey, Devin, Matthieu, et al. Ten-
+sorﬂow: Large-scale Machine Learning on Heteroge-
+neous Distributed Systems. arXiv:1603.04467, 2016.
+
+Alvarez, Jose M and Salzmann, Mathieu. Learning the
+Number of Neurons in Deep Networks. In NIPS. 2016.
+
+Ba, Jimmy and Caruana, Rich. Do Deep Nets Really Need
+
+to Be Deep? In NIPS, 2014.
+
+Bengio, Yoshua, Ducharme, Rejean, Vincent, Pascal, and
+Jauvin, Christian. A Neural Probabilistic Language
+Model. JMLR, 3:1137–1155, 2003.
+
+Chilimbi, Trishul, Suzue, Yutaka, Apacible, Johnson, and
+Kalyanaraman, Karthik. Project Adam: Building an Ef-
+ﬁcient and Scalable Deep Learning Training System. In
+OSDI, 2014.
+
+Collins, Maxwell D. and Kohli, Pushmeet. Mem-
+In
+
+ory Bounded Deep Convolutional Networks.
+arXiv:1412.1442, 2014.
+
+Dean, Jeffrey, Corrado, Greg S., Monga, Rajat, Chen, Kai,
+Devin, Matthieu, Le, Quoc V., Mao, Mark Z., Ranzato,
+MarcAurelio, Senior, Andrew, Tucker, Paul, Yang, Ke,
+and Ng, Andrew Y. Large Scale Distributed Deep Net-
+works. In NIPS, 2012.
+
+Deng, J., Dong, W., Socher, R., Li, L.-J., Li, K., and ei,
+L. Fei-F˙ Imagenet: A Large-Scale Hierarchical Image
+Database. In CVPR, 2009.
+
+Goo, Wonjoon, Kim, Juyong, Kim, Gunhee, and Hwang,
+Sung Ju. Taxonomy-Regularized Semantic Deep Con-
+volutional Neural Networks. In ECCV, 2016.
+
+Han, Song, Pool, Jeff, Tran, John, and Dally, William.
+Learning Both Weights and Connections for Efﬁcient
+Neural Network. In NIPS. 2015.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun,
+Jian. Deep Residual Learning for Image Recognition. In
+CVPR, 2016.
+
+Hinton, Geoffrey, Deng, Li, Yu, Dong, Dahl, George, rah-
+man Mohamed, Abdel, Jaitly, Navdeep, Senior, Andrew,
+Vanhoucke, Vincent, Nguyen, Patrick, Kingsbury, Brian,
+and Sainath, Tara. Deep Neural Networks for Acoustic
+Modeling in Speech Recognition. IEEE Signal Process-
+ing Magazine, 29:82–97, 2012.
+
+Hinton, Geoffrey, Vinyals, Oriol, and Dean, Jeff. Distilling
+the Knowledge in a Neural Network. NIPS 2014 Deep
+Learning Workshop, 2014.
+
+Huth, Alexander H., Nishimoto, Shinji, Vu, An T., and
+Gallant, Jack L. A Continuous Semantic Space De-
+scribes the Representation of Thousands of Object and
+Action Categories across the Human Brain. Neuron, 76
+(6):1210–1224, December 2012.
+
+Krizhevsky, Alex. One Weird Trick for Parallelizing Con-
+volutional Neural Networks. arXiv:1404.5997, 2014.
+
+Krizhevsky, Alex, Sutskever, Ilya, and Hinton, Geoffrey E.
+ImageNet Classiﬁcation with Deep Convolutional Neu-
+ral Networks. In NIPS, 2012.
+
+Murdock, Calvin, Li, Zhen, Zhou, Howard, and Duerig,
+Tom. Blockout: Dynamic Model Selection for Hierar-
+chical Deep Networks. In CVPR, 2016.
+
+Rakotomamonjy, Alain, Bach, Francis R, Canu, St´ephane,
+and Grandvalet, Yves. SimpleMKL. JMLR, 9:2491–
+2521, 2008.
+
+Reed, Russell. Pruning Algorithms - A Survey.
+
+IEEE
+Transactions on Neural Networks, 4(5):740–747, 1993.
+
+Shankar, Sukrit, Robertson, Duncan, Ioannou, Yani, Crim-
+inisi, Antonio, and Cipolla, Roberto. Reﬁning Architec-
+tures of Deep Convolutional Neural Networks. In CVPR,
+2016.
+
+Sutskever, Ilya, Vinyals, Oriol, and Le, Quoc V. Sequence
+to Sequence Learning with Neural Networks. In NIPS,
+pp. 3104–3112, 2014.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet,
+Pierre, Reed, Scott, Anguelov, Dragomir, Erhan, Du-
+mitru, Vanhoucke, Vincent, and Rabinovich, Andrew.
+Going Deeper with Convolutions. In CVPR, 2015.
+
+Warde-Farley, D., Rabinovich, A., and Anguelov, D.
+Self-informed Neural Network Structure Learning.
+arXiv:1412.6563, 2014.
+
+Wen, Wei, Wu, Chunpeng, Wang, Yandan, Chen, Yiran,
+and Li, Hai. Learning Structured Sparsity in Deep Neu-
+ral Networks. In NIPS. 2016.
+
+Yan, Zhicheng, Zhang, Hao, Jagadeesh, Vignesh, DeCoste,
+Dennis, Di, Wei, and Yu, Yizhou. HD-CNN: Hierarchi-
+cal Deep Convolutional Neural Network for Image Clas-
+siﬁcation. In ICCV, 2015.
+
+Zagoruyko, Sergey and Komodakis, Nikos. Wide Residual
+
+Networks. In BMVC, 2016.
+
+Zhang, Hao, Hu, Zhiting, Wei, Jinliang, Xie, Pengtao, Kim,
+Gunhee, Ho, Qirong, and Xing, Eric. Poseidon: A Sys-
+tem Architecture for Efﬁcient GPU-based Deep Learn-
+ing on Multiple Machines. arXiv:1512.06216, 2015.
+
+

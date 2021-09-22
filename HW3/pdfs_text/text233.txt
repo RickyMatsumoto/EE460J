@@ -1,0 +1,1445 @@
+ProtoNN: Compressed and Accurate kNN for Resource-scarce Devices
+
+Chirag Gupta 1 Arun Sai Suggala 1 2 Ankit Goyal 1 3 Harsha Vardhan Simhadri 1
+
+Bhargavi Paranjape 1 Ashish Kumar 1 Saurabh Goyal 4 Raghavendra Udupa 1 Manik Varma 1
+Prateek Jain 1
+
+Abstract
+
+Several real-world applications require real-time
+prediction on resource-scarce devices such as an
+Internet of Things (IoT) sensor. Such applica-
+tions demand prediction models with small stor-
+age and computational complexity that do not
+In this
+compromise signiﬁcantly on accuracy.
+work, we propose ProtoNN, a novel algorithm
+that addresses the problem of real-time and accu-
+rate prediction on resource-scarce devices. Pro-
+toNN is inspired by k-Nearest Neighbor (KNN)
+but has several orders lower storage and predic-
+tion complexity. ProtoNN models can be de-
+ployed even on devices with puny storage and
+an Arduino UNO
+computational power (e.g.
+with 2kB RAM) to get excellent prediction accu-
+racy. ProtoNN derives its strength from three key
+ideas: a) learning a small number of prototypes
+to represent the entire training set, b) sparse low
+dimensional projection of data, c) joint discrim-
+inative learning of the projection and prototypes
+with explicit model size constraint. We conduct
+systematic empirical evaluation of ProtoNN on
+a variety of supervised learning tasks (binary,
+multi-class, multi-label classiﬁcation) and show
+that it gives nearly state-of-the-art prediction ac-
+curacy on resource-scarce devices while consum-
+ing several orders lower storage, and using mini-
+mal working memory.
+
+1. Introduction
+
+Real-time and accurate prediction on resource-constrained
+devices is critical for several Machine Learning (ML) do-
+
+1Microsoft Research,
+
+2Carnegie Mellon Uni-
+India
+versity, Pittsburgh 3University of Michigan, Ann Arbor
+4IIT Delhi,
+Correspondence to: Arun Sai Sug-
+gala <asuggala@andrew.cmu.edu>,
+Jain <pra-
+Prateek
+jain@microsoft.com>.
+
+India.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+mains. Internet-of-things (IoT) is one such rapidly grow-
+ing domain. IoT devices have the potential to provide real-
+time, local, sensor-based solutions for a variety of areas
+like housing, factories, farming, even everyday utilities like
+toothbrushes and spoons. The ability to use machine learn-
+ing on data collected from IoT sensors opens up a myriad
+of possibilities. For example, smart factories measure tem-
+perature, noise and various other parameters of their ma-
+chines. ML based anomaly detection models can then be
+applied on this sensor data to preemptively schedule main-
+tenance of a machine and avoid failure.
+
+However, machine learning in IoT scenarios is so far lim-
+ited to cloud-based predictions where large deep learning
+models are deployed to provide accurate predictions. The
+sensors/embedded devices have limited compute/storage
+abilities and are tasked only with sensing and transmitting
+data to the cloud. Such a solution does not take into account
+several practical concerns like privacy, bandwidth, latency
+and battery issues. For example, consider the energy costs
+of communication if each IoT device on each machine in
+a smart factory has to continuously send data and receive
+predictions from the cloud.
+
+Consider a typical IoT device that has ≤ 32kB RAM and
+a 16MHz processor. Most existing ML models cannot be
+deployed on such tiny devices. Recently, several methods
+(Han et al., 2016; Nan et al., 2015; Kusner et al., 2014) have
+been proposed to produce models that are compressed com-
+pared to large DNN/kernel-SVM/decision-tree based clas-
+siﬁers. However, none of these methods work well at the
+scale of IoT devices. Moreover, they do not offer natural
+extensions to supervised learning problems other than the
+ones they were initially designed for.
+
+In this paper, we propose a novel kNN based algorithm
+(ProtoNN) that can be deployed on the tiniest of devices,
+can handle general supervised learning problems, and can
+produce state-of-the-art accuracies with just ≈16kB of
+model size on many benchmark datasets. A key reason for
+selecting kNN as the algorithm of choice is due to its gen-
+erality, ease of implementation on tiny devices, and small
+number of parameters to avoid overﬁtting. However, kNN
+suffers from three issues which limit its applicability in
+
+ProtoNN: kNN for Resource-scarce Devices
+
+practice, especially in the small devices setting: a) Poor
+accuracy: kNN is an ill-speciﬁed algorithm as it is not a
+priori clear which distance metric one should use to com-
+pare a given set of points. Standard metrics like Euclidean
+distance, (cid:96)1 distance etc. are not task-speciﬁc and lead to
+poor accuracies. b) Model size: kNN requires the entire
+training data for prediction, so its model size is too large
+for the IoT setting. c) Prediction time: kNN requires com-
+puting the distance of a given test point w.r.t. each training
+point, making it prohibitive for prediction in real-time.
+
+Several methods have been proposed to address some of
+these concerns. For example, metric learning (Weinberger
+& Saul, 2009) learns a task-speciﬁc metric that provides
+better accuracies but ends up increasing model-size and
+prediction time. KD-trees (Bentley, 1975) can decrease the
+prediction time, but they increase the model size and lead
+to loss in accuracy. Finally, recent methods like Stochastic
+Neighborhood Compression (SNC) (Kusner et al., 2014)
+can decrease model size and prediction time by learning a
+small number of prototypes to represent the entire training
+dataset. However, as our experiments show, their predic-
+tions are relatively inaccurate, especially in the tiny model-
+size regime. Moreover, their formulations limit applicabil-
+ity to binary and multi-class classiﬁcation problems (see
+Section 2 for a detailed comparison to SNC).
+
+In contrast, ProtoNN is able to address the above-
+mentioned concerns by using three key ideas:
+
+a) Sparse low-d projection: we project the entire data
+in low-d using a sparse projection matrix that is jointly
+learned to provide good accuracy in the projected space.
+
+b) Prototypes: we learn prototypes to represent the entire
+training dataset. Moreover, we learn labels for each pro-
+totype to further boost accuracy. This provides additional
+ﬂexibility, and allows us to seamlessly generalize ProtoNN
+for multi-label or ranking problems.
+
+c) Joint optimization: we learn the projection matrix jointly
+with the prototypes and their labels. Explicit sparsity con-
+straints are imposed on our parameters during the optimiza-
+tion itself so that we can obtain an optimal model within the
+given model size de-facto, instead of post-facto pruning to
+force the model to ﬁt in memory.
+
+Unfortunately, our optimization problem is non-convex
+with hard (cid:96)0 constraints. Yet, we show that simple stochas-
+tic gradient descent (SGD) with iterative hard-thresholding
+(IHT) works well for optimization. ProtoNN can be im-
+plemented efﬁciently, can handle datasets with millions of
+points, and obtains state-of-the-art accuracies.
+
+We analyze ProtoNN in a simple binary classiﬁcation set-
+ting where the data is sampled from a mixture of two well-
+separated Gaussians, each Gaussian representing one class.
+
+We show that if we ﬁx the projection matrix and proto-
+type labels, the prototypes themselves can be learned op-
+timally in polynomial time with at least a constant proba-
+bility. Moreover, assuming a strong initialization condition
+we observe that our SGD+IHT method when supplied a
+small number of samples, proportional to the sparsity of
+means, converges to the global optima. Although the data
+model is simple, it nicely captures the main idea behind our
+problem formulation. Further, our analysis is the ﬁrst such
+analysis for any method in this regime that tries to learn a
+compressed non-linear model for binary classiﬁcation.
+
+Finally, we conduct extensive experiments to benchmark
+ProtoNN against existing state-of-the-art methods for var-
+ious learning tasks. First, we show that on several bi-
+nary (multi-class) problems, ProtoNN with a 2kB (16kB)
+memory budget signiﬁcantly outperforms all the existing
+methods in this regime. Moreover, in the binary classi-
+ﬁcation case, we show that ProtoNN with just ≈ 16kB
+of model-size, provides nearly the same accuracy as most
+popular methods like GBDT, RBF-SVM, 1-hidden layer
+NN, etc, which might require up to 1GB of RAM on the
+same datasets. Similarly, on multilabel datasets, ProtoNN
+can give 100× compression with ≤ 1% loss in accuracy.
+Finally, we demonstrate that ProtoNN can be deployed on
+a tiny Arduino Uno device1 and leads to better accuracies
+than existing methods while incurring signiﬁcantly lesser
+energy and prediction time costs. We have implemented
+ProtoNN as part of an open source embedded device ML
+library and it can be downloaded online2.
+
+2. Related Works
+
+kNN is a popular ML algorithm owing to its simplicity,
+generality, and interpretability (Cover & Hart, 2006).
+In
+particular, kNN can learn complex decision boundaries and
+has only one hyperparameter k. However, vanilla kNN suf-
+fers from several issues as mentioned in the previous sec-
+tion. A number of methods, which try to address these is-
+sues, exist in the literature. Broadly, these methods can be
+divided into three sub-categories.
+
+Several existing methods reduce prediction time of kNN
+using fast nearest neighbor retrieval. For example Bent-
+ley (1975); Beygelzimer et al. (2006) use tree data struc-
+tures and Gionis et al. (1999); Weiss et al. (2008); Kulis
+& Darrell (2009); Norouzi et al. (2012); Liu et al. (2012)
+learn binary embeddings for fast nearest neighbor opera-
+tions. These methods, although helpful in reducing the pre-
+diction time, lead to loss in accuracy and require the entire
+training data to be in memory leading to large model sizes
+that cannot be deployed on tiny IoT devices.
+
+1https://www.arduino.cc/en/Main/ArduinoBoardUno
+2https://github.com/Microsoft/ELL
+
+ProtoNN: kNN for Resource-scarce Devices
+
+Another class of methods improve accuracy of kNN by
+learning a better metric to compare, given a pair of points
+(Goldberger et al., 2004; Davis et al., 2007). For example,
+(Weinberger & Saul, 2009) proposed a Large Margin Near-
+est Neighbor (LMNN) classiﬁer which transforms the input
+space such that in the transformed space points from same
+class are closer compared to points from disparate classes.
+LMNN’s transformation matrix can map data into lower di-
+mensions and reduce overall model size compared to kNN,
+but it is still too large for most resource-scarce devices.
+
+Finally, another class of methods constructs a set of pro-
+totypes to represent the entire training data. In some ap-
+proaches (Angiulli, 2005; Devi & Murty, 2002), the pro-
+totypes are chosen from the original training data, while
+some other approaches (Mollineda et al., 2002) construct
+artiﬁcial points for prototypes. Of these approaches, SNC,
+Deep SNC (DSNC) (Wang et al., 2016), Binary Neighbor
+Compression (BNC) (Zhong et al., 2017) are the current
+state-of-the-art.
+
+SNC learns artiﬁcial prototypes such that the likelihood of
+a particular class probability model is maximized. Thus,
+SNC applies only to multi-class problems and its extension
+to multilabel/ranking problems is non-trivial. In contrast,
+we have a more direct discriminative formulation that can
+be applied to arbitrary supervised learning problems. To
+decrease the model size, SNC introduces a pre-processing
+step of low-d projection of the data via LMNN based pro-
+jection matrix and then learns prototypes in the projected
+space. The SNC parameters (projection matrix, prototypes)
+might have to be hard-thresholded post-facto to ﬁt within
+the memory budget.
+In contrast, ProtoNN’s parameters
+are de-facto learnt jointly with model size constraints im-
+posed during optimization. This leads to signiﬁcant im-
+provements over SNC and other state-of-the-art methods in
+the small model-size regime; see Figure 1, 3.
+
+DSNC is a non-linear extension of SNC in that it learns
+a non-linear low-d transformation jointly with the proto-
+types. It has similar drawbacks as SNC: a) it only applies
+to multi-class problems and b) model size of DSNC can
+be signiﬁcantly larger than SNC as it uses a feedforward
+network to learn the non-linear transformation.
+
+BNC is a binary embedding technique, which jointly learns
+a binary embedding and a set of artiﬁcial binary prototypes.
+Although BNC learns binary embeddings, its dimensional-
+ity can be signiﬁcantly higher, so it need not result in sig-
+niﬁcant model compression. Moreover, the optimization in
+BNC is difﬁcult because of the discrete optimization space.
+
+3. Problem Formulation
+
+Given n data points X = [x1, x2, . . . xn]T and the corre-
+sponding target output Y = [y1, y2 . . . yn]T , where xi ∈
+
+Rd, yi ∈ Y, our goal is to learn a model that accurately pre-
+dicts the desired output of a given test point. In addition,
+we also want our model to have small size. For both multi-
+label/multi-class problems with L labels, yi ∈ {0, 1}L but
+in multi-class (cid:107)yi(cid:107) = 1. Similarly, for ranking problems,
+the output yi is a permutation.
+
+Let’s consider a smooth version of kNN prediction function
+for the above given general supervised learning problem
+
+ˆy = ρ(ˆs) = ρ
+
+σ(yi)K(x, xi)
+
+,
+
+(1)
+
+(cid:32) n
+(cid:88)
+
+i=1
+
+(cid:33)
+
+where ˆy is the predicted output for a given input x, ˆs =
+(cid:80)n
+i=1 σ(yi)K(x, xi) is the score vector for x. σ : Y →
+RL maps a given output into a score vector and ρ : RL →
+Y maps the score function back to the output space. For
+example, in the multi-class classiﬁcation, σ is the identity
+function while ρ = Top1, where [Top1(s)]j = 1 if sj is
+the largest element and 0 otherwise. K : Rd × Rd → R
+is the similarity function, i.e., K(xi, xj) computes similar-
+ity between xi and xj. For example, standard kNN uses
+K(x, xi) = I[xi ∈ Nk(x)] where Nk(x) is the set of k
+nearest neighbors of x in X.
+
+Note that kNN requires entire X to be stored in mem-
+ory for prediction, so its model size and prediction time
+are prohibitive for resource constrained devices. So, to
+bring down model and prediction complexity of kNN, we
+propose using prototypes that represent the entire train-
+ing data. That is, we learn prototypes B = [b1, . . . , bm]
+and the corresponding score vectors Z = [z1, . . . , zm] ∈
+RL×m, so that the decision function is given by: ˆy =
+ρ
+
+(cid:16)(cid:80)m
+
+j=1 zjK(x, bj)
+
+(cid:17)
+
+.
+
+Existing prototype based approaches like SNC, DSNC have
+a speciﬁc probabilistic model for multi-class problems with
+the prototypes as the model parameters.
+In contrast, we
+take a more direct discriminative learning approach that al-
+lows us to obtain better accuracies in several settings along
+with generalization to any supervised learning problem,
+e.g., multi-label classiﬁcation, regression, ranking, etc.
+
+However, K is a ﬁxed similarity function like RBF kernel
+which is not tuned for the task at hand and can lead to in-
+accurate results. We propose to solve this issue by learning
+a low-dimensional matrix W ∈ R ˆd×d that further brings
+down model/prediction complexity as well as transforms
+data into a space where prediction is more accurate.That is,
+our proposed algorithm ProtoNN uses the following predic-
+tion function that is based on three sets of learned param-
+eters W ∈ R ˆd×d, B = [b1, . . . , bm] ∈ R ˆd×m, and Z =
+[z1, . . . , zm] ∈ RL×m: ˆy = ρ
+
+(cid:17)
+j=1 zjK(W x, bj)
+
+(cid:16)(cid:80)m
+
+.
+
+To further reduce the model/prediction complexity, we
+learn sparse set of Z, B, W . Selecting the correct simi-
+
+ProtoNN: kNN for Resource-scarce Devices
+
+larity function K is crucial to the performance of the algo-
+rithm. In this work we choose K to be the Gaussian ker-
+nel: Kγ(x, y) = exp{−γ2(cid:107)x − y(cid:107)2
+2}, which is a popular
+choice in many non-parametric methods (including regres-
+sion, classiﬁcation, density estimation).
+
+Note that if m = n, and W = Id×d, then our prediction
+function reduces to the standard RBF kernel-SVM’s deci-
+sion function for binary classiﬁcation. That is, our func-
+tion class is universal: we can learn any arbitrary function
+given enough data and model complexity. We observe a
+similar trend in our experiments, where even with reason-
+ably small amount of model complexity, ProotNN nearly
+matches RBF-SVM’s prediction error.
+
+Training Objective: We now provide the formal optimiza-
+tion problem to learn parameters Z, B, W . Let L(ˆs, y) be
+the loss (or) risk of predicting score vector ˆs for a point
+with label vector y. For example, the loss function can be
+standard hinge-loss for binary classiﬁcation, or NDCG loss
+function for ranking problems.
+
+Now, deﬁne the empirical risk associated with Z, B, W as
+
+Remp(Z, B, W ) =
+
+L
+
+yi,
+
+zjKγ(bj, W xi)
+
+ .
+
+
+
+1
+n
+
+n
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+j=1
+
+
+
+(cid:16)
+
+In the sequel, to simplify the notation, we denote the risk
+at ith data point by Li(Z, B, W ) i.e., Li(Z, B, W ) =
+L
+. To jointly learn Z, B, W ,
+we minimize the empirical risk with explicit sparsity con-
+straints:
+
+(cid:17)
+j=1 zjKγ(bj, W xi)
+
+yi, (cid:80)m
+
+min
+Z:(cid:107)Z(cid:107)0≤sZ ,B:(cid:107)B(cid:107)0≤sB ,W :(cid:107)W (cid:107)0≤sW
+
+Remp(Z, B, W ), (2)
+
+(cid:80)n
+
+where (cid:107)Z(cid:107)0 is equal to the number of non-zero entries in
+Z. For all our expeirments (multi-class/multi-label), we
+used the squared (cid:96)2 loss function as it helps us write down
+the gradients easily and allows our algorithm to converge
+faster and in a robust manner. That is, Remp(Z, B, W ) =
+1
+j=1 zjKγ(bj, W xi)(cid:107)2
+2. Note that the
+n
+sparsity constraints in the above objective gives us explicit
+control over the model size. Furthermore, as we show in
+our experiments, jointly optimizing all the three parame-
+ters, Z, B, W , leads to better accuracies than optimizing
+only a subset of parameters.
+
+i=1 (cid:107)yi − (cid:80)m
+
+4. Algorithm
+
+We now present our algorithm for optimization of (2). Note
+that the objective in (2) is non-convex and is difﬁcult to
+optimize. However, we present a simple alternating mini-
+mization technique for its optimization. In this technique,
+we alternately minimize Z, B, W while ﬁxing the other two
+parameters. Note that the resulting optimization problem
+
+Algorithm 1 ProtoNN: Train Algorithm
+
+Input: data (X, Y ), sparsities (sZ, sB, sW ), kernel pa-
+rameter γ, projection dimension ˆd, no. of prototypes m,
+iterations T , SGD epochs e.
+Initialize Z, B, W
+for t = 1 to T do {alternating minimization}
+
+i∈S ∇ZLi(Z, B, W )(cid:1)
+
+i∈S ∇BLi(Z, B, W )(cid:1)
+
+repeat {minimization of Z}
+
+randomly sample S ⊆ [1, . . . n]
+(cid:0)Z − ηr
+Z ← HTsZ
+until e epochs
+repeat {minimization of B}
+
+(cid:80)
+
+randomly sample S ⊆ [1, . . . n]
+(cid:0)B − ηr
+B ← HTsB
+until e epochs
+repeat {minimization of W }
+
+(cid:80)
+
+randomly sample S ⊆ [1, . . . n]
+W ← HTsW
+until e epochs
+
+(cid:0)W − ηr
+
+(cid:80)
+
+i∈S ∇W Li(Z, B, W )(cid:1)
+
+end for
+Output: Z, B, W
+
+in each of the alternating steps is still non-convex. To opti-
+mize these sub-problems we use projected Stochastic Gra-
+dient Descent (SGD) for large datasets and projected Gra-
+dient Descent (GD) for small datasets.
+
+(cid:0)Z − η (cid:80)
+
+Suppose we want to minimize the objective w.r.t Z by
+ﬁxing B, W . Then in each iteration of SGD we ran-
+domly sample a mini-batch S ⊆ [1, . . . n] and update Z
+i∈S ∇ZLi(Z, B, W )(cid:1), where
+as: Z ← HTsZ
+HTsZ (A) is the hard thresholding operator that thresholds
+the smallest L × m − sZ entries (in magnitude) of A and
+∇ZLi(Z, B, W ) denotes the partial derivative of Li w.r.t
+Z. Note that GD procedure is just SGD with batch size
+|S| = n. Algorithm 1 presents pseudo-code for our entire
+training procedure.
+
+Step-size: Setting correct step-size is critical to conver-
+gence of SGD methods, especially for non-convex opti-
+mization problems. For our algorithm, we select the ini-
+tial step size using Armijo rule. Subsequent step sizes are
+selected as ηt = η0/t where η0 is the initial step-size.
+
+Initialization: Since our objective function (2) is non-
+convex, good initialization for Z, B, W is critical in con-
+verging efﬁciently to a good local optima. We used a
+randomly sampled Gaussian matrix to initialize W for bi-
+nary and small multi-class benchmarks. However, for large
+multi class datasets (aloi) we use LMNN based initializa-
+tion of W. Similarly, for multi-label datasets we use SLEEC
+(Bhatia et al., 2015) for initialization of W ; SLEEC is an
+embedding technique for large multi-label problems.
+
+For initialization of prototypes, we experimented with two
+different approaches. In one, we randomly sample training
+
+ProtoNN: kNN for Resource-scarce Devices
+
+data points in the transformed space and assign them as the
+prototypes; this is a useful technique for multilabel prob-
+lems.
+In the other approach, we run k-means clustering
+in the transformed space on data points belonging to each
+class and pick the cluster centers as our prototypes. We use
+this approach for binary and multi-class problems.
+
+Convergence: Although Algorithm 1 optimizes an (cid:96)0 con-
+strained optimization problem, we can still show that it
+converges to a local minimum due to smoothness of objec-
+tive function (Blumensath & Davies, 2008). Moreover, if
+the objective function satisﬁes strong convexity in a small
+ball around optima, then appropriate initialization leads to
+convergence to that optima (Jain et al., 2014). In fact, our
+next section presents such a strong convexity result (wrt B)
+if the data is generated from a mixture of well-separated
+Gaussians. Finally, our empirical results (Section 6) indi-
+cate that the objective function indeed converges at a fast
+rate to a good local optimum leading to accurate models.
+
+5. Analysis
+
+In this section, we present an analysis of our approach
+for when data is generated from the following generative
+model: let each point xi be sampled from a mixture of two
+i.i.d∼ 0.5·N (µ+, I)+0.5·N (µ−, I) ∈ Rd
+Gaussians, i.e., xi
+and the corresponding label yi be the indicator of the Gaus-
+sian from which xi is sampled. Now, it is easy to see that
+if the Gaussians are well-separated then one can design 2
+∗ such that the error of our method with
+prototypes b+
+W = I and ﬁxed Z = [e1, e2] will lead to nearly Bayes’
+optimal classiﬁer; ei is the i-th canonical basis vector.
+
+∗, b−
+
+The goal of this section is to show that our method that
+optimizes the squared (cid:96)2 loss objective (2) w.r.t. prototypes
+B, converges at a linear rate to a solution that is in a small
+ball around the global optima, and hence leads to nearly
+optimal classiﬁcation accuracy.
+
+We would like to stress that the goal of our analysis is to
+justify our proposed approach in a simple and easy to study
+setting. We do not claim new bounds for the mixture of
+Gaussians problem; it is a well-studied problem with sev-
+eral solid solutions. Our goal is to show that our method
+in this simple setting indeed converges to a nearly optimal
+solution at linear rate, thus providing some intuition for its
+success in practice. Also, our current analysis only studies
+the prototypes B while ﬁxing projec-
+optimization w.r.t.
+tion matrix W and prototype label vectors Z. Studying the
+problem w.r.t. all the three parameters is signiﬁcantly more
+challenging, and is beyond the scope of this paper.
+
+Despite the simplicity of our model, ours is one of the ﬁrst
+rigorous studies of a classiﬁcation method that is designed
+for resource constrained problems. Typically, the proposed
+methods in this regime are only validated using empirical
+
+results as theoretical study is quite challenging owing to the
+obtained non-convex optimization surface and complicated
+modeling assumptions.
+
+For our ﬁrst result, we ignore sparsity of B, i.e., sB = 2 · d.
+We consider the RBF-kernel for K with γ2 = 1
+2 .
+Theorem 1. Let X = [x1, . . . , xn] and Y = [y1, . . . , yn]
+be generated from the above mentioned generative model.
+Set W = I, Z = [e1, e2] and let b+, b− be the prototypes.
+Let n → ∞, ¯µ := µ+ − µ−. Also, let ∆+ := b+ − µ+,
+2 (cid:107)¯µ(cid:107)2 for some
+∆− := b+ − µ−, and let ∆+
+ﬁxed constant δ > 0, and d ≥ 8(α − δ)(cid:107)¯µ(cid:107)2 for some
+constant α > 0. Then, the following holds for the gradient
+(cid:48) = b+ − η∇b+R where R = E[Remp],
+descent step b+
+and η ≥ 0 is appropriately chosen:
+
+T ¯µ ≥ − (1−δ)
+
+(cid:107)b+
+
+(cid:48)−µ+(cid:107)2 ≤ (cid:107)b+−µ+(cid:107)2
+
+1 − 0.01 exp
+
+−
+
+(cid:18)
+
+(cid:26)
+
+α(cid:107)¯µ(cid:107)2
+4
+
+(cid:27)(cid:19)
+
+,
+
+if (cid:107)∆+(cid:107) ≥ 8(cid:107)¯µ(cid:107) exp
+
+(cid:110)
+− α(cid:107)¯µ(cid:107)2
+4
+
+(cid:111)
+.
+
+See Appendix 8 for a detailed proof of this as well as the
+below given theorem. The above theorem shows that if the
+Gaussians are well-separated and the starting b+ is closer
+to µ+ than µ−, then the gradient descent step decreases the
+distance between b+ and µ+ geometrically until b+ con-
+verges to a small ball around µ+, the radius of the ball is
+exponentially small in (cid:107)µ+ − µ−(cid:107). Note that our initializa-
+tion method indeed satisﬁes the above mentioned assump-
+tion with at least a constant probability.
+
+It is easy to see that in this setting, the loss function decom-
+poses over independent terms from b+ and b−, and hence
+an identical result can be obtained for b−. For simplicity,
+we present the result for n → ∞ (hence, expected value).
+Extension to ﬁnite samples should be fairly straightforward
+using standard tail bounds. The tail bounds will also lead to
+a similar result for SGD but with an added variance term.
+
+Next, we show that if the b+ is even closer to µ+, then the
+objective function becomes strongly convex in b+, b−.
+Theorem 2. Let X, Y, ¯µ, ∆+, ∆− be as given in Theo-
+T ¯µ ≥ − (1−δ)
+2 (cid:107)¯µ(cid:107)2, for some small
+rem 1. Also, let ∆+
+4
+constant δ > 0, (cid:107)¯µ(cid:107)2 ≥
+(ln 0.1)δ , and (cid:107)∆+(cid:107)2 ≤ 0.5. Then,
+R with W = I and Z = [e1, e2] is a strongly convex func-
+tion of B with condition number bounded by 20.
+
+Note that the initialization assumptions are much more
+strict here, but strong convexity with bounded condition
+number provides signiﬁcantly faster convergence to op-
+tima. Moreover, this theorem also justiﬁes our IHT based
+method. Using standard tail bounds, it is easy to show
+that if n grows linearly with sB rather than d, the condi-
+tion number bound still holds over sparse set of vectors,
+i.e., for sparse µ+, µ− and sparse b+, b−. Using this re-
+stricted strong convexity with (Jain et al., 2014) guarantees
+
+ProtoNN: kNN for Resource-scarce Devices
+
+is deﬁned as D = {(cid:107)bj − W xi(cid:107)2}i∈[n],j∈[m].
+ProtoNN vs. Uncompressed Baselines: In this experi-
+ment we compare the performance of ProtoNN with un-
+compressed baselines and demonstrate that even with com-
+pression, ProtoNN achieves near state-of-the-art accura-
+cies. We restrict the model size of ProtoNN to 16kB for
+binary datasets and to 64kB for multiclass datasets and
+don’t place any constraints on the model sizes of baselines.
+We compare ProtoNN with: GBDT, RBF-SVM, 1-Hidden
+Layer Neural Network (1-hidden NN), kNN, BNC and
+SNC. For baselines the optimal hyper-parameters are se-
+lected through cross-validation. For SNC, BNC we set pro-
+jection dimensions to 100, 1280 respectively and compres-
+sion ratios to 16%, 1%. For ProtoNN, hyper-parameters
+are set based on the following heuristics which ensure that
+the model size constraints are satisﬁed: Binary: ˆd = 10,
+sZ = sB = 0.8. m = 40 if sW = 1.0 gives model larger
+than 16kB. Else, sW = 1.0 and m is increased to reach
+16 kB model. Multiclass: ˆd = 15, sZ = sB = 0.8.
+m = 5/class if sW = 1.0 gives model larger than 64kb.
+Else, m is increased to reach 64 kB model. CUReT which
+has 61 classes, requires smaller sZ to satisfy model size
+constraints.
+We use the above parameter settings for all binary, multi-
+class datasets except for binary versions of usps, charac-
+ter and eye which require 5-fold cross validation. Table 1
+presents the results on binary datasets and Table 2 presents
+the results on multiclass datasets. For most of the datasets,
+ProtoNN gets to within 1−2% accuracy of the best uncom-
+pressed baseline with 1 − 2 orders of magnitude reduction
+in model size. For example on character recognition, Pro-
+toNN is 0.5% more accurate than the best method (RBF-
+SVM) while getting ≈ 400× compression in model size.
+Similarly, on letter-26, our method is within 0.5% accuracy
+of RBF-SVM while getting ≈ 9× compression. Also note
+that ProtoNN with 16kB models is still able to outperform
+BNC, SNC on most of the datasets.
+
+ProtoNN vs. Compressed Baselines: In this experiment
+we compare the performance of ProtoNN with other state-
+of-the-art compressed methods in the 2-16kB model size
+regime: BudgetRF (Nan et al., 2015), Decision Jungle
+(Shotton et al., 2013), LDKL (Jose et al., 2013), Tree Prun-
+ing (Dekel et al., 2016), GBDT (Friedman, 1999), Bud-
+get Prune (Nan et al., 2016), SNC and NeuralNet Prun-
+ing (Han et al., 2016). All baselines plots are obtained
+via cross-validation. Figure 1 presents the memory vs.
+accuracy plots. Hyper-parameters of ProtoNN are set as
+sB = sZ = 0.8. For [2, 4, 8, 16]
+follows: Binary:
+kB, ˆd = [5, 5, 10, 15]. sW , m are set using the same
+heuristic mentioned in the previous paragraph. Multiclass:
+sB = 0.8. For [16, 32, 64, 128] kB, ˆd = [10, 15, 15, 20].
+sW , sZ, m are set as deﬁned in the previous paragraph.
+ProtoNN values obtained with the above hyper-parameters
+
+Figure 1. Model size (kB, X-axis) vs Accuracy (%, Y-axis): com-
+parison of ProtoNN against existing compression algorithms on
+various datasets. The left two columns show the plots for binary
+datasets and the right most column shows the plots for multiclass
+datasets. For small model size, ProtoNN is signiﬁcantly more ac-
+curate than baselines.
+
+that with just O(sB log d) samples, our method will con-
+verge to a small ball around sparse µ+ in polynomial time.
+We skip these standard details as they are orthogonal to the
+main point of this analysis section.
+
+6. Experiments
+
+In this section we present the performance of ProtoNN
+on various benchmark binary, multiclass and multilabel
+datasets with a goal to demonstrate the following aspects:
+
+a) In severely resource constrained settings where we re-
+quire model sizes to be less than 2kB (which occur rou-
+tinely for IoT devices like Arduino Uno), we outperform
+all state-of-the art compressed methods.
+b) For model sizes in the range 16 − 32 kB, we achieve
+comparable accuracies to the best uncompressed methods.
+c) In multiclass and multilabel problems we achieve near
+state-of-the-art accuracies with an order of magnitude re-
+duction in model size, thus showing our approach is ﬂexible
+and general enough to handle a wide variety of problems.
+
+Experimental Settings: Datasets:
+Table 3 in Ap-
+pendix 9.1 lists the binary, multiclass and multilabel
+datasets used in our experiments. For binary and multi-
+class datasets, we standardize each feature in the data to
+zero-mean and unit-variance. For multilabel datasets, we
+normalize the feature vector of each data point by project-
+ing it onto a unit norm ball which preserves data sparsity.
+Hyperparameters: In all our experiments, we ﬁx the no.
+of alternating minimization iterations(T) to 150. Each such
+iteration does e-many epochs each over the 3 parameters,
+W , B, and Z. For small binary and multiclass datasets we
+do GD with e set to 20. For multilabel and large multi-
+class (aloi) datasets, we do SGD with e set to 5, batch size
+to 512. Kernel parameter γ is computed after initializing
+B, W as
+median(D) , where D is the set of distances between
+prototypes and training points in the transformed space and
+
+2.5
+
+ProtoNN: kNN for Resource-scarce Devices
+
+Table 1. Comparison of ProtoNN with uncompressed baselines on binary datasets. Model size is computed as #parameters × 4 bytes;
+sparse matrices taking an extra 4 bytes for each non-zero entry, for the index. For BNC it is computed as #parameters/8 bytes. GBDT
+model size is computed using the ﬁle size on disk.
+
+Dataset
+
+character recognition
+
+1-hidden NN RBF-SVM
+
+model size (kB)
+accuracy
+model size (kB)
+accuracy
+model size (kB)
+accuracy
+model size (kB)
+accuracy
+model size (kB)
+accuracy
+model size (kB)
+accuracy
+
+ProtoNN
+15.94
+76.14
+10.32
+90.82
+15.96
+96.5
+11.625
+95.67
+15.94
+96.01
+15.94
+76.35
+
+kNN
+6870.3
+67.28
+14592
+76.02
+183750
+96.9
+7291
+96.7
+17589.8
+94.98
+78125
+73.7
+
+SNC
+441.2
+74.87
+3305
+87.76
+4153.6
+95.74
+568.8
+97.16
+688
+96.01
+3360
+76.96
+
+BNC
+70.88
+70.68
+1311.4
+80.61
+221.35
+98.16
+52.49
+95.47
+167.04
+93.84
+144.06
+73.74
+
+GBDT
+625
+72.38
+234.37
+83.16
+1171.87
+98.36
+234.37
+95.91
+1171.87
+97.77
+1562.5
+77.19
+
+314.06
+72.53
+6401.56
+90.31
+3070
+98.33
+504
+95.86
+3914.06
+92.75
+314.06
+75.9
+
+6061.71
+75.6
+7937.45
+93.88
+35159.4
+98.08
+1659.9
+96.86
+7221.75
+96.42
+63934.2
+81.68
+
+eye
+
+mnist
+
+usps
+
+ward
+
+cifar
+
+Table 2. Comparison of ProtoNN with uncompressed baselines on
+multiclass datasets. First number in each cell refers to the model
+size in kB and the second number denotes accuracy. Refer to
+Table 1 for details about calculation of model size.
+
+Dataset
+
+letter-26
+
+mnist-10
+
+usps-10
+
+curet-61
+
+ProtoNN
+(64kB)
+63.4
+97.10
+63.4
+95.88
+63.83
+94.92
+63.14
+94.44
+
+kNN
+
+SNC
+
+BNC
+
+GBDT
+
+1237.8
+95.26
+183984.4
+94.34
+7291.4
+94.07
+10037.5
+89.81
+
+145.08
+96.36
+4172
+93.6
+568.8
+94.77
+513.3
+95.87
+
+31.95
+92.5
+220.46
+96.68
+51.87
+91.23
+146.70
+91.87
+
+20312
+97.16
+5859.37
+97.9
+390.62
+94.32
+2382.81
+90.81
+
+1-hidden
+NN
+164.06
+96.38
+4652.34
+98.44
+519.53
+94.32
+1310
+95.51
+
+RBF
+SVM
+568.14
+97.64
+39083.7
+97.3
+1559.6
+95.4
+8940.8
+97.43
+
+are reported for all datasets, except usps and character
+recognition which require 5-fold cross validation. ProtoNN
+performs signiﬁcantly better than the baselines on all the
+datasets. This is especially true in the 2kB regime, where
+ProtoNN is ≥ 5% more accurate on most of the datasets.
+
+it
+
+ProtoNN on Multilabel and Large Multiclass Datasets:
+We now present the performance of ProtoNN on larger
+datasets. Here, we experimented with the following
+datasets: aloi dataset which is a relatively large multi-
+class dataset , mediamill, delicious, eurlex which are small-
+medium sized multilabel datasets.
+ˆd
+We set the hyper-parameters of ProtoNN as follows.
+is set to 30 for all datasets, except for eurlex for which
+to 100. Other parameters are set as fol-
+we set
+lows: sW = 1, sB = 1, sZ = 5/L for aloi and
+sZ = 2(avg. number of labels per training point)/L for
+multilabel datasets, m = 2 · L for multilabel datasets.
+For aloi, we compare ProtoNN with the following base-
+lines: 1vsA L2 Logistic Regression (1vsA-Logi), RBF-
+SVM, FastXML: a large-scale multilabel method (Prabhu
+& Varma, 2014), Recall Tree: a scalable method for large
+multiclass problems (Daume III et al., 2016). For 1vsA-
+Logi, Recall Tree we perform cross validation to pick the
+best tuning parameter. For FastXML we use the default pa-
+rameters. For RBF-SVM we set γ to the default value 1/d
+
+and do a limited tuning of the regularization parameter.
+Left table of Figure 2 shows that ProtoNN (with m =
+5000) gets to within 1% of the accuracy of RBF-SVM with
+just (1/50)th of its model size and 50 times fewer ﬂoating
+point computations per prediction. For a better compari-
+son of ProtoNN with FastXML, we set the number of pro-
+totypes (m = 1500) such that computations/prediction of
+both the methods are almost the same. We can see that Pro-
+toNN gets similar accuracy as FastXML but with a model
+size 2 orders of magnitude smaller than FastXML. Finally,
+our method has almost same prediction cost as Recall-Tree
+but with 10% higher accuracy and 4× smaller model size.
+Right table of Figure 2 presents preliminary results on mul-
+tilabel datasets. Here, we compare ProtoNN with SLEEC,
+FastXML and DiSMEC (Babbar & Sh¨olkopf, 2016), which
+learns a 1vsA linear-SVM in a distributed fashion. Pro-
+toNN almost matches the performance of all baselines with
+huge reduction in model size.
+These results show that ProtoNN is very ﬂexible and can
+handle a wide variety of problems very efﬁciently. SNC
+doesn’t have such ﬂexibility. For example, it can’t be natu-
+rally extended to handle multilabel classiﬁcation problems.
+
+ProtoNN vs. BNC, SNC: In this experiment, we do a thor-
+ough performance comparison of ProtoNN with BNC and
+SNC. To show that ProtoNN learns better prototypes than
+BNC, SNC, we ﬁx the projection dimension ˆd of all the
+methods and vary the number of prototypes m. To show
+that ProtoNN learns a better embedding, we ﬁx m and vary
+ˆd. For BNC, which learns a binary embedding, ˆd is cho-
+sen such that the #parameters in its transformation ma-
+trix is 32 times the #parameters in transformation ma-
+trices of ProtoNN, SNC. m is chosen similarly. Figure 3
+presents the results from this experiment on mnist binary
+dataset. We use the following hyper parameters for Pro-
+toNN: sW = 0.1, sZ = sB = 1.0. For SNC, we hard
+threshold the input transformation matrix so that it has spar-
+sity 0.1. Note that for small ˆd our method is as much as
+
+ProtoNN: kNN for Resource-scarce Devices
+
+Figure 2. Left Table: ProtoNN vs baselines on aloi dataset. For Recall Tree we couldn’t compute the avg. number of computations
+needed per prediction, instead we report the prediction time w.r.t 1vsA-Logi. Right Table: ProtoNN vs baselines on multilabel datasets.
+For SLEEC and FastXML we use the default parameters from the respective papers. Both the tables show that our method achieves
+similar accuracies as the baselines, but often with 1 − 2 orders of magnitude compression in model size. On aloi our method is at most
+2 slower than 1-vs-all while RBF-SVM is 115× slower.
+
+Method
+
+Accuracy Model Size(MB)
+
+1vsA-Logi
+RBF-SVM
+FastXML
+Recall Tree
+ProtoNN
+(m = 1500)
+ProtoNN
+(m = 5000)
+
+86.96
+94.77
+89.86
+85.15
+
+89.6
+
+94.05
+
+0.512
+38.74
+254.53
+3.69
+
+0.315
+
+0.815
+
+computations/prediction
+w.r.t 1vsA-Logi
+1
+115.7
+0.752
+2.89*
+
+0.792
+
+2.17
+
+Dataset
+mediamill
+n = 30993
+d = 120
+L = 101
+delicious
+n = 12920
+d = 500
+L = 983
+eurlex
+n = 15539
+d = 5000
+L = 3993
+
+model size
+P@1
+P@3
+P@5
+model size
+P@1
+P@3
+P@5
+model size
+P@1
+P@3
+P@5
+
+FastXML DiSMEC SLEEC ProtoNN
+
+7.64M
+83.65
+66.92
+52.51
+36.87M
+69.41
+64.2
+59.83
+410.8M
+71.36
+59.85
+50.51
+
+48.48K
+87.25
+69.3
+54.19
+1.97M
+66.14
+61.26
+56.30
+79.86M
+82.40
+68.50
+57.70
+
+57.95M
+86.12
+70.31
+56.33
+7.34M
+67.77
+61.27
+56.62
+61.74M
+79.34
+64.25
+52.29
+
+54.8K
+85.19
+69.01
+54.39
+925.04K
+68.92
+63.04
+58.32
+5.03M
+77.74
+65.01
+53.98
+
+Figure 3. Comparison of ProtoNN with BNC, SNC on mnist bi-
+nary dataset with varying projection dimension ˆd or number of
+prototypes m.
+
+20% more accurate than SNC, 5% more accurate than BNC
+and reaches nearly optimal accuracy for small ˆd or m.
+
+Remark 1. Before we conclude the section we provide
+some practical guidelines for hyper-parameter selection in
+ProtoNN. Consider the following two cases:
+a) Small L (L (cid:47) 0.1d): In this case, parameters ˆd and
+sW govern the model size. Given a model size constraint,
+ﬁxing one parameter ﬁxes the other, so that we effectively
+have one hyper-parameter to cross-validate. Choosing m
+such that 10 ≤ m/L ≤ 20 typically gives good accuracies.
+b) Large L (L (cid:39) 0.1d): In this case, sZ also governs the
+model size. sZ, sW and ˆd can be selected through cross-
+validation. If the model size allows it, increasing ˆd typically
+helps. Fixing m/L to a reasonable value such as 3-10 for
+medium L, 1-2 for large L typically gives good accuracies.
+
+7. Experiments on tiny IoT devices
+
+In the previous section, we showed that ProtoNN gets better
+accuracies than other compressed baselines at low model
+size regimes. For small devices, it is also critical to study
+other aspects like energy consumption, which severely im-
+pact the effectiveness of a method in practice. In this sec-
+tion, we study the energy consumption and prediction time
+of ProtoNN model of size 2kB when deployed on an Ar-
+duino Uno.The Arduino Uno has an 8 bit, 16 MHz At-
+mega328P microcontroller, with 2kB of SRAM and 32kB
+
+Figure 4. Prediction time and energy consumed by ProtoNN
+(2kB) and its optimized version against baselines. The accuracy
+of each model is on top of its prediction time bar.
+
+of read-only ﬂash. We compare ProtoNN with 3 baselines
+(LDKL-L1, NeuralNet Pruning, L1 Logistic) on 4 binary
+datasets. Figure 4 presents the results from this experiment.
+ProtoNN shows almost the same characteristics as a simple
+linear model (L1-logistic) in most cases while providing
+signiﬁcantly more accurate predictions.
+Further optimization: The Atmega328P microcontroller
+supports native integer arithmetic at ≈0.1µs/operation,
+software-based ﬂoating point arithmetic at ≈6µs/operation;
+exponentials are a further order slower. It is thus desirable
+to perform prediction only using integers. We implemented
+an integer version of ProtoNN to leverage this. We factor
+out a common ﬂoat value from the parameters and round
+the residuals by 1-byte integers. To avoid computing the
+exponentials, we store a pre-computed table of approxi-
+mate exponential values. As can be seen in Figure 4, this
+optimized version of ProtoNN loses only a little accuracy,
+but obtains ≈ 2× reduction in energy and prediction cost.
+
+Model Size10203040Accuracy8486889092949698ˆd=15ˆd51015Accuracy65707580859095100m = 40ProtoNNSNCBNCProtoNN: kNN for Resource-scarce Devices
+
+References
+
+In ICML, 2005.
+
+Angiulli, Fabrizio. Fast condensed nearest neighbor rule.
+
+Babbar, Rohit and Sh¨olkopf, Bernhard. Dismec-distributed
+sparse machines for extreme multi-label classiﬁcation.
+In arXiv preprint arXiv:1609.02521, Accepted for Web
+Search and Data Mining Conference (WSDM) 2017,
+2016.
+
+Bentley, Jon Louis. Multidimensional binary search trees
+used for associative searching. Commun. ACM, 18:509–
+517, 1975.
+
+Beygelzimer, Alina, Kakade, Sham, and Langford, John.
+
+Cover trees for nearest neighbor. In ICML, 2006.
+
+Bhatia, Kush, Jain, Himanshu, Kar, Purushottam, Varma,
+Manik, and Jain, Prateek. Sparse local embeddings for
+extreme multi-label classiﬁcation. In NIPS, pp. 730–738,
+2015.
+
+Blumensath, Thomas and Davies, Mike E. Iterative thresh-
+olding for sparse approximations. Journal of Fourier
+Analysis and Applications, 14:629–654, 2008.
+
+Cover, T. and Hart, P. Nearest neighbor pattern classiﬁca-
+
+tion. IEEE Trans. Inf. Theor., 13:21–27, 2006.
+
+Daume III, Hal, Karampatziakis, Nikos, Langford, John,
+and Mineiro, Paul. Logarithmic time one-against-some.
+arXiv preprint arXiv:1606.04988, 2016.
+
+Davis, Jason V., Kulis, Brian, Jain, Prateek, Sra, Suvrit, and
+Dhillon, Inderjit S. Information-theoretic metric learn-
+ing. In ICML, 2007.
+
+Dekel, O., Jacobbs, C., and Xiao, L. Pruning decision
+
+forests. In Personal Communications, 2016.
+
+Devi, V Susheela and Murty, M Narasimha. An incremen-
+tal prototype set building technique. Pattern Recogni-
+tion, 35, 2002.
+
+Friedman, Jerome H. Stochastic gradient boosting. Compu-
+tational Statistics and Data Analysis, 38:367–378, 1999.
+
+Gionis, Aristides, Indyk, Piotr, Motwani, Rajeev, et al.
+Similarity search in high dimensions via hashing.
+In
+VLDB, volume 99, pp. 518–529, 1999.
+
+Goldberger, Jacob, Roweis, Sam T., Hinton, Geoffrey E.,
+and Salakhutdinov, Ruslan. Neighbourhood components
+analysis. In NIPS, 2004.
+
+Jain, Prateek, Tewari, Ambuj, and Kar, Purushottam. On it-
+erative hard thresholding methods for high-dimensional
+m-estimation. In NIPS, pp. 685–693, 2014.
+
+Jose, Cijo, Goyal, Prasoon, Aggrwal, Parv, and Varma,
+Manik. Local deep kernel learning for efﬁcient non-
+linear SVM prediction. In Proceedings of the 30th Inter-
+national Conference on Machine Learning, ICML 2013,
+Atlanta, GA, USA, 16-21 June 2013, pp. 486–494, 2013.
+
+Kulis, Brian and Darrell, Trevor. Learning to hash with
+binary reconstructive embeddings. In Advances in neural
+information processing systems, pp. 1042–1050, 2009.
+
+Kusner, Matt J., Tyree, Stephen, Weinberger, Kilian, and
+Agrawal, Kunal. Stochastic neighbor compression. In
+ICML, 2014.
+
+Liu, Wei, Wang, Jun, Ji, Rongrong, Jiang, Yu-Gang, and
+Chang, Shih-Fu. Supervised hashing with kernels.
+In
+Computer Vision and Pattern Recognition (CVPR), 2012
+IEEE Conference on, pp. 2074–2081. IEEE, 2012.
+
+Mollineda, Ram´on Alberto, Ferri, Francesc J, and Vidal,
+Enrique. An efﬁcient prototype merging strategy for
+the condensed 1-nn rule through class-conditional hier-
+archical clustering. Pattern Recognition, 35:2771–2782,
+2002.
+
+Nan, F., Wang, J., and Saligrama, V. Feature-budgeted ran-
+
+dom forest. In ICML, 2015.
+
+Nan, F., Wang, J., and Saligrama, V. Pruning random
+
+forests for prediction on a budget. 2016.
+
+Norouzi, Mohammad, Fleet, David J, and Salakhutdinov,
+In Ad-
+Ruslan R. Hamming distance metric learning.
+vances in neural information processing systems, pp.
+1061–1069, 2012.
+
+Prabhu, Yashoteja and Varma, Manik. Fastxml: A fast,
+accurate and stable tree-classiﬁer for extreme multi-label
+learning. In KDD, 2014.
+
+Shotton, J., Sharp, T., Kohli, P., Nowozin, S., Winn, J.,
+and Criminisi, A. Decision jungles: Compact and rich
+models for classiﬁcation. In NIPS, 2013.
+
+Wang, Wenlin, Chen, Changyou, Chen, Wenlin, Rai,
+Piyush, and Carin, Lawrence. Deep metric learning
+In Joint European Confer-
+with data summarization.
+ence on Machine Learning and Knowledge Discovery in
+Databases, pp. 777–794. Springer, 2016.
+
+Han, S., Mao, H., and Dally, W. J. Deep compression:
+Compressing deep neural networks with pruning, trained
+quantization and huffman coding. In ICLR, 2016.
+
+Weinberger, Kilian Q. and Saul, Lawrence K. Distance
+metric learning for large margin nearest neighbor classi-
+ﬁcation. J. Mach. Learn. Res., 10:207–244, 2009.
+
+ProtoNN: kNN for Resource-scarce Devices
+
+Weiss, Yair, Torralba, Antonio, and Fergus, Robert. Spec-
+In NIPS, pp. 1753–1760. Curran Asso-
+
+tral hashing.
+ciates, Inc, 2008.
+
+Zhong, Kai, Guo, Ruiqi, Kumar, Sanjiv, Yan, Bowei,
+Simcha, David, and Dhillon, Inderjit. Fast Classiﬁ-
+cation with Binary Prototypes.
+In Singh, Aarti and
+Zhu, Jerry (eds.), Proceedings of the 20th International
+Conference on Artiﬁcial Intelligence and Statistics, vol-
+ume 54 of Proceedings of Machine Learning Research,
+pp. 1255–1263, Fort Lauderdale, FL, USA, 20–22 Apr
+2017. PMLR. URL http://proceedings.mlr.
+press/v54/zhong17a.html.
+
+

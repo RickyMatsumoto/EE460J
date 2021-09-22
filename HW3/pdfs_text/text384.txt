@@ -1,0 +1,1356 @@
+Gram-CTC: Automatic Unit Selection and Target Decomposition for Sequence
+Labelling
+
+Hairong Liu* 1 Zhenyao Zhu* 1 Xiangang Li 1 Sanjeev Satheesh 1
+
+Abstract
+
+Most existing sequence labelling models rely on
+a ﬁxed decomposition of a target sequence into
+a sequence of basic units. These methods suffer
+from two major drawbacks: 1) the set of basic
+units is ﬁxed, such as the set of words, charac-
+ters or phonemes in speech recognition, and 2)
+the decomposition of target sequences is ﬁxed.
+These drawbacks usually result in sub-optimal
+performance of modeling sequences. In this pa-
+per, we extend the popular CTC loss criterion
+to alleviate these limitations, and propose a new
+loss function called Gram-CTC. While preserv-
+ing the advantages of CTC, Gram-CTC automat-
+ically learns the best set of basic units (grams), as
+well as the most suitable decomposition of tar-
+get sequences. Unlike CTC, Gram-CTC allows
+the model to output variable number of charac-
+ters at each time step, which enables the model
+to capture longer term dependency and improves
+the computational efﬁciency. We demonstrate
+that the proposed Gram-CTC improves CTC in
+terms of both performance and efﬁciency on the
+large vocabulary speech recognition task at mul-
+tiple scales of data, and that with Gram-CTC we
+can outperform the state-of-the-art on a standard
+speech benchmark.
+
+1. Introduction
+In recent years, there has been an explosion of interest in
+sequence labelling tasks. Connectionist Temporal Classi-
+ﬁcation (CTC) loss (Graves et al., 2006) and Sequence-
+to-sequence (seq2seq) models (Cho et al., 2014; Sutskever
+et al., 2014) present powerful approaches to multiple ap-
+plications, such as Automatic Speech Recognition (ASR)
+(Chan et al., 2016a; Hannun et al., 2014; Bahdanau et al.,
+
+*Equal contribution
+
+1Baidu Silicon Valley AI Lab, 1195
+Bordeaux Dr, Sunnyvale, CA 94089, USA. Correspondence to:
+Hairong Liu <liuhairong@baidu.com>.
+
+Proceedings of the 34th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+2016), machine translation (Sébastien et al., 2015), and
+parsing (Vinyals et al., 2015). These methods are based on
+1) a ﬁxed and carefully chosen set of basic units, such as
+words (Sutskever et al., 2014), phonemes (Chorowski et al.,
+2015) or characters (Chan et al., 2016a), and 2) a ﬁxed
+and pre-determined decomposition of target sequences into
+these basic units. While these two preconditions greatly
+simplify the problems, especially the training processes,
+they are also strict and unnecessary constraints, which usu-
+ally lead to suboptimal solutions. CTC models are espe-
+cially harmed by ﬁxed basic units in target space, because
+they build on the independence assumption between suc-
+cessive outputs in that space - an assumption which is often
+violated in practice.
+
+The problem with ﬁxed set of basic units is obvious: it is
+really hard, if not impossible, to determine the optimal set
+of basic units beforehand. For example, in English ASR,
+if we use words as basic units, we will need to deal with
+the large vocabulary-sized softmax, as well as rare words
+and data sparsity problem. On the other hand, if we use
+characters as basic units, the model is forced to learn the
+complex rules of English spelling and pronunciation. For
+example, the "oh" sound can be spelled in any of follow-
+ing ways, depending on the word it occurs in - { o, oa,
+oe, ow, ough, eau, oo, ew }. While CTC can easily model
+commonly co-occuring grams together, it is impossible to
+give roughly equal probability to many possible spellings
+when transcribing unseen words. Most speech recognition
+systems model phonemes, sub-phoneme units and senones
+e.g,
+(Xiong et al., 2016a) to get around these problems.
+Similarly, state-of-the-art neural machine translation sys-
+tems use pre-segmented word pieces e.g, (Wu et al., 2016a)
+aiming to ﬁnd the best of both worlds.
+
+In reality, groups of characters are typically cohesive units
+for many tasks. For the ASR task, words can be decom-
+posed into groups of characters that can be associated with
+sound (such as ‘tion’ and ‘eaux’). For the machine trans-
+lation task, there may be values in decomposing words as
+root words and extensions (so that meaning may be shared
+explicitly between ‘paternal’ and ‘paternity’). Since this
+information is already available in the training data, it is
+perhaps, better to let the model ﬁgure it out by itself. At
+the same time, it raises another import question: how to de-
+
+Gram-CTC
+
+compose a target sequence into basic units? This is coupled
+with the problem of automatic selection of basic units, thus
+also better to let the model determine. Recently, there are
+some interesting attempts in these directions in the seq2seq
+framework. For example, Chan et al (Chan et al., 2016b)
+proposed the Latent Sequence Decomposition to decom-
+pose target sequences with variable length units as a func-
+tion of both input sequence and the output sequence.
+
+In this work, we propose Gram-CTC - a strictly more gen-
+eral version of CTC - to automatically seek the best set
+of basic units from the training data, called grams, and
+automatically decompose target sequences into sequences
+of grams. Just as sequence prediction with cross entropy
+training can be seen as special case of the CTC loss with
+a ﬁxed alignment, CTC can be seen as a special case of
+Gram-CTC with a ﬁxed decomposition of target sequences.
+Since it is a loss function, it can be applied to many seq2seq
+tasks to enable automatic selection of grams and decompo-
+sition of target sequences without modifying the underly-
+ing networks. Extensive experiments on multiple scales of
+data validate that Gram-CTC can improve CTC in terms of
+both performance and efﬁciency, and that using Gram-CTC
+the models outperform state-of-the-arts on standard speech
+benchmarks.
+
+2. Related Work
+The basic text units that previous works utilized for text
+prediction tasks (e.g,, automatic speech recognition, hand-
+writing recognition, machine translation, and image cap-
+tioning) can be generally divided into two categories: hand-
+crafted ones and learning-based ones.
+
+Hand-crafted Basic Units.
+Fixed sets of characters
+(graphemes) (Graves et al., 2006; Amodei et al., 2015),
+word-pieces (Wu et al., 2016b; Collobert et al., 2016;
+Zweig et al., 2016a), words (Soltau et al., 2016; Sébastien
+et al., 2015), and phonemes (Lee and Hon, 1988; Sercu and
+Goel, 2016; Xiong et al., 2016b) have been widely used as
+basic units for text prediction, but all of them have draw-
+backs. Using these ﬁxed deterministic decompositions of
+text sequences deﬁnes a prior, which is not necessarily op-
+timal for end-to-end learning.
+
+• Word-segmented models remove the component of
+learning to spell and thus enable direct optimization to-
+wards reducing Word Error Rate (WER). However, these
+models suffer from having to handle a large vocabulary
+(1.7 million in (Soltau et al., 2016)), out-of-vocabulary
+words (Soltau et al., 2016; Sébastien et al., 2015) and
+data sparsity problems (Soltau et al., 2016).
+
+which is very noisy for languages like English.
+
+• Word-pieces lie at the middle-ground of words and char-
+acters, providing a good trade-off between vocabulary
+size and context size, while the performance of using
+word pieces is sensitive to the choice of the word-piece
+set and its decomposition.
+
+• For the ASR task, the use of phonemes was popular
+in the past few decades as it eases acoustic modeling
+(Lee and Hon, 1988) and good results were reported
+with phonemic models (Xiong et al., 2016b; Sercu and
+Goel, 2016). However, it introduces the uncertainties
+of mapping phonemes to words during decoding (Doss
+et al., 2003), which becomes less robust especially for
+accented speech data.
+
+Learning-based Basic Units. More recently, attempts
+have been made to learn basic unit sets automatically.
+(Luong and Manning, 2016) proposed a hybrid Word-
+Character model which translates mostly at the word level
+and consults the character components for rare words.
+Chan et al (Chan et al., 2016b) proposed the Latent Se-
+quence Decompositions framework to decomposes target
+sequences with variable length-ed basic units as a function
+of both input sequence and the output sequence.
+
+There exist some earlier works on the “unit discovery” task
+(Cartwright and Brent, 1994; Goldwater et al., 2006). A
+standard problem with MLE solutions to this task is that
+there are degenerate solutions, i.e., predicting the full cor-
+pus with probability 1 at the start. Often Bayesian priors or
+“minimum description length” constraints are used to rem-
+edy this.
+
+3. Gram-CTC
+
+3.1. CTC
+
+CTC (Graves et al., 2006) is a very popular method in
+seq2seq learning since it does not require the alignment
+information between inputs and outputs, which is usually
+expensive, if not impossible, to obtain.
+
+Since there is no alignment information, CTC marginalizes
+over all possible alignments. That is, it tries to maximize
+p(l|x) = (cid:80)
+π p(π|x), where x is input, and π represent a
+valid alignment. For example, if the size of input is 3, and
+the output is ‘hi’, whose length is 2, there are three possible
+alignments, ‘-hi’, ‘h-i’ and ‘hi-’, where ‘-’ represents blank.
+For the details, please refer to the original paper (Graves
+et al., 2006).
+
+• Using characters results in much smaller vocabularies
+(e.g, 26 for English and thousands for Chinese), but it re-
+quires much longer contexts compared to using words or
+word-pieces and poses the challenge of composing char-
+acters to words (Graves et al., 2006; Chan et al., 2015),
+
+3.2. From CTC to Gram-CTC
+In CTC, the basic units are ﬁxed, which is not desirable in
+some applications. Here we generalize CTC by considering
+a sequence of basic units, called gram, as a whole, which
+is usually more reasonable in many applications.
+
+Gram-CTC
+
+Figure 1. Illustration of the states and the forward-backward transitions for the label ‘CAT’. Here we let G be the set of all uni-grams and
+bi-grams of the English alphabet. The set of all valid states S for the label l = ‘CAT’ are listed to the left. The set of states and transitions
+that are common to both vanilla and Gram-CTC are in black, and those that are unique to Gram-CTC are in orange. In general, any
+extension that collapses back to l is a valid transition - For example, we can transition into (‘CAT’, 1) from (‘CAT’, 1), (‘CA’, 2), (‘CA’,
+1) and (‘CA’, 0) but not from (‘CAT’, 0) or (‘CAT’, 2)
+
+Let G be a set of n-grams of the set of basic units C of the
+target sequence, and τ be the length of the longest gram in
+G. A Gram-CTC network has a softmax output layer with
+|G|+1 units, that is, the probability over all grams in G and
+one additional symbol, blank. To simplify the problem, we
+also assume C ⊆ G. 1
+
+termine the transitions between the states of adjacent time
+steps in Figure 1. This is a many-to-one mapping and we
+denote it by B. Note that other rules can be adopted here
+and the general idea presented in this paper does not depend
+on these speciﬁc rules. For a target sequence l, B−1(l) rep-
+resents all paths mapped to l. Then, we have
+
+For an input sequence x of length T , let y = Nw(x) be
+the sequence of network outputs, and denote by yt
+k as the
+probability of the k-th gram at time t, where k is the index
+of grams in G(cid:48) = G ∪ {blank}, then we have
+
+p(π|x) =
+
+yt
+πt
+
+, ∀π ∈ G(cid:48)T
+
+(1)
+
+T
+(cid:89)
+
+t=1
+
+Just as in the case of CTC, here we refer to the elements
+of G(cid:48)T as paths, and denote them by π, which represents
+a possible alignment between input and output. The dif-
+ference is that for each word in the target sequence, it may
+be decomposed into different sequences of grams. For ex-
+ample, the word ‘hello’ can only be decomposed into the
+sequence [‘h’, ‘e’, ‘l’, ‘l’, ‘o’] for CTC (assume uni-gram
+CTC here), but it also can be decomposed into the sequence
+[‘he’, ‘ll’, ‘o’] if ‘he’ and ‘ll’ are in G.
+
+For each π, we map it into a target sequence in the same
+way as CTC using the collapsing function that 1) removes
+all repeated labels from the path and then 2) removes all
+blanks. Note that essentially it is these rules which de-
+
+1This is because there may be no valid decompositions for
+some target sequences if C (cid:54)⊆ G. Since Gram-CTC will ﬁgure
+out the ideal decomposition of target sequences into grams during
+training, this condition guarantees that there is at least one valid
+decomposition for every target sequence.
+
+p(l|x) =
+
+p(π|x)
+
+(cid:88)
+
+(2)
+
+π∈B−1(l)
+
+This equation allows for training sequence labeling mod-
+els without any alignment information using CTC loss, be-
+cause it marginalizes over all possible alignments during
+training. Gram-CTC uses the same effect to enable the
+model to marginalize over not only alignments, but also
+decompositions of the target sequence.
+
+Note that for each target sequence l, the set B−1(l) has
+O(τ 2) more paths than it does in CTC. This is because
+there are O(τ ) times more valid states per time step, and
+each state may have a valid transition from O(τ ) states in
+the previous time step. The original CTC method is thus,
+a special case of Gram-CTC when G = C and τ = 1.
+While the quadratic increase in the complexity of the algo-
+rithm is non trivial, we assert that it is a trivial increase in
+the overall training time of typical neural networks, where
+the computation time is dominated by the neural networks
+themselves. Additionally, the algorithm extends generally
+to any arbitrary G and need not have all possible n-grams
+up to length τ .
+
+3.3. The Forward-Backward Algorithm
+
+To efﬁciently compute p(l|x), we also adopt the dynamic
+programming algorithm. The essence here is identifying
+
+T	-1T	blank1ATCblankACAblankTATblankC23T	-2Statethe states of the problem, so that we may solve future
+states by reusing solutions to earlier states. In our case, the
+state must contain all the information required to identify
+all valid extensions of an incomplete path π such that the
+collapsing function will eventually collapse the complete
+π back to l. For Gram-CTC, this can be done by collaps-
+ing all but the last element of the path π. Therefore, the
+state is a tuple (l1:i, j), where the ﬁrst item is a collapsed
+path, representing a preﬁx of the target label sequence, and
+j ∈ {0, . . . , τ } is the length of the last gram (li−j+1:i)
+used for making the preﬁx. j = 0 is valid and means that
+blank was used. We denote the gram (li−j+1:i) by gj
+i (l),
+and the state (l1:i, j) as sj
+i (l). For readability, we will fur-
+ther shorten sj
+i . For a state s, its
+corresponding gram is denoted by sg, and the positions of
+the ﬁrst character and last character of sg are denoted by
+b(s) and e(s), respectively. During dynamic programming,
+we are dealing with sequence of states, for a state sequence
+ζ, its corresponding gram sequences is unique, denoted by
+ζg.
+
+i (l) to gj
+
+i (l) to sj
+
+i and gj
+
+Figure 1 illustrates partially the dynamic programming pro-
+cess for the target sequence ‘CAT’. Here we suppose G
+contains all possible uni-grams and bi-grams. Thus, for
+each character in ‘CAT’, there are three possible states as-
+sociated with it: 1) the current character, 2) the bi-gram
+ending in current character, and 3) the blank after current
+character. There is also one blank at beginning. In total we
+have 10 states.
+
+Supposing the maximum length of grams in G is τ , we ﬁrst
+scan l to get the set S of all possible states, such that for all
+sj
+i ∈ S, its corresponding gj
+i ∈ G(cid:48). i ∈ {0, . . . , |l|} and
+j ∈ {0, . . . , τ }. For a target sequence l, deﬁne the forward
+variable αt(s) for any s ∈ S to the total probability of all
+valid paths preﬁxes that end at state s at time t.
+
+αt(s) def=
+
+(cid:88)
+
+t
+(cid:89)
+
+yt(cid:48)
+ζt(cid:48) g
+
+ζ|B(ζg)=l1:e(s),ζt=s
+
+t(cid:48)=1
+
+Following this deﬁnition, we have the following rules for
+initialization
+
+α1(s) =
+
+
+
+
+
+
+y1
+b
+y1
+gi
+i
+0
+
+s = s0
+0
+s = si
+i ∀i ∈ {1, . . . , τ }
+otherwise
+
+and recursion
+
+
+t−1 ∗ yt
+ˆαi
+b
+
+αt(s) =
+
+
+
+
+when s = s0
+i ,
+
+[ˆαi−j
+
+t−1 + αt−1(s)] ∗ yt
+gj
+i
+i and gj
+when s = sj
+
+[ˆαi−j
+
+t−1 + αt−1(s) − αt−1(sj
+
+when s = sj
+
+i and gj
+
+i−j,
+
+i (cid:54)= gj
+i−j)] ∗ yt
+gj
+i
+i = gj
+
+i−j
+
+(3)
+
+(4)
+
+Gram-CTC
+
+where ˆαi
+at time t.
+
+t = (cid:80)τ
+
+j=0 αt(sj
+
+i ) and yt
+
+b is the probability of blank
+
+The total probability of the target sequence l is then ex-
+pressed in the following way:
+
+p(l|x) =
+
+αT (sj
+
+|l|)
+
+τ
+(cid:88)
+
+j=0
+
+(6)
+
+(7)
+
+(9)
+
+similarly, we can deﬁne the backward variable βt(s) as:
+
+βt(s) def=
+
+(cid:88)
+
+T
+(cid:89)
+
+yt(cid:48)
+ζt(cid:48) g
+
+ζ|B(ζg)=lb(s):l,ζt=s
+
+t(cid:48)=t
+
+For the initialization and recursion of βt(s), we have
+
+βT (s) =
+
+∀i ∈ {1, . . . , τ }
+
+(8)
+
+
+
+
+
+
+yT
+b
+yT
+gi
+T
+0
+
+s = s0
+T
+s = si
+T
+otherwise
+
+and
+
+βt(s) =
+
+
+
+
+
+
+ˆβi
+t+1 ∗ yt
+b
+
+when s = s0
+i ,
+
+[ ˆβi+j
+
+t+1 + βt+1(s)] ∗ yt
+gj
+i
+when s = sj
+
+[ ˆβi+j
+
+t+1 + βt+1(s) − βt+1(sj
+
+i+j,
+
+i and gj
+
+i (cid:54)= gj
+i+j)] ∗ yt
+gj
+i
+i = gj
+
+i+j
+
+when s = sj
+
+i and gj
+
+where ˆβi
+
+t = (cid:80)τ
+
+j=0 βt(sj
+
+i+j)
+
+3.4. BackPropagation
+Similar to CTC, we have the following expression:
+
+p(l|x) =
+
+(cid:88)
+
+s∈S
+
+αt(s)βt(s)
+yt
+sg
+
+∀t ∈ {1, . . . , T }
+
+(10)
+
+The derivative with regards to yt
+
+k is:
+
+∂p(l|x)
+∂yt
+k
+
+=
+
+1
+yt
+k
+
+2
+
+(cid:88)
+
+s∈lab(l,k)
+
+αt(s)βt(s)
+
+(11)
+
+where lab(l, k) is the set of states in S whose correspond-
+ing gram is k. This is because there may be multiple states
+corresponding to the same gram.
+
+For the backpropagation, the most important formula is the
+partial derivative of loss with regard to the unnormalized
+output ut
+k.
+
+∂ ln p(l|x)
+∂ut
+k
+
+= yt
+
+k −
+
+1
+yt
+kZt
+
+(cid:88)
+
+s∈lab(l,k)
+
+αt(s)βt(s)
+
+(12)
+
+(5)
+
+where Zt
+
+def= (cid:80)
+
+s∈S
+
+αt(s)βt(s)
+yt
+
+.
+
+sg
+
+Gram-CTC
+
+(a) Training curves before (blue) and after (or-
+ange) auto-reﬁnement of grams.
+
+(b) Training curves without (blue) and with
+(orange) joint-training
+
+(c) Joint-training Architecture
+
+Figure 2. (Figure 2a) compares the training curves before (blue) and after (orange) auto-reﬁnement of grams. They look very similar,
+although the number of grams is greatly reduced after reﬁnement, which makes training faster and potentially more robust due to less
+gram sparsity. Figure (2b) Training curve of model with and without joint-training. The model corresponding to the orange training
+curve is jointly trained together with vanilla CTC, such models are often more stable during training. Figure (2c) Typical joint-training
+model architecture - vanilla CTC loss is best applied a few levels lower than the Gram-CTC loss.
+
+4. Methodology
+
+Here we describe additional techniques we found useful in
+practice to enable the Gram-CTC to work efﬁciently as well
+as effectively.
+
+4.1. Iterative Gram Selection
+
+Although Gram-CTC can automatically select useful
+grams, it is challenging to train with a large G. The to-
+tal number of possible grams is usually huge. For example,
+in English, we have 26 characters, then the total number of
+bi-grams is 262 = 676, the total number of tri-grams are
+263 = 17576, . . . , which grows exponentially and quickly
+becomes intractable. However, it is unnecessary to con-
+sider many grams, such as ‘aaaa’, which are obviously use-
+less.
+
+In our experiments, we ﬁrst eliminate most of useless
+grams from the statistics of a huge corpus, that is, we count
+the frequency of each gram in the corpus and drop these
+grams with rare frequencies. Then, we train a model with
+Gram-CTC on all the remaining grams. By applying (de-
+coding) the trained model on a large speech dataset, we get
+the real statistics of gram’s usage. Ultimately, we choose
+high frequency grams together with all uni-grams as our ﬁ-
+nal gram set G. Table 1 shows the impact of iterative gram
+selection on WSJ (without LM). Figure 2a shows its corre-
+sponding training curve. For details, please refer to Section
+5.2.
+
+4.2. Joint Training with Vanilla CTC
+
+Gram-CTC needs to solve both decomposition and align-
+ment tasks, which is a harder task for a model to learn than
+CTC. This is often manifested in unstable training curves,
+forcing us to lower the learning rate which in turn results
+
+in models converging to a worse optima. To overcome this
+difﬁculty, we found it beneﬁcial to train a model with both
+the Gram-CTC, as well as the vanilla CTC loss (similar
+to joint-training CTC together with CE loss as mentioned
+in (Sak et al., 2015)). Joint training of multiple objectives
+for sequence labelling has also been explored in previous
+works (Kim et al., 2016; Kim and Rush, 2016).
+
+A typical joint-training model looks like Figure 2c, and the
+corresponding training curve is shown in Figure 2b. The
+effect of joint-training are shown in Table 4 and Table 5 in
+the experiments.
+
+5. Experiments
+
+We test the Gram-CTC loss on the ASR task, while both
+CTC and the introduced Gram-CTC are generic techniques
+for other sequence labelling tasks. For all of the experi-
+ments, the model speciﬁcation and training procedure are
+the same as in (Amodei et al., 2015) - The model is a recur-
+rent neural network (RNN) with 2 two-dimensional convo-
+lutional input layers, followed by K forward (Fwd) or bidi-
+rectional (Bidi) Gated Recurrent layers, N cells each, and
+one fully connected layer before a softmax layer. In short
+hand, such a model is written as ‘2x2D Conv - KxN GRU’.
+The network is trained end-to-end with the CTC, Gram-
+CTC or a weighted combination of both. This combination
+is described in the earlier section.
+
+In all experiments, audio data is is sampled at 16kHz. Lin-
+ear FFT features are extracted with a hop size of 10ms
+and window size of 20ms, and are normalized so that
+each input feature has zero mean and unit variance. The
+network inputs are thus spectral magnitude maps ranging
+from 0-8kHz with 161 features per 10ms frame. At each
+epoch, 40% of the utterances are randomly selected to add
+
+Gram-CTCC_ATCTC_C_AT_Gram-CTCC-ATCTC-C-AT-Gram-CTC
+
+Loss
+
+CTC, uni-gram
+CTC, bi-gram
+
+Gram-CTC, handpick
+Gram-CTC, all uni-grams + bi-grams
+Gram-CTC, auto-reﬁnement
+
+WER
+
+16.91
+21.63
+
+17.01
+16.89
+16.66
+
+Table 1. Results of different gram selection methods on WSJ
+dataset.
+
+background noise to. The optimization method we use
+is stochastic gradient descent with Nesterov momentum.
+Learning hyperparameters (batch-size, learning-rate, mo-
+mentum, and etc.) vary across different datasets and are
+tuned for each model by optimizing a hold-out set. Typical
+values are a learning rate of 10−3 and momentum of 0.99.
+
+5.1. Data and Setup
+
+Wall Street Journal (WSJ). This corpora consists pri-
+marily of read speech with texts drawn from a machine-
+readable corpus of Wall Street Journal news text, and con-
+tains about 80 hours speech data. We used the standard
+conﬁguration of train si284 dataset for training, dev93 for
+validation and eval92 for testing. This is a relatively ‘clean’
+task and often used for model prototyping (Miao et al.,
+2015; Bahdanau et al., 2016; Zhang et al., 2016; Chan et al.,
+2016b).
+
+Fisher-Switchboard. This is a commonly used English
+conversational
+telephone speech (CTS) corpora, which
+contains 2300 hours CTS data. Following the previous
+works (Zweig et al., 2016b; Povey et al., 2016; Xiong et al.,
+2016b; Sercu and Goel, 2016), evaluation is carried out on
+the NIST 2000 CTS test set, which comprises both Switch-
+board (SWB) and CallHome (CH) subsets.
+
+10K Speech Dataset. We conduct large scale ASR exper-
+iments on a noisy internal dataset of 10,000 hours. This
+dataset contains speech collected from various scenarios,
+such as different background noises, far-ﬁeld, different ac-
+cents, and so on. Due to its inherent complexities, it is a
+very challenging task, and can thus validate the effective-
+ness of the proposed method for real-world application.
+
+5.2. Gram Selection
+
+We employ the WSJ dataset for demonstrating different
+strategies of selecting grams for Gram-CTC, since it is a
+widely used dataset and also small enough for rapid idea
+veriﬁcation. However, because it is small, we cannot use
+large grams here due to data sparsity problem. Thus, the
+auto-reﬁned gram set on WSJ is not optimal for other larger
+datasets, where larger grams could be effectively used, but
+the procedure of reﬁnement is the same for them.
+
+We ﬁrst train a model using all uni-grams and bi-grams (29
+
+Loss
+
+WER
+
+Epoch Time (mins)
+
+(stride)
+
+2
+
+4
+
+CTC, uni-gram 16.91
+20.57
+CTC, bi-gram
+16.66
+Gram-CTC
+
+23.76
+21.63
+18.87
+
+2
+
+29
+23
+35
+
+4
+
+16
+12
+18
+
+Table 2. Performances with different model strides on WSJ
+dataset.
+
+uni-grams and 262 = 676 bi-grams, in total 705 grams),
+and then do decoding with the obtained model on another
+speech dataset to get the statistics of the usage of grams.
+Top 100 bi-grams together with all 29 uni-grams (auto-
+reﬁned grams) are used for the second round of training.
+For comparison, we also present the result of the best hand-
+picked grams, as well as the results on uni-grams. All the
+results are shown in Table 1.
+
+Some interesting observations can be found in Table 1.
+First, the performance of auto-reﬁned grams is only slightly
+better than the combination of all uni-grams and all bi-
+grams. This is probably because WSJ is so small that gram
+learning suffers from the data sparsity problem here (simi-
+lar to word-segmented models). The auto-reﬁned gram set
+contains only a small subset of bi-grams, thus more ro-
+bust. This is also why we only try bi-grams, not includ-
+ing higher-order grams. Second, the performance of best
+handpicked grams is worse than auto-reﬁned grams. This
+is desirable. It is time-consuming to handpick grams, es-
+pecially when you consider high-order grams. The method
+of iterative gram selection is not only fast, but usually bet-
+ter. Third, the performance of Gram-CTC on auto-reﬁned
+grams is only slightly better than CTC on uni-grams. This
+is because Gram-CTC is inherently difﬁcult to train, since
+it needs to learn both decomposition and alignment. WSJ
+is too small to provide enough data to train Gram-CTC.
+
+5.3. Sequence Labelling in Large Stride
+
+Using a large time stride for sequence labelling with RNNs
+can greatly boost the overall computation efﬁciency, since
+it effectively reduces the time steps for recurrent computa-
+tion, thus speeds up the process of both forward inference
+and backward propagation. However, the largest stride that
+can be used is limited by the gram set we use. The (uni-
+gram) CTC has to work in a high time resolution (small
+stride) in order to have enough number of frames to out-
+put every character. This is very inefﬁcient as we know the
+same acoustic feature could correspond to several grams of
+different lengths (e.g., {‘i’, ‘igh’, ‘eye’}) . The larger the
+grams are, the larger stride we are potentially able to use.
+
+DS2 (Amodei et al., 2015) employed non-overlapping bi-
+gram outputs to allow for a larger stride. This imposes an
+artiﬁcial constraint forcing the model to learn, not only the
+spelling of each word, but also how to split words into bi-
+grams. For example, part is split as [pa, rt] but the word
+
+Gram-CTC
+
+Figure 3. Max-decoding results (without collapsing) of CTC and Gram-CTC on utterances from Switchboard dataset. The predicted
+characters (by CTC) or grams (by Gram-CTC) at each timestep are separated by "|". As the Gram-CTC model is trained with doubled
+stride as that of CTC model, we place the grams at a doubled width as we do with characters for better viewing. The "_" represents
+blank.
+
+apart is forced to be decomposed as [ap, ar, t]. Gram-
+CTC removes this constraint by allowing the model to de-
+compose words into larger units into the most convenient
+or sensible decomposition. Comparison results show this
+change enables Gram-CTC to work much better than bi-
+gram CTC, as in Table 2.
+
+In Table 2, we compare the performance of trained model
+and training efﬁciency on two strides, 2 and 4. For Gram-
+CTC, we use the auto-reﬁned gram set from previous sec-
+tion. As expected, using stride 4 almost cuts the train-
+ing time per epoch into half, compared to stride 2. From
+stride 2 to stride 4, the performance of uni-gram CTC
+drops quickly. This is because small grams inherently need
+higher time resolutions. As for Gram-CTC, from stride 2
+to stride 4, its performance decreases a little bit, while in
+experiments on the other datasets, Gram-CTC constantly
+works better in stride 4. One possible explanation is that
+WSJ is too small for Gram-CTC to learn large grams well.
+In contrast, the performance of bi-gram CTC is not as good
+as that of Gram-CTC in either stride.
+
+CTC uses stride 4 while CTC uses stride 2.
+
+From Figure 3, we can ﬁnd that: 1) Gram-CTC does auto-
+matically ﬁnd many intuitive and meaningful grams, such
+as ‘the’, ‘ng’, and ‘are’. 2) It also decomposes the sen-
+tences into segments which are meaningful in term of pro-
+nunciation. This decomposition resembles the phonetic de-
+composition, but in larger granularity and arguably more
+natural. 3) Since Gram-CTC predicts a chunk of charac-
+ters (a gram) each time, each prediction utilizes larger con-
+text and these characters in the same predicted chunk are
+dependent, thus potentially more robust. One example is
+the word ‘will’ in the last sentence in Figure 3. 4) Since
+the output of network is the probability over all grams, the
+decoding process is almost the same as CTC, still end-to-
+end. This makes such decomposition superior to phonetic
+decomposition. In summary, Gram-CTC combines the ad-
+vantages of both CTC on characters and CTC on phonemes.
+
+5.5. Comparison with Other Methods
+
+5.5.1. WSJ DATASET
+
+5.4. Decoding Examples
+
+Figure 3 illustrates the max-decoding results of both CTC
+and Gram-CTC on nine utterances. Here the label set for
+CTC is the set of all characters, and the label set for Gram-
+CTC is an auto-reﬁned gram set containing all uni-grams
+and some high-frequency high-order grams. Here Gram-
+
+The model used here is [2x2D conv, 3x1280 Bidi GRU]
+with a CTC or Gram-CTC loss. The results are shown
+in Table 3. For all models we trained, language model
+can greatly improve their performances, in term of WER.
+Though this dataset contains very limited amount of text
+data for learning gram selection and decomposition, Gram-
+
+True Text what were they doing down there  CTC         |h |h |a |t |_ |  |w |e |e |r |r |e |  |t |h |e |y |_ |_ |  |d |o |_ |_ |i |i |n |g |  |  |d |o |w |_ |n |_ |  |t |h |e |r |e |e |_ |_ |_ |  |  | Gram-CTC    |w    |hat  |     |we   |re   |re   |     |the  |y    |y    |     |do   |i    |ng   |     |d    |own  |     |the  |the  |re   |     |     |     | True Text that is very exciting  CTC         |_ |_ |i |t |' |' |s |  |  |v |_ |e |r |r |_ |_ |y |  |e |e |_ |x |x |c |_ |i |_ |t |t |_ |_ |_ |i |n |g |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |  |  | Gram-CTC    |_    |t    |hat  |'    |s    |     |ve   |r    |y    |     |     |ex   |c    |i    |t    |i    |i    |ng   |     |     |     |     |     |     | True Text that sounds great  CTC         |_ |_ |t |t |h |a |t |_ |_ |_ |  |  |s |_ |o |u |n |n |d |s |s |_ |_ |  |  |  |g |r |r |_ |e |a |_ |_ |t |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |  |  | Gram-CTC    |_    |t    |hat  |     |     |     |so   |und  |s    |     |     |     |     |     |g    |re   |a    |t    |     |     |     |     |     |     |     |     | True Text now where would that be  CTC         |_ |_ |_ |_ |n |n |o |_ |_ |_ |_ |_ |  |  |w |h |e |r |e |e |_ |_ |  |  |w |_ |o |u |l |d |  |  |t |h |a |t |t |_ |_ |  |  |b |_ |e |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |  |  | Gram-CTC    |_    |_    |now  |_    |     |     |     |w    |w    |he   |re   |     |w    |o    |u    |ld   |     |t    |hat  |     |     |     |be   |     |     |     |     |     | True Text did you get my email today  CTC         |d |d |i |d |d |  |y |o |u |_ |  |  |g |e |t |t |  |  |  |m |y |_ |  |  |  |e |_ |_ |_ |m |a |i |i |l |l |  |  |t |_ |o |_ |_ |_ |d |a |a |y |_ |_ |_ |_ |_ |_ |_ |_ |  |  | Gram-CTC    |did  |did  |     |     |you  |     |     |get  |     |     |my   |     |     |e    |_    |ma   |il   |     |     |     |to   |_    |_    |day  |     |     |     |     |     | True Text oh how long are you going to be there  CTC         |_ |_ |_ |o |h |_ |_ |_ |  |  |h |o |w |w |  |l |o |o |n |g |g |  |a |r |e |  |y |o |u |_ |_ |_ |  |  |g |o |i |n |g |  |t |o |  |b |e |_ |  |t |h |e |_ |r |e |_ |_ |_ |_ |_ |  |  | Gram-CTC    |_    |oh   |     |     |     |how  |     |lo   |ng   |     |     |are  |     |you  |     |     |go   |go   |i    |ng   |     |to   |     |be   |     |the  |the  |re   |     |     | True Text well i thought she is in washington  CTC         |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |i |_ |  |  |t |t |h |o |u |g |h |t |  |s |h |e |e |' |' |s |s |  |_ |i |_ |n |_ |  |  |w |a |_ |_ |s |h |_ |i |i |n |g |g |_ |_ |o |o |n |_ |  |  | Gram-CTC    |_    |_    |_    |_    |i    |     |t    |ho   |u    |g    |h    |t    |     |     |she  |     |was  |     |in   |     |     |w    |a    |sh   |i    |ng   |t    |on   |on   |     |     | True Text did they stay with you for the whole two weeks  CTC         |d |d |i |d |d |  |t |h |e |y |  |  |s |t |a |y |y |  |w |w |i |t |h |  |  |y |o |u |_ |  |  |f |o |r |  |t |t |h |e |  |w |h |o |l |e |  |t |w |o |_ |_ |  |  |w |e |_ |e |k |_ |s |_ |_ |_ |  | Gram-CTC    |did  |     |     |the  |y    |     |st   |a    |y    |w    |it   |it   |h    |     |you  |     |for  |for  |     |the  |     |who  |le   |     |     |two  |     |we   |we   |e    |k    |s    | True Text he will take the luggage  CTC         |_ |h |e |_ |_ |_ |  |  |w |_ |i |l |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |_ |  |_ |t |_ |a |_ |k |e |_ |_ |_ |  |  |t |h |e |_ |_ |_ |  |  |_ |l |_ |u |_ |_ |g |g |_ |g |g |_ |a |g |e |_ |_ |_ | Gram-CTC    |_    |he   |_    |     |     |w    |ill  |_    |     |     |     |     |     |ta   |ta   |k    |e    |     |     |     |the  |     |     |     |lu   |g    |_    |g    |g    |age  |age  |     |  	Architecture
+
+WER
+
+Architecture
+
+Gram-CTC
+
+Phoneme CTC + trigram LM (Miao et al., 2015)
+Grapheme CTC + trigram LM (Miao et al., 2015)
+Attention + trigram LM (Bahdanau et al., 2016)
+DeepConv LAS + no LM (Zhang et al., 2016)
+DeepConv LAS + LSD + no LM (Chan et al., 2016b)
+Temporal LS + Cov + LM
+(Chorowski and Navdeep, 2016)
+
+Vanilla CTC + no LM (ours)
+Vanilla CTC + LM (ours)
+
+Gram-CTC + no LM (ours)
+Gram-CTC + LM (ours)
+
+7.3
+9.0
+9.3
+10.5
+9.6
+
+6.7
+
+16.91
+7.11
+
+16.66
+6.75
+
+Table 3. Comparison with previous published results with end-to-
+end training on WSJ speech dataset. The numbers in bold are the
+best results with and without a language model
+
+CTC can still improve the vanilla CTC notably.
+
+5.5.2. FISHER-SWITCHBOARD
+
+The acoustic model trained here is composed of two 2D
+convolutions and six bi-directional GRU layer in 2048 di-
+mension. The corresponding labels are used for training
+N-gram language models.
+
+• Switchboard English speech 97S62
+• Fisher English speech Part 1 - 2004S13, 2004T19
+• Fisher English speech Part 2 - 2005S13, 2005T19
+
+We use a sample of the Switchboard-1 portion of the NIST
+2002 dataset (2004S11 RT-02) for tuning language model
+hyper-parameters. The evaluation is done on the NIST
+2000 set. This conﬁguration forms a standard benchmark
+for evaluating ASR models. Results are in Table 4.
+
+We compare our model against best published results on
+in-domain data. These results can often be improved using
+out-of-domain data for training the language model, and
+sometimes the acoustic model as well. Together these tech-
+niques allow (Xiong et al., 2016b) to reach a WER of 5.9
+on the SWBD set.
+
+5.5.3. 10K SPEECH DATASET
+
+Finally, we experiment on a large noisy dataset collected by
+ourself for building large-vocabulary Continuous Speech
+Recognition (LVCSR) systems. This dataset contains about
+10000 hours speech in a diversity of scenarios, such as far-
+ﬁeld, background noises, accents. In all cases, the model
+is [2x2D Conv, 3x2560 Fwd GRU, LA Conv] with only a
+‘LA Conv’ refers to a look
+change in the loss function.
+ahead convolution layer as seen in (Amodei et al., 2015)
+which works together with forward-only RNNs for deploy-
+ment purpose.
+
+As with the Fisher-Switchboard dataset, the optimal stride
+is 4 for Gram-CTC and 2 for vanilla CTC on this dataset.
+Thus, in both experiments, both Gram-CTC and vanilla
+
+Iterated-CTC (Zweig et al., 2016b)
+BLSTM + LF MMI (Povey et al., 2016)
+LACE + LF MMI 2 (Xiong et al., 2016b)
+Dilated convolutions (Sercu and Goel, 2016)
+
+Vanilla CTC (ours)
+Gram-CTC (ours)
+Vanilla CTC + Gram-CTC (ours)
+
+SWBD
+CH
+WER WER
+
+11.3
+8.5
+8.3
+7.7
+
+9.0
+7.9
+7.3
+
+18.7
+15.3
+14.8
+14.5
+
+17.7
+15.8
+14.7
+
+Table 4. Comparison with previous published results on Fisher-
+Switchboard benchmark (“SWBD” and “CH” represent Switch-
+board and Callhome portions, respectively) using in-domain data.
+We only list results using single models here.
+
+Architecture
+
+WER(No LM) WER(With LM)
+
+Vanilla CTC
+Gram-CTC
+Vanilla CTC + Gram-CTC
+
+29.1
+27.56
+25.59
+
+19.77
+19.53
+18.52
+
+Table 5. LVCSR results on 10K speech dataset.
+
+CTC + Gram-CTC are trained mush faster than vanilla
+CTC itself. The result is shown in Table 5. Gram-CTC
+performs better than CTC. After joint-training with vanilla
+CTC and alignment information through a CE loss, its per-
+formance is further boosted, which veriﬁes joint-training
+In fact, with only a small additional cost
+helps training.
+of time, it effectively reduces the WER from 27.56% to
+25.59% (without language model).
+
+6. Conclusions and Future Work
+
+In this paper, we have proposed the Gram-CTC loss to
+enable automatic decomposition of target sequences into
+learned grams. We also present techniques to train the
+Gram-CTC in a clean and stable way. Our extensive exper-
+iments demonstrate the proposed Gram-CTC enables the
+models to run more efﬁciently than the vanilla CTC, by
+using larger stride, while obtaining better performance of
+sequence labelling. Comparison experiments on multiple-
+scale datasets show the proposed Gram-CTC obtains state-
+of-the-art results on various ASR tasks.
+
+An interesting observation is that the learning of Gram-
+CTC implicitly avoids the “degenerated solution” that oc-
+curring in the traditional “unit discovery” task, without in-
+volving any Bayesian priors or the “minimum description
+length” constraint. Using a small gram set that contains
+only short (up to 5 in our experiments) as well as high-
+frequency grams may explain the success here.
+
+We will continue investigating techniques of improving the
+optimization of Gram-CTC loss, as well as the applications
+of Gram-CTC for other sequence labelling tasks.
+
+Gram-CTC
+
+References
+
+Alex Graves, Santiago Fernández, Faustino Gomez, and
+Jürgen Schmidhuber. Connectionist temporal classiﬁca-
+tion: labelling unsegmented sequence data with recur-
+rent neural networks. In Proceedings of the 23rd interna-
+tional conference on Machine learning, pages 369–376.
+ACM, 2006.
+
+Kyunghyun Cho, Bart Van Merriënboer, Caglar Gulcehre,
+Dzmitry Bahdanau, Fethi Bougares, Holger Schwenk,
+and Yoshua Bengio. Learning phrase representations us-
+ing rnn encoder-decoder for statistical machine transla-
+tion. arXiv preprint arXiv:1406.1078, 2014.
+
+Ilya Sutskever, Oriol Vinyals, and Quoc V Le. Sequence
+to sequence learning with neural networks. In Advances
+in neural information processing systems, pages 3104–
+3112, 2014.
+
+William Chan, Navdeep Jaitly, Quoc Le, and Oriol Vinyals.
+Listen, attend and spell: A neural network for large
+vocabulary conversational speech recognition. In 2016
+IEEE International Conference on Acoustics, Speech
+and Signal Processing (ICASSP), pages 4960–4964.
+IEEE, 2016a.
+
+Awni Y. Hannun, Carl Case, Jared Casper, Bryan Catan-
+zaro, Greg Diamos, Erich Elsen, Ryan Prenger, San-
+jeev Satheesh, Shubho Sengupta, Adam Coates, and An-
+drew Y. Ng. Deep speech: Scaling up end-to-end speech
+recognition. CoRR, abs/1412.5567, 2014.
+
+Dzmitry Bahdanau, Jan Chorowski, Dmitriy Serdyuk,
+Yoshua Bengio, et al. End-to-end attention-based large
+vocabulary speech recognition. In 2016 IEEE Interna-
+tional Conference on Acoustics, Speech and Signal Pro-
+cessing (ICASSP), pages 4945–4949. IEEE, 2016.
+
+Jean Sébastien, Kyunghyun Cho, Roland Memisevic, and
+Yoshua Bengio. On using very large target vocabulary
+for neural machine translation. 2015.
+
+Oriol Vinyals, Łukasz Kaiser, Terry Koo, Slav Petrov, Ilya
+Sutskever, and Geoffrey Hinton. Grammar as a foreign
+language. In Advances in Neural Information Processing
+Systems, pages 2773–2781, 2015.
+
+Jan K Chorowski, Dzmitry Bahdanau, Dmitriy Serdyuk,
+Kyunghyun Cho, and Yoshua Bengio. Attention-based
+models for speech recognition. In Advances in Neural
+Information Processing Systems, pages 577–585, 2015.
+
+W Xiong, J Droppo, X Huang, F Seide, M Seltzer, A Stol-
+cke, D Yu, and G Zweig. The microsoft 2016 con-
+versational speech recognition system. arXiv preprint
+arXiv:1609.03528, 2016a.
+
+Yonghui Wu, Mike Schuster, Zhifeng Chen, Quoc V.
+Le, Mohammad Norouzi, Wolfgang Macherey, Maxim
+Krikun, Yuan Cao, Qin Gao, Klaus Macherey, Jeff
+Klingner, Apurva Shah, Melvin Johnson, Xiaobing
+Liu, Lukasz Kaiser, Stephan Gouws, Yoshikiyo Kato,
+Taku Kudo, Hideto Kazawa, Keith Stevens, George
+Kurian, Nishant Patil, Wei Wang, Cliff Young, Jason
+Smith, Jason Riesa, Alex Rudnick, Oriol Vinyals, Gre-
+gory S. Corrado, Macduff Hughes, and Jeffrey Dean.
+Google’s neural machine translation system: Bridging
+the gap between human and machine translation. CoRR,
+abs/1609.08144, 2016a.
+
+William Chan, Yu Zhang, Quoc Le, and Navdeep Jaitly.
+
+Latent sequence decompositions. In Arxiv, 2016b.
+
+Dario Amodei, Rishita Anubhai, Eric Battenberg, Carl
+Case, Jared Casper, Bryan Catanzaro, Jingdong Chen,
+Mike Chrzanowski, Adam Coates, Greg Diamos, et al.
+Deep speech 2: End-to-end speech recognition in en-
+glish and mandarin. arXiv preprint arXiv:1512.02595,
+2015.
+
+Yonghui Wu, Mike Schuster, Zhifeng Chen, Quoc V
+Le, Mohammad Norouzi, Wolfgang Macherey, Maxim
+Krikun, Yuan Cao, Qin Gao, Klaus Macherey, et al.
+Google’s neural machine translation system: Bridging
+the gap between human and machine translation. arXiv
+preprint arXiv:1609.08144, 2016b.
+
+Ronan Collobert, Christian Puhrsch, and Gabriel Synnaeve.
+Wav2letter: an end-to-end convnet-based speech recog-
+nition system. arXiv preprint arXiv:1609.03193, 2016.
+
+Geoffrey Zweig, Chengzhu Yu, Jasha Droppo, and An-
+dreas Stolcke. Advances in all-neural speech recogni-
+tion. arXiv preprint arXiv:1609.05935, 2016a.
+
+Hagen Soltau, Hank Liao, and Hasim Sak.
+
+Neural
+speech recognizer: Acoustic-to-word lstm model for
+arXiv preprint
+large vocabulary speech recognition.
+arXiv:1610.09975, 2016.
+
+K-F Lee and H-W Hon.
+
+Large-vocabulary speaker-
+independent continuous speech recognition using hmm.
+In Acoustics, Speech, and Signal Processing, 1988.
+ICASSP-88., 1988 International Conference on, pages
+123–126. IEEE, 1988.
+
+Tom Sercu and Vaibhava Goel. Dense prediction on
+sequences with time-dilated convolutions for speech
+recognition. arXiv preprint arXiv:1611.09288, 2016.
+
+Wayne Xiong, Jasha Droppo, Xuedong Huang, Frank
+Seide, Mike Seltzer, Andreas Stolcke, Dong Yu, and Ge-
+offrey Zweig. Achieving human parity in conversational
+speech recognition. arXiv preprint arXiv:1610.05256,
+2016b.
+
+Gram-CTC
+
+networks for asr based on lattice-free mmi. Submitted to
+Interspeech, 2016.
+
+Jan Chorowski and Jaitly Navdeep. Towards better decod-
+ing and language model integration in sequence to se-
+quence models. arXiv preprint arXiv:1612.02695, 2016.
+
+William Chan, Navdeep Jaitly, Quoc V Le, and Oriol
+arXiv preprint
+
+Listen, attend and spell.
+
+Vinyals.
+arXiv:1508.01211, 2015.
+
+Mathew Magimai Doss, Todd A Stephenson, Hervé
+Bourlard, and Samy Bengio. Phoneme-grapheme based
+speech recognition system. In Automatic Speech Recog-
+nition and Understanding, 2003. ASRU’03. 2003 IEEE
+Workshop on, pages 94–98. IEEE, 2003.
+
+Minh-Thang Luong and Christopher D Manning. Achiev-
+translation
+arXiv preprint
+
+ing open vocabulary neural machine
+with hybrid word-character models.
+arXiv:1604.00788, 2016.
+
+Timothy Andrew Cartwright and Michael R Brent. Seg-
+menting speech without a lexicon: The roles of
+phonotactics and speech source. arXiv preprint cmp-
+lg/9412005, 1994.
+
+Sharon Goldwater, Thomas L Grifﬁths, and Mark Johnson.
+Contextual dependencies in unsupervised word segmen-
+tation. In Proceedings of the 21st International Confer-
+ence on Computational Linguistics and the 44th annual
+meeting of the Association for Computational Linguis-
+tics, pages 673–680. Association for Computational Lin-
+guistics, 2006.
+
+Hasim Sak, Andrew W. Senior, Kanishka Rao, and
+FranÃ˘goise Beaufays. Fast and accurate recurrent neural
+network acoustic models for speech recognition. CoRR,
+abs/1507.06947, 2015.
+
+Suyoun Kim, Takaaki Hori, and Shinji Watanabe.
+
+Joint
+ctc-attention based end-to-end speech recognition using
+multi-task learning. arXiv preprint arXiv:1609.06773,
+2016.
+
+Yoon Kim and Alexander M Rush. Sequence-level knowl-
+arXiv preprint arXiv:1606.07947,
+
+edge distillation.
+2016.
+
+Yajie Miao, Mohammad Gowayyed, and Florian Metze.
+Eesen: End-to-end speech recognition using deep rnn
+models and wfst-based decoding. In Automatic Speech
+Recognition and Understanding (ASRU), 2015 IEEE
+Workshop on, pages 167–174. IEEE, 2015.
+
+Yu Zhang, William Chan, and Navdeep Jaitly. Very deep
+convolutional networks for end-to-end speech recogni-
+tion. arXiv preprint arXiv:1610.03022, 2016.
+
+Geoffery Zweig, Ghengzhu Yu, Jasha Droppo, and An-
+dreas Stolcke. Advances in all-neural speech recogni-
+tion. arXiv preprint arXiv:1609.05935, 2016b.
+
+Daniel Povey, Vijayaditya Peddinti, Daniel Galvez, Pegah
+Ghahrmani, Vimal Manohar, Xingyu Na, Yiming Wang,
+and Sanjeev Khudanpur. Purely sequence-trained neural
+
+

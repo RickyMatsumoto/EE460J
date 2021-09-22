@@ -1,0 +1,1047 @@
+Interactive Learning from Policy-Dependent Human Feedback
+
+James MacGlashan 1 Mark K Ho 2 Robert Loftin 3 Bei Peng 4 Guan Wang 2 David L. Roberts 3
+Matthew E. Taylor 4 Michael L. Littman 2
+
+Abstract
+
+This paper investigates the problem of interac-
+tively learning behaviors communicated by a hu-
+man teacher using positive and negative feed-
+back. Much previous work on this problem has
+made the assumption that people provide feed-
+back for decisions that is dependent on the be-
+havior they are teaching and is independent from
+the learner’s current policy. We present empirical
+results that show this assumption to be false—
+whether human trainers give a positive or neg-
+ative feedback for a decision is inﬂuenced by
+the learner’s current policy. Based on this in-
+sight, we introduce Convergent Actor-Critic by
+Humans (COACH), an algorithm for learning
+from policy-dependent feedback that converges
+to a local optimum. Finally, we demonstrate that
+COACH can successfully learn multiple behav-
+iors on a physical robot.
+
+1. Introduction
+
+Programming robots is very difﬁcult,
+in part because
+the real world is inherently rich and—to some degree—
+unpredictable.
+In addition, our expectations for physical
+agents are quite high and often difﬁcult to articulate. Nev-
+ertheless, for robots to have a signiﬁcant impact on the lives
+of individuals, even non-programmers need to be able to
+specify and customize behavior. Because of these complex-
+ities, relying on end-users to provide instructions to robots
+programmatically seems destined to fail.
+
+Reinforcement learning (RL) from human trainer feedback
+provides a compelling alternative to programming because
+agents can learn complex behavior from very simple posi-
+tive and negative signals. Furthermore, real-world animal
+training is an existence proof that people can train complex
+
+*Equal contribution 1Cogitai 2Brown University 3North Car-
+olina State University 4Washington State University. Correspon-
+dence to: James MacGlashan <james@cogitai.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+behavior using these simple signals. Indeed, animals have
+been successfully trained to guide the blind, locate mines
+in the ocean, detect cancer or explosives, and even solve
+complex, multi-stage puzzles.
+
+Despite success when learning from environmental reward,
+traditional reinforcement-learning algorithms have yielded
+limited success when the reward signal is provided by hu-
+mans. This failure underscores the importance that algo-
+rithms for learning from humans are based on appropriate
+models of human-feedback. Indeed, much human-centered
+RL work has investigated and employed different mod-
+els of human-feedback (Knox & Stone, 2009b; Thomaz &
+Breazeal, 2006; 2007; 2008; Grifﬁth et al., 2013; Loftin
+et al., 2015). Many of these algorithms leverage the ob-
+servation that people tend to give feedback that is best in-
+terpreted as guidance on the policy the agent should be fol-
+lowing, rather than as a numeric value to be maximized
+by the agent. However, these approaches assume models
+of feedback that are independent of the policy the agent
+is currently following. We present empirical results that
+demonstrate that this assumption is incorrect and further
+demonstrate cases in which policy-independent learning al-
+gorithms suffer from this assumption. Following this result,
+we present Convergent Actor-Critic by Humans (COACH),
+an algorithm for learning from policy-dependent human
+feedback. COACH is based on the insight that the ad-
+vantage function (a value roughly corresponding to how
+much better or worse an action is compared to the current
+policy) provides a better model of human feedback, cap-
+turing human-feedback properties like diminishing returns,
+rewarding improvement, and giving 0-valued feedback a
+semantic meaning that combats forgetting. We compare
+COACH to other approaches in a simple domain with sim-
+ulated feedback. Then, to validate that COACH scales to
+complex problems, we train ﬁve different behaviors on a
+TurtleBot robot.
+
+2. Background
+
+For modeling the underlying decision-making problem of
+an agent being taught by a human, we adopt the Markov
+Decision Process (MDP) formalism. An MDP is a 5-tuple:
+(cid:104)S, A, T, R, γ(cid:105), where S is the set of possible states of the
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+environment; A is the set of actions available to the agent;
+T (s(cid:48)|s, a) is the transition function, which deﬁnes the prob-
+ability of the environment transitioning to state s(cid:48) when
+the agent takes action a in environment state s; R(s, a, s(cid:48))
+is the reward function specifying the numeric reward the
+agent receives for taking action a in state s and transition-
+ing to state s(cid:48); and γ ∈ [0, 1] is a discount factor specifying
+how much immediate rewards are preferred to more distant
+rewards.
+
+A stochastic policy π for an MDP is a per-state action
+probability distribution that deﬁnes an agent’s behavior;
+π : S × A → [0, 1], where (cid:80)
+a∈A π(s, a) = 1, ∀s ∈ S.
+In the MDP setting, the goal is to ﬁnd the optimal pol-
+icy π∗, which maximizes the expected future discounted
+reward when the agent selects actions in each state ac-
+cording to π∗; π∗ = argmaxπ E[(cid:80)∞
+t=0 γtrt|π], where
+rt is the reward received at time t. Two important con-
+cepts in MDPs are the value function (V π) and action–
+value function (Qπ). The value function deﬁnes the ex-
+pected future discounted reward from each state when fol-
+lowing some policy and the action–value function deﬁnes
+the expected future discounted reward when an agent takes
+some action in some state and then follows some policy π
+thereafter. These equations can be recursively deﬁned via
+the Bellman equation: V π(s) = (cid:80)
+a π(s, a)Qπ(s, a) and
+Qπ(s, a) = (cid:80)
+s(cid:48) T (s(cid:48)|s, a) [R(s, a, s(cid:48)) + γV π(s(cid:48))]. For
+shorthand, the value functions for the optimal policies are
+usually denoted V ∗ and Q∗.
+
+In reinforcement learning (RL), an agent interacts with an
+environment modeled as an MDP, but does not have di-
+rect access to the transition function or reward function
+and instead must learn a policy from environment obser-
+vations. A common class of RL algorithms are actor-
+critic algorithms. Bhatnagar et al. (2009) provide a gen-
+eral template for these algorithms. Actor-critic algorithms
+are named for the two main components of the algorithms:
+The actor is a parameterized policy that dictates how the
+agent selects actions; the critic estimates the value func-
+tion for the actor and provides critiques at each time step
+that are used to update the policy parameters. Typically,
+the critique is the temporal difference (TD) error: δt =
+rt + γV (st) − V (st−1), which describes how much better
+or worse a transition went than expected.
+
+3. Human-centered Reinforcement Learning
+
+In this work, a human-centered reinforcement-learning
+(HCRL) problem is a learning problem in which an agent
+is situated in an environment described by an MDP but in
+which rewards are generated by a human trainer instead of
+from a stationary MDP reward function that the agent is
+meant to maximize. The trainer has a target policy π∗ they
+are trying to teach the agent. The trainer communicates this
+
+policy by giving numeric feedback as the agent acts in the
+environment. The goal of the agent is to learn the target
+policy π∗ from the feedback.
+
+To deﬁne a learning algorithm for this problem, we ﬁrst
+characterize how human trainers typically use numeric
+feedback to teach target policies. If feedback is stationary
+and intended to be maximized, it can be treated as a re-
+ward function and standard RL algorithms used. Although
+this approach has had some success (Pilarski et al., 2011;
+Isbell et al., 2001), there are complications that limit its ap-
+plicability. In particular, a trainer must take care that the
+feedback they give contains no unanticipated exploits, con-
+straining the feedback strategies they can use. Indeed, prior
+research has shown that interpreting human feedback like
+a reward function often induces positive reward cycles that
+lead to unintended behaviors (Knox, 2012; Ho et al., 2015).
+
+The issues with interpreting feedback as reward have led
+to the insight that human feedback is better interpreted as
+commentary on the agent’s behavior; for example, positive
+feedback roughly corresponds to “that was good” and neg-
+ative feedback roughly corresponds to “that was bad.” In
+the next section, we review existing HCRL approaches that
+build on this insight.
+
+4. Related Work
+
+A number of existing approaches to HCRL and RL that
+includes human feedback has been explored in the past.
+The most similar to ours, and a primary inspiration for
+In
+this work, is the TAMER framework (Knox, 2012).
+TAMER, trainers provide interactive numeric feedback as
+the learner takes actions. The learner attempts to estimate
+a target reward function by interpreting trainer feedback as
+exemplars of this function. When the agent makes rapid
+decisions, TAMER divides the feedback among the recent
+state–action pairs according to a probability distribution.
+TAMER makes decisions by myopically choosing the ac-
+tion with the highest reward estimate. Because the agent
+myopically maximizes reward, the feedback can also be
+thought of as exemplars of Q∗. Later work also investi-
+gated non-myopically maximizing the learned reward func-
+tion with a planning algorithm (Knox & Stone, 2013), but
+this approach requires a model of the environment and spe-
+cial treatment of termination conditions.
+
+Two other closely related approaches are SABL (Loftin
+et al., 2015) and Policy Shaping (Grifﬁth et al., 2013). Both
+of these approaches treat feedback as discrete probabilis-
+tic evidence of the trainer’s target parameterized policy.
+SABL’s probabilistic model additionally includes (learn-
+able) parameters for describing how often a trainer is ex-
+pected to give explicit positive or negative feedback.
+
+There have also been some domains in which treating hu-
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+man feedback as reward signals to maximize has had some
+success, such as in shaping the control for a prosthetic
+arm (Pilarski et al., 2011) and learning how to interact in
+an online chat room from multiple users’ feedback (Isbell
+et al., 2001). Some complications with how people give
+feedback have been reported, however.
+
+Some research has also examined combining human feed-
+back with more traditional environmental rewards (Knox
+& Stone, 2010; Tenorio-Gonzalez et al., 2010; Clouse &
+Utgoff, 1992; Maclin et al., 2005). A challenge in this
+context in practice is that rewards do not naturally come
+from the environment and must be programmatically de-
+ﬁned. However, it is appealing because the agent can learn
+in the absence of an active trainer. We believe our approach
+to HCRL could also straightforwardly incorporate learning
+from environmental reward as well, but we leave this inves-
+tigation for future work.
+
+Finally, a related research area is learning from demonstra-
+tion (LfD), in which a human provides examples of the de-
+sired behavior. There are a number of different approaches
+to solving this problem surveyed by Argall et al. (2009).
+We see these approaches as complementary to HCRL be-
+cause it is not always possible, or convenient, to provide
+demonstrations. LfD approaches that learn a parameter-
+ized policy could also operate with COACH, allowing the
+agent to have their policy seeded by demonstrations, and
+then ﬁne tuned with interactive feedback.
+
+Note that the policy-dependent feedback we study here
+is viewed as essential in behavior analysis reinforcement
+schedules (Miltenberger, 2011). Trainers are taught to
+provide diminishing returns (gradual decreases in posi-
+tive feedback for good actions as the agent adopts those
+actions), differential feedback (varied magnitude of feed-
+backs depending on the degree of improvement or deterio-
+ration in behavior), and policy shaping (positive feedback
+for suboptimal actions that improve behavior and then neg-
+ative feedback after the improvement has been made), all
+of which are policy dependent.
+
+5. Policy-dependent Feedback
+
+A common assumption of existing HCRL algorithms is that
+feedback depends only on the quality of an agent’s action
+selection. An alternative hypothesis is that feedback also
+depends on the agent’s current policy. That is, an action se-
+lection may be more greatly rewarded or punished depend-
+ing on how often the agent would typically be inclined to
+select it. For example, more greatly rewarding the agent for
+improving its performance than maintaining the status quo.
+We call the former model of feedback policy-independent
+and the latter policy-dependent.
+If people are more nat-
+urally inclined toward one model of feedback, algorithms
+
+Figure 1. The training interface shown to AMT users.
+
+based on the wrong assumption may result in unexpected
+responses to feedback. Consequently, we were interested
+in investigating which model better ﬁts human feedback.
+
+Despite existing HCRL algorithms assuming policy-
+independent feedback, evidence of policy-dependent feed-
+back can be found in prior works with these algorithms.
+For example, it was often observed that trainers taper their
+feedback over the course of learning (Ho et al., 2015; Knox
+et al., 2012; Isbell et al., 2001). Although diminishing feed-
+back is a property that is explained by people’s feedback
+being policy-dependent—as the learner’s performance im-
+proves, trainer feedback is decreased—an alternative expla-
+nation is simply trainer fatigue. To further make the case
+for human feedback being policy dependent, we provide a
+stronger result showing that trainers—for the same state–
+action pair—choose positive or negative feedback depend-
+ing on their perception of the learner’s behavior.
+
+5.1. Empirical Results
+
+We had Amazon Mechanical Turk (AMT) participants
+teach an agent in a simple sequential task, illustrated in Fig-
+ure 1. Participants were instructed to train a virtual dog to
+walk to the yellow goal location in a grid world as fast as
+possible but without going through the green cells. They
+were additionally told that, as a result of prior training,
+their dog was already either “bad,” “alright,” or “good” at
+the task and were shown examples of each behavior before
+training. In all cases, the dog would start in the location
+shown in Figure 1. “Bad” dogs walked straight through the
+green cells to the yellow cell. “Alright” dogs ﬁrst moved
+left, then up, and then to the goal, avoiding green but not
+taking the shortest route. “Good” dogs took the shortest
+path to yellow without going through green.
+
+During training, participants saw the dog take an action
+from one tile to another and then gave feedback after ev-
+ery action using a continuous labeled slider as shown. The
+slider always started in the middle of the scale on each
+trial, and several points were labeled with different levels
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+of reward (praise and treats) and punishment (scolding and
+a mild electric shock). Participants went through a brief
+tutorial using this interface. Responses were coded as a
+numeric value from −50 to 50, with “Do Nothing” as the
+zero-point.
+
+During the training phase, participants trained a dog for
+three episodes that all started in the same position and
+ended at the goal. The dog’s behavior was pre-programmed
+in such a way that the ﬁrst step of the ﬁnal episode would
+reveal if feedback was policy dependent. Each user was
+placed into one of three different conditions: improving,
+steady, or degrading. For all three conditions, the dog’s
+behavior in the ﬁnal episode was “alright,” regardless of
+any prior feedback. The conditions differed in terms of the
+behavior users observed in the ﬁrst two episodes. In the
+ﬁrst two episodes, users observed bad behavior in the im-
+proving condition (improving to alright); alright behavior
+in the steady condition; and good behavior in the degrad-
+ing condition. If feedback is policy-dependent, we would
+expect more positive feedback in the ﬁnal episode for the
+improving condition, but not for policy-independent feed-
+back since it was the same ﬁnal behavior for all conditions.
+
+Figure 2 shows boxplots and individual responses for the
+ﬁrst step of the ﬁnal episode under each of the three con-
+ditions. These results indicate that the sign of feedback is
+sensitive to the learner’s policy, as predicted. The mean and
+median feedback under the improving condition is slightly
+positive (Mean = 9.8, Median = 24, S.D. = 22.2; planned
+Wilcoxon one-sided signed-rank test: Z = 1.71, p <
+0.05), whereas it is negative for the steady condition (Mean
+= −18.3, Median = −23.5, S.D. = 24.6; planned Wilcoxon
+two-sided signed-rank test: Z = −3.15, p < 0.01) and
+degrading condition (Mean = −10.8, Median = −18.0,
+S.D. = 20.7; planned Wilcoxon one-sided signed-rank test:
+Z = −2.33, p < 0.05). There was a main effect across
+the three conditions (p < 0.01, Kruskal-Wallace Test), and
+pairwise comparisons indicated that only the improving
+condition differed from steady and degrading conditions
+(p < 0.01 for both, Bonferroni-corrected, Mann-Whitney
+Pairwise test).
+
+6. Convergent Actor-Critic by Humans
+
+In this section, we introduce Convergent Actor-Critic by
+Humans (COACH), an actor-critic-based algorithm capa-
+ble of learning from policy-dependent feedback. COACH
+is based on the insight that the advantage function is a good
+model of human feedback and that actor–critic algorithms
+update a policy using the critic’s TD error, which is an unbi-
+ased estimate of the advantage function. Consequently, an
+agent’s policy can be directly modiﬁed by human feedback
+without a critic component. We ﬁrst deﬁne the advantage
+function and its interpretation as trainer feedback. Then,
+
+Figure 2. The feedback distribution for ﬁrst step of the ﬁnal
+episode for each condition. Feedback tended to be positive for
+improving behavior, but negative otherwise.
+
+we present the general update rule for COACH and its con-
+vergence. Finally, we present Real-time COACH, which in-
+cludes mechanisms for providing variable magnitude feed-
+back and learning in problems with a high-frequency deci-
+sion cycle.
+
+6.1. The Advantage Function and Feedback
+
+The advantage function (Baird, 1995) Aπ is deﬁned as
+
+Aπ(s, a) = Qπ(s, a) − V π(s).
+
+(1)
+
+Roughly speaking, the advantage function describes how
+much better or worse an action selection is compared to
+the agent’s performance under policy π. The function is
+closely related to the update used in policy iteration (Put-
+erman, 1994): deﬁning π(cid:48)(s) = argmaxa Aπ(s, a) is guar-
+anteed to produce an improvement over π whenever π is
+suboptimal. It can also be used in policy gradient meth-
+ods to gradually improve the performance of a policy, as
+described later.
+
+It is worth nothing that feedback produced by the advan-
+tage function is consistent with that recommended in be-
+havior analysis. It trivially results in differential feedback
+since it is deﬁned as the magnitude of improvement of
+an action over its current policy.
+It induces diminishing
+returns because, as π improves opportunities to improve
+on it decrease. Indeed, once π is optimal, all advantage-
+function-based feedback is zero or negative. Finally, ad-
+vantage function feedback induces policy shaping in that
+whether feedback is positive or negative for an action de-
+pends on whether it is a net improvement over the current
+behavior.
+
+6.2. Convergence and Update Rule
+
+Given a performance metric ρ, Sutton et al. (1999) derive a
+policy gradient algorithm of the form: ∆θ = α∇θρ. Here,
+
+ImprovingSteadyDegradingConditionFinal Episode First ResponseInteractive Learning from Policy-Dependent Human Feedback
+
+θ represents the parameters that control the agent’s behav-
+ior and α is a learning rate. Under the assumption that ρ
+is the discounted expected reward from a ﬁxed start state
+distribution, they show that
+
+∇θρ =
+
+(cid:88)
+
+dπ(s)
+
+(cid:88)
+
+∇θπ(s, a)Qπ(s, a),
+
+s
+
+a
+
+where dπ(s) is the component of the (discounted) station-
+ary distribution at s. A beneﬁt of this form of the gradient
+is that, given that states are visited according to dπ(s) and
+actions are taken according to π(s, a), the update at time t
+can be made as:
+
+∆θt = αt∇θπ(st, at)
+
+(2)
+
+ft+1
+π(st, at)
+
+,
+
+where E[ft+1] = Qπ(st, at) − v(s) for any action-
+independent function v(s).
+
+In the context of the present paper, ft+1 represents the
+feedback provided by the trainer. It follows trivially that
+if the trainer chooses the policy-dependent feedback ft =
+Qπ(st, at), we obtain a convergent learning algorithm that
+(locally) maximizes discounted expected reward. In addi-
+tion, feedback of the form ft = Qπ(st, at) − V π(st) =
+Aπ(st, at) also results in convergence. Note that for the
+trainer to provide feedback in the form of Qπ or Aπ, they
+would need to “peer inside” the learner and observe its pol-
+icy. In practice, the trainer estimates π by observing the
+agent’s actions.
+
+6.3. Real-time COACH
+
+There are challenges in implementing Equation 2 for real-
+time use in practice. Speciﬁcally, the interface for provid-
+ing variable magnitude feedback needs to be addressed, and
+the question of how to handle sparseness and the timing of
+feedback needs to be answered. Here, we introduce Real-
+time COACH, shown in Algorithm 1, to address these is-
+sues.
+
+For providing variable magnitude reward, we use reward
+aggregation (Knox & Stone, 2009b). In reward aggrega-
+tion, a trainer selects from a discrete set of feedback values
+and further raises or lowers the numeric value by giving
+multiple feedbacks in succession that are summed together.
+
+While sparse feedback is not especially problematic (be-
+cause no feedback results in no change in policy), it may
+slow down learning unless the trainer is provided with a
+mechanism to allow feedback to affect a history of actions.
+We use eligibility traces (Barto et al., 1983) to help apply
+feedback to the relevant transitions. An eligibility trace is
+a vector that keeps track of the policy gradient and decays
+exponentially with a parameter λ. Policy parameters are
+then updated in the direction of the trace, allowing feed-
+back to affect earlier decisions. However, a trainer may not
+
+Algorithm 1 Real-time COACH
+Require: policy πθ0, trace set λ, delay d, learning rate α
+
+Initialize traces eλ ← 0 ∀λ ∈ λ
+observe initial state s0
+for t = 0 to ∞ do
+
+select and execute action at ∼ πθt(st, ·)
+observe next state st+1, sum feedback ft+1, and λ
+for λ(cid:48) ∈ λ do
+
+eλ(cid:48) ← λ(cid:48)eλ(cid:48) +
+
+1
+
+πθt (st−d,at−d) ∇θtπθt(st−d, at−d)
+
+end for
+θt+1 ← θt + αft+1eλ
+
+end for
+
+always want to inﬂuence a long history of actions. Conse-
+quently, Real-time COACH maintains multiple eligibility
+traces with different temporal decay rates and the trainer
+chooses which eligibility trace to use for each update. This
+trace choice may be handled implicitly with the feedback
+value selection or explicitly.
+
+Due to reaction time, human feedback is typically delayed
+by about 0.2 to 0.8 seconds from the event to which they
+meant to give feedback (Knox, 2012). To handle this delay,
+feedback in Real-time COACH is associated with events
+from d steps ago to cover the gap. Eligibility traces further
+smooth the feedback to older events.
+
+Finally, we note that just as there are numerous variants of
+actor-critic update rules, similar variations can be used in
+the context of COACH.
+
+7. Comparison of Update Rules
+
+To understand the behavior of COACH under different
+types of trainer feedback strategies, we carried out a con-
+trolled comparison in a simple grid world. The domain is
+essentially an expanded version of the dog domain used in
+our human-subject experiment. It is a 8 × 5 grid in which
+the agent starts in 0, 0 and must get to 7, 0, which yields +5
+reward. However, from 1, 0 to 6, 0 are cells the agent needs
+to avoid, which yield −1 reward.
+
+7.1. Learning Algorithms and Feedback Strategies
+
+Three types of learning algorithms were tested. Each main-
+tains an internal data structure, which it updates with feed-
+back of the form (cid:104)s, a, f, s(cid:48)(cid:105), where s is a state, a is an
+action taken in that state, f is the feedback received from
+the trainer, and s(cid:48) is the resulting next state. The algorithm
+also must produce an action for each state encountered.
+
+The ﬁrst algorithm, Q learning (Watkins & Dayan, 1992),
+represents a standard value-function-based RL algorithm
+designed for reward maximization under delayed feedback.
+It maintains a data structure Q(s, a), initially 0. Its update
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+rule has the form:
+
+7.2. Results
+
+∆Q(s, a) = α[f + γ max
+
+Q(s(cid:48), a(cid:48)) − Q(s, a)].
+
+(3)
+
+a(cid:48)
+
+Actions are chosen using the rule: argmaxa Q(s, a), where
+ties are broken randomly. We tested a handful of parame-
+ters and used the best values: discount factor γ = 0.99 and
+learning rate α = 0.2.
+
+In TAMER (Knox & Stone, 2009a), a trainer provides inter-
+active numeric feedback that is interpreted as an exemplar
+of the reward function for the demonstrated state–action
+pair as the learner takes actions. We assumed that each
+feedback applies to the last action, and thus used a simpli-
+ﬁed version of the algorithm that did not attempt to spread
+updates over multiple transitions. TAMER maintains a data
+structure RH (s, a) for the predicted reward in each state,
+initially 0. It is updated by: ∆RH (s, a) = αf . We used
+α = 0.2. Actions are chosen via an (cid:15)-greedy rule on
+RH (s, a) with (cid:15) = 0.2.
+
+Lastly, we examined COACH, which is also designed to
+work well with human-generated feedback. We used a soft-
+max policy with a single λ = 0 trace. The parameters were
+a matrix of values θ(s, a), initially zero. The stochastic
+policy deﬁned by these parameters was
+
+π(s, a) = eβθ(s,a)/
+
+eβθ(s,a),
+
+(cid:88)
+
+a
+
+with β = 1. Parameters were updated via
+
+∆θ = α∇θπ(s, a)
+
+(4)
+
+f
+π(s, a)
+
+,
+
+where α is a learning rate. We used α = 0.05.
+
+In effect, each of these learning rules makes an assump-
+tion about the kind of feedback it expects trainers to use.
+We wanted to see how they would behave with feedback
+strategies that matched these assumptions and those that
+did not. The ﬁrst feedback strategy we studied is the clas-
+sical task-based reward function (“task”) where the feed-
+back is sparse: +5 reward when the agent reaches the goal
+state, −1 for avoidance cells, and 0 for all other transi-
+tions. Q-learning is known to converge to optimal behav-
+ior with this type of feedback. The second strategy pro-
+vides policy-independent feedback for each state–action
+pair (“action”): +5 when the agent reaches termination,
++1 reward when the selected action matches an optimal
+policy, −1 for reaching an avoidance cell, and 0 other-
+wise. This type of feedback serves TAMER well. The
+third strategy (“improvement”) used feedback deﬁned by
+the advantage function of the learner’s current policy π,
+Aπ(s, a) = Qπ(s, a) − V π(s), where the value functions
+are deﬁned based on the task rewards. This type of feed-
+back is very well suited to COACH.
+
+Each combination of algorithm and feedback strategy was
+run 99 times with the median value of the number of steps
+needed to reach the goal reported. Episodes were ended
+after 1, 000 steps if the goal was not reached.
+
+Figure 3(a) shows the steps needed to reach the goal for
+the three algorithms trained with task feedback. The ﬁgure
+shows that TAMER can fail to learn in this setting. COACH
+also performs poorly with λ = 0, which prevents feedback
+from inﬂuencing earlier decisions. We did a subsequent ex-
+periment (not shown) with λ = 0.9 and found that COACH
+converged to reasonable behavior, although not as quickly
+as Q learning. This result helps justify using traces to com-
+bat the challenges of delayed feedback.
+
+Figure 3(b) shows results with action feedback. This time,
+Q learning fails to perform well, a consequence of this feed-
+back strategy inducing positive behavior cycles as it tries to
+avoid ending the trial, the same kind of problem that HCRL
+algorithms have been designed to avoid. Both TAMER and
+COACH perform well with this feedback strategy. TAMER
+performs slightly better than COACH, as this is precisely
+the kind of feedback TAMER was designed to handle.
+
+Figure 3(c) shows the results of the three algorithms with
+improvement feedback, which is generated via the advan-
+tage function deﬁned on the learner’s current policy. These
+results tells a different story. Here, COACH performs the
+best. Q-learning largely ﬂounders for most of the time,
+but with enough training sometimes start to converge. (Al-
+though, 14% of the time, Q learning fails to do well even
+after 100 training episodes). TAMER, on the other hand,
+performs very badly at ﬁrst. While the median score in the
+plot shows TAMER suddenly performing more compara-
+bly to COACH after about 10 episodes, 29% of our training
+trials completely failed to improve and timed-out across all
+100 episodes.
+
+8. Robotics Case Study
+
+In this section, we present qualitative results on Real-time
+COACH applied to a TurtleBot robot. The goal of this
+study was to test that COACH can scale to a complex do-
+main involving multiple challenges, including training an
+agent that operates on a fast decision cycle (33ms), noisy
+non-Markov observations from a camera, and agent per-
+ception that is hidden from the trainer. To demonstrate the
+ﬂexibility of COACH, we trained it to perform ﬁve differ-
+ent behaviors involving a pink ball and cylinder with an
+orange top using the same parameter selections. We dis-
+cuss these behaviors below. We also contrast the results to
+training with TAMER. We chose TAMER as a comparison
+because, to our knowledge, it is the only HCRL algorithm
+with success on a similar platform (Knox et al., 2013).
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+The TurtleBot is a mobile base with two degrees of freedom
+that senses the world from a Kinect camera. We discretized
+the action space to ﬁve actions: forward, backward, rotate
+clockwise, rotate counterclockwise, and do nothing. The
+agent selects one of these actions every 33ms. To deliver
+feedback, we used a Nintendo Wii controller to give +1,
++4, or −1 numeric feedback, and pause and continue train-
+ing. For perception, we used only the RGB image chan-
+nels from the Kinect. Because our behaviors were based
+around a relocatable pink ball and a ﬁxed cylinder with an
+orange top, we hand constructed relevant image features to
+be used by the learning algorithms. These features were
+generated using techniques similar to those used in neural
+network architectures. The features were constructed by
+ﬁrst transforming the image into two color channels asso-
+ciated with the colors of the ball and cylinder. Sum pool-
+ing to form a lower-dimensional 8 × 8 grid was applied to
+each color channel. Each sum-pooling unit was then passed
+through three different normalized threshold units deﬁned
+by Ti(x) = min( x
+, 1), where φi speciﬁes the saturation
+φi
+point. Using multiple saturation parameters differentiates
+the distance of objects, resulting in three “depth” scales per
+color channel. Finally, we passed these results through a
+2 × 8 max-pooling layer with stride 1.
+
+The ﬁve behaviors we trained were push–pull, hide, ball
+following, alternate, and cylinder navigation. In push–pull,
+the TurtleBot is trained to navigate to the ball when it is far,
+and back away from it when it is near. The hide behavior
+has the TurtleBot back away from the ball when it is near
+and turn away from it when it is far. In ball following, the
+TurtleBot is trained to navigate to the ball. In the alternate
+task, the TurtleBot is trained to go back and forth between
+the cylinder and ball. Finally, cylinder navigation involves
+the agent navigating to the cylinder. We further classify
+training methods for each of these behaviors as ﬂat, involv-
+ing the push–pull, hide, and ball following behaviors; and
+compositional, involving the alternate and cylinder naviga-
+tion behaviors.
+
+In all cases, our human trainer (one of the co-authors) used
+differential feedback and diminishing returns to quickly re-
+inforce behaviors and restrict focus to the areas needing
+tuning. However, in alternate and cylinder navigation, they
+attempted more advanced compositional training methods.
+For alternate, the agent was ﬁrst trained to navigate to the
+ball when it sees it, and then turn away when it is near.
+Then, the same was independently done for the cylinder.
+After training, introducing both objects would cause the
+agent to move back and forth between them. For cylin-
+der navigation, they attempted to make use of an animal-
+training method called lure training in which an animal is
+ﬁrst conditioned to follow a lure object, which is then used
+to guide it through more complex behaviors. In cylinder
+navigation, they ﬁrst trained the ball to be a lure, used it to
+
+(a) Task feedback
+
+(b) Action feedback
+
+(c) Improvement feedback
+
+Figure 3. Steps to goal for Q learning (blue), TAMER (red), and
+COACH (yellow) in Cliff world under different feedback strate-
+gies. The y-axis is on a logarithmic scale.
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+guide the TurtleBot to the cylinder, and ﬁnally gave a +4
+reward to reinforce the behaviors it took when following
+the ball (turning to face the cylinder, moving toward it, and
+stopping upon reaching it). The agent would then navigate
+to the cylinder without requiring the ball to be present.
+
+For COACH parameters, we used a softmax parameterized
+policy, where each action preference value was a linear
+function of the image features, plus tanh(θa), where θa
+is a learnable parameter for action a, providing a prefer-
+ence in the absence of any stimulus. We used two eligi-
+bility traces with λ = 0.95 for feedback +1 and −1, and
+λ = 0.9999 for feedback +4. The feedback-action delay
+d was set to 6, which is 0.198 seconds. Additionally, we
+used an actor-critic parameter-update rule variant in which
+action preference values are directly modiﬁed (along its
+gradient), rather than by the gradient of the policy (Sut-
+ton & Barto, 1998). This variant more rapidly commu-
+nicates stimulus–response preferences. For TAMER, we
+used typical parameter values for fast decision cycle prob-
+lems: delay-weighted aggregate TAMER with uniform dis-
+tribution credit assignment over 0.2 to 0.8 seconds, (cid:15)p = 0,
+and cmin = 1 (Knox, 2012). (See prior work for parameter
+meaning.) TAMER’s reward-function approximation used
+the same representation as COACH.
+
+8.1. Results and Discussion
+
+COACH was able to successfully learn all ﬁve behaviors
+and a video showing its learning is available online at
+https://vid.me/3h2s. Each of these behaviors were
+trained in less than two minutes, including the time spent
+verifying that a behavior worked. Differential feedback
+and diminishing returns allowed only the behaviors in need
+of tuning to be quickly reinforced or extinguished without
+any explicit division between training and testing. More-
+over, the agent successfully beneﬁted from the composi-
+tional training methods, correctly combining subbehaviors
+for alternate, and quickly learning cylinder navigation with
+the lure.
+
+TAMER only successfully learned the behaviors using the
+ﬂat training methodology and failed to learn the composi-
+tionally trained behaviors. In all cases, TAMER tended to
+forget behavior, requiring feedback for previous decisions
+it learned to be resupplied after it learned a new decision.
+For the alternate behavior, this forgetting led to failure: af-
+ter training the behavior for the cylinder, the agent forgot
+some of the ball-related behavior and ended up drifting off
+course when it was time to go to the ball. TAMER also
+failed to learn from lure training because TAMER does not
+allow reinforcing a long history of behaviors.
+
+We believe TAMER’s forgetting is a result of interpret-
+ing feedback as reward-function exemplars in which new
+feedback in similar contexts can change the target. To il-
+
+lustrate this problem, we constructed a well-deﬁned sce-
+nario in which TAMER consistently unlearns behavior. In
+this scenario, the goal was for the TurtleBot to always stay
+whenever the ball was present, and move forward if just the
+cylinder was present. We ﬁrst trained TAMER to stay when
+the ball alone was present using many rapid rewards (yield-
+ing a large aggregated signal). Next, we trained it to move
+forward when the cylinder alone was present. We then in-
+troduced both objects, and the TurtleBot correctly stayed.
+After rewarding it for staying with a single reward (weaker
+than the previously-used many rapid rewards), the Turtle-
+Bot responded by moving forward—the positive feedback
+actually caused it to unlearn the rewarded behavior. This
+counter-intuitive response is a consequence of the small re-
+ward decreasing its reward-function target for the stay ac-
+tion to a point lower than the value for moving forward.
+Roughly, because TAMER does not treat zero reward as
+special, a positive reward can be a negative inﬂuence if
+it is less than expected. COACH does not exhibit this
+problem—any positive reward for staying will strengthen
+the behavior.
+
+9. Conclusion
+
+In this work, we presented empirical results that show
+that the numeric feedback people give agents in an inter-
+active training paradigm is inﬂuenced by the agent’s cur-
+rent policy and argued why such policy-dependent feed-
+back enables useful training strategies. We then intro-
+duced COACH, an algorithm that, unlike existing human-
+centered reinforcement-learning algorithms, converges to a
+local optimum when trained with policy-dependent feed-
+back. We showed that COACH learns robustly in the
+face of multiple feedback strategies and ﬁnally showed that
+COACH can be used in the context of robotics with ad-
+vanced training methods.
+
+There are a number of exciting future directions to ex-
+tend this work. In particular, because COACH is built on
+the actor-critic paradigm, it should be possible to combine
+it straightforwardly with learning from demonstration and
+environmental rewards, allowing an agent to be trained in
+a variety of ways. Second, because people give policy-
+dependent feedback, investigating how people model the
+current policy of the agent and how their model differs from
+the agent’s actual policy may produce even greater gains.
+
+Acknowledgements
+
+We thank the anonymous reviewers for their useful sug-
+gestions and comments. This research has taken place in
+part at the Intelligent Robot Learning (IRL) Lab, Wash-
+IRL’s support includes NASA
+ington State University.
+NNX16CD07C, NSF IIS-1149917, NSF IIS-1643614, and
+USDA 2014-67021-22174.
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+References
+
+Argall, Brenna D, Chernova, Sonia, Veloso, Manuela, and
+Browning, Brett. A survey of robot learning from
+demonstration. Robotics and autonomous systems, 57
+(5):469–483, 2009.
+
+Baird, Leemon. Residual algorithms: Reinforcement learn-
+ing with function approximation. In Proceedings of the
+twelfth international conference on machine learning,
+pp. 30–37, 1995.
+
+Barto, A.G., Sutton, R.S., and Anderson, C.W. Neuron-
+like adaptive elements that can solve difﬁcult learning
+control problems. Systems, Man and Cybernetics, IEEE
+Transactions on, SMC-13(5):834 –846, sept.-oct. 1983.
+
+Bhatnagar, Shalabh, Sutton, Richard S, Ghavamzadeh, Mo-
+hammad, and Lee, Mark. Natural actor–critic algo-
+rithms. Automatica, 45(11):2471–2482, 2009.
+
+Clouse, Jeffery A and Utgoff, Paul E. A teaching method
+the
+for reinforcement
+Ninth International Conference on Machine Learning
+(ICML92), pp. 92–101, 1992.
+
+In Proceedings of
+
+learning.
+
+Grifﬁth, Shane, Subramanian, Kaushik, Scholz, Jonathan,
+Isbell, Charles, and Thomaz, Andrea L. Policy shaping:
+Integrating human feedback with reinforcement learn-
+ing. In Advances in Neural Information Processing Sys-
+tems, pp. 2625–2633, 2013.
+
+Ho, Mark K, Littman, Michael L., Cushman, Fiery, and
+Austerweil, Joseph L. Teaching with rewards and pun-
+In Pro-
+ishments: Reinforcement or communication?
+ceedings of the 37th Annual Meeting of the Cognitive
+Science Society, 2015.
+
+Isbell, Charles, Shelton, Christian R, Kearns, Michael,
+Singh, Satinder, and Stone, Peter. A social reinforcement
+learning agent. In Proceedings of the ﬁfth international
+conference on Autonomous agents, pp. 377–384. ACM,
+2001.
+
+Knox, W Bradley and Stone, Peter. Interactively shaping
+agents via human reinforcement: The TAMER frame-
+work. In Proceedings of the Fifth International Confer-
+ence on Knowledge Capture, pp. 9–16, 2009a.
+
+Knox, W Bradley, Glass, Brian D, Love, Bradley C, Mad-
+dox, W Todd, and Stone, Peter. How humans teach
+agents. International Journal of Social Robotics, 4(4):
+409–421, 2012.
+
+Knox, W Bradley, Stone, Peter, and Breazeal, Cynthia.
+Training a robot via human feedback: A case study. In
+Social Robotics, pp. 460–470. Springer, 2013.
+
+Knox, W. Bradley Knox and Stone, Peter. Combining
+manual feedback with subsequent MDP reward signals
+In Proc. of 9th Int. Conf.
+for reinforcement learning.
+on Autonomous Agents and Multiagent Systems (AAMAS
+2010), May 2010.
+
+Knox, William Bradley. Learning from human-generated
+reward. PhD thesis, University of Texas at Austin, 2012.
+
+Loftin, Robert, Peng, Bei, MacGlashan, James, Littman,
+Michael L., Taylor, Matthew E., Huang, Jeff, and
+Roberts, David L.
+Learning behaviors via human-
+delivered discrete feedback: modeling implicit feedback
+strategies to speed up learning. Autonomous Agents and
+Multi-Agent Systems, 30(1):30–59, 2015.
+
+Maclin, Richard, Shavlik, Jude, Torrey, Lisa, Walker,
+Trevor, and Wild, Edward. Giving advice about pre-
+ferred actions to reinforcement learners via knowledge-
+based kernel regression. In Proceedings of the National
+Conference on Artiﬁcial intelligence, volume 20, pp.
+819, 2005.
+
+Miltenberger, Raymond G. Behavior modiﬁcation: Princi-
+
+ples and procedures. Cengage Learning, 2011.
+
+Pilarski, Patrick M, Dawson, Michael R, Degris, Thomas,
+Fahimi, Farbod, Carey, Jason P, and Sutton, Richard S.
+Online human training of a myoelectric prosthesis
+controller via actor-critic reinforcement learning.
+In
+2011 IEEE International Conference on Rehabilitation
+Robotics, pp. 1–7. IEEE, 2011.
+
+Puterman, Martin L. Markov Decision Processes—
+Discrete Stochastic Dynamic Programming. John Wiley
+& Sons, Inc., New York, NY, 1994.
+
+Sutton, Richard S and Barto, Andrew G. Reinforcement
+learning: An introduction, volume 1. MIT press Cam-
+bridge, 1998.
+
+Knox, W Bradley and Stone, Peter. Interactively shaping
+agents via human reinforcement: The tamer framework.
+In Proceedings of the ﬁfth international conference on
+Knowledge capture, pp. 9–16. ACM, 2009b.
+
+Sutton, Richard S, McAllester, David A, Singh, Satinder P,
+Mansour, Yishay, et al. Policy gradient methods for re-
+inforcement learning with function approximation.
+In
+NIPS, volume 99, pp. 1057–1063, 1999.
+
+Knox, W Bradley and Stone, Peter.
+
+Learning non-
+myopically from human-generated reward. In Proceed-
+ings of the 2013 international conference on Intelligent
+user interfaces, pp. 191–202. ACM, 2013.
+
+Tenorio-Gonzalez, Ana C, Morales, Eduardo F, and Vil-
+lase˜nor-Pineda, Luis. Dynamic reward shaping: training
+a robot by voice. In Advances in Artiﬁcial Intelligence–
+IBERAMIA 2010, pp. 483–492. Springer, 2010.
+
+Interactive Learning from Policy-Dependent Human Feedback
+
+Thomaz, Andrea L and Breazeal, Cynthia. Robot learn-
+In Development
+ing via socially guided exploration.
+and Learning, 2007. ICDL 2007. IEEE 6th International
+Conference on, pp. 82–87. IEEE, 2007.
+
+Thomaz, Andrea L and Breazeal, Cynthia. Teachable
+robots: Understanding human teaching behavior to build
+more effective robot learners. Artiﬁcial Intelligence,
+172:716–737, 2008.
+
+Thomaz, Andrea Lockerd and Breazeal, Cynthia. Rein-
+forcement learning with human teachers: Evidence of
+feedback and guidance with implications for learning
+performance. In AAAI, volume 6, pp. 1000–1005, 2006.
+
+Watkins, Christopher J. C. H. and Dayan, Peter. Q-learning.
+
+Machine Learning, 8(3):279–292, 1992.
+
+

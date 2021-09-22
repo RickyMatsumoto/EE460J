@@ -1,0 +1,1345 @@
+Bayesian Optimization with Tree-structured Dependencies
+
+Rodolphe Jenatton 1 Cedric Archambeau 1 Javier Gonzalez 2 Matthias Seeger 1
+
+Abstract
+
+Bayesian optimization has been successfully used
+to optimize complex black-box functions whose
+evaluations are expensive. In many applications,
+like in deep learning and predictive analytics, the
+optimization domain is itself complex and struc-
+tured. In this work, we focus on use cases where
+this domain exhibits a known dependency struc-
+ture. The beneﬁt of leveraging this structure is
+twofold: we explore the search space more efﬁ-
+ciently and posterior inference scales more favor-
+ably with the number of observations than Gaus-
+sian Process-based approaches published in the
+literature. We introduce a novel surrogate model
+for Bayesian optimization which combines inde-
+pendent Gaussian Processes with a linear model
+that encodes a tree-based dependency structure
+and can transfer information between overlapping
+decision sequences. We also design a specialized
+two-step acquisition function that explores the
+search space more effectively. Our experiments
+on synthetic tree-structured objectives and on the
+tuning of feedforward neural networks show that
+our method compares favorably with competing
+approaches.
+
+1. Introduction
+
+In recent years, Bayesian optimization has gained a growing
+attention from machine learning experts in, both, academia
+and industry (Shahriari et al., 2016). It takes the widespread
+application of machine learning to the next level of sophisti-
+cation as it enables to automatically ﬁne-tune hyperparam-
+eters (Snoek et al., 2012), whether they are parametrizing
+data pre-processors, models or the learning algorithms. Fine-
+tuning is essential to obtain state-of-the-art performance
+
+1Amazon, Berlin, Germany. 2Amazon, Cambridge, United
+Kingdom. Correspondence to: Rodolphe Jenatton <jenat-
+ton@amazon.de>, Cedric Archambeau <cedrica@amazon.de>,
+Javier Gonzalez <gojav@amazon.co.uk>, Matthias Seeger
+<matthias@amazon.de>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+with complex machine learning models, such as deep neural
+networks. Historically, this vital step has been done, either
+manually, or via regular or random grid search, which can
+consume vast amounts of human expert time and are waste-
+ful of computing resources. Hence, one of the main beneﬁts
+of Bayesian optimization is that it removes this burden from
+the shoulders of the practitioners, who can then focus their
+attention on more rewarding value-adding tasks.
+
+To set the stage, our goal is to solve a global optimization
+problem:
+
+min
+x∈X
+
+f (x),
+
+where X is the optimization domain and f is a black-box
+function, typically continuous and multimodal. We further
+assume that querying f is costly. For example, f may be the
+outcome of a physical experiment or require a large amount
+of computation. The latter arises when f corresponds to a
+model selection score for a machine learning model trained
+on a possibly large dataset.
+
+The protocol for sequential Bayesian optimization proceeds
+as follows (Mockus et al., 1978; Shahriari et al., 2016).
+Given n noisy evaluations yi ≈ f (xi), i ∈ {1, . . . , n},
+a surrogate probabilistic model of f is maintained. Our
+goal is to ﬁnd a global optimum of f by querying it as few
+times as possible. The location xn+1 is chosen by maximiz-
+ing an acquisition function which performs an exploration-
+exploitation trade-off. A common choice for the surrogate
+model is a Gaussian process (GP) (Rasmussen & Williams,
+2006). For a GP surrogate model, common acquisition func-
+tions can be tractably computed and optimized via gradient-
+based optimization algorithms. While existing Bayesian
+optimization approaches mitigate the high evaluation cost of
+f , they suffer from the curse of dimensionality when facing
+a high-dimensional space X .
+
+In this paper, we introduce a novel methodology able to
+exploit a given tree-shaped dependency structure on X by
+transferring information between overlapping paths. By
+constructing a surrogate model tailored to the structure, we
+can reduce the number of evaluations of commonly used
+acquisition functions. The same structure also allows us to
+take acquisition decisions more efﬁciently, thus speeding up
+the search of candidates.
+
+Tree-based dependencies occur often in practice. For exam-
+
+Bayesian Optimization with Tree-structured Dependencies
+
+ple, faced with a classiﬁcation problem, we may want to
+simultaneously search over many different machine learn-
+ing models, each coming with their own hyperparameters.
+Some conﬁgurations may also share parameters (e.g., logis-
+tic regression with (cid:96)2 and (cid:96)1 penalty may share the learning
+rate). These choices could be encoded in a decision tree,
+where inner nodes select between different models and hy-
+perparameters populate leaf nodes. Another example arises
+when having to decide on a deep neural network architecture:
+the size of a layer, choice of activation function, or drop-
+out fraction may depend on the number of layers (Bengio,
+2009).
+
+1.1. Baselines and Related Work
+
+A baseline approach to Bayesian optimization in this setting
+is to ignore the structure of X and, as a result, choose a GP
+with covariance kernel K(x, x(cid:48)) deﬁned over the joint input
+space. When comparing a pair of points, all coordinates are
+taken into account. While easy to run in existing Bayesian
+optimization toolboxes, this approach can be highly inef-
+ﬁcient. Not only do we encounter a cost of O(n3) after
+n acquisitions due to the global nature of the GP, but we
+also suffer from the curse of dimensionality when searching
+over X . Several authors attempted to design covariance
+functions that are aware of the structure: Duvenaud et al.
+(2011) consider kernels with an additive structure, while
+Swersky et al. (2014a); Hutter & Osborne (2013) introduce
+the Arc-kernel. However, the cost remains O(n3).
+
+Another idea is to consider an independent GP for every
+valid subset of hyperparameters, as proposed by Bergstra
+et al. (2011). This approach corresponds to having an in-
+dependent GP per leaf in the dependency tree. It scales as
+O((cid:80)
+p n3
+p), where np is the number of evaluations at leaf
+node p and (cid:80)
+p np = n. However, it lacks a mechanism
+for information sharing across the leaves. As we will show,
+information sharing can be beneﬁcial in order to cut down
+on the number of evaluations. Moreover, the independent
+approach requires a sizable number of evaluations at each
+leaf, which can be problematic when there are many leafs.
+
+Tree-structured dependencies can also be dealt with by as-
+signing default values to coordinates of x which do not fall
+into the leaf node under consideration, using a Random For-
+est model to make this choice (Hutter et al., 2011). This
+strategy is implemented in the SMAC library.
+
+Finally, Zhang et al. (2016) proposed a dedicated approach
+to tune data analytic pipelines, via a two-layer Bayesian
+optimization framework. Their method ﬁrst uses a para-
+metric model to select some promising algorithms, whose
+hyperparameters are then reﬁned by a nonparametric model.
+
+1.2. Contributions
+
+First, we introduce a novel Bayesian optimization method-
+ology able to leverage conditional dependencies between
+hyperparameters. To this end, we build a tree-structured
+surrogate model, with separate GPs at the leaf nodes, and
+random linear (or constant) functions at the inner nodes.
+This allows us to transfer information between leafs that
+share nodes on their respective paths, which enables us in
+turn to efﬁciently search the space X . Yet, we also retain
+the beneﬁcial scaling of the independent approach (Bergstra
+et al., 2011). To our knowledge, no prior published work
+satisﬁed these two aspects. The Arc-kernel allows for in-
+formation sharing, but comes with O(n3) computations.
+Hutter et al. (2011) rely on Random Forests to represent
+correlations, but no particular sharing mechanism exists.
+
+Second, we introduce a novel acquisition function which is
+also able to exploit the tree structure and relies on the ex-
+pected improvement (Mockus et al., 1978). The acquisition
+operates in two steps. We ﬁrst select the most promising
+leaf node to score, effectively restricting our attention to a
+portion of X . We then optimize over all possible anchor
+points in this portion of space. This can result in a drastic
+reduction in the number of surrogate functions to optimize
+over. In comparison, the independent baseline requires to
+score every anchor point of every leaf in the tree at each
+iteration.
+
+The paper is organized as follows. In Section 2, we detail
+our surrogate GP model and inference computations. In
+Section 3, we show how the model structure gives rise to ef-
+ﬁcient acquisition optimization. For a range of experiments
+on simulated and real data, we report in Section 4 favorable
+comparisons with existing alternatives. We conclude with
+possible extensions in Section 5.
+
+2. Tree-structured semi-parametric Gaussian
+
+process regression model
+
+We assume that the hyperparameters exhibit conditional
+dependencies, which can be modeled with decision tree T .
+The set of inner nodes V is indexed by v ∈ {1, . . . , V }; each
+v has a decision variable and a weight variable cv. The set
+of leaf nodes P is indexed by p ∈ {1, . . . , P }. Equivalently,
+p indexes (unique) paths from the root to a leaf.
+
+Further, let Dn = {(xi, yi)}n
+i=1 be the set of observations.
+We introduce a set of auxiliary variables {pi | pi ∈ P}n
+i=1
+that indicate the leaf to which observation i is associated
+and let np = |{i | pi = p}|. Note that xi ∈ Xpi since the input
+domain may vary from one leaf to another.
+
+Bayesian Optimization with Tree-structured Dependencies
+
+2.1. Model with Random Inner Node Parameters
+
+First, we obtain the posterior GP over the latent functions:
+
+We consider a surrogate model that associates with leaf p
+a latent function gp with GP prior, whose mean function
+and covariance kernel are bp and Kp(x, x(cid:48)). We impose
+a zero-mean Gaussian prior over the weight vector c =
+[c1, . . . , cV ]T .
+
+The resulting generative model is given by
+
+c ∼ N (0, Σc),
+gp(·) ∼ GP(cid:0)bp, Kp
+p=1, c ∼ N (gpi(xi) + z(cid:62)
+pi
+
+(cid:1),
+
+yi|pi, {gp(xi)}P
+
+c, σ2).
+
+(1)
+
+p=1 and σ2 are the prior covariance, the
+where Σc, {bp}P
+scalar offsets and the noise variance. Vector zp ∈ {0, 1}V
+is a binary mask that activates the weights of the inner node
+decision variables on the path to leaf node p. In other words,
+(zp)v = 1 iff v lies on the path from the root to p. The prior
+covariance Σc will be diagonal in our experiments.
+
+When c = 0, model (1) boils down to assuming P indepen-
+dent GPs. While inference only scales as O((cid:80)
+p) in this
+case, information is not transferred between overlapping
+paths. Introducing the weight vector c allows us to couple
+inference for such paths, while keeping the favorable scaling
+and better exploring the optimization space (see Section 4).
+
+p n3
+
+Next, we show how to perform efﬁcient inference in this
+model and give an interpretation of the induced kernel when
+computing the marginal likelihood. Posterior inference over
+the surrogate models {gp(·)} and the random weights c is
+needed to compute the acquisition functions (see Section 3).
+
+2.2. Posterior Inference
+
+Before starting, we need some notation. Let y ∈ Rn be the
+vector of all observations and g ∈ Rn the vector of latent
+function values at {xi}n
+i=1. Further, let Ip = {i | pi = p},
+noting that np = |Ip|. We partition the data accordingly,
+so that yp = [yi]i∈Ip , and similarly gp = [gp(xi)]i∈Ip .
+∈ RV ×np , where
+Also, we deﬁne the matrix Zp = zp1(cid:62)
+np
+1np = [1] ∈ Rnp , and the vector bp = bp1np ∈ Rnp .
+The joint distribution P (y, g, c) of our model is given by
+
+P (c)(cid:81)
+
+pN (gp; bp, Kp)N (yp; gp + Z(cid:62)
+
+p c, σ2Inp ),
+
+(2)
+
+where Kp = [Kp(xi, xj)]i,j∈Ip are kernel matrices, with
+the prior P (c) = N (c; 0, Σc). Our goal is to obtain the pos-
+terior process P (gp(·)|c, yp) and the posterior distribution
+P (c|y).
+
+We can directly read off the posterior over the latent func-
+tions and parameters after rewriting the joint distribution
+into the following form (see Section 2 of the Appendix for
+details):
+
+P (y)P (c|y)(cid:81)
+
+pP (gp|c, yp).
+
+gp(·)|c, yp ∼ GP(cid:0)mp(·), Sp(·, ·)(cid:1),
+
+where mp(x) = kp(x)(cid:62)M−1
+Sp(x, x(cid:48)) = Kp(x, x(cid:48)) − kp(x)(cid:62)M−1
+Kp + σ2Inp .
+
+p (yp − Z(cid:62)
+
+p c − bp) + bp,
+p kp(x(cid:48)) and Mp =
+
+Next, we obtain the posterior for the weights c:
+
+c|y ∼ N (Λ−1
+
+c
+
+fc, Λ−1
+
+c ),
+
+where fc = (cid:80)
+(cid:80)
+p Z(cid:62)
+p ZpM−1
+p .
+
+p ZpM−1
+
+p (yp − bp) and Λc = Σ−1
+
+c +
+
+In the sequel, we compute expressions such as M−1
+and
+log |Mp| by using the Cholesky decomposition Mp =
+LpL(cid:62)
+p . Similarly, the expressions depending on Λc are
+computed using its Cholesky decomposition.
+
+p
+
+2.3. Marginal Likelihood and Its Interpretation
+
+As shown in Section 2 of the Appendix, we can derive
+the expression for the log-marginal likelihood log P (y) in
+closed form:
+
+log P (y) =
+
+(cid:88)
+
+log N (yp; Z(cid:62)
+
+p c + bp, Mp)
+
+p
++ log N (c; 0, Σc) − log P (c|y),
+
+(3)
+
+The p-dependent terms require computing the Cholesky
+decompositions of all Mp ∈ Rnp×np , whereas the ﬁnal
+term needs the Cholesky decomposition of Λc ∈ RV ×V .
+Therefore, log P (y) can be computed in O(V 3 + (cid:80)
+p n3
+p).
+Note that this computation is required for optimizing the
+hyperparameters of the GPs.
+
+We can also obtain an interesting interpretation for the in-
+duced kernel of the marginal likelihood by computing it in
+a different way. Let Z = [Zp] ∈ RV ×n, b = [bp] ∈ Rn
+and Kblock ∈ Rn×n the block-diagonal matrix with blocks
+Kp. With these notations, it can be shown that P (yp|c) =
+N (yp|Z(cid:62)
+p c + bp, Mp). Integrating out c leads to
+
+P (y) = N (cid:0)b, Z(cid:62)ΣcZ + Kblock + σ2I(cid:1) .
+
+(4)
+
+If we further assume that Σc = σ2
+
+c IV , then
+
+Z(cid:62)ΣcZ = (cid:2)σ2
+
+c Z(cid:62)
+
+p Zp(cid:48)
+
+(cid:3)
+p,p(cid:48) =
+
+c (z(cid:62)
+σ2
+
+p zp(cid:48))1np 1(cid:62)
+np(cid:48)
+
+(cid:104)
+
+(cid:105)
+
+.
+
+p,p(cid:48)
+
+Hence, the diagonal blocks are proportional to z(cid:62)
+p zp, which
+is the length of path p, and the off-diagonal blocks are pro-
+portional to z(cid:62)
+p zp(cid:48), which is the path overlap length between
+p and p(cid:48). The resulting kernel is thus the intersection kernel
+(see Shawe-Taylor & Cristianini (2004), Section 9.5).
+
+Bayesian Optimization with Tree-structured Dependencies
+
+2.4. Model with Random Linear Inner Node Functions
+
+3.1. Acquisition Strategies
+
+We have so far associated a random scalar cv with each inner
+node. More generally, we can use linear functions c(cid:62)
+v rv,
+where cv is a weight vector and rv ∈ Rdv is a feature vector.
+The special case above is obtained with dv = 1 and rv = [1].
+We collect the weight vectors in c = [cv] ∈ Rd, where
+d = (cid:80)
+v dv. Let Vp ⊆ V be the set of inner nodes on the
+path from the root to leaf p. Concatenating the rv’s, we
+deﬁne the induced feature vector zp = [rv]v∈Vp such that
+
+c(cid:62)zp = (cid:80)
+
+c(cid:62)
+v rv.
+
+v∈Vp
+
+Hence, the dataset we collect during the optimization is now
+the extended set Dn = {(xi, yi, pi, zpi =[rv,i]v∈Vpi
+i=1.
+It is easy to see that all our results above transfer to this
+more general case, if only we redeﬁne
+
+)}n
+
+Zp = [zpi]i∈Ip
+
+= [rv,i]i∈Ip,v∈Vpi
+
+∈ Rd×np .
+
+Except for an increased dimensionality d (cid:62) V of the weight
+vector c, the extension with random linear inner node func-
+tions is not more difﬁcult to implement or run.
+
+In Section 4, we will use rv to encode both numerical (i.e.,
+dv = 1) and categorical parameters (via one-hot represen-
+tations, so that dv equals the number of categories). In our
+deep learning use case, parameters such as the learning rate,
+the number of units and the type of activation functions are
+encoded via the rv’s (see Figure 3, bottom). We will refer
+to the parameter associated with rv as a shared parameter
+since it is shared across all the leaves whose paths contain v.
+
+3. Acquisition Functions
+
+Bayesian optimization generally proceeds by discretizing
+the search space X into a set of anchor points, for example
+by using quasi-random sequences (Sobol, 1967). We then
+maximize an acquisition function starting from the most
+promising anchor point(s), typically with a numerical solver
+like L-BFGS (Nocedal & Wright, 2006). Acquisition func-
+tions are deﬁned in terms of expectations over the surrogate
+model posterior. Frequently used choices include Thompson
+sampling (Thompson, 1933), probability of improvement
+(PI) (Kushner, 1964), expected improvement (EI) (Mockus
+et al., 1978), or GP-UCB (Srinivas et al., 2010). We will
+focus on EI in the sequel as it has been shown to perform
+better than PI. Our initial experiments also showed that
+Thompson sampling was not performing well.
+
+The naive approach of globally optimizing EI over anchor
+points does not scale well with a high-dimensional X . In the
+previous section, we speciﬁed a tree-structured model for
+the (random) surrogate function, with which the evaluation
+of an acquisition function at some x ∈ X is sped up. In
+this section, we show how the model structure can also be
+exploited in order to speed up the optimization itself.
+
+The acquisition function α(x|Dn) plays a critical role in
+Bayesian Optimization as it selects anchor points by per-
+forming an exploration-exploitation trade-off. The key ques-
+tion that concerns us is whether we can leverage the explicit
+structure in high-dimensional structured space in order to
+make the search more efﬁcient. The naive approach ignores
+structure in the search space, using a surrogate model based
+on a global kernel, like the one proposed by Swersky et al.
+(2014a). While the design of a kernel that incorporate struc-
+ture is non-trivial, it is not explicitly used to guide the search
+and the cost of evaluations still scales as O(n3).
+As noted above, we can speed up evaluations to O((cid:80)
+p n3
+p)
+by adopting an independent model, which corresponds to
+our tree model with c = 0, so that the surrogate models
+{gp(·)}P
+p=1 can be learnt and queried independently from
+each other. With this approach, the search decouples across
+the leaf nodes and can be parallelized accordingly. However,
+if acquisitions are done sequentially, then all leafs have
+to be searched in order to ﬁnd the overall best candidate.
+The independent model also fails to represent dependencies
+between the leaf nodes, so that a larger total number of
+evaluations may be required to reach a good solution.
+
+Given our tree-structured surrogate model, we can improve
+on both the naive and the independent approach. The acqui-
+sition function becomes α(x, p|Dn), p being the leaf node
+where x is evaluated. For our model, α(x, p|Dn) can be
+evaluated in O(V 3 + (cid:80)
+p), which is often much cheaper
+than O(n3) required in the naive approach, and is compa-
+rable to O((cid:80)
+p) for independent. We could maximize
+α(x, p|Dn) separately at each leaf p, and then pick the best
+candidate across leaf nodes:
+
+p n3
+
+p n3
+
+(x(cid:63), p(cid:63)) ∈ arg max
+p∈P,x∈Xp
+
+α(x, p|Dn).
+
+In practice, the set of leaf nodes P can become large, in
+which case the requirement to search in every leaf node can
+be costly. We propose to further exploit the tree structure
+of our surrogate model in order to speed up the optimiza-
+tion. Namely, our model implies a path acquisition function
+α(p|Dn). Based on this, we select p(cid:63) and x(cid:63) in two steps:
+
+p(cid:63) = arg max
+
+α(p|Dn), x(cid:63) ∈ arg max
+
+α(x, p(cid:63)|Dn).
+
+p∈P
+
+x∈Xp(cid:63)
+
+This strategy can greatly speed up the optimization. There
+are obvious intermediates, such as searching in a subset of
+top-ranked leafs p, which we defer for future work.
+
+3.2. Two-step Expected Improvement
+
+Given our surrogate model, the EI acquisition function is:
+
+α(x, p|Dn) = E (cid:8)[ymin − gp(x) − z(cid:62)
+
+p c]+
+
+(cid:9) ,
+
+(5)
+
+Bayesian Optimization with Tree-structured Dependencies
+
+Table 1. Comparison of different surrogate models and acquisition
+strategies (see text for details). Here, M(X ) is the complexity of
+optimizing a surrogate function over the space X . p(cid:63) is the path
+selected by tree, and Xp(cid:63) is the corresponding leaf domain.
+
+independent
+naive
+tree
+
+sharing?
+×
+(cid:88)
+(cid:88)
+
+complexity
+p n3
+
+p · M(Xp)(cid:1)
+O(cid:0) (cid:80)
+p np)3 · M(cid:0)P ×(cid:81)
+
+pXp
+p(cid:63) · M(Xp(cid:63) )(cid:1)
+
+O(cid:0)V 3 + n3
+
+O(cid:0)((cid:80)
+
+(cid:1)(cid:1)
+
+where [u]+ = max{u, 0}, and ymin is the best evaluation
+so far (across all leafs). The expectation is computed with
+respect to the posterior of gp(x) + z(cid:62)
+p c, which is a GP with
+mean and covariance functions respectively given by
+
+(cid:101)mp(x) = kp(x)(cid:62)M−1
+
+p (yp − bp) + tp(x)(cid:62)Λ−1
+c
+
+fc + bp,
+
+˜Sp(x, x(cid:48)) = Sp(x, x(cid:48)) + tp(x)(cid:62)Λ−1
+
+c tp(x(cid:48)),
+
+where tp(x) = zp − ZpM−1
+compute (5), leading to
+
+p kp(x). We can analytically
+
+α(x, p|Dn) = ˜σp(x) (ξΦ(ξ) + N (ξ; 0, 1)) ,
+
+where ˜σp(x) = { ˜Sp(x, x)}1/2, ξ = ˜mp(x)−ymin
+is the CDF of a standard Gaussian.
+
+˜σp(x)
+
+and Φ(ξ)
+
+As noted above, we could optimize α(x, p|Dn) at all leaves
+and pick the overall winner. Instead, we propose a two-step
+approach, based on a path EI acquisition function:
+(cid:9) ,
+α(p|Dn) = E (cid:8)[ymin − bp − z(cid:62)
+
+(6)
+
+p c]+
+
+p Λ−1
+c
+
+fc + bp, z(cid:62)
+
+where the expectation is taken with respect to z(cid:62)
+p c + bp ∼
+p Λ−1
+N (z(cid:62)
+c zp). We ﬁrst select the path
+p(cid:63) = arg maxp α(p|Dn), then ﬁnd x(cid:63) by maximizing
+α(x, p(cid:63)|Dn) at leaf p(cid:63) only. Our tree acquisition strategy is
+related to the naive and independent ones in Table 1. Inter-
+estingly, tree can be faster than independent overall. Finally,
+(6) is easily extended to the case where we have random
+linear functions at the inner nodes by considering the aug-
+mented induced variable zp = [rv]v∈Vp (see Section 2.4 for
+details). In particular, the resulting optimization of (6) is
+carried out jointly over p and zp = [rv]v∈Vp .
+
+4. Experiments
+
+In this section, we conduct two sets of experiments. First,
+we focus on optimizing synthetic functions designed to have
+tree-structured conditional relationships. We then consider
+the tuning of a multi-layer perceptron for binary classiﬁca-
+tion, which we evaluate over a large number of datasets.
+
+Throughout the experiments, we use the following acronyms
+to refer to the different competing methods: tree is our
+proposed approach, independent is a baseline that con-
+sider an independent GP for every leaf, arc corresponds
+
+x2
+
+4 + 0.1
+
+5 + 0.2
+
+x2
+
+6 + 0.3
+
+x1
+
+x1
+
+x2
+
+0
+
+x2, r8
+
+0
+
+0
+
+1
+x2
+
+0
+
+1
+
+1
+
+0
+
+x3
+
+1
+x2
+
+7 + 0.4
+
+1
+
+0
+
+x3, r9
+
+1
+
+x2
+
+4 + 0.1+r8
+
+x2
+
+5 + 0.2+r8
+
+x2
+
+6 + 0.3+r9
+
+x2
+
+7 + 0.4+r9
+
+Figure 1. Two examples of functions with tree-structured condi-
+tional relationships. Each inner node is a binary variable, and a
+path in those trees represents successive binary decisions. The
+leaves contain univariate quadratic functions that are shifted by
+different constant terms. Top: Setting without shared variables.
+Bottom: r8 and r9 are shared variables that are common to the
+functions at the leaves of their respective subtrees. In this example,
+the shared variables have a linear dependency in the leaf objectives.
+r8 and r9 are encoded following the description of Section 2.4.
+
+to (Swersky et al., 2014a), smac refers to (Hutter et al.,
+2011) and gp-baseline is a standard GP-based Bayesian
+optimization solver taken from (GPyOpt, 2016). For tree,
+independent and gp-baseline, we use 5/2 Mat´ern
+kernels. marginal is another baseline obtained by replac-
+ing the kernel of gp-baseline by that stemming from
+the marginal (4), where c is viewed as a nuisance variable
+and integrated out. Finally, random is standard random
+search (Bergstra & Bengio, 2012).
+
+Unless otherwise speciﬁed, all the results displayed in this
+section correspond to the means and twice the standard
+errors computed over 25 random replications. Also, in
+order to minimize the initialization bias, all methods (except
+smac1) start from the same set of random candidates; there
+is one random candidate drawn per conditional path. Our
+implementation is in Python and we ran the experiments
+on a ﬂeet of Amazon AWS c4.8xlarge machines.
+
+4.1. Synthetic Tree-structured Functions
+
+The functions we consider are deﬁned over binary trees:
+Each inner node, including the root, corresponds to a binary
+variable. A path in this tree thus represents successive binary
+decisions. The leaves contain univariate quadratic functions
+that are shifted by different constant terms. We give an
+example of such a function in Figure 1. In the sequel, we
+study the two functions from Figure 1 (referred to as small
+balanced), in addition to a higher-dimensional version of
+those, with a depth of 4 and 8 leaves whose constant shifts
+are {a × 0.1}8
+a=1 (referred to as large balanced). In
+the supplementary material, we provide further results based
+
+1We use https://github.com/sfalkner/pySMAC.
+To the best of our knowledge, we cannot specify the starting point.
+
+Bayesian Optimization with Tree-structured Dependencies
+
+on unbalanced binary trees of increasing sizes, for which
+similar conclusions hold. All the non-shared continuous
+variables xj’s are deﬁned in [−1, 1], while the shared ones
+are in [0, 1]. The best function value will thus always be 0.1.
+
+Those functions encode conditional relationships since
+given a path p and its leaf (cid:96)p, all the binary variables outside
+of the path p and all the continuous variables deﬁned in
+the leaves (cid:96)(cid:48) (cid:54)= (cid:96)p are irrelevant. We report in Figure 2 the
+optimization results for the different competing methods.
+We make the following observations:
+
+Approaches blind to structure perform poorly: The re-
+sults show that, both gp-baseline and random, which
+cannot use the conditional structure, do not fare well. As ex-
+pected, the performance gap widens as the trees get deeper.
+
+Independent vs. tree vs. arc: independent, tree and
+arc represent 3 ways of increasingly incorporating con-
+ditional structure. Indeed, independent takes into ac-
+count the tree structure but does not allow for any sharing
+of information across different paths, arc deﬁnes a joint
+kernel over the union of all the leaves, while tree makes
+intermediate modeling assumptions. We can observe that,
+thanks to its joint nature, arc tends to perform well ini-
+tially, but it is quickly overtaken by tree and later also by
+independent that lags behind because of the absence of
+sharing, but catches up once sufﬁcient observations were col-
+lected. Also, as the dimension of the optimization space gets
+larger, the performance of independent worsens, while
+that of tree is barely affected (we do observe the same
+scalability with respect to the dimension on unbalanced bi-
+nary trees, as reported in the supplementary material). At
+this juncture, we would also like to emphasize that while
+independent catches up with tree in some cases, it is
+more wasteful of resources as it requires to score every leaf
+at each iteration unlike tree (see also Table 1).
+
+Importance of exploiting the latent variables c: It is in-
+teresting to observe that marginal, which considers c to
+be a nuisance variable and integrates it out, performs signiﬁ-
+cantly worse than tree. Note that marginal cannot de
+facto be applied in presence of shared variables, which ex-
+plains why it does not appear in the right panels of Figure 1.
+
+Approach not based on GPs: smac is known to be state-
+of-the-art for optimization tasks in presence of conditional
+relationships (Eggensperger et al., 2013). In particular, it is
+known to work better than GP-based approaches, especially
+when the dimension gets large. We observe in our experi-
+ments (e.g., for large balanced, 7 categorical and 10
+continuous parameters, 2 of which being shared) that smac
+does not reach good solutions on these synthetic tasks.
+
+Figure 2. Optimization performance over synthetic tree-structured
+functions, as measured by the log10 distance to the (known) mini-
+mum versus the number of iterations. Top: Results for the balanced
+binary trees displayed in Figure 1, without and with shared vari-
+ables (respectively left and right). Bottom: Results for larger
+balanced binary trees with depth 4 and 8 leaves. Best seen in color.
+
+4.2. Multi-layer Perceptron Tuning
+
+We now focus our attention on the tuning of a multi-
+layer perceptron (MLP) for binary classiﬁcation. The set-
+ting we consider is reminiscent of that proposed by Swer-
+sky et al. (2014a). We optimize for the number of
+hidden layers in {0, 1, 2, 3, 4}, the number of units per
+layer in {1, 2, . . . , 30} (provided the corresponding layer
+is activated),
+the choice of the activation function in
+{identity, logistic, tanh, relu}, which we
+constrain to be identical across all layers, the amount
+of (cid:96)2 regularization in [10−6, 10−1], the learning rate in
+[10−5, 10−1] of the underlying Adam solver (Kingma & Ba,
+2014), the tolerance in [10−5, 10−2] of the solver (based
+on relative decrease), and the type of data pre-processing,
+which can be unit (cid:96)2-norm observation-wise normaliza-
+tion, (cid:96)∞-norm feature-wise normalization, mean/standard-
+deviation feature-wise whitening or no normalization at all.
+
+The optimization task can be speciﬁed in various ways, re-
+sulting in different topologies for the trees of conditional
+relationships.We consider the two instantiations of condi-
+tional relationships illustrated in Figure 3. The ﬁrst one has
+all the variables duplicated (top tree), which is similar to
+how independent proceeds. The second one consists in
+having most of the variables shared (bottom tree). Note that
+in the two settings, we have one regularization parameter
+λk per number k of hidden layer(s) of the network. We do
+
+Bayesian Optimization with Tree-structured Dependencies
+
+L ≥ 0
+
+L = 0
+
+λ0, ε0, η0, nor0(·)
+
+L > 0
+
+L ≥ 1
+
+L = 1
+
+X1
+
+L > 1
+
+L ≥ 2
+
+L = 2
+
+X2
+
+L > 2
+
+L ≥ 3
+
+L = 3
+
+L = 4
+
+(cid:110)
+
+Xk (cid:44)
+
+λk, {u(k)
+
+j }k
+
+j=1, εk, ηk, nork(·), actk(·)
+
+X3
+
+X4
+
+(cid:111)
+
+L ≥ 0, ε, η, nor(·)
+
+L = 0
+
+λ0
+
+L > 0
+
+L ≥ 1, act(·), u1
+
+L = 1
+
+λ1
+
+L > 1
+
+L ≥ 2, u2
+
+L = 2
+
+L > 2
+
+λ2
+
+L ≥ 3, u3
+
+L = 3
+
+L = 4
+
+λ3
+
+λ4, u4
+
+Figure 3. Conditional relationships for MLP tuning. L refers to the
+number of hidden layers, uj is the number of units of the j-th layer,
+λk controls the (cid:96)2 regularization of a network with k hidden layers,
+η and ε are respectively the learning rate and stopping criterion
+of the Adam optimizer, while nor(·) and act(·) respectively stand
+for the normalization of the dataset and the activation function.
+Top: An independent topology where the domain Xk of each leaf
+is made of duplicated parameters (indexed by k in the ﬁgure).
+Bottom: A topology where the parameters (in blue) are shared
+across leaves, following Section 2.4..
+
+so to account for the fact that the λk’s regularize matrices of
+different dimensions. In between those two extreme settings,
+we could consider intermediate modeling assumptions (e.g.,
+a learning rate ηlinear for the case with no hidden layers and
+a shared learning rate ηnon-linear otherwise).
+
+To provide a robust evaluation of the different competing
+methods, we consider a subset of the datasets from the
+Libsvm repository (Chang & Lin, 2011). More speciﬁ-
+cally, we consider all the datasets whose number of features
+is smaller than 106, which results in 45 data sets. In absence
+of pre-deﬁned default train-test split, we took a random
+80%−20% split. To limit the overall computational burden,
+we cap the training and test set sizes to a maximum of re-
+spectively 103 and 104 instances (randomly selected when
+the subsampling applies). Note that this subsampling step
+is not related to a computational limitation of our approach,
+but is a practical consideration only modifying the properties
+of the black-box function we optimize. We use the MLP im-
+plementation of scikit-learn (Pedregosa et al., 2011)
+
+Figure 4. Tuning of a MLP for binary classiﬁcation. Average rank
+aggregated over 45 datasets versus the number of iterations (lower
+is better; see text for details). Shaded regions correspond to two
+standard errors tube around the average rank. Top: Comparison of
+independent with the tree-based independent topology (see
+bottom tree of Figure 3). Bottom: Comparison of all the methods
+based on the shared topology (see top tree of Figure 3). Best seen
+in color.
+
+and we add a CPU-time constraint of 5 minutes to each
+evaluation, beyond which the worst classiﬁcation error 1.0
+is returned. Under this constraint, the total computational
+time of the experiment was roughly 100 CPU days.
+
+We run all the methods for 85 iterations and initialize them
+with one random choice for each of the 5 conditional paths.
+We aggregate the average classiﬁcation errors per dataset by
+displaying the average rank of each method as a function of
+the number of iterations. We say that the rank of a method is
+equal to i if it performs the ith best (see, e.g., Bardenet et al.
+(2013); Feurer et al. (2015)). We can draw the following
+conclusions:
+
+Effect of z(cid:62)
+p c without shared variables: The top panel
+in Figure 4 compares independent with tree-based
+method when it is deﬁned on the independent topology
+shown in Figure 3(top). Since there are no shared variables
+in the inner nodes, the sharing mechanism of tree only
+
+Bayesian Optimization with Tree-structured Dependencies
+
+happens via the term z(cid:62)
+p c which contributes to the mean.
+As expected, sharing results in tree makes faster progress
+towards the optimum. However, when more observations
+are collected, independent outperforms tree because
+it better explores all the leafs (though, at a higher com-
+putational cost; see Table 1). We next show how we can
+additionally beneﬁt from sharing parameters at inner nodes.
+
+Shared topology: The lower panel in Figure 4 compares
+all the methods using the shared topology shown in Fig-
+ure 3(bottom). We found that arc, gp-baseline,
+random and smac all beneﬁtted from running with the
+shared topology. The results show that tree not only
+greatly improves upon all other GP-based approaches, but
+also converges faster than smac that ﬁnally reaches the
+same level of performance after about 75 iterations. We
+can observe that a standard GP-based technique that is
+blind to the conditional structure, like gp-baseline, per-
+forms poorly. Of independent interest is the comparison of
+arc with smac, which was not reported by Swersky et al.
+(2014a). Finally, it is worth emphasizing that tree obtains
+good results while only modeling shared variables at the
+inner nodes in a linear fashion. This conclusion is in agree-
+ment with the recent observations from (Zhang et al., 2016)
+where linear models lead to good results in the context of
+the optimization of data analytic pipelines. Next, we discuss
+an extension to model the shared variables non-linearly.
+
+4.3. Nonlinear Extensions
+
+The approach we have introduced in Section 2.4 can easily
+be extended to account for non-linearities through the use
+of basis expansions. More speciﬁcally, we focus on the use
+of random Fourier features (Rahimi et al., 2007) that proved
+successful for large-scale kernel methods (Lu et al., 2014).
+Combining basis expansion with linear models for Bayesian
+optimization is by no means new (see (Shahriari et al., 2016)
+and references therein). We also follow this methodology
+since it naturally ﬁts our proposed semi-parametric model.
+
+In the supplementary material, we report results on syn-
+thetic tree-structured functions where the objectives at
+the leaves depend now quadratically on the shared vari-
+ables and on the MLP tuning task. In a nutshell, on the
+synthetic functions with linearly-dependent shared vari-
+ables, tree-nonlinear converges slower than the lin-
+ear version tree, which might be due to the fact that
+c is of higher dimensionality. Moreover, in presence of
+quadratically-dependent shared variables, we observe that
+tree fails to model adequately the non-linearities, while
+tree-nonlinear, as expected, can. As for the MLP
+task, we notice that the non-linear extension of tree tends
+to perform worse than its linear counterpart.
+
+5. Concluding Remarks
+
+The black-box functions typically encountered in machine
+learning rely on incremental learning procedures, such as
+the application of (stochastic) gradient descent over sev-
+eral epochs. A recent line of work has been focusing on
+leveraging this property to speed up Bayesian optimiza-
+tion (Swersky et al., 2013; 2014b; Domhan et al., 2014;
+Li et al., 2016; Klein et al., 2016). In particular, Li et al.
+(2016) and Klein et al. (2016) have reported state-of-the-art
+results with methods based respectively on bandits and GPs,
+exploiting a dynamic subsampling of the training sets.
+
+The goal of our work is orthogonal to this idea and consists
+instead in efﬁciently encoding conditional relationships with
+GPs. We next outline ways of combining our work with the
+aforementioned subsampling idea:
+
+Combination with Klein et al. (2016): The proposal of
+Klein et al. (2016) uses some contextual variable (also re-
+ferred to as environmental variable) to encode the subsam-
+pling rate of the training set. Let us denote it by β ∈ [0, 1].
+Klein et al. (2016) deﬁne the following joint kernel:
+
+K((x, β), (x(cid:48), β(cid:48))) = K0(x, x(cid:48)) · Kcontext(β, β(cid:48)).
+
+The optimization is then driven by a cost-normalized acqui-
+sition function maxβ(cid:48),x α(x, β = 1|Dn)/cost(x, β(cid:48)) where
+both x and β are sought to perform well on the ﬁnal task of
+interest where no subsampling is applied (i.e., β = 1).
+
+Looking at our case, we could easily replace our kernel Kp
+by ˜Kp((x, β), (x(cid:48), β(cid:48))) (cid:44) Kp(x, x(cid:48)) · Kcontext(β, β(cid:48)). To ap-
+ply the two-step procedure, we could normalize (6) by a cost
+following a separate model (1) where the contextual vari-
+able β would be a shared variables at the root. Formally, we
+could consider a joint path/subsampling selection criterion:
+
+(p(cid:63), β(cid:63)) ∈ arg max
+p∈P,β(cid:48)∈[0,1]
+
+E(cid:8)[ymin − bp − zp(β = 1)(cid:62)c]+
+E(cid:8)zp(β(cid:48))(cid:62)ccost
+
+(cid:9)
+
+(cid:9)
+
+,
+
+where zp(β) refers to the feature representation of the path
+p with context variable β.
+
+Combination with Li et al. (2016): The approach of Li
+et al. (2016) is based on successive halving procedures
+where a pool containing initially many models is progres-
+sively reﬁned and trimmed. The output of their theoretically-
+justifed algorithm, named hyperband, can be seen as
+triplets Hn (cid:44) {(xi, yi, βi)}n
+i=1 representing all the tested
+conﬁgurations xi along with their corresponding evaluations
+yi and subsampling rates βi.
+
+A natural approach to leverage hyperband is therefore
+to use Hn to warm-start our context-aware extension with
+kernel ˜Kp while ﬁxing β = 1. In other words, our approach
+would be used to reﬁne the smart and computationally-
+efﬁcient initialization provided by hyperband.
+
+Bayesian Optimization with Tree-structured Dependencies
+
+References
+
+Bardenet, R´emi, Brendel, M´aty´as, K´egl, Bal´azs, and Se-
+bag, Michele. Collaborative hyperparameter tuning. In
+Proceedings of the International Conference on Machine
+Learning (ICML), pp. 199–207, 2013.
+
+Bengio, Y. Learning deep architectures for AI. Foundations
+
+and Trends in Machine Learning, 2(1), 2009.
+
+Bergstra, James and Bengio, Yoshua. Random search for
+hyper-parameter optimization. Journal of Machine Learn-
+ing Research, 13:281–305, 2012.
+
+Bergstra, James, Bardenet, R´emi, K´egl, B, and Bengio, Y.
+Implementations of algorithms for hyper-parameter opti-
+mization. In NIPS Workshop on Bayesian optimization,
+pp. 29, 2011.
+
+Chang, Chih-Chung and Lin, Chih-Jen.
+
+LIBSVM:
+ACM
+A library for support vector machines.
+Transactions on Intelligent Systems and Technol-
+ogy, 2:27:1–27:27, 2011.
+Software available at
+http://www.csie.ntu.edu.tw/∼cjlin/libsvm.
+
+Domhan, Tobias, Springenberg, Tobias, and Hutter, Frank.
+Extrapolating learning curves of deep neural networks.
+In ICML 2014 AutoML Workshop, 2014.
+
+Duvenaud, David K, Nickisch, Hannes, and Rasmussen,
+Carl E. Additive gaussian processes. In Shawe-Taylor, J.,
+Zemel, R. S., Bartlett, P. L., Pereira, F., and Weinberger,
+K. Q. (eds.), Advances in Neural Information Processing
+Systems 24, pp. 226–234. Curran Associates, Inc., 2011.
+
+Kingma, Diederik and Ba, Jimmy. Adam: A method
+for stochastic optimization. Technical report, preprint
+arXiv:1412.6980, 2014.
+
+Klein, Aaron, Falkner, Stefan, Bartels, Simon, Hennig,
+Philipp, and Hutter, Frank. Fast Bayesian optimization
+of machine learning hyperparameters on large datasets.
+Technical report, preprint arXiv:1605.07079, 2016.
+
+Kushner, Harold J. A new method of locating the maximum
+point of an arbitrary multipeak curve in the presence
+of noise. Journal of Fluids Engineering, 86(1):97–106,
+1964.
+
+Li, Lisha, Jamieson, Kevin, DeSalvo, Giulia, Rostamizadeh,
+Afshin, and Talwalkar, Ameet. Hyperband: A novel
+bandit-based approach to hyperparameter optimization.
+Technical report, preprint arXiv:1603.06560, 2016.
+
+Lu, Zhiyun, May, Avner, Liu, Kuan, Garakani,
+Alireza Bagheri, Guo, Dong, Bellet, Aur´elien, Fan,
+Linxi, Collins, Michael, Kingsbury, Brian, Picheny,
+Michael, et al. How to scale up kernel methods to be
+as good as deep neural nets. Technical report, preprint
+arXiv:1411.4000, 2014.
+
+Mockus, Jonas, Tiesis, Vytautas, and Zilinskas, Antanas.
+The application of Bayesian methods for seeking the
+extremum. Towards Global Optimization, 2(117-129):2,
+1978.
+
+Nocedal, J. and Wright, S. J. Numerical Optimization.
+
+Springer, 2006.
+
+Eggensperger, Katharina, Feurer, Matthias, Hutter, Frank,
+Bergstra, James, Snoek, Jasper, Hoos, H, and Leyton-
+Brown, Kevin. Towards an empirical foundation for as-
+sessing Bayesian optimization of hyperparameters. In
+NIPS Workshop on Bayesian Optimization in Theory and
+Practice, 2013.
+
+Pedregosa, Fabian, Varoquaux, Ga¨el, Gramfort, Alexandre,
+Michel, Vincent, Thirion, Bertrand, Grisel, Olivier, Blon-
+del, Mathieu, Prettenhofer, Peter, Weiss, Ron, Dubourg,
+Vincent, et al. Scikit-learn: Machine learning in python.
+Journal of Machine Learning Research, 12(Oct):2825–
+2830, 2011.
+
+Feurer, Matthias, Springenberg, T, and Hutter, Frank. Ini-
+tializing Bayesian hyperparameter optimization via meta-
+learning. In Proceedings of the Twenty-Ninth AAAI Con-
+ference on Artiﬁcial Intelligence, 2015.
+
+GPyOpt.
+
+GPyOpt:
+framework
+
+A
+
+Bayesian
+in
+
+Op-
+Python.
+
+timization
+http://github.com/SheffieldML/GPyOpt,
+2016.
+
+Hutter, F., Hoos, H. H., and Leyton-Brown, K. Sequential
+model-based optimization for general algorithm conﬁgu-
+ration. In Proceedings of LION-5, pp. 507?523, 2011.
+
+Hutter, Frank and Osborne, Michael A. A kernel for hi-
+erarchical parameter spaces. Technical report, preprint
+arXiv:1310.5738, 2013.
+
+Rahimi, Ali, Recht, Benjamin, et al. Random features for
+large-scale kernel machines. In Advances in Neural In-
+formation Processing Systems, volume 3, pp. 5, 2007.
+
+Rasmussen, Carl and Williams, Chris. Gaussian Processes
+
+for Machine Learning. MIT Press, 2006.
+
+Shahriari, Bobak, Swersky, Kevin, Wang, Ziyu, Adams,
+Ryan P, and de Freitas, Nando. Taking the human out of
+the loop: A review of Bayesian optimization. Proceedings
+of the IEEE, 104(1):148–175, 2016.
+
+Shawe-Taylor, J. and Cristianini, N. Kernel Methods for
+Pattern Analysis. Cambridge University Press, 2004.
+
+Snoek, Jasper, Larochelle, Hugo, and Adams, Ryan P. Practi-
+cal Bayesian optimization of machine learning algorithms.
+
+Bayesian Optimization with Tree-structured Dependencies
+
+In Advances in Neural Information Processing Systems,
+pp. 2960–2968, 2012.
+
+Sobol, Ilya M. On the distribution of points in a cube and
+the approximate evaluation of integrals. USSR Compu-
+tational Mathematics and Mathematical Physics, 7(4):
+86–112, 1967.
+
+Srinivas, N., Krause, A., Kakade, S. M., and M., Seeger.
+Gaussian Process optimization in the bandit setting: No
+In Furnkranz, J. and
+regret and experimental design.
+Joachims, T. (eds.), Proceedings of the 27th International
+Conference on Machine Learning (ICML), Haifa, June
+2010.
+
+Swersky, Kevin, Snoek, Jasper, and Adams, Ryan P. Multi-
+task Bayesian optimization. In Advances in Neural Infor-
+mation Processing Systems, pp. 2004–2012, 2013.
+
+Swersky, Kevin, Duvenaud, David, Snoek, Jasper, Hutter,
+Frank, and Osborne, Michael A. Raiders of the lost
+architecture: Kernels for Bayesian optimization in con-
+ditional parameter spaces. Technical report, preprint
+arXiv:1409.4011, 2014a.
+
+Swersky, Kevin, Snoek, Jasper, and Adams, Ryan Prescott.
+Freeze-thaw Bayesian optimization. Technical report,
+preprint arXiv:1406.3896, 2014b.
+
+Thompson, William R. On the likelihood that one unknown
+probability exceeds another in view of the evidence of
+two samples. Biometrika, pp. 285–294, 1933.
+
+Zhang, Yuyu, Bahadori, Mohammad Taha, Su, Hang, and
+Sun, Jimeng. Flash: Fast bayesian optimization for data
+analytic pipelines. In Krishnapuram, Balaji, Shah, Mohak,
+Smola, Alexander J., Aggarwal, Charu, Shen, Dou, and
+Rastogi, Rajeev (eds.), KDD, pp. 2065–2074. ACM, 2016.
+ISBN 978-1-4503-4232-2.
+
+

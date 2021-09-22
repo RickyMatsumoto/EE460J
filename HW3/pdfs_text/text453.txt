@@ -1,0 +1,1406 @@
+SARAH: A Novel Method for Machine Learning Problems
+Using Stochastic Recursive Gradient
+
+Lam M. Nguyen 1 Jie Liu 1 Katya Scheinberg 1 2 Martin Tak´aˇc 1
+
+Abstract
+
+In this paper, we propose a StochAstic Recur-
+sive grAdient algoritHm (SARAH), as well as its
+practical variant SARAH+, as a novel approach
+to the ﬁnite-sum minimization problems. Dif-
+ferent from the vanilla SGD and other modern
+stochastic methods such as SVRG, S2GD, SAG
+and SAGA, SARAH admits a simple recursive
+framework for updating stochastic gradient esti-
+mates; when comparing to SAG/SAGA, SARAH
+does not require a storage of past gradients. The
+linear convergence rate of SARAH is proven un-
+der strong convexity assumption. We also prove
+a linear convergence rate (in the strongly convex
+case) for an inner loop of SARAH, the property
+that SVRG does not possess. Numerical exper-
+iments demonstrate the efﬁciency of our algo-
+rithm.
+
+1. Introduction
+
+We are interested in solving a problem of the form
+
+
+
+
+
+
+min
+w∈Rd
+
+P (w) def=
+
+1
+n
+
+(cid:88)
+
+i∈[n]
+
+
+
+
+
+
+fi(w)
+
+,
+
+(1)
+
+where each fi, i ∈ [n] def= {1, . . . , n}, is convex with a
+Lipschitz continuous gradient. Throughout the paper, we
+assume that there exists an optimal solution w∗ of (1).
+
+Industrial
+
+1Department of
+and Systems Engineering,
+2On leave at The University of
+Lehigh University, USA.
+Oxford, UK. All authors were supported by NSF Grant
+CCF-1618717.
+Katya Scheinberg was partially supported
+by NSF Grants DMS 13-19356, CCF-1320137 and CCF-
+Correspondence to: Lam M. Nguyen <lamn-
+1618717.
+guyen.mltd@gmail.com>, Jie Liu <jie.liu.2018@gmail.com>,
+Katya Scheinberg <katyas@lehigh.edu>, Martin Tak´aˇc
+<Takac.MT@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Problems of this type arise frequently in supervised learn-
+ing applications (Hastie et al., 2009). Given a training set
+i=1 with xi ∈ Rd, yi ∈ R, the least squares re-
+{(xi, yi)}n
+gression model, for example, is written as (1) with fi(w) def=
+2 (cid:107)w(cid:107)2, where (cid:107)·(cid:107) denotes the (cid:96)2-norm. The
+(xT
+(cid:96)2-regularized logistic regression for binary classiﬁcation
+is written with fi(w) def= log(1 + exp(−yixT
+2 (cid:107)w(cid:107)2
+(yi ∈ {−1, 1}).
+
+i w−yi)2 + λ
+
+i w)) + λ
+
+In recent years, many advanced optimization methods have
+been developed for problem (1). While the objective func-
+tion is smooth and convex, the traditional optimization
+methods, such as gradient descent (GD) or Newton method
+are often impractical for this problem, when n – the num-
+ber of training samples and hence the number of fi’s – is
+very large. In particular, GD updates iterates as follows
+
+wt+1 = wt − ηt∇P (wt),
+
+t = 0, 1, 2, . . . .
+
+Under strong convexity assumption on P and with appro-
+priate choice of ηt, GD converges at a linear rate in terms of
+objective function values P (wt). However, when n is large,
+computing ∇P (wt) at each iteration can be prohibitive.
+
+As an alternative, stochastic gradient descent (SGD)1, orig-
+inating from the seminal work of Robbins and Monro in
+1951 (Robbins & Monro, 1951), has become the method
+of choice for solving (1). At each step, SGD picks an in-
+dex i ∈ [n] uniformly at random, and updates the iterate as
+wt+1 = wt − ηt∇fi(wt), which is up-to n times cheaper
+than an iteration of a full gradient method. The conver-
+gence rate of SGD is slower than that of GD, in particular, it
+is sublinear in the strongly convex case. The tradeoff, how-
+ever, is advantageous due to the tremendous per-iteration
+savings and the fact that low accuracy solutions are sufﬁ-
+cient. This trade-off has been thoroughly analyzed in (Bot-
+tou, 1998). Unfortunately, in practice SGD method is often
+too slow and its performance is too sensitive to the vari-
+ance in the sample gradients ∇fi(wt). Use of mini-batches
+(averaging multiple sample gradients ∇fi(wt)) was used
+in (Shalev-Shwartz et al., 2007; Cotter et al., 2011; Tak´aˇc
+
+1We mark here that even though stochastic gradient is referred
+to as SG in literature, the term stochastic gradient descent (SGD)
+has been widely used in many important works of large-scale
+learning, including SAG/SAGA, SDCA, SVRG and MISO.
+
+SARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+Table 1: Comparisons between different algorithms for strongly
+convex functions. κ = L/µ is the condition number.
+
+Method
+
+Complexity
+
+GD
+SGD
+SVRG
+
+O (nκ log (1/(cid:15)))
+O (1/(cid:15))
+O ((n + κ) log (1/(cid:15)))
+
+O ((n + κ) log (1/(cid:15)))
+
+SAG/SAGA
+SARAH O ((n + κ) log (1/(cid:15)))
+
+Fixed
+Learning
+Rate
+(cid:51)
+(cid:55)
+(cid:51)
+
+(cid:51)
+
+(cid:51)
+
+Low
+Storage
+Cost
+(cid:51)
+(cid:51)
+(cid:51)
+
+(cid:55)
+
+(cid:51)
+
+Table 2: Comparisons between different algorithms for convex
+functions.
+
+Method
+GD
+SGD
+SVRG
+SAGA
+SARAH
+SARAH (one outer
+loop)
+
+Complexity
+O (n/(cid:15))
+O (cid:0)1/(cid:15)2(cid:1)
+√
+
+O (n + (
+n/(cid:15)))
+O (n + (n/(cid:15)))
+O ((n + (1/(cid:15))) log(1/(cid:15)))
+O (cid:0)n + (1/(cid:15)2)(cid:1)
+
+et al., 2013) to reduce the variance and improve conver-
+gence rate by constant factors. Using diminishing sequence
+{ηt} is used to control the variance (Shalev-Shwartz et al.,
+2011; Bottou et al., 2016), but the practical convergence
+of SGD is known to be very sensitive to the choice of this
+sequence, which needs to be hand-picked.
+
+Recently, a class of more sophisticated algorithms have
+emerged, which use the speciﬁc ﬁnite-sum form of (1) and
+combine some deterministic and stochastic aspects to re-
+duce variance of the steps. The examples of these meth-
+ods are SAG/SAGA (Le Roux et al., 2012; Defazio et al.,
+2014), SDCA (Shalev-Shwartz & Zhang, 2013), SVRG
+(Johnson & Zhang, 2013; Xiao & Zhang, 2014), DIAG
+(Mokhtari et al., 2017), MISO (Mairal, 2013) and S2GD
+(Koneˇcn´y & Richt´arik, 2013), all of which enjoy faster con-
+vergence rate than that of SGD and use a ﬁxed learning rate
+parameter η. In this paper we introduce a new method in
+this category, SARAH, which further improves several as-
+pects of the existing methods. In Table 1 we summarize
+complexity and some other properties of the existing meth-
+ods and SARAH when applied to strongly convex prob-
+lems. Although SVRG and SARAH have the same conver-
+gence rate, we introduce a practical variant of SARAH that
+outperforms SVRG in our experiments.
+
+In addition, theoretical results for complexity of the meth-
+ods or their variants when applied to general convex func-
+tions have been derived (Schmidt et al., 2016; Defazio
+et al., 2014; Reddi et al., 2016; Allen-Zhu & Yuan, 2016;
+Allen-Zhu, 2017). In Table 2 we summarize the key com-
+plexity results, noting that convergence rate is now sublin-
+ear.
+
+Our Contributions.
+In this paper, we propose a novel
+algorithm which combines some of the good properties of
+existing algorithms, such as SAGA and SVRG, while aim-
+ing to improve on both of these methods. In particular, our
+algorithm does not take steps along a stochastic gradient
+direction, but rather along an accumulated direction using
+past stochastic gradient information (as in SAGA) and oc-
+casional exact gradient information (as in SVRG). We sum-
+marize the key properties of the proposed algorithm below.
+
+• Similarly to SVRG, SARAH’s iterations are divided
+into the outer loop where a full gradient is computed
+and the inner loop where only stochastic gradient is
+computed. Unlike the case of SVRG, the steps of
+the inner loop of SARAH are based on accumulated
+stochastic information.
+
+• Like SAG/SAGA and SVRG, SARAH has a sublin-
+ear rate of convergence for general convex functions,
+and a linear rate of convergence for strongly convex
+functions.
+
+• SARAH uses a constant learning rate, whose size is
+larger than that of SVRG. We analyze and discuss the
+optimal choice of the learning rate and the number
+of inner loop steps. However, unlike SAG/SAGA but
+similar to SVRG, SARAH does not require a storage
+of n past stochastic gradients.
+
+• We also prove a linear convergence rate (in the
+strongly convex case) for the inner loop of SARAH,
+the property that SVRG does not possess. We show
+that the variance of the steps inside the inner loop goes
+to zero, thus SARAH is theoretically more stable and
+reliable than SVRG.
+
+• We provide a practical variant of SARAH based on
+the convergence properties of the inner loop, where
+the simple stable stopping criterion for the inner loop
+is used (see Section 4 for more details). This vari-
+ant shows how SARAH can be made more stable than
+SVRG in practice.
+
+2. Stochastic Recursive Gradient Algorithm
+
+Now we are ready to present our SARAH (Algorithm 1).
+
+The key step of the algorithm is a recursive update of the
+stochastic gradient estimate (SARAH update)
+
+vt = ∇fit(wt) − ∇fit(wt−1) + vt−1,
+
+(2)
+
+followed by the iterate update:
+
+wt+1 = wt − ηvt.
+
+(3)
+
+For comparison, SVRG update can be written in a similar
+way as
+
+vt = ∇fit(wt) − ∇fit(w0) + v0.
+
+(4)
+
+SARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+Algorithm 1 SARAH
+
+Parameters: the learning rate η > 0 and the inner loop
+size m.
+Initialize: ˜w0
+Iterate:
+for s = 1, 2, . . . do
+
+i=1 ∇fi(w0)
+
+w0 = ˜ws−1
+(cid:80)n
+v0 = 1
+n
+w1 = w0 − ηv0
+Iterate:
+for t = 1, . . . , m − 1 do
+
+Sample it uniformly at random from [n]
+vt = ∇fit(wt) − ∇fit(wt−1) + vt−1
+wt+1 = wt − ηvt
+
+end for
+Set ˜ws = wt with t chosen uniformly at random from
+{0, 1, . . . , m}
+
+end for
+
+Observe that in SVRG, vt is an unbiased estimator of the
+gradient, while it is not true for SARAH. Speciﬁcally, 2
+
+E[vt|Ft] = ∇P (wt)−∇P (wt−1)+vt−1 (cid:54)= ∇P (wt), (5)
+
+where 3 Ft = σ(w0, i1, i2, . . . , it−1) is the σ-algebra gen-
+erated by w0, i1, i2, . . . , it−1; F0 = F1 = σ(w0). Hence,
+SARAH is different from SGD and SVRG type of methods,
+however, the following total expectation holds, E[vt] =
+E[∇P (wt)], differentiating SARAH from SAG/SAGA.
+
+SARAH is similar to SVRG since they both contain outer
+loops which require one full gradient evaluation per outer
+iteration followed by one full gradient descent step with a
+given learning rate. The difference lies in the inner loop,
+where SARAH updates the stochastic step direction vt re-
+cursively by adding and subtracting component gradients
+to and from the previous vt−1 (t ≥ 1) in (2). Each inner it-
+eration evaluates 2 stochastic gradients and hence the total
+work per outer iteration is O(n+m) in terms of the number
+of gradient evaluations. Note that due to its nature, without
+running the inner loop, i.e., m = 1, SARAH reduces to the
+GD algorithm.
+
+3. Theoretical Analysis
+
+To proceed with the analysis of the proposed algorithm, we
+will make the following common assumptions.
+Assumption 1 (L-smooth). Each fi : Rd → R, i ∈ [n], is
+L-smooth, i.e., there exists a constant L > 0 such that
+
+(cid:107)∇fi(w) − ∇fi(w(cid:48))(cid:107) ≤ L(cid:107)w − w(cid:48)(cid:107), ∀w, w(cid:48) ∈ Rd.
+2 E[·|Ft] = Eit [·], which is expectation with respect to the
+random choice of index it (conditioned on w0, i1, i2, . . . , it−1).
+3Ft also contains all the information of w0, . . . , wt as well as
+
+v0, . . . , vt−1.
+
+this assumption implies
+
+that P (w) =
+Note that
+(cid:80)n
+1
+i=1 fi(w) is also L-smooth. The following strong con-
+n
+vexity assumption will be made for the appropriate parts of
+the analysis, otherwise, it would be dropped.
+
+Assumption 2a (µ-strongly convex). The function P :
+Rd → R, is µ-strongly convex, i.e., there exists a constant
+µ > 0 such that ∀w, w(cid:48) ∈ Rd,
+
+P (w) ≥ P (w(cid:48)) + ∇P (w(cid:48))T (w − w(cid:48)) + µ
+
+2 (cid:107)w − w(cid:48)(cid:107)2.
+
+Another, stronger, assumption of µ-strong convexity for (1)
+will also be imposed when required in our analysis. Note
+that Assumption 2b implies Assumption 2a but not vice
+versa.
+Assumption 2b. Each function fi : Rd → R, i ∈ [n], is
+strongly convex with µ > 0.
+
+Under Assumption 2a, let us deﬁne the (unique) optimal
+solution of (1) as w∗, Then strong convexity of P implies
+that
+
+2µ[P (w) − P (w∗)] ≤ (cid:107)∇P (w)(cid:107)2, ∀w ∈ Rd.
+
+(6)
+
+We note here, for future use, that for strongly convex func-
+tions of the form (1), arising in machine learning applica-
+tions, the condition number is deﬁned as κ def= L/µ. Fur-
+thermore, we should also notice that Assumptions 2a and
+2b both cover a wide range of problems, e.g. l2-regularized
+empirical risk minimization problems with convex losses.
+
+Finally, as a special case of the strong convexity of all fi’s
+with µ = 0, we state the general convexity assumption,
+which we will use for convergence analysis.
+Assumption 3. Each function fi : Rd → R, i ∈ [n], is
+convex, i.e.,
+
+fi(w) ≥ fi(w(cid:48)) + ∇fi(w(cid:48))T (w − w(cid:48)),
+
+∀i ∈ [n].
+
+Again, we note that Assumption 2b implies Assumption 3,
+but Assumption 2a does not. Hence in our analysis, de-
+pending on the result we aim at, we will require Assump-
+tion 3 to hold by itself, or Assumption 2a and Assumption 3
+to hold together, or Assumption 2b to hold by itself. We
+will always use Assumption 1.
+
+Our iteration complexity analysis aims to bound the num-
+ber of outer iterations T (or total number of stochastic
+gradient evaluations) which is needed to guarantee that
+(cid:107)∇P (wT )(cid:107)2 ≤ (cid:15). In this case we will say that wT is an
+(cid:15)-accurate solution. However, as is common practice for
+stochastic gradient algorithms, we aim to obtain the bound
+on the number of iterations, which is required to guarantee
+the bound on the expected squared norm of a gradient, i.e.,
+
+E[(cid:107)∇P (wT )(cid:107)2] ≤ (cid:15).
+
+(7)
+
+SARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+for SARAH, SVRG, SGD+ (SGD with decreasing learn-
+ing rate) and FISTA (an accelerated version of GD (Beck
+& Teboulle, 2009)) with m = 4n, where the left plot shows
+the trend over multiple outer iterations and the right plot
+shows a single outer iteration4. We can see that for SVRG,
+(cid:107)vt(cid:107)2 decreases over the outer iterations, while it has an
+increasing trend or oscillating trend for each inner loop.
+In contrast, SARAH enjoys decreasing trends both in the
+outer and the inner loop iterations.
+
+We will now show that the stochastic steps computed by
+SARAH converge linearly in the inner loop. We present
+two linear convergence results based on our two different
+assumptions of µ-strong convexity. These results substan-
+tiate our conclusion that SARAH uses more stable stochas-
+tic gradient estimates than SVRG. The following theorem
+is our ﬁrst result to demonstrate the linear convergence of
+our stochastic recursive step vt.
+Theorem 1a. Suppose that Assumptions 1, 2a and 3 hold.
+Consider vt deﬁned by (2) in SARAH (Algorithm 1) with
+η < 2/L. Then, for any t ≥ 1,
+
+E[(cid:107)vt(cid:107)2] ≤
+
+1 −
+
+(cid:104)
+
+(cid:104)
+
+≤
+
+1 −
+
+(cid:16) 2
+
+(cid:17)
+ηL − 1
+(cid:17)
+ηL − 1
+
+(cid:16) 2
+
+µ2η2(cid:105)
+µ2η2(cid:105)t
+
+E[(cid:107)vt−1(cid:107)2]
+
+E[(cid:107)∇P (w0)(cid:107)2].
+
+This result implies that by choosing η = O(1/L), we ob-
+tain the linear convergence of (cid:107)vt(cid:107)2 in expectation with the
+rate (1 − 1/κ2). Below we show that a better convergence
+rate can be obtained under a stronger convexity assumption.
+
+Theorem 1b. Suppose that Assumptions 1 and 2b hold.
+Consider vt deﬁned by (2) in SARAH (Algorithm 1) with
+η ≤ 2/(µ + L). Then the following bound holds, ∀ t ≥ 1,
+
+E[(cid:107)vt(cid:107)2] ≤
+
+1 − 2µLη
+µ+L
+
+E[(cid:107)vt−1(cid:107)2]
+
+(cid:16)
+
+(cid:16)
+
+(cid:17)
+
+(cid:17)t
+
+≤
+
+1 − 2µLη
+µ+L
+
+E[(cid:107)∇P (w0)(cid:107)2].
+
+Again, by setting η = O(1/L), we derive the linear con-
+vergence with the rate of (1 − 1/κ), which is a signiﬁcant
+improvement over the result of Theorem 1a, when the prob-
+lem is severely ill-conditioned.
+
+3.2. Convergence Analysis
+
+In this section, we derive the general convergence rate re-
+sults for Algorithm 1. First, we present two important Lem-
+mas as the foundation of our theory. Then, we proceed to
+prove sublinear convergence rate of a single outer iteration
+when applied to general convex functions. In the end, we
+
+4In the plots of Figure 2, since the data for SVRG is noisy, we
+smooth it by using moving average ﬁlters with spans 100 for the
+left plot and 10 for the right one.
+
+Figure 1: A two-dimensional example of minw P (w) with n = 5
+for SVRG (left) and SARAH (right).
+
+Figure 2: An example of (cid:96)2-regularized logistic regression on
+rcv1 training dataset for SARAH, SVRG, SGD+ and FISTA with
+multiple outer iterations (left) and a single outer iteration (right).
+
+3.1. Linearly Diminishing Step-Size in a Single Inner
+
+Loop
+
+The most important property of the SVRG algorithm is the
+variance reduction of the steps. This property holds as the
+number of outer iteration grows, but it does not hold, if only
+the number of inner iterations increases. In other words, if
+we simply run the inner loop for many iterations (without
+executing additional outer loops), the variance of the steps
+does not reduce in the case of SVRG, while it goes to zero
+in the case of SARAH. To illustrate this effect, let us take a
+look at Figures 1 and 2.
+
+In Figure 1, we applied one outer loop of SVRG and
+SARAH to a sum of 5 quadratic functions in a two-
+dimensional space, where the optimal solution is at the ori-
+gin, the black lines and black dots indicate the trajectory of
+each algorithm and the red point indicates the ﬁnal iterate.
+Initially, both SVRG and SARAH take steps along stochas-
+tic gradient directions towards the optimal solution. How-
+ever, later iterations of SVRG wander randomly around the
+origin with large deviation from it, while SARAH follows a
+much more stable convergent trajectory, with a ﬁnal iterate
+falling in a small neighborhood of the optimal solution.
+
+In Figure 2, the x-axis denotes the number of effective
+passes which is equivalent to the number of passes through
+all of the data in the dataset, the cost of each pass being
+equal to the cost of one full gradient evaluation; and y-axis
+represents (cid:107)vt(cid:107)2. Figure 2 shows the evolution of (cid:107)vt(cid:107)2
+
+A Simple Example with SVRGx1-600-400-2000200400600x2-600-400-2000200400600A Simple Example with SARAHx1-600-400-2000200400600x2-600-400-2000200400600Number of Effective Passes05101520kvtk210-1010-810-610-410-2100102104rcv1, Moving Average with Span 100SARAHSVRGSGD+FISTANumber of Effective Passes00.511.522.533.54kvtk210-710-610-510-410-310-210-1100101102103rcv1, Moving Average with Span 10SARAHSVRGSGD+FISTASARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+prove that the algorithm with multiple outer iterations has
+linear convergence rate in the strongly convex case.
+
+We begin with proving two useful lemmas that do not re-
+quire any convexity assumption. The ﬁrst Lemma 1 bounds
+the sum of expected values of (cid:107)∇P (wt)(cid:107)2. The second,
+Lemma 2, bounds E[(cid:107)∇P (wt) − vt(cid:107)2].
+Lemma 1. Suppose that Assumption 1 holds. Consider
+SARAH (Algorithm 1). Then, we have
+
+E[(cid:107)∇P (wt)(cid:107)2] ≤
+
+E[P (w0) − P (w∗)]
+
+(8)
+
+2
+η
+
+E[(cid:107)∇P (wt) − vt(cid:107)2] − (1 − Lη)
+
+E[(cid:107)vt(cid:107)2].
+
+m
+(cid:88)
+
+t=0
+
+Lemma 2. Suppose that Assumption 1 holds. Consider vt
+deﬁned by (2) in SARAH (Algorithm 1). Then for any t ≥ 1,
+
+m
+(cid:88)
+
+t=0
+
++
+
+m
+(cid:88)
+
+t=0
+
+(cid:80)m
+
+t=0
+≤ 2
+η
+
+(11)
+≤ 2
+η
+
+Hence, by Lemma 1 with η ≤ 1/L, we have
+
+E[(cid:107)∇P (wt)(cid:107)2]
+E[P (w0) − P (w∗)] + (cid:80)m
+
+E[(cid:107)∇P (wt) − vt(cid:107)2]
+
+t=0
+
+E[P (w0) − P (w∗)] + mηL
+2−ηL
+
+E[(cid:107)v0(cid:107)2].
+
+(12)
+
+Since we are considering one outer iteration, with s ≥ 1,
+then we have v0 = ∇P (w0) = ∇P ( ˜ws−1) (since w0 =
+˜ws−1), and ˜ws = wt, where t is picked uniformly at ran-
+dom from {0, 1, . . . , m}. Therefore, the following holds,
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2] = 1
+
+(cid:80)m
+
+m+1
+
+t=0
+
+E[(cid:107)∇P (wt)(cid:107)2]
+
+(12)
+≤
+
+2
+η(m+1)
++ ηL
+2−ηL
+
+E[P ( ˜ws−1) − P (w∗)]
+E[(cid:107)∇P ( ˜ws−1)(cid:107)2].
+
+Theorem 2, in the case when η ≤ 1/L implies that
+
+E[(cid:107)∇P (wt) − vt(cid:107)2] =
+
+E[(cid:107)vj − vj−1(cid:107)2]
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2] ≤
+
+2
+η(m+1)
+
+E[P ( ˜ws−1) − P (w∗)]
+
+t
+(cid:88)
+
+j=1
+
+−
+
+t
+(cid:88)
+
+j=1
+
+E[(cid:107)∇P (wj) − ∇P (wj−1)(cid:107)2].
+
+Now we are ready to provide our main theoretical results.
+
+3.2.1. GENERAL CONVEX CASE
+
+Following from Lemma 2, we can obtain the following up-
+per bound for E[(cid:107)∇P (wt) − vt(cid:107)2] for convex functions
+fi, i ∈ [n].
+Lemma 3. Suppose that Assumptions 1 and 3 hold. Con-
+sider vt deﬁned as (2) in SARAH (Algorithm 1) with η <
+2/L. Then we have that for any t ≥ 1,
+
+E[(cid:107)∇P (wt) − vt(cid:107)2] ≤
+
+(cid:104)
+E[(cid:107)v0(cid:107)2] − E[(cid:107)vt(cid:107)2]
+
+(cid:105)
+
+ηL
+2 − ηL
+ηL
+2 − ηL
+
+≤
+
+E[(cid:107)v0(cid:107)2].
+
+(9)
+
+Using the above lemmas, we can state and prove one of our
+core theorems as follows.
+Theorem 2. Suppose that Assumptions 1 and 3 hold. Con-
+sider SARAH (Algorithm 1) with η ≤ 1/L. Then for any
+s ≥ 1, we have
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2] ≤
+
+E[P ( ˜ws−1) − P (w∗)]
+
+2
+η(m + 1)
+ηL
+2 − ηL
+
++
+
++ ηLE[(cid:107)∇P ( ˜ws−1)(cid:107)2].
+(cid:113) 2
+
+By choosing the learning rate η =
+
+L(m+1) (with m such
+
+L(m+1) ≤ 1/L) we can derive the following con-
+
+(cid:113) 2
+
+that
+vergence result,
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2]
+(cid:113) 2L
+m+1
+
+≤
+
+E[P ( ˜ws−1) − P (w∗) + (cid:107)∇P ( ˜ws−1)(cid:107)2].
+
+Clearly, this result shows a sublinear convergence rate for
+SARAH under general convexity assumption within a sin-
+gle inner loop, with increasing m, and consequently, we
+have the following result for complexity bound.
+Corollary 1. Suppose that Assumptions 1 and 3 hold. Con-
+sider SARAH (Algorithm 1) within a single outer iteration
+(cid:113) 2
+L(m+1) where m ≥ 2L − 1 is
+with the learning rate η =
+the total number of iterations, then (cid:107)∇P (wt)(cid:107)2 converges
+m+1 , and there-
+sublinearly in expectation with a rate of
+fore, the total complexity to achieve an (cid:15)-accurate solution
+deﬁned in (7) is O(n + 1/(cid:15)2).
+
+(cid:113) 2L
+
+We now turn to estimating convergence of SARAH with
+multiple outer steps. Simply using Theorem 2 for each of
+the outer steps we have the following result.
+Theorem 3. Suppose that Assumptions 1 and 3 hold. Con-
+sider SARAH (Algorithm 1) and deﬁne
+
+E[(cid:107)∇P ( ˜ws−1)(cid:107)2].
+
+(10)
+
+δk =
+
+2
+η(m+1)
+
+E[P ( ˜wk) − P (w∗)], k = 0, 1, . . . , s − 1,
+
+Proof. Since v0 = ∇P (w0) implies (cid:107)∇P (w0) − v0(cid:107)2 = 0
+then by Lemma 3, we can write
+
+(cid:80)m
+
+t=0
+
+E[(cid:107)∇P (wt) − vt(cid:107)2] ≤ mηL
+2−ηL
+
+E[(cid:107)v0(cid:107)2].
+
+(11)
+
+and δ = max0≤k≤s−1 δk. Then we have
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2] − ∆ ≤ αs((cid:107)∇P ( ˜w0)(cid:107)2 − ∆),
+(cid:17)
+
+(cid:16)
+
+1 + ηL
+
+2(1−ηL)
+
+, and α = ηL
+
+2−ηL .
+
+where ∆ = δ
+
+(13)
+
+SARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+Figure 3: Theoretical comparisons of learning rates (left) and convergence rates (middle and right) with n = 1, 000, 000 for SVRG and
+SARAH in one inner loop.
+
+Based on Theorem 3, we have the following total complex-
+ity for SARAH in the general convex case.
+
+Corollary 2. Let us choose ∆ = (cid:15)/4, α = 1/2 (with η =
+2/(3L)), and m = O(1/(cid:15)) in Theorem 3. Then, the total
+complexity to achieve an (cid:15)-accuracy solution deﬁned in (7)
+is O((n + (1/(cid:15))) log(1/(cid:15))).
+
+3.2.2. STRONGLY CONVEX CASE
+
+We now turn to the discussion of the linear convergence
+rate of SARAH under the strong convexity assumption on
+P . From Theorem 2, for any s ≥ 1, using property (6) of
+the µ-strongly convex P , we have
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2] ≤
+
+E[P ( ˜ws−1) − P (w∗)]
+2
+η(m+1)
++ ηL
+E[(cid:107)∇P ( ˜ws−1)(cid:107)2]
+2−ηL
+(cid:17)
+
+E[(cid:107)∇P ( ˜ws−1)(cid:107)2],
+
+(cid:16)
+
+(6)
+≤
+
+1
+
+µη(m+1) + ηL
+
+2−ηL
+
+and equivalently,
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2] ≤ σm E[(cid:107)∇P ( ˜ws−1)(cid:107)2].
+
+(14)
+
+def=
+
+µη(m+1) + ηL
+Let us deﬁne σm
+2−ηL . Then by choosing
+η and m such that σm < 1, and applying (14) recursively,
+we are able to reach the following convergence result.
+
+1
+
+Theorem 4. Suppose that Assumptions 1, 2a and 3 hold.
+Consider SARAH (Algorithm 1) with the choice of η and m
+such that
+
+σm
+
+def
+=
+
+1
+µη(m + 1)
+
++
+
+ηL
+2 − ηL
+
+< 1.
+
+(15)
+
+Then, we have
+
+η < 1/L required by SARAH. In addition, with the same
+values of m and η, the rate or convergence of (the outer
+iterations) of SARAH is always smaller than that of SVRG.
+
+σm =
+
+1
+
+µη(m+1) + ηL
+1
+µη(1−2Lη)m +
+
+1
+µη(m+1) +
+1
+0.5/(ηL)−1 = αm.
+
+2−ηL =
+
+<
+
+1
+2/(ηL)−1
+
+Remark 2. To further demonstrate the better convergence
+properties of SARAH, let us consider following optimiza-
+tion problem
+
+min
+0<η<1/L
+
+σm,
+
+min
+0<η<1/4L
+
+αm,
+
+which can be interpreted as the best convergence rates for
+different values of m, for both SARAH and SVRG. After
+simple calculations, we plot both learning rates and the
+corresponding theoretical rates of convergence, as shown
+in Figure 3, where the right plot is a zoom-in on a part
+of the middle plot. The left plot shows that the optimal
+learning rate for SARAH is signiﬁcantly larger than that of
+SVRG, while the other two plots show signiﬁcant improve-
+ment upon outer iteration convergence rates for SARAH
+over SVRG.
+
+Based on Theorem 4, we are able to derive the following
+total complexity for SARAH in the strongly convex case.
+
+Corollary 3. Fix (cid:15) ∈ (0, 1), and let us run SARAH with
+η = 1/(2L) and m = 4.5κ for T iterations where
+T = (cid:100)log((cid:107)∇P ( ˜w0)(cid:107)2/(cid:15))/ log(9/7)(cid:101), then we can derive
+an (cid:15)-accuracy solution deﬁned in (7). Furthermore, we
+can obtain the total complexity of SARAH, to achieve the
+(cid:15)-accuracy solution, as O ((n + κ) log(1/(cid:15))) .
+
+E[(cid:107)∇P ( ˜ws)(cid:107)2] ≤ (σm)s(cid:107)∇P ( ˜w0)(cid:107)2.
+
+4. A Practical Variant
+
+Remark 1. Theorem 4 implies that any η < 1/L will work
+for SARAH. Let us compare our convergence rate to that of
+SVRG. The linear rate of SVRG, as presented in (Johnson
+& Zhang, 2013), is given by
+
+αm =
+
+µη(1−2Lη)m + 2ηL
+
+1−2ηL < 1.
+
+1
+
+We observe that it implies that the learning rate has to
+satisfy η < 1/(4L), which is a tighter restriction than
+
+While SVRG is an efﬁcient variance-reducing stochastic
+gradient method, one of its main drawbacks is the sensitiv-
+ity of the practical performance with respect to the choice
+of m. It is know that m should be around O(κ),5 while it
+still remains unknown that what the exact best choice is. In
+this section, we propose a practical variant of SARAH as
+
+5 In practice, when n is large, P (w) is often considered as a
+regularized Empirical Loss Minimization problem with regular-
+ization parameter λ = 1
+n , then κ ∼ O(n).
+
+m×10700.511.52Learning Rate0.12590.19950.31620.50120.79431.25891.9953Evolutions of Learning Ratesσm(SARAH)αm(SVRG)m×10700.511.52Convergence Rate10-1100101102103104105106Evolutions of Convergence Ratesσm(SARAH)αm(SVRG)m×1070.811.21.41.61.82Convergence Rate0.40.60.811.21.41.6Evolutions of Convergence Ratesσm(SARAH)αm(SVRG)SARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+SARAH+ (Algorithm 2), which provides an automatic and
+adaptive choice of the inner loop size m. Guided by the lin-
+ear convergence of the steps in the inner loop, demonstrated
+in Figure 2, we introduce a stopping criterion based on the
+values of (cid:107)vt(cid:107)2 while upper-bounding the total number of
+steps by a large enough m for robustness. The other mod-
+iﬁcation compared to SARAH (Algorithm 1) is the more
+practical choice ˜ws = wt, where t is the last index of the
+particular inner loop, instead of randomly selected interme-
+diate index.
+
+Algorithm 2 SARAH+
+
+Parameters: the learning rate η > 0, 0 < γ ≤ 1 and the
+maximum inner loop size m.
+Initialize: ˜w0
+Iterate:
+for s = 1, 2, . . . do
+
+i=1 ∇fi(w0)
+
+w0 = ˜ws−1
+(cid:80)n
+v0 = 1
+n
+w1 = w0 − ηv0
+t = 1
+while (cid:107)vt−1(cid:107)2 > γ(cid:107)v0(cid:107)2 and t < m do
+
+Sample it uniformly at random from [n]
+vt = ∇fit(wt) − ∇fit(wt−1) + vt−1
+wt+1 = wt − ηvt
+t = t + 1
+
+end while
+Set ˜ws = wt
+
+end for
+
+Different from SARAH, SARAH+ provides a possibility of
+earlier termination and unnecessary careful choices of m,
+and it also covers the classical gradient descent when we
+set γ = 1 (since the while loop does not proceed). In Fig-
+ure 4 we present the numerical performance of SARAH+
+with different γs on rcv1 and news20 datasets. The size
+of the inner loop provides a trade-off between the fast sub-
+linear convergence in the inner loop and linear convergence
+in the outer loop. From the results, it appears that γ = 1/8
+is the optimal choice. With a larger γ, i.e. γ > 1/8, the
+iterates in the inner loop do not provide sufﬁcient reduc-
+tion, before another full gradient computation is required,
+while with γ < 1/8 an unnecessary number of inner steps
+is performed without gaining substantial progress. Clearly
+γ is another parameter that requires tuning, however, in our
+experiments, the performance of SARAH+ has been very
+robust with respect to the choices of γ and did not vary
+much from one data set to another.
+
+Similarly to SVRG, (cid:107)vt(cid:107)2 decreases in the outer iterations
+of SARAH+. However, unlike SVRG, SARAH+ also in-
+herits from SARAH the consistent decrease of (cid:107)vt(cid:107)2 in
+expectation in the inner loops. It is not possible to apply
+the same idea of adaptively terminating the inner loop of
+
+Figure 4: An example of (cid:96)2-regularized logistic regression on
+rcv1 (left) and news20 (right) training datasets for SARAH+ with
+different γs on loss residuals P (w) − P (w∗).
+
+Table 3: Summary of datasets used for experiments.
+
+Dataset
+
+covtype
+ijcnn1
+news20
+rcv1
+
+d
+
+n (train)
+
+Sparsity
+
+54
+22
+1,355,191
+47,236
+
+406,709
+91, 701
+13, 997
+677,399
+
+22.12%
+59.09%
+0.03375%
+0.1549%
+
+n (test)
+
+174,303
+49, 990
+5, 999
+20,242
+
+L
+
+1.90396
+1.77662
+0.2500
+0.2500
+
+SVRG based on the reduction in (cid:107)vt(cid:107)2, as (cid:107)vt(cid:107)2 may have
+side ﬂuctuations as shown in Figure 2.
+
+5. Numerical Experiments
+
+the theoretical analyses and insights, we
+To support
+present our empirical experiments, comparing SARAH and
+SARAH+ with the state-of-the-art ﬁrst-order methods for
+(cid:96)2-regularized logistic regression problems with
+
+fi(w) = log(1 + exp(−yixT
+
+i w)) + λ
+
+2 (cid:107)w(cid:107)2,
+
+on datasets covtype, ijcnn1, news20 and rcv1 6. For ijcnn1
+and rcv1 we use the predeﬁned testing and training sets,
+while covtype and news20 do not have test data, hence we
+randomly split the datasets with 70% for training and 30%
+for testing. Some statistics of the datasets are summarized
+in Table 3.
+
+The penalty parameter λ is set to 1/n as is common prac-
+tice (Le Roux et al., 2012). Note that like SVRG/S2GD and
+SAG/SAGA, SARAH also allows an efﬁcient sparse imple-
+mentation named “lazy updates” (Koneˇcn´y et al., 2016).
+We conduct and compare numerical results of SARAH
+with SVRG, SAG, SGD+ and FISTA. SVRG (Johnson &
+Zhang, 2013) and SAG (Le Roux et al., 2012) are classic
+modern stochastic methods. SGD+ is SGD with decreas-
+ing learning rate η = η0/(k + 1) where k is the number
+of effective passes and η0 is some initial constant learning
+rate. FISTA (Beck & Teboulle, 2009) is the Fast Iterative
+Shrinkage-Thresholding Algorithm, well-known as an ef-
+ﬁcient accelerated version of the gradient descent. Even
+though for each method, there is a theoretical safe learning
+rate, we compare the results for the best learning rates in
+hindsight.
+
+Figure 5 shows numerical results in terms of loss residuals
+
+6All datasets are available at http://www.csie.ntu.
+
+edu.tw/˜cjlin/libsvmtools/datasets/.
+
+Number of Effective Passes051015202530P(w) - P(w  *)10-1510-1010-5100rcv1γ=1γ=1/2γ=1/4γ=1/8γ=1/16γ=1/64γ=1/256Number of Effective Passes0510152025P(w) - P(w  *)10-1510-1010-5100news20γ=1γ=1/2γ=1/4γ=1/8γ=1/16γ=1/64γ=1/256SARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+Figure 5: Comparisons of loss residuals P (w) − P (w∗) (top) and test errors (bottom) from different modern stochastic methods on
+covtype, ijcnn1, news20 and rcv1.
+
+Table 4: Summary of best parameters for all the algorithms on
+different datasets.
+
+Dataset
+
+covtype
+ijcnn1
+news20
+rcv1
+
+SARAH
+(m∗, η∗)
+(2n, 0.9/L)
+(0.5n, 0.8/L)
+(0.5n, 0.9/L)
+(0.7n, 0.7/L)
+
+SVRG
+(m∗, η∗)
+(n, 0.8/L)
+(n, 0.5/L)
+(n, 0.5/L)
+(0.5n, 0.9/L)
+
+SAG
+(η∗)
+0.3/L
+0.7/L
+0.1/L
+0.1/L
+
+SGD+
+(η∗)
+0.06/L
+0.1/L
+0.2/L
+0.1/L
+
+FISTA
+(η∗)
+50/L
+90/L
+30/L
+120/L
+
+(top) and test errors (bottom) on the four datasets, SARAH
+is sometimes comparable or a little worse than other meth-
+ods at the beginning. However, it quickly catches up to or
+surpasses all other methods, demonstrating a faster rate of
+decrease across all experiments. We observe that on cov-
+type and rcv1, SARAH, SVRG and SAG are comparable
+with some advantage of SARAH on covtype. On ijcnn1
+and news20, SARAH and SVRG consistently surpass the
+other methods.
+
+In particular, to validate the efﬁciency of our practical vari-
+ant SARAH+, we provide an insight into how important
+the choices of m and η are for SVRG and SARAH in Ta-
+ble 4 and Figure 6. Table 4 presents the optimal choices
+of m and η for each of the algorithm, while Figure 6
+shows the behaviors of SVRG and SARAH with different
+choices of m for covtype and ijcnn1, where m∗s denote
+the best choices. In Table 4, the optimal learning rates of
+SARAH vary less among different datasets compared to all
+the other methods and they approximate the theoretical up-
+per bound for SARAH (1/L); on the contrary, for the other
+methods the empirical optimal rates can exceed their the-
+oretical limits (SVRG with 1/(4L), SAG with 1/(16L),
+FISTA with 1/L). This empirical studies suggest that it
+is much easier to tune and ﬁnd the ideal learning rate for
+SARAH. As observed in Figure 6, the behaviors of both
+SARAH and SVRG are quite sensitive to the choices of m.
+With improper choices of m, the loss residuals can be in-
+creased considerably from 10−15 to 10−3 on both covtype
+in 40 effective passes and ijcnn1 in 17 effective passes for
+
+Figure 6: Comparisons of loss residuals P (w) − P (w∗) for dif-
+ferent inner loop sizes with SVRG (top) and SARAH (bottom) on
+covtype and ijcnn1.
+
+SARAH/SVRG.
+
+6. Conclusion
+
+We propose a new variance reducing stochastic recur-
+sive gradient algorithm SARAH, which combines some of
+the properties of well known existing algorithms, such as
+SAGA and SVRG. For smooth convex functions, we show
+a sublinear convergence rate, while for strongly convex
+cases, we prove the linear convergence rate and the compu-
+tational complexity as those of SVRG and SAG. However,
+compared to SVRG, SARAH’s convergence rate constant
+is smaller and the algorithms is more stable both theoret-
+ically and numerically. Additionally, we prove the linear
+convergence for inner loops of SARAH which support the
+claim of stability. Based on this convergence we derive a
+practical version of SARAH, with a simple stopping crite-
+rion for the inner loops.
+
+Number of Effective Passes010203040P(w) - P(w  *)10-1510-1010-5100covtypeSARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes051015202530P(w) - P(w  *)10-1510-1010-5100ijcnn1SARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes051015202530P(w) - P(w  *)10-1510-1010-5100news20SARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes010203040P(w) - P(w  *)10-1510-1010-5100rcv1SARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes0510152025303540Test Error Rate0.240.260.280.30.320.34covtypeSARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes051015202530Test Error Rate0.0750.080.0850.090.0950.1ijcnn1SARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes051015202530Test Error Rate0.070.080.090.10.110.120.130.14news20SARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes0510152025303540Test Error Rate0.0220.0240.0260.0280.030.0320.0340.036rcv1SARAH+SARAHSVRGSAGSGD+FISTANumber of Effective Passes010203040P(w) - P(w  *)10-1510-1010-5100SVRG(covtype)m*/8m*/4m*/2m*2m*4m*8m*Number of Effective Passes010203040P(w) - P(w  *)10-1510-1010-5100SVRG(ijcnn1)m*/8m*/4m*/2m*2m*4m*8m*Number of Effective Passes010203040P(w) - P(w  *)10-1510-1010-5100SARAH(covtype)m*/8m*/4m*/2m*2m*4m*8m*Number of Effective Passes010203040P(w) - P(w  *)10-1510-1010-5100SARAH(ijcnn1)m*/8m*/4m*/2m*2m*4m*8m*SARAH: A Novel Method for Machine Learning Problems Using Stochastic Recursive Gradient
+
+Mairal, Julien. Optimization with ﬁrst-order surrogate
+
+functions. In ICML, pp. 783–791, 2013.
+
+Mokhtari, Aryan, G¨urb¨uzbalaban, Mert, and Ribeiro, Ale-
+jandro.
+A double incremental aggregated gradient
+method with linear convergence rate for large-scale op-
+timization. Proceedings of IEEE International Confer-
+ence on Acoustic, Speech and Signal Processing (to ap-
+pear), 2017.
+
+Nesterov, Yurii. Introductory lectures on convex optimiza-
+tion : a basic course. Applied optimization. Kluwer
+Academic Publ., Boston, Dordrecht, London, 2004.
+ISBN 1-4020-7553-7.
+
+Reddi, Sashank J., Hefny, Ahmed, Sra, Suvrit, P´oczos,
+Barnab´as, and Smola, Alexander J. Stochastic variance
+In ICML, pp.
+reduction for nonconvex optimization.
+314–323, 2016.
+
+Robbins, Herbert and Monro, Sutton. A stochastic approx-
+imation method. The Annals of Mathematical Statistics,
+22(3):400–407, 1951.
+
+Schmidt, Mark, Le Roux, Nicolas, and Bach, Francis. Min-
+imizing ﬁnite sums with the stochastic average gradient.
+Mathematical Programming, pp. 1–30, 2016.
+
+Shalev-Shwartz, Shai and Zhang, Tong. Stochastic dual
+coordinate ascent methods for regularized loss. Journal
+of Machine Learning Research, 14(1):567–599, 2013.
+
+Shalev-Shwartz, Shai, Singer, Yoram, and Srebro, Nathan.
+Pegasos: Primal estimated sub-gradient solver for SVM.
+In ICML, pp. 807–814, 2007.
+
+Shalev-Shwartz, Shai, Singer, Yoram, Srebro, Nathan, and
+Cotter, Andrew. Pegasos: Primal estimated sub-gradient
+solver for SVM. Mathematical Programming, 127(1):
+3–30, 2011.
+
+Tak´aˇc, Martin, Bijral, Avleen Singh, Richt´arik, Peter, and
+Srebro, Nathan. Mini-batch primal and dual methods for
+SVMs. In ICML, pp. 1022–1030, 2013.
+
+Xiao, Lin and Zhang, Tong. A proximal stochastic gradi-
+ent method with progressive variance reduction. SIAM
+Journal on Optimization, 24(4):2057–2075, 2014.
+
+Acknowledgements
+
+The authors would like to thank the reviewers for useful
+suggestions which helped to improve the exposition in the
+paper.
+
+References
+
+Allen-Zhu, Zeyuan. Katyusha: The First Direct Accelera-
+tion of Stochastic Gradient Methods. Proceedings of the
+49th Annual ACM on Symposium on Theory of Comput-
+ing (to appear), 2017.
+
+Allen-Zhu, Zeyuan and Yuan, Yang.
+
+Improved SVRG
+for Non-Strongly-Convex or Sum-of-Non-Convex Ob-
+jectives. In ICML, pp. 1080–1089, 2016.
+
+Beck, Amir and Teboulle, Marc. A fast iterative shrinkage-
+inverse problems.
+
+thresholding algorithm for
+SIAM J. Imaging Sciences, 2(1):183–202, 2009.
+
+linear
+
+Bottou, L´eon. Online learning and stochastic approxima-
+tions. In Saad, David (ed.), Online Learning in Neural
+Networks, pp. 9–42. Cambridge University Press, New
+York, NY, USA, 1998. ISBN 0-521-65263-4.
+
+Bottou, L´eon, Curtis, Frank E, and Nocedal, Jorge. Op-
+timization methods for large-scale machine learning.
+arXiv:1606.04838, 2016.
+
+Cotter, Andrew, Shamir, Ohad, Srebro, Nati, and Sridharan,
+Karthik. Better mini-batch algorithms via accelerated
+gradient methods. In NIPS, pp. 1647–1655, 2011.
+
+Defazio, Aaron, Bach, Francis, and Lacoste-Julien, Simon.
+SAGA: A fast incremental gradient method with support
+for non-strongly convex composite objectives. In NIPS,
+pp. 1646–1654, 2014.
+
+Hastie, Trevor, Tibshirani, Robert, and Friedman, Jerome.
+The Elements of Statistical Learning: Data Mining, In-
+ference, and Prediction. Springer Series in Statistics,
+2nd edition, 2009.
+
+Johnson, Rie and Zhang, Tong. Accelerating stochastic
+gradient descent using predictive variance reduction. In
+NIPS, pp. 315–323, 2013.
+
+Koneˇcn´y, Jakub, Liu, Jie, Richt´arik, Peter, and Tak´aˇc, Mar-
+tin. Mini-batch semi-stochastic gradient descent in the
+IEEE Journal of Selected Topics in
+proximal setting.
+Signal Processing, 10:242–255, 2016.
+
+Koneˇcn´y, Jakub and Richt´arik, Peter. Semi-stochastic gra-
+
+dient descent methods. arXiv:1312.1666, 2013.
+
+Le Roux, Nicolas, Schmidt, Mark, and Bach, Francis. A
+stochastic gradient method with an exponential conver-
+In NIPS, pp. 2663–
+gence rate for ﬁnite training sets.
+2671, 2012.
+
+

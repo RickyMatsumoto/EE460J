@@ -1,0 +1,1304 @@
+Conﬁdent Multiple Choice Learning
+
+Kimin Lee 1 Changho Hwang 1 KyoungSoo Park 1 Jinwoo Shin 1
+
+Abstract
+Ensemble methods are arguably the most trust-
+worthy techniques for boosting the performance
+of machine learning models. Popular indepen-
+dent ensembles (IE) relying on na¨ıve averag-
+ing/voting scheme have been of typical choice
+for most applications involving deep neural net-
+works, but they do not consider advanced collab-
+oration among ensemble models. In this paper,
+we propose new ensemble methods specialized
+for deep neural networks, called conﬁdent mul-
+tiple choice learning (CMCL): it is a variant of
+multiple choice learning (MCL) via addressing
+its overconﬁdence issue. In particular, the pro-
+posed major components of CMCL beyond the
+original MCL scheme are (i) new loss, i.e., con-
+ﬁdent oracle loss, (ii) new architecture, i.e., fea-
+ture sharing and (iii) new training method, i.e.,
+stochastic labeling. We demonstrate the effect of
+CMCL via experiments on the image classiﬁca-
+tion on CIFAR and SVHN, and the foreground-
+background segmentation on the iCoseg. In par-
+ticular, CMCL using 5 residual networks pro-
+vides 14.05% and 6.60% relative reductions in
+the top-1 error rates from the corresponding IE
+scheme for the classiﬁcation task on CIFAR and
+SVHN, respectively.
+
+1. Introduction
+
+Ensemble methods have played a critical role in the
+machine learning community to obtain better predictive
+performance than what could be obtained from any of
+learning models alone, e.g., Bayesian
+the constituent
+model/parameter averaging (Domingos, 2000), boosting
+(Freund et al., 1999) and bagging (Breiman, 1996). Re-
+cently, they have been successfully applied to enhancing
+the power of many deep neural networks, e.g., 80% of
+
+1School of Electrical Engineering, Korea Advanced Institute
+of Science and Technology (KAIST), Daejeon, Repulic of Korea.
+Correspondence to: Jinwoo Shin <jinwoos@kaist.ac.kr>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+top-5 best-performing teams on ILSVRC challenge 2016
+(Krizhevsky et al., 2012) employ ensemble methods. They
+are easy and trustworthy to apply for most scenarios.
+While there exists a long history on ensemble methods,
+the progress on developing more advanced ensembles spe-
+cialized for deep neural networks has been slow. De-
+spite continued efforts that apply various ensemble meth-
+ods such as bagging and boosting to deep models, it has
+been observed that traditional independent ensembles (IE)
+which train models independently with random initializa-
+tion achieve the best performance (Ciregan et al., 2012; Lee
+et al., 2015). In this paper, we focus on developing more
+advanced ensembles for deep models utilizing the concept
+of multiple choice learning (MCL).
+
+The MCL concept was originally proposed in (Guzman-
+Rivera et al., 2012) under the scenario when inference pro-
+cedures are cascaded:
+
+(a) First, generate a set of plausible outputs.
+
+(b) Then, pick the correct solution form the set.
+
+For example, (Park & Ramanan, 2011; Batra et al., 2012)
+proposed human-pose estimation methods which produce
+multiple predictions and then reﬁne them by employing a
+temporal model, and (Collins & Koo, 2005) proposed a
+sentence parsing method which re-ranks the output of an
+initial system which produces a set of plausible outputs
+(Huang & Chiang, 2005). In such scenarios, the goal of
+the ﬁrst stage (a) is generating a set of plausible outputs
+such that at least one of them is correct for the second stage
+(b), e.g., human operators. Under this motivation, MCL has
+been studied (Guzman-Rivera et al., 2014; 2012; Lee et al.,
+2016), where various applications have been demonstrated,
+e.g., image classiﬁcation (Krizhevsky & Hinton, 2009), se-
+mantic segmentation (Everingham et al., 2010) and image
+captioning (Lin et al., 2014b).
+It trains an ensemble of
+multiple models by minimizing the so-called oracle loss,
+only focusing on the most accurate prediction produced by
+them. Consequently, it makes each model specialized for
+a certain subset of data, not for the entire one similarly as
+mixture-of-expert schemes (Jacobs et al., 1991).
+
+Although MCL focuses on the ﬁrst stage (a) in cascaded
+scenarios and thus can produce diverse/plausible outputs, it
+might be not useful if one does not have a good scheme for
+
+Conﬁdent Multiple Choice Learning
+
+the second stage (b). One can use a certain average/voting
+scheme of the predictions made by models for (b), but MCL
+using deep neural networks often fails to make a correct
+decision since each network tends to be overconﬁdent in
+its prediction. Namely, the oracle error/loss of MCL is low,
+but its top-1 error rate might be very high.
+
+Contribution. To address the issue, we develop the con-
+cept of conﬁdent MCL (CMCL) that does not lose any ben-
+eﬁt of the original MCL, while its target loss and architec-
+ture are redesigned for making the second stage (b) easier.
+Speciﬁcally, it targets to generate a set of diverse/plausible
+conﬁdent predictions from which one can pick the correct
+one using a simple average/voting scheme. To this end, we
+ﬁrst propose a new loss function, called conﬁdent oracle
+loss, for relaxing the overconﬁdence issue of MCL. Our
+key idea is to additionally minimize the Kullback-Leibler
+divergence from a predictive distribution to the uniform
+one in order to give conﬁdence to non-specialized models.
+Then, CMCL that minimizes the new loss can be efﬁciently
+trained like the original MCL for certain classes of models
+including neural networks, via stochastic alternating mini-
+mization (Lee et al., 2016). Furthermore, when CMCL is
+applied to deep models, we propose two additional regu-
+larization techniques for boosting its performance: feature
+sharing and stochastic labeling. Despite the new compo-
+nents, we note that the training complexity of CMCL is
+almost same to that of MCL or IE.
+
+We apply the new ensemble model trained by the new
+training scheme for several convolutional neural net-
+works (CNNs) including VGGNet (Simonyan & Zisser-
+man, 2015), GoogLeNet (Szegedy et al., 2015), and ResNet
+(He et al., 2016) for image classiﬁcation on the CIFAR
+(Krizhevsky & Hinton, 2009) and SVHN (Netzer et al.,
+2011) datasets, and fully-convolutional neural networks
+(FCNs) (Long et al., 2015) for foreground-background seg-
+mentation on the iCoseg dataset (Batra et al., 2010). First,
+for the image classiﬁcation task, CMCL outperforms all
+baselines, i.e., the traditional IE and the original MCL,
+in top-1 error rates.
+In particular, CMCL of 5 ResNet
+with 20 layers provides 14.05% and 6.60% relative reduc-
+tions in the top-1 error rates from the corresponding IE
+on CIFAR-10 and SVHN, respectively. Second, for the
+foreground-background segmentation task, CMCL using
+multiple FCNs with 4 layers also outperforms all baselines
+in top-1 error rates. Each model trained by CMCL gener-
+ates high-quality solutions by specializing for speciﬁc im-
+ages while each model trained by IE does not. We be-
+lieve that our new approach should be of broader interest
+for many deep learning tasks requiring high accuracy.
+
+Organization. In Section 2, we introduce necessary back-
+grounds for multiple choice learning and the corresponding
+loss function. We describe the proposed loss and the corre-
+
+sponding training scheme in Section 3. Section 4 provides
+additional techniques for the proposed ensemble model.
+Experimental results are reported in Section 5.
+
+2. Preliminaries
+
+2.1. Multiple Choice Learning
+
+In this section, we describe the basic concept of multi-
+ple choice learning (MCL) (Guzman-Rivera et al., 2014;
+2012). Throughout this paper, we denote the set {1, . . . , n}
+by [n] for positive integer n. The MCL scheme is a type
+of ensemble learning that produces diverse outputs of high
+quality. Formally, given a training dataset D = {(xi, yi) |
+i ∈ [N ], xi ∈ X , yi ∈ Y}, we consider an ensemble of M
+models f , i.e., (f1, . . . , fM ). For some task-speciﬁc loss
+function (cid:96) (y, f (x)), the oracle loss over the dataset D is
+deﬁned as follows:
+
+LO (D) =
+
+(cid:96) (yi, fm (xi)) ,
+
+(1)
+
+while the traditional independent ensemble (IE) loss is
+
+LE (D) =
+
+(cid:96) (yi, fm (xi)) .
+
+(2)
+
+N
+(cid:88)
+
+i=1
+
+min
+m∈[M ]
+
+N
+(cid:88)
+
+(cid:88)
+
+i=1
+
+m∈[M ]
+
+If all models have the same capacity and one can obtain
+the (global) optimum of the IE loss with respect to the
+model parameters, then all trained models should produce
+the same outputs, i.e., f1 = . . . = fM . On the other hand,
+the oracle loss makes the most accurate model optimize the
+loss function (cid:96) (y, f (x)) for each data x. Therefore, MCL
+produces diverse outputs of high quality by forcing each
+model to be specialized on a part of the entire dataset.
+
+Minimizing the oracle loss (1) is harder than minimizing
+the independent ensemble loss (2) since the min function is
+a non-continuous function. To address the issue, (Guzman-
+Rivera et al., 2012) proposed an iterative block coordinate
+decent algorithm and (Dey et al., 2015) reformulated this
+problem as a submodular optimization task in which en-
+semble models are trained sequentially in a boosting-like
+manner. However, when one considers an ensemble of
+deep neural networks, it is challenging to apply these meth-
+ods since they require either costly retraining or sequential
+training. Recently, (Lee et al., 2016) overcame this issue
+by proposing a stochastic gradient descent (SGD) based
+algorithm. Throughout this paper, we primarily focus on
+ensembles of deep neural networks and use the SGD algo-
+rithm for optimizing the oracle loss (1) or its variants.
+
+2.2. Oracle Loss for Top-1 Choice
+
+The oracle loss (1) used for MCL is useful for producing di-
+verse/plausible outputs, but it is often inappropriate for ap-
+
+Conﬁdent Multiple Choice Learning
+
+(a) Multiple choice learning (MCL)
+
+(b) Conﬁdent MCL (CMCL)
+
+(c) Independent ensemble (IE)
+
+Figure 1. Class-wise test set accuracy of each ensemble model trained by various ensemble methods. One can observe that most models
+trained by MCL and CMCL become specialists for certain classes while they are generalized in case of traditional IE.
+
+plications requiring a single choice, i.e., top-1 error. This
+is because ensembles of deep neural networks tend to be
+overconﬁdent in their predictions, and it is hard to judge a
+better solution from their outputs. To explain this in more
+detail, we evaluate the performance of ensembles of convo-
+lutional neural networks (CNNs) for the image classiﬁca-
+tion task on the CIFAR-10 dataset (Krizhevsky & Hinton,
+2009). We train ensembles of 5 CNNs (two convolutional
+layers followed by a fully-connected layer) using MCL.
+We also train the models using traditional IE which trains
+each model independently under different random initial-
+izations. Figure 1 summarizes the class-wise test set accu-
+racy of each ensemble member. In the case of MCL, most
+models become specialists for certain classes (see Figure
+1(a)), while they are generalized in the case of traditional
+IE as shown in Figure 1(c). However, as expected, each
+model trained by MCL signiﬁcantly outperforms for its
+specialized classes than that trained by IE. For choosing
+a single output, similar to (Wan et al., 2013; Ciregan et al.,
+2012), one can average the output probabilities from en-
+semble members trained by MCL, but the corresponding
+top-1 classiﬁcation error rate is often very high (e.g., see
+Table 1 in Section 5). This is because each model trained
+by MCL is overconﬁdent for its non-specialized classes.
+To quantify this, we also compute the entropy of the pre-
+dictive distribution on the test data and use this to evalu-
+ate the quality of conﬁdence/uncertainty level. Figure 2(a)
+reports the entropy extracted from the predictive distribu-
+tion of one of ensemble models trained by MCL. One can
+observe that it has low entropy as expected for its special-
+ized classes (i.e., classes that the model has a test accu-
+racy higher than 90%). However, even for non-specialized
+classes, it also has low entropy. Due to this, with respect
+to top-1 error rates, simple averaging of models trained by
+MCL performs much worse than that of IE. Such issue typi-
+cally occurs in deep neural networks since it is well known
+that they are poor at quantifying predictive uncertainties,
+and tend to be easily overconﬁdent (Nguyen et al., 2015).
+
+3. Conﬁdent Multiple Choice Learning
+
+3.1. Conﬁdent Oracle Loss
+
+In this section, we propose a modiﬁed oracle loss for re-
+laxing the issue of MCL described in the previous section.
+Suppose that the m-th model outputs the predictive distri-
+bution Pθm (y | x) given input x, where θm denotes the
+model parameters. Then, we deﬁne the conﬁdent oracle
+loss as the following integer programming variant of (1):
+
+LC(D) = min
+vm
+i
+
+N
+(cid:88)
+
+M
+(cid:88)
+
+(cid:32)
+
+i=1
+
+m=1
+
+vm
+i (cid:96) (yi, Pθm (y | xi))
+
++ β (1 − vm
+
+i ) DKL (U (y) (cid:107) Pθm (y | xi))
+
+(cid:33)
+
+(3a)
+
+(3b)
+
+subject to
+
+M
+(cid:88)
+
+vm
+i = 1,
+
+∀i,
+
+m=1
+vm
+i ∈ {0, 1},
+
+∀i, m (3c)
+
+where DKL denotes the Kullback-Leibler (KL) divergence,
+U (y) is the uniform distribution, β is a penalty parameter,
+and vm
+is a ﬂag variable to decide the assignment of xi to
+i
+the m-th model. By minimizing the KL divergence from
+the predictive distribution to the uniform one, the new loss
+forces the predictive distribution to be closer to the uniform
+one, i.e., zero conﬁdence, on non-specialized data, while
+those for specialized data still follow the correct one. For
+example, for classiﬁcation tasks, the most accurate model
+for each data is allowed to optimize the classiﬁcation loss,
+while others are forced to give less conﬁdent predictions by
+minimizing the KL divergence. We remark that although
+we optimize the KL divergence only for non-specialized
+data, one can also do it even for specialized data to regular-
+ize each model (Pereyra et al., 2017).
+
+AirplaneAutomobileBirdCatDeerDogFrogHorseShipTruck123450.0 %0.0 %93.6 %0.0 %0.0 %0.0 %0.0 %96.1 %0.0 %0.0 %99.9 %0.0 %0.0 %0.0 %0.0 %0.0 %0.0 %95.6 %0.0 %0.0 %0.0 %0.0 %0.0 %97.5 %0.0 %0.0 %97.0 %0.0 %0.0 %0.0 %0.0 %0.0 %0.0 %0.0 %97.7 %0.0 %0.0 %0.0 %0.0 %97.2 %0.0 %0.0 %0.0 %97.2 %0.0 %0.0 %97.4 %0.0 %0.0 %0.0 %1234595.8%0.0%4.4%12.2%2.2%0.0%0.0%0.8%98.6%9.0%0.1%0.3%2.4%4.1%94.0%94.5%2.6%0.0%0.0%0.2%0.0%23.6%1.2%98.7%4.5%15.8%8.0%2.9%4.7%91.7%7.1%0.9%99.2%2.7%0.0%0.0%0.0%98.1%0.0%0.0%0.0%97.3%0.0%0.0%0.0%0.5%96.1%0.0%0.0%28.0%1234586.6%85.5%86.4%85.7%86.0%90.7%90.3%90.5%90.6%90.5%75.4%75.9%74.5%76.3%76.5%68.5%66.5%66.1%67.1%67.1%85.8%86.3%86.1%86.1%86.2%76.3%75.6%77.5%75.0%76.5%90.1%90.7%90.3%91.4%90.6%87.3%86.9%86.6%86.3%87.2%91.6%91.6%91.4%91.7%90.7%90.4%89.3%89.8%90.0%90.0%Conﬁdent Multiple Choice Learning
+
+(a) MCL
+
+(b) CMCL
+
+(c) IE with AT
+
+(d) Feature sharing
+
+Figure 2. Histogram of the predictive entropy of model trained by (a) MCL (b) CMCL and (c) IE on CIFAR-10 and SVHN test data. In
+the case of MCL and CMCL, we separate the classes of CIFAR-10 into specialized (i.e., classes that model has a class-wise test accuracy
+higher than 90%) and non-specialized (others) classes. In the case of IE, we follow the proposed method by (Lakshminarayanan et al.,
+2016):
+train an ensemble of 5 models with adversarial training (AT) and measure the entropy using the averaged probability, i.e.,
+averaging output probabilities from 5 models. (d) Detailed view of feature sharing between two models. Grey units indicate that they
+are currently dropped. Masked features passed to a model are all added to generate the shared features.
+
+3.2. Stochastic Alternating Minimization for Training
+
+Algorithm 1 Conﬁdent MCL (CMCL)
+
+In order to minimize the conﬁdent oracle loss (3) efﬁ-
+ciently, we use the following procedure (Guzman-Rivera
+et al., 2012), which optimizes model parameters {θm} and
+assignment variables {vm
+
+i } alternatively:
+
+1. Fix {θm} and optimize {vm
+
+i }.
+
+Under ﬁxed model parameters {θm}, the objective
+(3a) is decomposable with respect to assignments
+{vm
+
+i } and it is easy to ﬁnd optimal {vm
+
+i }.
+
+2. Fix {vm
+
+i } and optimize {θm}.
+Under ﬁxed assignments {vm
+the objective (3a)
+is decomposable with respect to model parameters
+{θm}, and it requires each model to be trained inde-
+pendently.
+
+i },
+
+The above scheme iteratively assigns each data to a partic-
+ular model and then independently trains each model only
+using its assigned data. Even though it monotonically de-
+creases the objective, it is still highly inefﬁcient since it
+requires training each model multiple times until assign-
+ments {vm
+i } converge. To address the issue, we propose
+deciding assignments and update model parameters to the
+gradient directions once per each batch, similarly to (Lee
+et al., 2016). In other words, we perform a single gradient-
+update on parameters in Step 2, without waiting for their
+convergence to a (local) optimum. In fact, (Lee et al., 2016)
+show that such stochastic alternating minimization works
+well for the oracle loss (1). We formally describe a de-
+tailed training procedure as the ‘version 0’ of Algorithm 1,
+and we will introduce the alternative ‘version 1’ later. This
+direction is complementary to ours, and we do not explore
+in this paper.
+
+Input: Dataset D = {(xi, yi) | xi ∈ X , yi ∈ Y} and
+penalty parameter β
+Output: Ensemble of M trained models
+repeat
+
+Let U (y) be a uniform distribution
+Sample random batch B ⊂ D
+for m = 1 to M do
+
+Compute the loss of the m-th model:
+
+Lm
+
+i ←β
+
+(cid:88)
+
+DKL (U (y) (cid:107) Pθ
+
+(cid:99)m (y | xi))
+
+(cid:98)m(cid:54)=m
++ (cid:96) (yi, Pθm (yi | xi)) ,
+
+∀(xi, yi) ∈ B
+
+end for
+for m = 1 to M do
+
+for i = 1 to |B| do
+
+if the m-th model has the lowest loss then
+
+Compute the gradient of the training loss
+(cid:96) (yi, Pθm (yi | xi)) w.r.t θm
+
+else
+
+/∗ version 0: exact gradient ∗/
+Compute the gradient of the KL divergence
+βDKL (U (y) (cid:107) Pθm (y | xi)) w.r.t θm
+/∗ version 1: stochastic labeling ∗/
+Compute the gradient of the cross entropy loss
+−β log Pθm ((cid:98)yi | xi) using (cid:98)yi w.r.t θm where
+(cid:98)yi ∼ U (y)
+
+end if
+end for
+Update the model parameters
+
+end for
+
+until convergence
+
+CIFAR-10 (specialized)CIFAR-10 (non-specialized)SVHN (unseen)Fraction00.20.40.60.8Entropy00.51.01.52.02.5CIFAR-10 (specialized)CIFAR-10 (non-specialized)SVHN (unseen)Fraction00.20.40.60.8Entropy00.51.01.52.02.5CIFAR-10 (seen)SVHN (unseen)Fraction00.20.40.60.8Entropy00.51.01.52.02.5++Hidden Feature 𝐴Hidden Feature 𝐵Masked Feature 𝐴1Masked Feature 𝐵1Shared Feature𝐴+𝐵1Shared Feature𝐵+𝐴1Conﬁdent Multiple Choice Learning
+
+3.3. Effect of Conﬁdent Oracle Loss
+
+Similar to Section 2.2, we evaluate the performance of the
+proposed training scheme using 5 CNNs for image clas-
+siﬁcation on the CIFAR-10 dataset. As shown in Figure
+1(b), ensemble models trained by CMCL using the exact
+gradient (i.e., version 0 of Algorithm 1) become special-
+ists for certain classes. For specialized classes, they show
+the similar performance compared to the models trained by
+MCL, i.e., minimizing the oracle loss (1), which considers
+only specialization (see Figure 1(a)). For non-specialized
+classes, ensemble members of CMCL are not overconﬁ-
+dent, which makes it easy to pick a correct output via sim-
+ple voting/averaging. We indeed conﬁrm that each model
+trained by CMCL has not only low entropy for its spe-
+cialized classes, but also exhibits high entropy for non-
+specialized classes as shown in Figure 2(b).
+
+We also evaluate the quality of conﬁdence/uncertainty level
+on unseen data using SVHN (Netzer et al., 2011). Some-
+what surprisingly, each model trained by CMCL only using
+CIFAR-10 training data exhibits high entropy for SVHN
+test data, whereas models trained by MCL and IE are over-
+conﬁdent on it (see Figure 2(a) and 2(c)). We empha-
+size that our method can produce conﬁdent predictions sig-
+niﬁcantly better than the proposed method by (Lakshmi-
+narayanan et al., 2016), which uses the averaged probabil-
+ity of ensemble models trained by IE to obtain high quality
+uncertainty estimates (see Figure 2(c)).
+
+4. Regularization Techniques
+
+In this section, we introduce advanced techniques for re-
+ducing the overconﬁdence and improving the performance.
+
+4.1. Feature Sharing
+
+We ﬁrst propose a feature sharing scheme that stochasti-
+cally shares the features among member models of CMCL
+to further address the overconﬁdence issue. The primary
+reason why deep learning models are overconﬁdent is that
+they do not always extract general features from data. For
+examples, assume that some deep model only trains frogs
+and roses for classifying them. Although there might exist
+many kinds of features on their images, the model might
+make a decision based only on some speciﬁc features, e.g.,
+colors. In this case, ‘red’ apples can be classiﬁed as rose
+with high conﬁdence. Such an issue might be more severe
+in CMCL (and MCL) compared to IE since members of
+CMCL are specialized to certain data. To address the issue,
+we suggest the feature ensemble approach that encourages
+each model to generate meaningful abstractions from rich
+features extracted from other models.
+
+Formally, consider an ensemble of M neural networks with
+L hidden layers. We denote the weight matrix for layer
+
+m and h(cid:96)
+
+m, respectively.
+
+(cid:96) of model m ∈ [M ] and (cid:96)-th hidden feature of model
+m by W(cid:96)
+Instead of sharing the
+whole units of a hidden feature, we introduce random bi-
+nary masks determining which units to be shared with other
+models. We denote the mask for layer (cid:96) from model n to
+m as σσσ(cid:96)
+nm ∼ Bernoulli(λ), which has the same dimen-
+sion with h(cid:96)
+n (we use λ = 0.7 in all experiments). Then,
+the (cid:96)-th hidden feature of model m with sharing ((cid:96) − 1)-th
+hidden features is deﬁned as follows:
+
+h(cid:96)
+
+m (x) = φ
+
+
+W(cid:96)
+m
+
+
+h(cid:96)−1
+
+m (x) +
+
+
+
+
+
+nm (cid:63) h(cid:96)−1
+σσσ(cid:96)
+
+n
+
+(x)
+
+
+
+ ,
+
+(cid:88)
+
+n(cid:54)=m
+
+where (cid:63) denotes element-wise multiplication and φ is the
+activation function. Figure 2(d) illustrates the proposed
+feature sharing scheme in an ensemble of deep neural net-
+works. It makes each model learn more generalized fea-
+tures by sharing the features among them. However, one
+might expect that it might make each model overﬁtted due
+to the increased number of parameters that induces a single
+prediction, i.e., the statistical dependencies among outputs
+of models increase, which would hurt the ensemble effect.
+In order to handle this issue, we introduce the randomness
+in sharing across models in a similar manner to DropOut
+(Srivastava et al., 2014) using the random binary masks
+σσσ. In addition, we propose sharing features at lower layers
+since sharing the higher layers might overﬁt the overall net-
+works more. For example, in all experiments with CNNs in
+this paper, we commonly apply feature sharing for hidden
+features just before the ﬁrst pooling layer. We also remark
+that such feature sharing strategies for better generalization
+have also been investigated in the literature for different
+purposes (Misra et al., 2016; Rusu et al., 2016).
+
+4.2. Stochastic Labeling
+
+For more efﬁciency in minimizing the conﬁdent oracle loss,
+we also consider a noisy unbiased estimator of gradients of
+the KL divergence with Monte Carlo samples from the uni-
+form distribution. The KL divergence from the predictive
+distribution to the uniform distribution can be written as
+follows:
+
+DKL (U (y) (cid:107) Pθ (y | x))
+U (y)
+Pθ (y | x)
+
+U (y) log
+
+(cid:88)
+
+=
+
+y
+(cid:88)
+
+y
+
+=
+
+U (y) log U (y) −
+
+U (y) log Pθ (y | x).
+
+(cid:88)
+
+y
+
+Hence, the gradient of the above KL divergence with re-
+spect to the model parameter θ becomes
+
+(cid:53)θDKL (U (y) (cid:107) Pθ (y | x)) = −EU (y)[(cid:53)θlog Pθ (y | x)].
+
+Conﬁdent Multiple Choice Learning
+
+From the above, we induce the following noisy unbiased
+estimator of gradients with Monte Carlo samples from the
+uniform distribution:
+
+− EU (y)[(cid:53)θlog Pθ (y | x)] (cid:119) −
+
+(cid:53)θlog Pθ (ys | x),
+
+1
+S
+
+(cid:88)
+
+s
+
+where ys ∼ U (y) and S is the number of samples. This
+random estimator takes samples from the uniform distribu-
+tion U (y) and constructs estimates of the gradient using
+them. In other words, (cid:53)θlog Pθ (ys | x) is the gradient of
+the cross entropy loss under assigning a random label to x.
+This stochastic labeling provides efﬁciency in implementa-
+tion/computation and stochastic regularization effects. We
+formally describe detailed procedures, as the version 1 of
+Algorithm 1.
+
+5. Experiments
+
+We evaluate our algorithm for both classiﬁcation and
+foreground-background segmentation tasks using CIFAR-
+10 (Krizhevsky & Hinton, 2009), SVHN (Netzer et al.,
+2011) and iCoseg (Batra et al., 2010) datasets. In all exper-
+iments, we compare the performance of CMCL with those
+of traditional IE and MCL using deep models. We provide
+the more detailed experimental setups including model ar-
+chitectures in the supplementary material.1
+
+5.1. Image Classiﬁcation
+
+Setup. The CIFAR-10 dataset consists of 50,000 training
+and 10,000 test images with 10 image classes where each
+image consists of 32 × 32 RGB pixels. The SVHN dataset
+consists of 73,257 training and 26,032 test images.2 We
+pre-process the images with global contrast normalization
+and ZCA whitening following (Ian J. Goodfellow & Ben-
+gio, 2013; Zagoruyko & Komodakis, 2016), and do not use
+any data augmentation. Using these datasets, we train vari-
+ous CNNs, e.g., VGGNet (Simonyan & Zisserman, 2015),
+GoogLeNet (Szegedy et al., 2015), and ResNet (He et al.,
+2016). Similar to (Zagoruyko & Komodakis, 2016), we use
+the softmax classiﬁer, and train each model by minimizing
+the cross-entropy loss using the stochastic gradient descent
+method with Nesterov momentum.
+
+For evaluation, we measure the top-1 and oracle error rates
+on the test dataset. The top-1 error rate is calculated by av-
+eraging output probabilities from all models and predicting
+the class of the highest probability. The oracle error rate is
+the rate of classiﬁcation failure over all outputs of individ-
+ual ensemble members for a given input, i.e., it measures
+whether none of the members predict the correct class for
+
+1Our
+
+is
+chhwang/cmcl.
+
+code
+
+available
+
+at https://github.com/
+
+2We do not use the extra SVHN dataset for training.
+
+Ensemble
+Method
+IE
+MCL
+
+CMCL
+
+Feature
+Sharing
+-
+-
+-
+(cid:88)
+(cid:88)
+
+Stochastic
+Labeling
+-
+-
+-
+-
+(cid:88)
+
+Oracle
+Error Rate
+10.65%
+4.40%
+4.49%
+5.12%
+3.32%
+
+Top-1
+Error Rate
+15.34%
+60.40%
+15.65%
+14.83%
+14.78%
+
+Table 1. Classiﬁcation test set error rates on CIFAR-10 using var-
+ious ensemble methods.
+
+an input. While a lower oracle error rate suggests higher
+diversity, a lower oracle error rate does not always bring
+a higher top-1 accuracy as this metric does not reveal the
+level of overconﬁdence of each model. By collectively
+measuring the top-1 and oracle error rates, one can grasp
+the level of specialization and conﬁdence of a model.
+
+Contribution by each technique. Table 1 validates con-
+tributions of our suggested techniques under comparison
+with other ensemble methods IE and MCL. We evaluate an
+ensemble of ﬁve simple CNN models where each model
+has two convolutional layers followed by a fully-connected
+layer. We incrementally apply our optimizations to gauge
+the stepwise improvement by each component. One can
+note that CMCL signiﬁcantly outperforms MCL in the top-
+1 error rate even without feature sharing or stochastic la-
+beling while it still provides a comparable oracle error rate.
+By sharing the 1st ReLU activated features, the top-1 er-
+ror rates are improved compared to those that employ only
+conﬁdent oracle loss. Stochastic labeling further improves
+both error rates. This implies that stochastic labeling not
+only reduces computational burdens but also provides reg-
+ularization effects.
+
+m=1 vm
+
+Overlapping. As a natural extension of CMCL, we also
+consider picking K specialized models instead of having
+only one specialized model, which was investigated for
+original MCL (Guzman-Rivera et al., 2012; Lee et al.,
+2016). This is easily achieved by modifying the constraint
+(3b) as (cid:80)M
+i = K, where K is an overlap parame-
+ter that controls training data overlap between the models.
+This simple but natural scheme brings extra gain in top-1
+performance by generalizing each model better. Table 2
+compares the performance of various ensemble methods
+with varying values of K. Under the choice of K = 4,
+CMCL of 10 CNNs provides 9.13% relative reduction in
+the top-1 error rates from the corresponding IE. Somewhat
+interestingly, IE has similar error rates on ensembles of
+both 5 and 10 CNNs, which implies that the performance
+of CMCL might be impossible to achieve using IE even if
+one increases the number of models in IE.
+
+Large-scale CNNs. We now evaluate the performance of
+our ensemble method when it is applied to larger-scale
+CNN models for image classiﬁcation tasks on CIFAR-10
+
+Conﬁdent Multiple Choice Learning
+
+Ensemble Method K
+
+Ensemble Size M = 5
+Oracle Error Rate Top-1 Error Rate
+
+Ensemble Size M = 10
+Oracle Error Rate Top-1 Error Rate
+
+IE
+
+MCL
+
+CMCL
+
+-
+1
+2
+3
+4
+1
+2
+3
+4
+
+10.65%
+4.40%
+3.75%
+4.73%
+5.83%
+3.32%
+3.69%
+4.38%
+5.82%
+
+15.34%
+60.40%
+20.66%
+16.24%
+15.65%
+14.78%
+14.25% (-7.11%)
+14.38%
+14.49%
+
+9.26%
+0.00%
+1.46%
+1.52%
+1.82%
+1.96%
+1.22%
+1.53%
+1.73%
+
+15.34%
+76.88%
+49.31%
+22.63%
+17.61%
+14.28%
+13.95%
+14.00%
+13.94% (-9.13%)
+
+Table 2. Classiﬁcation test set error rates on CIFAR-10 with varying values of the overlap parameter K explained in Section 5.1. We
+use CMCL with both feature sharing and stochastic labeling. Boldface values in parentheses represent the relative reductions from the
+best results of MCL and IE.
+
+CIFAR-10
+Oracle Error Rate Top-1 Error Rate
+
+SVHN
+Oracle Error Rate Top-1 Error Rate
+
+Model Name
+
+VGGNet-17
+
+GoogLeNet-18
+
+ResNet-20
+
+Ensemble
+Method
+- (single)
+IE
+MCL
+CMCL
+- (single)
+IE
+MCL
+CMCL
+- (single)
+IE
+MCL
+CMCL
+
+10.65%
+3.27%
+2.52%
+2.95%
+10.15%
+3.37%
+2.41%
+2.78%
+14.03%
+3.83%
+2.47%
+2.79%
+
+10.65%
+8.21%
+45.58%
+7.83% (-4.63%)
+10.15%
+7.97%
+52.03%
+7.51% (-5.77%)
+14.03%
+10.18%
+53.37%
+8.75% (-14.05%)
+
+5.22%
+1.99%
+1.45%
+1.65%
+4.59%
+1.78%
+1.39%
+1.36%
+5.31%
+1.82%
+1.29%
+1.42%
+
+5.22%
+4.10%
+45.30%
+3.92% (-4.39%)
+4.59%
+3.60%
+37.92%
+3.44% (-4.44%)
+5.31%
+3.94%
+40.91%
+3.68% (-6.60%)
+
+Table 3. Classiﬁcation test set error rates on CIFAR-10 and SVHN for various large-scale CNN models. We train an ensemble of 5
+models, and use CMCL with both feature sharing and stochastic labeling. Boldface values in parentheses indicate relative error rate
+reductions from the best results of MCL and IE.
+
+and SVHN datasets. Speciﬁcally, we test VGGNet (Si-
+monyan & Zisserman, 2015), GoogLeNet (Szegedy et al.,
+2015), and ResNet (He et al., 2016). We share the non-
+linear activated features right before the ﬁrst pooling layer,
+i.e., the 6th, 2nd, and 1st ReLU activations for ResNet
+with 20 layers, VGGNet with 17 layers, and GoogLeNet
+with 18 layers, respectively. This choice is for maxi-
+mizing the regularization effect of feature sharing while
+minimizing the statistical dependencies among the ensem-
+ble models. For all models, we choose the best hyper-
+parameters for conﬁdent oracle loss among the penalty pa-
+rameter β ∈ {0.5, 0.75, 1, 1.25, 1.5} and the overlapping
+parameter K ∈ {2, 3, 4}. Table 3 shows that CMCL con-
+sistently outperforms all baselines with respect to the top-1
+error rate while producing comparable oracle error rates to
+those of MCL. We also apply the feature sharing to IE as re-
+ported in Figure 4(a). Even though the feature sharing also
+improves the performance of IE, CMCL still outperforms
+IE: CMCL provides 6.11% relative reduction of the top-1
+
+error rate from the IE with feature sharing under the choice
+of M = 10. We also remark that IE with feature shar-
+ing has similar error rates as the ensemble size increases,
+while CMCL does not (i.e., the gain is more signiﬁcant for
+CMCL). This implies that feature sharing is more effec-
+tively working for CMCL.
+
+5.2. Foreground-Background Segmentation
+
+In this section, we evaluate if ensemble models trained with
+CMCL produce high-quality segmentation of foreground
+and background of an image with the iCoseg dataset. The
+foreground-background segmentation is formulated as a
+pixel-level classiﬁcation problem with 2 classes, i.e., 0
+(background) or 1 (foreground). To tackle the problem, we
+design fully convolutional networks (FCNs) model (Long
+et al., 2015) based on the decoder architecture presented in
+(Radford et al., 2016). The dataset consists of 38 groups of
+related images with pixel-level ground truth on foreground-
+background segmentation of each image. We only use im-
+
+Conﬁdent Multiple Choice Learning
+
+Figure 3. Prediction results of foreground-background segmentation for a few sample images. A test error rate is shown below each
+prediction. The ensemble models trained by CMCL and MCL generate high-quality predictions specialized for certain images.
+
+(a)
+
+(b)
+
+(c)
+
+Figure 4. (a) Top-1 error rate on CIFAR-10. We train an ensemble of M ResNets with 20 layers, and apply feature sharing (FS) to IE
+and CMCL. (b) Top-1 error rate and (c) oracle error rate on iCoseg by varying the ensemble sizes. The ensemble models trained by
+CMCL consistently improves the top-1 error rate over baselines.
+
+ages that are larger than 300 × 500 pixels. For each class,
+we randomly split 80% and 20% of the data into training
+and test sets, respectively. We train on 75 × 125 resized
+images using the bicubic interpolation (Keys, 1981). Sim-
+ilar to (Guzman-Rivera et al., 2012; Lee et al., 2016), we
+initialize the parameters of FCNs with those trained by IE
+for MCL and CMCL. For all experiments, CMCL is used
+with both feature sharing and stochastic labeling.
+
+Similar to (Guzman-Rivera et al., 2012), we deﬁne the per-
+centage of incorrectly labeled pixels as prediction error
+rate. We measure the oracle error rate (i.e., the lowest error
+rate over all models for a given input) and the top-1 error
+rate. The top-1 error rate is measured by following the pre-
+dictions of the member model that has a lower pixel-wise
+entropy, i.e., picking the output of a more conﬁdent model.
+For each ensemble method, we vary the number of ensem-
+ble models and measure the oracle error rate and test error
+rate. Figure 4(b) and 4(c) show both top-1 and oracle er-
+ror rates for all ensemble methods. We remark that the en-
+semble models trained by CMCL consistently improves the
+top-1 error rate over baselines. In an ensemble of 5 models,
+we ﬁnd that CMCL achieve up to 6.77% relative reduction
+
+in the top-1 error rate from the corresponding IE. As shown
+in Figure 3, an individual model trained by CMCL gen-
+erates high-quality solutions by specializing itself in spe-
+ciﬁc images (e.g., model 1 is specialized for ‘lobster’ while
+model 2 is specialized for ‘duck’) while each model trained
+by IE does not.
+
+6. Conclusion
+
+This paper proposes CMCL, a novel ensemble method of
+deep neural networks that produces diverse/plausible con-
+ﬁdent prediction of high quality. To this end, we address
+the over-conﬁdence issues of MCL, and propose a new
+loss, architecture and training method. In our experiments,
+CMCL outperforms not only the known MCL, but also the
+traditional IE, with respect to the top-1 error rates in clas-
+siﬁcation and segmentation tasks. The recent trend in the
+deep learning community tends to make models bigger and
+wider. We believe that our new ensemble approach brings a
+refreshing angle for developing advanced large-scale deep
+neural networks in many related applications.
+
+23.81 %8.34 %10.28 %10.99 %InputGround truthIE model 1CMCL model 1Prediction error rate:6.78 %34.12 %8.96 %9.79 %Prediction error rate:7.82 %33.39 %38.17 %8.71 %IE model 2CMCL model 2MCL model 1MCL model 2CMCLIE with FSIE without FS8.758.459.02910.29.72Top-1 error rate (%)8.59.09.510.0Ensemble size M510MCLCMCLIETop-1 error rate (%)12.513.013.514.0Ensemble size M12345MCLCMCLIEOracle error rate (%)1011121314Ensemble size M12345Conﬁdent Multiple Choice Learning
+
+Acknowledgements
+
+This work was supported in part by the ICT R&D Program
+of MSIP/IITP, Korea, under [2016-0-00563, Research on
+Adaptive Machine Learning Technology Development for
+Intelligent Autonomous Digital Companion], R0190-16-
+2012, [High Performance Big Data Analytics Platform Per-
+formance Acceleration Technologies Development], and
+by the National Research Council of Science & Technol-
+ogy (NST) grant by the Korea government (MSIP) (No.
+CRC-15-05-ETRI).
+
+References
+
+Batra, Dhruv, Kowdle, Adarsh, Parikh, Devi, Luo, Jiebo,
+and Chen, Tsuhan. icoseg: Interactive co-segmentation
+with intelligent scribble guidance. In Computer Vision
+and Pattern Recognition (CVPR), pp. 3169–3176. IEEE,
+2010.
+
+Batra, Dhruv, Yadollahpour, Payman, Guzman-Rivera, Ab-
+ner, and Shakhnarovich, Gregory. Diverse m-best solu-
+tions in markov random ﬁelds. In European Conference
+on Computer Vision (ECCV), pp. 1–16. Springer, 2012.
+
+Breiman, Leo. Bagging predictors. Machine learning, 24
+
+(2):123–140, 1996.
+
+Ciregan, Dan, Meier, Ueli, and Schmidhuber, J¨urgen.
+Multi-column deep neural networks for image classiﬁ-
+In Computer Vision and Pattern Recognition
+cation.
+(CVPR), pp. 3642–3649. IEEE, 2012.
+
+In Advances in neural in-
+multiple structured outputs.
+formation processing systems (NIPS), pp. 1799–1807,
+2012.
+
+Guzman-Rivera, Abner, Kohli, Pushmeet, Batra, Dhruv,
+and Rutenbar, Rob A. Efﬁciently enforcing diversity
+In International
+in multi-output structured prediction.
+Conference on Artiﬁcial Intelligence and Statistics (AIS-
+TATS), volume 2, pp. 3, 2014.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun,
+Jian. Deep residual learning for image recognition.
+In Computer Vision and Pattern Recognition (CVPR),
+2016.
+
+Huang, Liang and Chiang, David. Better k-best parsing.
+In Proceedings of the Ninth International Workshop on
+Parsing Technology, pp. 53–64. Association for Compu-
+tational Linguistics, 2005.
+
+Ian J. Goodfellow, David Warde-Farley, Mehdi Mirza
+Aaron Courville and Bengio, Yoshua. Maxout net-
+works. In International Conference on Machine Learn-
+ing (ICML), pp. 1319–1327, 2013.
+
+Ioffe, Sergey and Szegedy, Christian. Batch normalization:
+Accelerating deep network training by reducing internal
+covariate shift. In International Conference on Machine
+Learning (ICML), pp. 448–456, 2015.
+
+Jacobs, Robert A, Jordan, Michael I, Nowlan, Steven J, and
+Hinton, Geoffrey E. Adaptive mixtures of local experts.
+Neural computation, 1991.
+
+Collins, Michael and Koo, Terry. Discriminative reranking
+for natural language parsing. Computational Linguistics,
+31(1):25–70, 2005.
+
+Keys, Robert. Cubic convolution interpolation for digi-
+IEEE transactions on acoustics,
+tal image processing.
+speech, and signal processing, 29(6):1153–1160, 1981.
+
+Dey, Debadeepta, Ramakrishna, Varun, Hebert, Martial,
+and Andrew Bagnell, J. Predicting multiple structured
+In International Conference on
+visual interpretations.
+Computer Vision (ICCV), pp. 2947–2955, 2015.
+
+Domingos, Pedro. Bayesian averaging of classiﬁers and
+the overﬁtting problem. In International Conference on
+Machine Learning (ICML), volume 2000, pp. 223–230,
+2000.
+
+Everingham, Mark, Van Gool, Luc, Williams, Christo-
+pher KI, Winn, John, and Zisserman, Andrew. The pas-
+cal visual object classes (voc) challenge. International
+journal of computer vision, 88(2):303–338, 2010.
+
+Freund, Yoav, Schapire, Robert, and Abe, N. A short intro-
+duction to boosting. Journal-Japanese Society For Arti-
+ﬁcial Intelligence, 14(771-780):1612, 1999.
+
+Guzman-Rivera, Abner, Batra, Dhruv, and Kohli, Push-
+meet. Multiple choice learning: Learning to produce
+
+Kingma, Diederik and Ba, Jimmy. Adam: A method for
+stochastic optimization. In International Conference on
+Learning Representations (ICLR), 2015.
+
+Krizhevsky, Alex and Hinton, Geoffrey. Learning multiple
+
+layers of features from tiny images. 2009.
+
+Krizhevsky, Alex, Sutskever, Ilya, and Hinton, Geoffrey E.
+Imagenet classiﬁcation with deep convolutional neural
+networks. In Advances in neural information processing
+systems (NIPS), pp. 1097–1105, 2012.
+
+Lakshminarayanan, Balaji, Pritzel, Alexander, and Blun-
+dell, Charles. Simple and scalable predictive uncertainty
+estimation using deep ensembles. NIPS Workshop on
+Bayesian Deep Learning, 2016.
+
+Lee, Stefan, Purushwalkam, Senthil, Cogswell, Michael,
+Crandall, David, and Batra, Dhruv. Why m heads are
+better than one: Training a diverse ensemble of deep net-
+works. arXiv preprint arXiv:1511.06314, 2015.
+
+Conﬁdent Multiple Choice Learning
+
+Lee, Stefan, Prakash, Senthil Purushwalkam Shiva,
+Cogswell, Michael, Ranjan, Viresh, Crandall, David,
+and Batra, Dhruv. Stochastic multiple choice learning for
+training diverse deep ensembles. In Advances in neural
+information processing systems (NIPS), pp. 2119–2127,
+2016.
+
+Lin, Min, Chen, Qiang, and Yan, Shuicheng. Network in
+network. In International Conference on Learning Rep-
+resentations (ICLR), 2014a.
+
+Simonyan, Karen and Zisserman, Andrew. Very deep con-
+volutional networks for large-scale image recognition. In
+International Conference on Learning Representations
+(ICLR), 2015.
+
+Srivastava, Nitish, Hinton, Geoffrey E, Krizhevsky, Alex,
+Sutskever, Ilya, and Salakhutdinov, Ruslan. Dropout:
+a simple way to prevent neural networks from overﬁt-
+Journal of Machine Learning Research, 15(1):
+ting.
+1929–1958, 2014.
+
+Lin, Tsung-Yi, Maire, Michael, Belongie, Serge, Hays,
+James, Perona, Pietro, Ramanan, Deva, Doll´ar, Piotr, and
+Zitnick, C Lawrence. Microsoft coco: Common objects
+in context. In European Conference on Computer Vision
+(ECCV), pp. 740–755. Springer, 2014b.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet,
+Pierre, Reed, Scott, Anguelov, Dragomir, Erhan, Du-
+mitru, Vanhoucke, Vincent, and Rabinovich, Andrew.
+Going deeper with convolutions. In Computer Vision and
+Pattern Recognition (CVPR), 2015.
+
+Long, Jonathan, Shelhamer, Evan, and Darrell, Trevor.
+Fully convolutional networks for semantic segmentation.
+In Computer Vision and Pattern Recognition (CVPR),
+pp. 3431–3440, 2015.
+
+Wan, Li, Zeiler, Matthew D., Zhang, Sixin, LeCun, Yann,
+and Fergus, Rob. Regularization of neural networks us-
+In International Conference on Ma-
+ing dropconnect.
+chine Learning (ICML), pp. 1058–1066, 2013.
+
+Zagoruyko, Sergey and Komodakis, Nikos. Wide resid-
+In British Machine Vision Conference
+
+ual networks.
+(BMVC), 2016.
+
+Misra, Ishan, Shrivastava, Abhinav, Gupta, Abhinav, and
+Hebert, Martial. Cross-stitch networks for multi-task
+In Computer Vision and Pattern Recognition
+learning.
+(CVPR), pp. 3994–4003, 2016.
+
+Netzer, Yuval, Wang, Tao, Coates, Adam, Bissacco,
+Alessandro, Wu, Bo, and Ng, Andrew Y. Reading dig-
+its in natural images with unsupervised feature learning.
+NIPS Workshop on Deep Learning and Unsupervised
+Feature Learning, 2011(2):5, 2011.
+
+Nguyen, Anh, Yosinski, Jason, and Clune, Jeff. Deep neu-
+ral networks are easily fooled: High conﬁdence predic-
+In Computer Vision
+tions for unrecognizable images.
+and Pattern Recognition (CVPR), pp. 427–436, 2015.
+
+Park, Dennis and Ramanan, Deva. N-best maximal de-
+coders for part models. In International Conference on
+Computer Vision (ICCV), pp. 2627–2634. IEEE, 2011.
+
+Pereyra, Gabriel, Tucker, George, Chorowski, Jan, Kaiser,
+Łukasz, and Hinton, Geoffrey. Regularizing neural net-
+works by penalizing conﬁdent output distributions.
+In
+International Conference on Learning Representations
+(ICLR), 2017.
+
+Radford, Alec, Metz, Luke, and Chintala, Soumith. Unsu-
+pervised representation learning with deep convolutional
+generative adversarial networks. In International Con-
+ference on Learning Representations (ICLR), 2016.
+
+Rusu, Andrei A, Rabinowitz, Neil C, Desjardins, Guil-
+laume, Soyer, Hubert, Kirkpatrick, James, Kavukcuoglu,
+Koray, Pascanu, Razvan, and Hadsell, Raia. Progres-
+sive neural networks. arXiv preprint arXiv:1606.04671,
+2016.
+
+

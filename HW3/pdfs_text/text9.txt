@@ -1,0 +1,1217 @@
+Local Bayesian Optimization of Motor Skills
+
+Riad Akrour 1 Dmitry Sorokin 1 Jan Peters 1 2 Gerhard Neumann 1 3
+
+Abstract
+Bayesian optimization is renowned for its sam-
+ple efﬁciency but its application to higher dimen-
+sional tasks is impeded by its focus on global
+optimization. To scale to higher dimensional
+problems, we leverage the sample efﬁciency of
+Bayesian optimization in a local context. The
+optimization of the acquisition function is re-
+stricted to the vicinity of a Gaussian search dis-
+tribution which is moved towards high value ar-
+eas of the objective. The proposed information-
+theoretic update of the search distribution results
+in a Bayesian interpretation of local stochas-
+tic search: the search distribution encodes prior
+knowledge on the optimum’s location and is
+weighted at each iteration by the likelihood of
+this location’s optimality. We demonstrate the
+effectiveness of our algorithm on several bench-
+mark objective functions as well as a continuous
+robotic task in which an informative prior is ob-
+tained by imitation learning.
+
+1. Introduction
+
+Recent advances in deep reinforcement learning, supported
+by the ability of generating and processing large amounts
+of data, allowed impressive achievements such as playing
+Atari at human level (Mnih et al., 2015) or mastering the
+game of Go (Silver et al., 2016). In robotics however, sam-
+ple complexity is paramount as sample generation on phys-
+ical systems cannot be sped up and can cause wear and
+damage to the robot when excessive (Kober et al., 2013).
+Relying on a simulator to carry the learning will inevitably
+result in a reality gap, since mechanical forces such as
+stiction are hard to accurately model. However, a policy
+learned in a simulated environment can still be valuable
+provided the availability of a sample efﬁcient algorithm to
+
+1CLAS/IAS, TU Darmstadt, Darmstadt, Germany 2Max
+Planck Institute for Intelligent Systems, T¨ubingen, Germany 3L-
+CAS, University of Lincoln, Lincoln, United Kingdom. Corre-
+spondence to: Riad Akrour <riad@robot-learning.de>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+carry an additional optimization phase on the physical sys-
+tem.
+
+Bayesian optimization is best known as a black-box global
+optimizer (Brochu et al., 2010; Shahriari et al., 2016). It
+was shown to be efﬁcient for several function landscapes
+(Jones, 2001), real world scenarios such as the automatic
+tuning of machine learning algorithms (Bergstra et al.,
+2011; Snoek et al., 2012; Feurer et al., 2015) or robotics and
+control (Lizotte et al., 2007; Wilson et al., 2014; Calandra
+et al., 2016) and several of its variants have convergence
+guaranties to a global optimum (Vazquez & Bect, 2010;
+Bull, 2011). Its efﬁciency stems from two key principles: a
+probabilistic modeling of the objective function and a sam-
+pling procedure that fully exploits this model. However,
+as the dimensionality of the task increases, non-stationarity
+effects of the objective or the noise function (see Shahri-
+ari et al. (2016), Sec. V.D. for a discussion of these ef-
+fects) are exacerbated, rendering the modeling of the ob-
+jective function challenging. An additional difﬁculty stem-
+ming from the increase in dimensionality is the tendency
+of Bayesian optimization to over-explore, which was ex-
+perimentally observed in e.g. Brochu et al. (2007). Several
+recent approaches trying to scale Bayesian optimization to
+higher dimensions assume additional structure of the objec-
+tive function. In Snoek et al. (2014), it is assumed that sta-
+tionarity of the objective function can be recovered through
+the use of a parametric family of mappings. While it is as-
+sumed that the objective function has a lower intrinsic di-
+mension in Djolonga et al. (2013); Wang et al. (2016), can
+be decomposable into a sum of lower dimensional func-
+tions in Kandasamy et al. (2015) or a combination of both
+hypothesis in Li et al. (2016).
+
+In this paper, we assume prior knowledge on the location
+of the optimum—given by an initial solution and a con-
+ﬁdence on the optimality thereof—and leverage Bayesian
+optimization in a local manner to improve over this solu-
+tion. We are especially interested in the application of our
+algorithm to the optimization of motor skills since i) evalu-
+ating the policy return is expensive on physical systems and
+will likely dominate the computational budget of the opti-
+mization process; as such, sample efﬁcient algorithms such
+as Bayesian optimization are desirable ii) robotics applica-
+tions are typically high dimensional and global optimiza-
+tion might be prohibitively expensive iii) an initial solution
+
+Local Bayesian Optimization of Motor Skills
+
+can often be obtained through the use of imitation learn-
+ing (Argall et al., 2009) or by a preliminary optimization
+on a surrogate model such as a simulator.
+
+2. Related work
+
+Our algorithm can be seen as a local stochastic search
+algorithm akin to Covariance Matrix Adaptation (CMA-
+ES) (Hansen & Ostermeier, 2001), cross-entropy (Man-
+nor et al., 2003) or MOdel-based Relative Entropy
+(MORE) (Abdolmaleki et al., 2015). Local stochastic
+search algorithms typically maintain a Gaussian search dis-
+tribution from which samples are generated, the objective
+function is evaluated and the search distribution is updated.
+As in Bayesian optimization, they are of particular use
+when the gradient of the objective function is unknown.
+Their use as a black-box optimization routine is gaining
+popularity in the machine learning community, e.g. in rein-
+forcement learning (Thomas et al., 2015) or even for hyper-
+parameter tuning (Bergstra et al., 2011) and the optimiza-
+tion of the acquisition function (Wang et al., 2016) of global
+Bayesian optimization.
+
+Our algorithm shares the same general structure as lo-
+cal stochastic search algorithms and additionally learns
+a (probabilistic) model of the objective function. Mod-
+eling the objective function was already explored in the
+stochastic search literature. A surrogate function is learned
+in (Loshchilov et al., 2013) using SVM-Rank, and is op-
+timized using CMA-ES for a few iterations, yielding an
+update of the search distribution without requiring addi-
+tional function evaluations. While in MORE (Abdolmaleki
+et al., 2015), a local quadratic approximation of the objec-
+tive function yields the new mean and covariance of the
+Gaussian search distribution upon an information-theoretic
+update. Unlike these algorithms, we do not optimize the
+learned (probabilistic) model, but derive from it p(x =
+x(cid:63)|D), the probability of x being optimal. Our search dis-
+tribution is then updated such as to minimize the Kullback-
+Leibler (KL) divergence to p(x = x(cid:63)|D). Compared to
+these surrogate assisted local stochastic search algorithms
+(Loshchilov et al., 2013; Abdolmaleki et al., 2015), the
+transformation of the optimization landscape (minimizing
+the KL-divergence to p(x = x(cid:63)|D) instead of the objec-
+tive function) facilitates learning of the surrogate model by
+lowering the variance in poorly performing regions, as il-
+lustrated in Fig. 1.
+
+To approximate p(x = x(cid:63)|D) we rely on a probabilistic
+modeling of the objective function and to select the next
+point to sample we locally optimize an acquisition func-
+tion. As such, our algorithm can also be seen as Bayesian
+optimization where the usual box constraint is moved to-
+wards a high value area of the objective function to restrict
+exploration.
+
+Algorithm 1 Local Bayesian Optimization of Motor Skills
+
+Input: Initial policy π0 = N (µ0, σ2
+tropy reduction rate β
+Output: Policy πN
+for n = 1 to N do
+
+0I), step-size (cid:15), en-
+
+Fit: Gaussian (cid:98)pn from local samples of p(cid:63)
+Optimize: (η∗, ω∗) = arg min gn(η, ω)
+Bayesian Update: (πn+1)η(cid:63)+ω(cid:63)
+∝ πη(cid:63)
+n p(cid:63)
+Evaluate: xn from local samples of p(cid:63)
+n
+Dn ←− Dn−1 ∪ {(xn, yn)}
+
+n (Sec. 3.2)
+(Sec. 3.1.1)
+n (Sec. 3.1.1)
+(Sec. 3.3)
+
+end for
+
+In reinforcement learning, probabilistic modeling was used
+to e.g. learn a transition model (Deisenroth & Rasmussen,
+2011) or the policy gradient (Ghavamzadeh et al., 2016)
+with Gaussian processes. Closer to our work, the use of
+an adaptive box constraint was explored in Bayesian opti-
+mization to ensure a safe optimization of a robot controller
+(Berkenkamp et al., 2016; Englert & Toussaint, 2016).
+Considering safety is crucial for motor skill learning on
+physical systems to prevent the evaluation of ’dangerous’
+parameters. Both approaches restrict exploration to an ini-
+tial safe region of the parameter space that is incrementally
+expanded using additional problem assumptions. Without
+such assumptions our algorithm cannot guarantee safety
+but its local nature is expected to dampen the potential risk
+of global Bayesian optimization.
+
+3. Local Bayesian optimization
+
+Let f : Rd (cid:55)→ R be an objective function. For example
+f (x) can be the expected reward of a robot controller pa-
+rameterized by x ∈ Rd. We assume that the algorithm only
+has access to noisy evaluations y = f (x) + (cid:15), where (cid:15) ∼
+N (0, σ2
+s ) is Gaussian noise of unknown deviation σs. The
+algorithm will produce a sequence {(x1, y1) . . . (xN , yN )}
+of parameter-evaluation pairs and the goal is to minimize
+the cumulative regret 1
+i f (x(cid:63)) − yi for some global
+N
+maximizer x(cid:63) of f . The cumulative regret emphasizes
+the inherent cost in evaluating a bad parameter, potentially
+causing wear and damage to the robot.
+
+(cid:80)
+
+Prior knowledge on an optimum’s location x(cid:63) is given
+to the algorithm by a Gaussian distribution π0 =
+N (µ0, σ2
+0I). In what follows we will indistinctly refer to
+π as a search distribution or a policy following the termi-
+nology of the stochastic search and reinforcement learning
+(RL) communities. In an RL context, an informative prior
+can often be obtained from human generated data or from a
+simulator. Speciﬁcally, we assume that the mean µ0 of π0
+is obtained by imitation learning if near-optimal demon-
+strations are available or by a preliminary optimization on
+a less accurate but inexpensive model of the system dy-
+
+Local Bayesian Optimization of Motor Skills
+
+(a) Objective function f .
+
+(b) Search distribution.
+
+(c) Quad. approx. of f .
+
+(d) GP approx. of f .
+
+(e) Gaussian approx.
+p(x(cid:63)|D).
+
+of
+
+Figure 1. The beneﬁts of minimizing the KL divergence to p(x(cid:63)|D) instead of maximizing a local approximation of the objective
+function f . a) The objective function f has two modes illustrated by the red (higher mode) and blue (lower mode) stars. b) The search
+distribution π draws samples in the area of both modes. The samples and their evaluation are stored in D. c) The quadratic approximation
+of f (minimizing the empirical mean squared error on D) captures variations of f even in low value areas and result in a poor orientation
+for the search distribution update as illustrated by the model’s optimum (magenta star in (c)). On the other side, the Gaussian process
+approximation of f (shown in (d)) is conﬁdent enough in its approximation for p(x(cid:63)|D) to sample mainly around the higher mode (red
+star, see (e)). As a result, the Gaussian approximation of p(x(cid:63)|D) only focuses on high value areas and results in a better direction for
+the search distribution update than the quadratic model of f .
+
+namics. Whereas σ0 is a hyper-parameter of the algorithm,
+manually set in our experiments, and expressing the conﬁ-
+dence in the optimality of µ0.
+
+The search distribution πn is updated by solving the op-
+timization problem formally deﬁned in Sec. 3.1.1. The
+objective of the optimization problem is to minimize the
+KL divergence between πn and p(x = x(cid:63)|Dn), the prob-
+ability of x(cid:63) being optimal according to the data set of
+parameter-evaluation pairs Dn. Solving this problem re-
+sults in a Bayesian update, as shown in Alg. 1, where the
+prior πn(x) on the optimality of x is weighted by the like-
+lihood p(x = x(cid:63)|Dn) of x being optimal according to Dn.
+Letting the likelihood p(x = x(cid:63)|Dn) be denoted by p(cid:63)
+n(x),
+the ﬁrst step of the algorithm is to ﬁt (cid:98)pn, a Gaussian approx-
+imation of p(cid:63)
+n (Sec. 3.2). Subsequently, a dual function is
+optimized (Sec. 3.1.1) to make sure that the search distribu-
+tion moves slowly towards p(cid:63) as new evaluations are col-
+lected. Modulating the Bayesian update with the dual pa-
+rameters η∗ and ω∗ is important since Dn is initially empty
+and p(cid:63)
+n not initially informative. Finally, a new evaluations
+of f is requested by selecting xn from the previously gen-
+erated samples of p(cid:63)
+
+n and the process is iterated.
+
+The next subsections give a detailed presentation of both
+the search distribution update and the sampling procedure
+from p(cid:63)
+n.
+
+3.1. Search distribution update
+
+The search distribution in our algorithm is updated such as
+to minimize the KL divergence between πn and p(cid:63)
+n. The
+resulting optimization problem is closely related to the one
+solved by the MORE algorithm (Abdolmaleki et al., 2015).
+In the next subsections, we will ﬁrst formalize our search
+distribution update before brieﬂy describing the search dis-
+tribution update of MORE and showing how their deriva-
+
+tions can be used to obtain our search distribution update.
+
+3.1.1. THE OPTIMIZATION PROBLEM
+
+The search distribution is updated such that its KL diver-
+gence w.r.t. p(cid:63)
+n is minimized. Since future evaluations of f
+will be performed around the updated search distribution,
+it becomes critical to control the change of distribution be-
+tween iterations by constraining the aforementioned min-
+imization problem. These constraints will ensure that the
+exploration is not reduced too fast or that the mean is not
+moved too quickly from the initial solution µ0. The result-
+ing optimization problem is given by
+
+arg min
+π
+subject to
+
+KL(π (cid:107) p(cid:63)
+
+n),
+
+KL(π (cid:107) πn)
+H(πn) − H(π)
+
+≤ (cid:15),
+
+≤ β,
+
+(1)
+
+(2)
+
+where KL(p (cid:107) q) = (cid:82) p(x) log p(x)
+q(x) dx is the KL diver-
+gence between p and q and H(p) = − (cid:82) p(x) log(p(x))dx
+is the entropy of p. The hyper-parameters (cid:15) and β respec-
+tively bound the change in distribution and the reduction in
+entropy between successive iterations.
+
+The use of the KL divergence to constrain the update is
+widespread in the reinforcement learning community (Pe-
+ters et al., 2010; Schulman et al., 2015). When the search
+distributions π and πn are of Gaussian form, the KL diver-
+gence in Eq. (1) is impacted by three factors. On one side,
+by the change in entropy between the two distributions—
+having a direct impact on the exploration rate. On the other
+side, by the displacement of the mean and the rotation of
+the covariance matrix—not impacting the exploration rate.
+To better control the exploration, we choose to decouple
+
+-4-3-2-1012-8-6-4-2024-4-3-2-1012-8-6-4-2024-4-3-2-1012-8-6-4-2024-4-3-2-1012-8-6-4-2024-4-3-2-1012-8-6-4-2024Local Bayesian Optimization of Motor Skills
+
+the reduction in entropy from the KL constraint.
+It was
+shown in (Abdolmaleki et al., 2015) that the additional en-
+tropy constraint can lead to signiﬁcantly better solutions at
+the expense of a slower start.
+
+The optimization problem deﬁned in this section is closely
+related to the one solved by MORE. In fact, when the in-
+equality (2) is replaced by the equality constraint H(πn) −
+H(π) = β for both algorithms then the two problems coin-
+cide; while only a small modiﬁcation of the dual function
+is necessary otherwise. For the sake of clarity and to keep
+the paper self-contained, we will brieﬂy introduce MORE
+before showing how we can reuse their derivation of the
+search distribution update in our algorithm.
+
+3.1.2. MODEL-BASED RELATIVE ENTROPY SEARCH
+
+MORE (Abdolmaleki et al., 2015) is a local stochastic
+search algorithm where the search distribution πn(x) is up-
+dated by solving the following constrained problem
+
+arg max
+π
+subject to
+
+(cid:90)
+
+π(x)f (x)dx
+
+KL(π (cid:107) πn)
+H(πn) − H(π)
+
+≤ (cid:15),
+
+≤ β,
+
+(3)
+
+(4)
+
+An analytic solution of the problem is obtained by locally
+approximating f with the quadratic model
+
+Rn(x) = −
+
+xT Rnx + xT rn + rn,
+
+1
+2
+
+learned by linear regression from the data set Dn. Letting
+the search distribution πn(x) = N (x|µn, Σn) at iteration
+n be parameterized by the mean µn and covariance matrix
+Σn, the aforementioned optimization problem yields the
+closed form update where the new mean and covariance
+are given by
+
+n+1 = (η(cid:63) + ω(cid:63))−1 (cid:0)η(cid:63)Σ−1
+
+Σ−1
+µn+1 = (η(cid:63) + ω(cid:63))−1Σn+1
+
+n + Rn
+(cid:0)η(cid:63)Σ−1
+
+(cid:1) ,
+n µn + rn
+
+(cid:1) ,
+
+(5)
+
+(6)
+
+where η(cid:63) and ω(cid:63) are the Lagrange multipliers of the con-
+straints (3) and (4) respectively, and are obtained by mini-
+mizing the dual function gn(η, ω) by gradient descent (Ab-
+dolmaleki et al., 2015).
+
+As can be seen in Eq. 5, the new covariance matrix is a
+trade-off between the old covariance and the local curva-
+ture of the objective function f —where the trade-off pa-
+rameters are computed in order to satisfy both constraints
+of the optimization problem. As such, it is appropriate to
+use the covariance matrix of the search distribution in the
+kernel function for the local approximation of f when us-
+ing GP regression.
+
+is replaced with the equality constraint H(πn) − H(π) =
+β, forcing the reduction in entropy at each iteration to be
+exactly β. This modiﬁcation will not change the shape of
+the update but only the Lagrange multipliers, that can be
+obtained by simply alleviating the constraint ω ≥ 0 in the
+minimization of gn(η, ω).
+
+3.1.3. OPTIMIZATION PROBLEMS’ EQUIVALENCE
+
+We now show that the optimization problem in our algo-
+rithm can be phrased as the optimization problem solved
+by MORE for the equality entropy constraint; while only a
+small modiﬁcation of the dual minimization is required for
+the inequality entropy constraint. The equivalence of the
+optimization problems will allow us to use Eq. 5 and 6 to
+update our search distribution.
+
+Proposition 1. The optimization problem in Sec. 3.1.1 can
+be reduced to the optimization problem in 3.1.2 for the ob-
+jective function f = log p(cid:63)
+n when both problems enforce an
+exact entropy reduction constraint on π.
+
+Proof. We ﬁrst rephrase the problem in Sec. 3.1.1 as the
+maximization over π of
+
+−KL(π (cid:107) p(cid:63)
+
+n) + β − H(πn),
+
+where we switched the sign of the KL divergence term and
+added the constant term β − H(πn). These modiﬁcations
+will not change the value of the stationary points of the
+Lagrangian. The resulting Lagrangian is
+
+L(π, η, ω) =
+
+π(x) log p(cid:63)
+
+n(x)dx+η((cid:15)−KL(π (cid:107) πn))
+
++ (ω + 1)(H(π) − H(πn) + β),
+
+with dual variables η ≥ 0 and ω ∈ R and where we have
+split the term KL(π (cid:107) p(cid:63)
+n) into the expected log-density of
+p(cid:63)
+n and the entropy H(π) of π. A MORE formulation with
+similar entropy and KL divergence constraints and where
+the objective is to maximize the log-density log p(cid:63)
+n yields
+the Lagrangian
+
+(cid:90)
+
+(cid:90)
+
+L(cid:48)(π, η, ω) =
+
+π(x) log p(cid:63)
+
+n(x)dx+η((cid:15)−KL(π (cid:107) πn))
+
++ ω(H(π) − H(πn) + β).
+
+Since we have no constraint on ω, it is easy to see that
+the dual variable minimizing the dual of the ﬁrst problem
+ω(cid:63) and of the second (MORE) problem ω(cid:48)∗ are related by
+ω(cid:63) = ω(cid:48)∗ − 1 and both problems will result in the same
+update of π.
+
+We additionally deﬁne MORE with equality constraint as
+a variant of MORE where the inequality constraint in (4)
+
+Intuitively, the minimization of KL(π (cid:107) p(cid:63)
+n) can be reduced
+to the maximization (in expectation of π) of the log-density
+
+Local Bayesian Optimization of Motor Skills
+
+log p(cid:63)
+n because the equality constraint H(π) = H(πn) − β
+annihilates the effect of the additional entropy term H(π)
+coming from the KL objective.
+
+From Proposition 1 and following the derivations in (Ab-
+dolmaleki et al., 2015), the search distribution πn+1 solu-
+tion of the optimization problem in Sec. 3.1.1 is given by
+
+πn+1 ∝ (πn)
+
+η(cid:63)
+
+η(cid:63)+ω(cid:63) (p(cid:63)
+n)
+
+1
+η(cid:63)+ω(cid:63) ,
+
+(7)
+
+where η(cid:63) and ω(cid:63) are the Lagrange multipliers related to the
+KL and entropy constraints respectively and minimizing
+the dual function gn(η, ω). We refer the reader to Sec. 2.1
+in (Abdolmaleki et al., 2015) for the deﬁnition of gn(η, ω).
+
+When the entropy constraint is the inequality in (2) instead
+of an equality, the Lagrange multipliers for our update and
+the MORE update may differ. However, η(cid:63) and ω(cid:63) can still
+be obtained by the minimization of the same gn(η, ω) with
+the additional constraint ω ≥ 1.
+
+Note that the new search distribution πn+1 as deﬁned in
+Eq. (7) is not necessarily Gaussian because of the multipli-
+cation by p(cid:63)
+n by a Gaussian
+distribution (cid:98)pn, log (cid:98)pn will be a quadratic model and Eq. 5
+and 6 can be used to obtain a Gaussian πn+1.
+
+n. However, by approximating p(cid:63)
+
+3.2. Approximating the argmax distribution
+
+To obtain a closed form update of the Gaussian search dis-
+tribution in Eq. (7), we will approximate p(cid:63)
+n by ﬁtting a
+Gaussian (cid:98)pn to samples of p(cid:63)
+n as shown in Fig. 1e. To
+generate samples from p(cid:63)
+n, we use Thompson sampling
+(Chapelle & Li, 2011; Russo & Roy, 2014) from a prob-
+abilistic model of the objective function f .
+
+The probabilistic model of f follows from both a Gaus-
+sian process (GP) prior and a Gaussian likelihood assump-
+tion. We use in this paper the squared exponential kernel
+kn(xi, xj) = θ0 exp(−θ1(xi − xj)T Σ−1
+n (xi − xj)) with
+hyper-parameters θ0 and θ1 and Σn the covariance matrix
+of πn. The resulting model has hyper-parameter vector
+φ = (θ0, θ1, σs), where σ2
+s is the noise variance of the
+likelihood function as previously deﬁned. Samples from
+p(cid:63)
+n are generated by i) sampling a hyper-parameter vec-
+tor φ from the posterior distribution p(φ|Dn) using slice
+sampling (Murray & Adams, 2010), ii) sampling a func-
+tion from the GP posterior p( (cid:101)f |Dn, φ) and iii) returning
+the argmax of (cid:101)f .
+
+The computational complexity of evaluating (cid:101)f is cubical in
+the number of requested evaluations as it involves a matrix
+inversion. As such, the exact maximization of (cid:101)f can prove
+to be challenging. Prior work in the literature considered
+approximating (cid:101)f with a linear function (see for example
+Hern´andez-Lobato et al. (2014), Sec. 2.1) and globally
+
+maximizing the linear surrogate.
+In our local optimiza-
+tion context, we follow a more straightforward approach
+by generating samples from πn, and returning the sample
+with maximal value of (cid:101)f . The rational behind searching
+the argmax of (cid:101)f in the vicinity of πn is that samples from
+πn are likely to have high (cid:101)f value since πn is updated such
+that the KL divergence w.r.t. p(cid:63)
+n is minimized. The re-
+peated process of drawing points from πn, drawing their
+value from the GP posterior and selecting the point with
+highest value will constitute a data set D(cid:63)
+n containing local
+samples from p(cid:63)
+n.
+
+n are generated and stored in D(cid:63)
+n and Σ(cid:63)
+n) where µ(cid:63)
+
+Once samples from p(cid:63)
+n, we
+n, Σ(cid:63)
+set (cid:98)pn = N (µ(cid:63)
+n are the sample
+mean and covariance of the samples in D(cid:63)
+n. Because (cid:98)pn
+is Gaussian, log (cid:98)pn is quadratic and the search distribution
+update in Eq. (7) yields a Gaussian distribution πn+1 with
+covariance and mean as deﬁned in Eq. (5) and Eq. (6) re-
+spectively with Rn = Σ(cid:63)
+n
+
+−1 and rn = Σ(cid:63)
+n
+
+−1µ(cid:63)
+n.
+
+3.3. Sample generation
+
+The function f is initially evaluated at a point x0 drawn
+from the prior distribution π0. In subsequent iterations, a
+point xn is randomly selected from D(cid:63)
+n, the set of samples
+used in the computation of (cid:98)pn (Sec. 3.2).
+Experimentally, we noticed that the exploration in our al-
+gorithm is heavily inﬂuenced by the centering of the values
+{yi}n
+1 in Dn. Three variants of our algorithm are initially
+evaluated with different target values of the GP. The target
+values are obtained by subtracting from yi either the max
+the min or the mean of {yi}n
+1 . Since the GP modeling of
+f has a zero mean prior, the extreme case where the max
+(resp. the min) is subtracted from the data results in an op-
+timistic (resp. pessimistic) exploration strategy considering
+that the objective function in unexplored areas have val-
+ues higher (resp. lower) in expectation than the best (resp.
+worst) evaluation so far.
+
+4. Experiments
+
+We initially investigate in this section the impact of the
+target centering (Sec. 3.3) on the exploration-exploitation
+trade-off of our algorithm. We then compare our algo-
+rithm to two state-of-the-art model based optimizers: the
+global Bayesian optimizer and the local Model-Based Rel-
+ative Entropy Search (Abdolmaleki et al., 2015). The algo-
+rithms are compared on several continuous function bench-
+marks as well as a simulated robotics task.
+
+Benchmarks. Variants of our algorithm are ﬁrst compared
+on randomly generated smooth 2 dimensional objective
+functions. We then conduct a comparison to the state-of-
+the-art on the COmparing COntinuous optimisers (COCO)
+
+Local Bayesian Optimization of Motor Skills
+
+testbed on the 20 functions f 5 to f 24 (we refer the reader to
+http://coco.gforge.inria.fr/ for an illustra-
+tion and the mathematical deﬁnition of each function). We
+chose to split the experimentation between the uni-modal
+and the multi-modal categories of the testbed. The uni-
+modal category is representative of the informed initial-
+ization hypothesis that only requires local improvements.
+While the multi-modal category assesses the robustness
+of our algorithm to more complex function landscapes—
+which can be encountered in practice despite the informed
+initialization if e.g. a too wide variance σ2
+0 is initially set.
+We vary the dimension of the COCO functions from 3 to
+30 while the robotics task evaluates our algorithm on a 70
+dimensional setting.
+
+Algorithms. In what follows, we will refer to our algo-
+rithm as L-BayesOpt. We rely on the GPStuff library (Van-
+hatalo et al., 2013) for the GP implementation and the pos-
+terior sampling of hyper-parameters. We use the BayesOpt
+library (Martinez-Cantin, 2014) for global Bayesian opti-
+mization with a similar to L-BayesOpt squared exponen-
+tial kernel and MCMC sampling of hyper-parameters and
+an additional Automatic Relevance Determination step ex-
+ecuted every 50 samples. In the experiments we evaluate
+BayesOpt with both Expected Improvement and Thomp-
+son Sampling acquisition functions.
+
+In all of the experiments, L-BayesOpt and MORE will
+share the same initial policy, step-size (cid:15), entropy reduc-
+tion β and will sample ten points per iteration. We choose
+to use an equality constraint for the entropy reduction for
+both algorithms. As a result, both L-BayesOpt and MORE
+will have the same entropy at every iteration and any dif-
+ference in performance will be attributed to a better loca-
+tion of the mean, adaptation of the covariance matrix or
+sampling procedure rather than a faster reduction in explo-
+ration. In all but the last experiment (cid:15) = β = .05 while for
+the robotics experiment with an initial solution learned by
+imitation learning we set a more aggressive step size and
+entropy reduction (cid:15) = β = 1.
+
+Evaluation criterion. The performance metric in RL
+is typically given by the average return J(πn) =
+(cid:82) πn(x)f (x)dx while in Bayesian optimization it is typ-
+ically determined by the minimal evaluation min1≤i≤n yi
+reached at iteration n. When the evaluations are noisy the
+minimum evaluation is not a robust performance metric—
+nor an appropriate criterion for the algorithm to select the
+returned optimizer. In order to have a common evaluation
+criterion, all the approaches are seen as multi-armed bandit
+algorithms and we use the cumulative regret 1
+i f (x(cid:63))−
+n
+yi as the evaluation criterion. The cumulative regret of
+(global) Bayesian optimizers is expected to be asymptot-
+ically lower than that of local optimizers as it always ﬁnds
+the global maximum given sufﬁciently many evaluations.
+
+(cid:80)
+
+(a) Sample objective function.
+
+(b) Cumulative regret.
+
+Figure 2. Three variants of L-BayesOpt (Sec. 3.3) and MORE
+evaluated on 11 randomly generated objective functions. The min
+variant results in a contained exploration and has the lowest cu-
+mulative regret during the ﬁrst 500 function evaluations.
+
+Conversely, trading-off global optimality for fast local im-
+provements might result in a lower regret for local optimiz-
+ers when the evaluation budget is moderate.
+
+4.1. Exploration variants
+
+In this ﬁrst set of experiments, we evaluate the different ex-
+ploration strategies resulting from three different centering
+methods of the y values in Dn. We compare these three
+variants of L-BayesOpt on 11 randomly generated two di-
+mensional Gaussian mixture objective functions (see Fig.
+2a for an illustration). We chose these functions as they
+are cheap to evaluate, easy to approximate by a GP and
+their multi-modal nature is appropriate for evaluating the
+exploration-exploitation trade-off of the three variants.
+
+As hypothesized in Sec. 3.3, the cumulative regret in Fig.
+2b shows that the min variant exhibits the lowest explo-
+ration and reduces the regret faster than the other optimiz-
+ers. Yet, when compared to MORE it manages to converge
+to better local optima in 5 out of the 11 randomly generated
+objectives while MORE converges to a better optimum in
+one of the 6 remaining objectives. Note that MORE man-
+ages to decrease the regret faster than our algorithm during
+the ﬁrst 100 evaluations. However, the sampling scheme re-
+lying on the Thompson sampling acquisition function and
+the convergence to higher modes gives the advantage to the
+L-BayesOpt variants after the initial 100 evaluations. In the
+remainder of the experimental section only the min variant
+of our algorithm will be considered.
+
+4.2. State-of-the-art benchmark comparisons
+
+We compare our algorithm to MORE and Bayesian opti-
+mization on the COCO testbed. We form two sets each con-
+taining 10 objective functions. The ﬁrst one includes uni-
+modal functions (f 5 to f 14) while the second one includes
+multi-modal function with an adequate (f 15 to f 19) and a
+weak (f 20 to f 24) global structure. Each function has a
+global optimum in [−5, 5]D, where D is the dimension of
+the objective function that we vary in the set {3, 10, 30}.
+
+-10-50510-10-5051015Local Bayesian Optimization of Motor Skills
+
+(a) Multi-modal objectives, dim = 3.
+
+(b) Multi-modal objectives, dim = 10.
+
+(c) Multi-modal objectives, dim = 30.
+
+(d) Uni-modal objectives, dim = 3.
+
+(e) Uni-modal objectives, dim = 10.
+
+(f) Uni-modal objectives, dim = 30.
+
+Figure 3. Evaluation on uni-modal and multi-modal functions of varying dimension of the COCO testbed of four algorithms: L-
+BayesOpt, MORE and global Bayesian optimization using either Expected Improvement (EI) or Thompson Sampling (TS) acquisition
+function. Bayesian optimization is a global optimizer and its combination with Thompson sampling is as such a zero regret algorithm.
+However, when evaluation budget is moderate (≤ 500), the local optimization performed by L-BayesOpt yields faster improvements
+than Bayesian optimization when the objective function is uni-modal or when the dimensionality of the problem increases.
+
+The bounding box [−5, 5]D is provided to Bayesian opti-
+mization while for the local stochastic search algorithms
+we set the initial distribution to π0 = N (0, 3I). Note that
+this is not an informed initialization and none of the func-
+tions had their optimum on the null vector.
+
+Fig. 3 shows the performance of the four algorithms on the
+multi-modal (top row) and uni-modal (bottom row) func-
+tion sets. On the multi-modal set of functions and when
+D = 3, Bayesian optimization with Thompson sampling
+proves to be an extremely efﬁcient bandit algorithm for
+uncovering the highest reward point with a minimal num-
+ber of evaluations. On the contrary, both local stochastic
+search algorithms struggle to improve over the initial per-
+formance. Upon closer inspection, this appears to be es-
+pecially true for functions with weak global structure such
+as f 23. We hypothesize that for these highly multi-modal
+functions, both model based stochastic search algorithms
+learn poor quadratic models (when either approximating f
+or p(cid:63)
+n). The performance gap between Bayesian optimiza-
+tion and our algorithm reduces however as the dimension-
+ality of the problem increases.
+
+the dimension of the objective function increases from
+D = 10 to D = 30, more evaluations are required by
+Bayesian optimization to reach our algorithm. Compared
+to MORE, and since the objectives are uni-modal, the use
+of an acquisition function is the main driving factor for the
+faster decrease of the regret. Note that even if the functions
+are uni-modal, both local search algorithms are not neces-
+sarily zero if the decrease in entropy is too fast.
+
+Both L-BayesOpt and BayesOpt/TS rely on the Thompson
+sampling acquisition function for selecting the next point
+to evaluate. While the acquisition function is maximized
+on the full support of the objective in the case of Bayesian
+optimization, it is only optimized in the vicinity of the cur-
+rent search distribution by our algorithm. The experiments
+on the COCO testbed show that when the function land-
+scape enables the learning of an appropriate update direc-
+tion for moving the search distribution, the adaptive strat-
+egy employed by our algorithm can be more efﬁcient than
+the global search performed by Bayesian optimization.
+
+4.3. Robot ball in the cup
+
+On the uni-modal functions set, our algorithm reduces sig-
+niﬁcantly faster the regret than Bayesian optimization. As
+
+The task’s objective is for the Barrett robot arm to swing
+the ball upward and place it in the cup (Fig. 4a). The
+
+Local Bayesian Optimization of Motor Skills
+
+promising region of the objective function. The constant
+reduction of the entropy of the search distribution ensures
+that the objective function is not modeled and optimized on
+the entirety of its domain. Compared to (global) Bayesian
+optimization, we experimentally demonstrated on several
+continuous optimization benchmarks that it results in faster
+improvements over the initial solution, at the expense of
+global optimality. This property is especially useful when
+an initial informative solution is available and only requires
+to be locally improved.
+
+The computational cost of the search distribution update
+in our algorithm is signiﬁcantly higher than most local
+stochastic search algorithms. This cost mainly arises from
+the full Bayesian treatment of the modeling of the objective
+function f . If the evaluation of f is cheap, a better perfor-
+mance per second is obtained by less expensive stochastic
+search algorithms where the additional computational bud-
+get can be spent in running additional randomized restarts
+of the algorithms (Auger & Hansen, 2005). However, if the
+optimization cost is dominated by the evaluation of f , the
+probabilistic modeling proved to be more sample efﬁcient
+on several benchmarks by actively selecting the next point
+to evaluate. As a result, when f is expensive to evaluate
+our algorithm is expected to have better per second perfor-
+mance than state-of-the-art stochastic search algorithms.
+
+The search distribution update proposed in this paper is
+well founded and results in an interpretable update. At each
+iteration the current search distribution is simply weighted
+by p(x = x(cid:63)|Dn), the probability of x being optimal
+according to the current data set. Future work can fur-
+ther improve the sample efﬁciency of our algorithm in at
+least three ways. First, if the objective function is upper
+bounded and the bound is known, we expect that the inte-
+gration of an additional constraint f (x) < f (x∗) for all x
+to lead to a more accurate probabilistic modeling and a bet-
+ter exploration-exploitation trade-off. Secondly, the search
+distribution update is phrased as the minimization of the
+I-projection of p(x = x(cid:63)|Dn), which has the property of
+focusing on one mode of the distribution (Bishop, 2006).
+However, the Gaussian approximation of p(x = x(cid:63)|Dn)
+can average over multiple modes if the GP is unsure about
+which of them is the highest. We expected that a better up-
+date direction can be obtained if a clustering algorithm can
+detect the highest mode from samples of p(x = x(cid:63)|Dn).
+Finally and perharps most interestingly, we expect our al-
+gorithm to be able to scale to signiﬁcantly higher dimen-
+sional policies in an RL setting if a trajectory data kernel is
+used (Wilson et al., 2014). Speciﬁcally, distance between
+policies can be measured by the similarity of actions taken
+in similar states. The local nature of our algorithm will ad-
+ditionally ensure that such similarity is evaluated on states
+that are likely to be reached by the evaluated policies.
+
+(a) Robot ball in a cup.
+
+(b) Cumulative regret.
+
+Figure 4. L-BayesOpt and MORE locally optimizing an imitation
+learning policy. The 7 DoF robot is controlled by a 70 parameters
+policy. L-BayesOpt is initially slower but is better at ﬁne-tuning
+the policy later on. Plots are averaged over 5 runs.
+
+optimization is performed on the 70 weights of the forc-
+ing function of a Dynamical Movement Primitive (DMP,
+Ijspeert & Schaal 2003) controlling the 7 joints of the robot.
+The initial forcing function weights µ0 are learned by lin-
+ear regression from a single demonstrated trajectory that
+successfully swings the ball up but where the ball lands at
+circa 20cm from the cup. We compare the performance
+of MORE and L-BayesOpt in optimizing the initial pol-
+icy π0 = N (µ0, I) using the same hyper-parameters. The
+challenge of the task, in addition to the dimension of the
+action space, stems from the two exploration regimes re-
+quired by the exploration scheme. While initially a signiﬁ-
+cant amount of noise needs to be introduced to the parame-
+ters to get the ball closer to the cup; successfully getting the
+ball in the cup requires a more careful tuning of the forcing
+function.
+
+Fig. 4b shows the performance of both MORE and L-
+BayesOpt on the robot ball in a cup task. MORE has a
+better initial sample efﬁciency and gets the ball closer to
+the cup at a faster pace than L-BayesOpt. However, the ac-
+quisition function based sampling scheme of our algorithm
+was more efﬁcient for discovering parameters that success-
+fully put the ball in the cup and results in a lower regret (av-
+eraged over 5 runs) after 1000 evaluations. The experiment
+shows that for such high dimensional tasks, our algorithm
+was better at tuning the policy only when the entropy of the
+search distribution was signiﬁcantly reduced. This might
+be due to the low correlation between Euclidean distance
+between parameters and difference in reward. One promis-
+ing direction for future work in a reinforcement learning
+context is to use kernels based on trajectory data distance
+instead of parameter distance in euclidian space (Wilson
+et al., 2014).
+
+5. Discussion
+
+The algorithm presented in this paper can be seen as
+Bayesian optimization where the usual box constraint is ro-
+tated, shrunk and moved at each iteration towards the most
+
+Local Bayesian Optimization of Motor Skills
+
+Acknowledgments
+
+The research leading to these results was funded by
+the DFG Project LearnRobotS under the SPP 1527 Au-
+tonomous Learning.
+
+References
+
+Abdolmaleki, Abbas, Lioutikov, Rudolf, Peters, Jan R,
+Lau, Nuno, Pualo Reis, Luis, and Neumann, Ger-
+hard. Model-based relative entropy stochastic search.
+In Advances in Neural Information Processing Systems
+(NIPS), pp. 3523–3531. Curran Associates, Inc., 2015.
+
+Argall, Brenna, Chernova, Sonia, Veloso, Manuela M.,
+and Browning, Brett. A survey of robot learning from
+demonstration. Robotics and Autonomous Systems, 57
+(5):469–483, 2009.
+
+Auger, Anne and Hansen, Nikolaus. A restart cma evolu-
+In IEEE
+tion strategy with increasing population size.
+Congress on Evolutionary Computation, volume 2, pp.
+1769–1776. IEEE, 2005.
+
+Bergstra, James, Bardenet, R´emi, Bengio, Yoshua, and
+K´egl, Bal´azs. Algorithms for hyper-parameter optimiza-
+tion. In Advances in Neural Information Processing Sys-
+tems (NIPS), pp. 2546–2554, 2011.
+
+Berkenkamp, Felix, Schoellig, Angela P, and Krause, An-
+dreas. Safe controller optimization for quadrotors with
+gaussian processes. In Robotics and Automation (ICRA),
+2016 IEEE International Conference on, pp. 491–496.
+IEEE, 2016.
+
+Bishop, Christopher M. Pattern Recognition and Machine
+
+Learning. Springer-Verlag New York, 2006.
+
+Brochu, Eric, de Freitas, Nando, and Ghosh, Abhijeet.
+Active preference learning with discrete choice data.
+In Advances in Neural Information Processing Systems
+(NIPS), pp. 409–416, 2007.
+
+Brochu, Eric, Cora, Vlad M., and de Freitas, Nando. A
+tutorial on bayesian optimization of expensive cost func-
+tions, with application to active user modeling and hier-
+archical reinforcement learning. CoRR, abs/1012.2599,
+2010.
+
+Bull, A. D. Convergence rates of efﬁcient global optimiza-
+
+tion algorithms. 12:2879–2904, 2011.
+
+Calandra, Roberto, Seyfarth, Andr´e, Peters, Jan, and
+Deisenroth, Marc Peter. Bayesian optimization for learn-
+ing gaits under uncertainty - an experimental comparison
+on a dynamic bipedal walker. Ann. Math. Artif. Intell.,
+76(1-2):5–23, 2016.
+
+Chapelle, Olivier and Li, Lihong. An empirical evaluation
+of thompson sampling. In Advances in Neural Informa-
+tion Processing Systems (NIPS), pp. 2249–2257. Curran
+Associates, Inc., 2011.
+
+Deisenroth, M. and Rasmussen, C. PILCO: A Model-
+Based and Data-Efﬁcient Approach to Policy Search. In
+International Conference on Machine Learning (ICML),
+pp. 465–472, 2011.
+
+Djolonga, Josip, Krause, Andreas, and Cevher, Volkan.
+High-dimensional gaussian process bandits. In Advances
+in Neural Information Processing Systems (NIPS), pp.
+1025–1033, 2013.
+
+Englert, Peter and Toussaint, Marc. Combined optimiza-
+tion and reinforcement learning for manipulations skills.
+In Robotics:Science and Systems 2016, 2016.
+
+Feurer, Matthias, Klein, Aaron, Eggensperger, Katharina,
+Springenberg, Jost Tobias, Blum, Manuel, and Hutter,
+Frank. Efﬁcient and robust automated machine learning.
+In Advances in Neural Information Processing Systems
+(NIPS), pp. 2962–2970, 2015.
+
+Ghavamzadeh, Mohammad, Engel, Yaakov, and Valko,
+Michal. Bayesian policy gradient and actor-critic algo-
+rithms. Journal of Machine Learning Research, 17(66):
+1–53, 2016.
+
+Hansen, Nikolaus and Ostermeier, Andreas. Completely
+derandomized self-adaptation in evolution strategies.
+Evolutionary Computation, 9(2):159–195, 2001.
+
+Hern´andez-Lobato, Jos´e Miguel, Hoffman, Matthew W.,
+and Ghahramani, Zoubin. Predictive entropy search
+for efﬁcient global optimization of black-box functions.
+In Advances in Neural Information Processing Systems
+(NIPS), pp. 918–926, 2014.
+
+Ijspeert, A. and Schaal, S. Learning Attractor Landscapes
+for Learning Motor Primitives. In Advances in Neural
+Information Processing Systems 15, (NIPS). MIT Press,
+Cambridge, MA, 2003.
+
+Jones, Donald R. A taxonomy of global optimization meth-
+ods based on response surfaces. J. Global Optimization,
+21(4):345–383, 2001.
+
+Kandasamy, Kirthevasan, Schneider, Jeff G., and P´oczos,
+Barnab´as. High dimensional bayesian optimisation and
+bandits via additive models. In International Conference
+on Machine Learning (ICML), pp. 295–304, 2015.
+
+Kober, J., Bagnell, J. Andrew, and Peters, J. Reinforcement
+learning in robotics: A survey. International Journal of
+Robotics Research, July 2013.
+
+Local Bayesian Optimization of Motor Skills
+
+Li, Chun-Liang, Kandasamy, Kirthevasan, P´oczos,
+Barnab´as, and Schneider, Jeff G. High dimensional
+bayesian optimization via restricted projection pursuit
+models. In Proceedings of the 19th International Con-
+ference on Artiﬁcial Intelligence and Statistics, AISTATS
+2016, Cadiz, Spain, May 9-11, 2016, pp. 884–892, 2016.
+
+Lizotte, Daniel J., Wang, Tao, Bowling, Michael H., and
+Schuurmans, Dale. Automatic gait optimization with
+In IJCAI 2007, Proceed-
+gaussian process regression.
+ings of the 20th International Joint Conference on Artiﬁ-
+cial Intelligence, Hyderabad, India, January 6-12, 2007,
+pp. 944–949, 2007.
+
+Loshchilov, Ilya, Schoenauer, Marc, and Sebag, Mich`ele.
+Bi-population CMA-ES agorithms with surrogate mod-
+In Genetic and Evolutionary
+els and line searches.
+Computation Conference, GECCO ’13, Amsterdam, The
+Netherlands, July 6-10, 2013, Companion Material Pro-
+ceedings, pp. 1177–1184, 2013.
+
+Mannor, Shie, Rubinstein, Reuven, and Gat, Yohai. The
+Cross Entropy method for Fast Policy Search. In Pro-
+ceedings of the 20th International Conference on Ma-
+chine Learning, (ICML 2003), pp. 512–519, Washing-
+ton, DC, USA, 2003.
+
+Martinez-Cantin, Ruben. Bayesopt: A bayesian optimiza-
+tion library for nonlinear optimization, experimental de-
+sign and bandits. Journal of Machine Learning Research
+(JMLR), 15(1):3735–3739, January 2014.
+ISSN 1532-
+4435.
+
+Mnih, Volodymyr, Kavukcuoglu, Koray, Silver, David,
+Rusu, Andrei A., Veness, Joel, Bellemare, Marc G.,
+Graves, Alex, Riedmiller, Martin, Fidjeland, Andreas K.,
+Ostrovski, Georg, Petersen, Stig, Beattie, Charles, Sadik,
+Amir, Antonoglou, Ioannis, King, Helen, Kumaran,
+Dharshan, Wierstra, Daan, Legg, Shane, and Hassabis,
+Demis. Human-level control through deep reinforcement
+learning. Nature, 518(7540):529–533, 02 2015.
+
+Murray, Iain and Adams, Ryan P. Slice sampling co-
+variance hyperparameters of latent gaussian models. In
+Advances in Neural Information Processing Systems
+(NIPS), pp. 1732–1740, 2010.
+
+Peters, J., M¨ulling, K., and Altun, Y. Relative Entropy Pol-
+In Proceedings of the 24th National Con-
+icy Search.
+ference on Artiﬁcial Intelligence (AAAI). AAAI Press,
+2010.
+
+Russo, Daniel and Roy, Benjamin Van. Learning to opti-
+mize via posterior sampling. Math. Oper. Res., 39(4):
+1221–1243, 2014.
+
+Schulman, John, Levine, Sergey, Jordan, Michael, and
+Abbeel, Pieter. Trust Region Policy Optimization. Inter-
+national Conference on Machine Learning (ICML), pp.
+16, 2015.
+
+Shahriari, Bobak, Swersky, Kevin, Wang, Ziyu, Adams,
+Ryan P., and de Freitas, Nando. Taking the human out of
+the loop: A review of bayesian optimization. Proceed-
+ings of the IEEE, 104(1):148–175, 2016.
+
+Silver, David, Huang, Aja, Maddison, Chris J., Guez,
+Arthur, Sifre, Laurent, van den Driessche, George,
+Schrittwieser, Julian, Antonoglou, Ioannis, Panneer-
+shelvam, Veda, Lanctot, Marc, Dieleman, Sander,
+Grewe, Dominik, Nham, John, Kalchbrenner, Nal,
+Sutskever, Ilya, Lillicrap, Timothy, Leach, Madeleine,
+Kavukcuoglu, Koray, Graepel, Thore, and Hassabis,
+Demis. Mastering the game of Go with deep neural net-
+works and tree search. Nature, 529(7587):484–489, Jan-
+uary 2016.
+
+Snoek, Jasper, Larochelle, Hugo, and Adams, Ryan P.
+Practical bayesian optimization of machine learning al-
+gorithms. In Advances in Neural Information Processing
+Systems (NIPS), pp. 2960–2968, 2012.
+
+Snoek, Jasper, Swersky, Kevin, Zemel, Richard S., and
+Adams, Ryan P. Input warping for bayesian optimization
+of non-stationary functions. In International Conference
+on Machine Learning (ICML), pp. 1674–1682, 2014.
+
+Thomas,
+
+Philip S., Theocharous, Georgios,
+
+Ghavamzadeh, Mohammad.
+icy improvement.
+Machine Learning (ICML), pp. 2380–2388, 2015.
+
+and
+High conﬁdence pol-
+In International Conference on
+
+Vanhatalo, Jarno, Riihim¨aki, Jaakko, Hartikainen, Jouni,
+Jyl¨anki, Pasi, Tolvanen, Ville, and Vehtari, Aki. Gpstuff:
+Bayesian modeling with gaussian processes. Journal of
+Machine Learning Research (JMLR), 14(1):1175–1179,
+April 2013. ISSN 1532-4435.
+
+Vazquez, E. and Bect, J. Convergence properties of the
+expected improvement algorithm with ﬁxed mean and
+covariance functions. J. of Statistical Planning and In-
+ference, 140:3088–3095, 2010.
+
+Wang, Ziyu, Hutter, Frank, Zoghi, Masrour, Matheson,
+David, and de Freitas, Nando. Bayesian optimization
+in a billion dimensions via random embeddings. J. Artif.
+Intell. Res. (JAIR), 55:361–387, 2016.
+
+Wilson, Aaron, Fern, Alan, and Tadepalli, Prasad. Using
+trajectory data to improve bayesian optimization for re-
+inforcement learning. Journal of Machine Learning Re-
+search, 15(1):253–282, 2014.
+
+

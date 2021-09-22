@@ -1,0 +1,1505 @@
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+Yingzhen Li 1 Yarin Gal 1 2
+
+Abstract
+To obtain uncertainty estimates with real-world
+Bayesian deep learning models, practical infer-
+ence approximations are needed. Dropout varia-
+tional inference (VI) for example has been used
+for machine vision and medical applications,
+but VI can severely underestimates model un-
+certainty. Alpha-divergences are alternative di-
+vergences to VI’s KL objective, which are able
+to avoid VI’s uncertainty underestimation. But
+these are hard to use in practice: existing tech-
+niques can only use Gaussian approximating dis-
+tributions, and require existing models to be
+changed radically, thus are of limited use for
+practitioners. We propose a re-parametrisation
+of the alpha-divergence objectives, deriving a
+simple inference technique which, together with
+dropout, can be easily implemented with exist-
+ing models by simply changing the loss of the
+model. We demonstrate improved uncertainty es-
+timates and accuracy compared to VI in dropout
+networks. We study our model’s epistemic un-
+certainty far away from the data using adversarial
+images, showing that these can be distinguished
+from non-adversarial images by examining our
+model’s uncertainty.
+
+1. Introduction
+
+Deep learning models have been used to obtain state-of-
+the-art results on many tasks (Krizhevsky et al., 2012;
+Szegedy et al., 2014; Sutskever et al., 2014; Sundermeyer
+et al., 2012; Mikolov et al., 2010; Kalchbrenner & Blun-
+som, 2013), and in many pipelines these models have re-
+placed the more traditional Bayesian probabilistic models
+(Sennrich et al., 2016). But unlike deep learning models,
+Bayesian probabilistic models can capture parameter un-
+certainty and its induced effects over predictions, capturing
+the models’ ignorance about the world, and able to convey
+their increased uncertainty on out-of-data examples. This
+
+1University of Cambridge, UK 2The Alan Turing Institute,
+
+UK. Correspondence to: Yingzhen Li <yl494@cam.ac.uk>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+information can be used, for example, to identify when a vi-
+sion model is given an adversarial image (studied below),
+or to tackle many problems in AI safety (Amodei et al.,
+2016). With model uncertainty at hand, applications as far-
+reaching as safety in self-driving cars can be explored, us-
+ing models which can propagate their uncertainty up the
+decision making pipeline (Gal, 2016). With deterministic
+deep learning models this invaluable uncertainty informa-
+tion is often lost.
+
+Bayesian deep learning – an approach to combining
+Bayesian probability theory together with deep learning –
+allows us to use state-of-the-art models and at the same
+time obtain model uncertainty (Gal, 2016; Gal & Ghahra-
+mani, 2016a). Originating in the 90s (Neal, 1995; MacKay,
+1992; Denker & LeCun, 1991), Bayesian neural networks
+(BNNs) in particular have started gaining in popularity
+again (Graves, 2011; Blundell et al., 2015; Hernandez-
+Lobato & Adams, 2015). BNNs are standard neural net-
+works (NNs) with prior probability distributions placed
+over their weights. Given observed data,
+inference is
+then performed to ﬁnd what are the more likely and less
+likely weights to explain the data. But as easy it is to
+formulate BNNs, is as difﬁcult to perform inference in
+them. Many approximations have been proposed over the
+years (Denker & LeCun, 1991; Neal, 1995; Graves, 2011;
+Blundell et al., 2015; Hernandez-Lobato & Adams, 2015;
+Hern´andez-Lobato et al., 2016), some more practical and
+some less practical. A practical approximation for infer-
+ence in Bayesian neural networks should be able to scale
+well to large data and complex models (such as convo-
+lutional neural networks (CNNs) (Rumelhart et al., 1985;
+LeCun et al., 1989)). Much more importantly perhaps, it
+would be impractical to change existing model architec-
+tures that have been well studied, and it is often impractical
+to work with complex and cumbersome techniques which
+are difﬁcult to explain to non-experts. Many existing ap-
+proaches to obtain model conﬁdence often do not scale to
+complex models or large amounts of data, and require us to
+develop new models for existing tasks for which we already
+have well performing tools (Gal, 2016).
+
+One possible solution for practical inference in BNNs is
+variational inference (VI) (Jordan et al., 1999), a ubiquitous
+technique for approximate inference. Dropout variational
+distributions in particular (a mixture of two Gaussians with
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+small standard deviations, and with one component ﬁxed at
+zero) can be used to obtain a practical inference technique
+(Gal & Ghahramani, 2016b). These have been used for ma-
+chine vision and medical applications (Kendall & Cipolla,
+2016; Kendall et al., 2015; Angermueller & Stegle, 2015;
+Yang et al., 2016). Dropout variational inference can be
+implemented by adding dropout layers (Hinton et al., 2012;
+Srivastava et al., 2014) before every weight layer in the NN
+model. Inference is then carried out by Monte Carlo (MC)
+integration over the variational distribution, in practice im-
+plemented by simulating stochastic forward passes through
+the model at test time (referred to as MC dropout). Al-
+though dropout VI is a practical technique for approximate
+inference, it also has some major limitations. Dropout VI
+can severely underestimate model uncertainty (Gal, 2016,
+Section 3.3.2) – a property many VI methods share (Turner
+& Sahani, 2011). This can lead to devastating results in ap-
+plications that must rely on good uncertainty estimates such
+as AI safety applications.
+
+are
+
+to VI’s objective
+
+there-
+Alternative objectives
+Black-box α-divergence minimisation
+fore needed.
+(Hern´andez-Lobato et al., 2016; Li & Turner, 2016; Minka,
+2005) is a class of approximate inference methods extend-
+ing on VI, approximating EP’s energy function (Minka,
+2001) as well as the Hellinger distance (Hellinger, 1909).
+These were proposed as a solution to some of the difﬁ-
+culties encountered with VI. However, the main difﬁculty
+with α-divergences is that the divergences are hard to use in
+practice. Existing inference techniques only use Gaussian
+approximating distributions, with the density over the ap-
+proximation having to be evaluated explicitly many times.
+The objective offers a limited intuitive interpretation which
+is difﬁcult to explain to non-experts, and of limited use
+for engineers (Gal, 2016, Section 2.2.2). Perhaps more
+importantly, current α-divergence inference techniques re-
+quire existing models and code-bases to be changed rad-
+ically to perform inference in the Bayesian counterpart to
+these models. To implement a complex CNN structure with
+the inference and code of (Hern´andez-Lobato et al., 2016),
+for example, one would be required to re-implement many
+already-implemented software tools.
+
+In this paper we propose a re-parametrisation of the in-
+duced α-divergence objectives, and by relying on some
+mild assumptions (justiﬁed below), derive a simple ap-
+proximate inference technique which can easily be im-
+plemented with existing models. Further, we rely on the
+dropout approximate variational distribution and demon-
+strate how inference can be done in a practical way – re-
+quiring us to only change the loss of the NN, L(θ), and
+to perform multiple stochastic forward passes at training
+time. Precisely, given l(·, ·) some standard NN loss such
+as cross entropy or the Euclidean loss, and {f (cid:98)ωk (xn)}K
+k=1
+a set of K stochastic dropout network outputs on input xn
+
+with randomly masked weights (cid:98)ωk, our proposed objective
+is:
+
+L(θ) = −
+
+log-sum-exp
+
+(cid:104)
+
+(cid:105)
+−αl(yn, f (cid:98)ωk (xn))
+
++ L2(θ)
+
+1
+α
+
+(cid:88)
+
+n
+
+with α a real number, θ the set of network weights to
+be optimised, and an L2 regulariser over θ. By selecting
+α = 1 this objective directly optimises the per-point pre-
+dictive log-likelihood, while picking α → 0 would focus
+on increasing the training accuracy, recovering VI.
+
+Speciﬁc choices of α will result in improved uncertainty es-
+timates (and accuracy) compared to VI in dropout BNNs,
+without slowing convergence time. We demonstrate this
+through a myriad of applications, including an assessment
+of fully connected NNs in regression and classiﬁcation, and
+an assessment of Bayesian CNNs. Finally, we study the
+uncertainty estimates resulting from our approximate in-
+ference technique. We show that our models’ uncertainty
+increases on adversarial images generated from the MNIST
+dataset, suggesting that these lie outside of the training data
+distribution. This in practice allows us to tell-apart such
+adversarial images from non-adversarial images by exam-
+ining epistemic model uncertainty.
+
+2. Background
+
+We review background in Bayesian neural networks and
+approximate variational inference. In the next section we
+discuss α-divergences.
+
+2.1. Bayesian Neural Networks
+
+Given training inputs X = {x1, . . . , xN } and their cor-
+responding outputs Y = {y1, . . . , yN }, in parametric
+Bayesian regression we would like to infer a distribution
+over parameters ω of a function y = f ω(x) that could have
+generated the outputs. Following the Bayesian approach, to
+ﬁnd parameters that could have generated our data, we put
+some prior distribution over the space of parameters p0(ω).
+This distribution captures our prior belief as to which pa-
+rameters are likely to have generated our outputs before
+observing any data. We further need to deﬁne a probabil-
+ity distribution over the outputs given the inputs p(y|x, ω).
+For classiﬁcation tasks we assume a softmax likelihood,
+p(cid:0)y|x, ω(cid:1) = Softmax (f ω(x))
+
+or a Gaussian likelihood for regression. Given a dataset
+X, Y, we then look for the posterior distribution over the
+space of parameters: p(ω|X, Y). This distribution captures
+how likely the function parameters are, given our observed
+data. With it we can predict an output for a new input point
+x∗ by integrating
+
+p(y∗|x∗, X, Y) =
+
+p(y∗|x∗, ω)p(ω|X, Y)dω.
+
+(1)
+
+(cid:90)
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+One way to deﬁne a distribution over a parametric set of
+functions is to place a prior distribution over a neural net-
+work’s weights ω = {Wi}L
+i=1, resulting in a Bayesian NN
+(MacKay, 1992; Neal, 1995). Given weight matrices Wi
+and bias vectors bi for layer i, we often place standard ma-
+trix Gaussian prior distributions over the weight matrices,
+p0(Wi) = N (Wi; 0, I) and often assume a point estimate
+for the bias vectors for simplicity.
+
+2.2. Approximate Variational Inference in Bayesian
+
+Neural Networks
+
+In approximate inference, we are interested in ﬁnding the
+distribution of weight matrices (parametrising our func-
+tions) that have generated our data. This is the posterior
+over the weights given our observables X, Y: p(ω|X, Y),
+which is not tractable in general. Existing approaches to
+approximate this posterior are through variational infer-
+ence (as was done in Hinton & Van Camp (1993); Barber
+& Bishop (1998); Graves (2011); Blundell et al. (2015)).
+We need to deﬁne an approximating variational distribution
+qθ(ω) (parametrised by variational parameters θ), and then
+minimise w.r.t. θ the KL divergence (Kullback & Leibler,
+1951; Kullback, 1959) between the approximating distri-
+bution and the full posterior:
+
+KL(cid:0)qθ(ω)||p(ω|X, Y)(cid:1)
+
+∝ −
+
+qθ(ω) log p(Y|X, ω)dω + KL(qθ(ω)||p0(ω))
+
+= −
+
+qθ(ω) log p(yi|f ω(xi))dω + KL(qθ(ω)||p0(ω)),
+
+(cid:90)
+
+N
+(cid:88)
+
+(cid:90)
+
+i=1
+
+where A ∝ B is slightly abused here to denote equality up
+to an additive constant (w.r.t. variational parameters θ).
+
+2.3. Dropout Approximate Inference
+
+Given a (deterministic) neural network, stochastic regular-
+isation techniques in the model (such as dropout (Hinton
+et al., 2012; Srivastava et al., 2014)) can be interpreted
+as variational Bayesian approximations in a Bayesian NN
+with the same network structure (Gal & Ghahramani,
+2016b). This is because applying a stochastic regularisa-
+tion technique is equivalent to multiplying the NN weight
+matrices Mi by some random noise (cid:15)i (with a new noise
+realisation for each data point). The resulting stochastic
+weight matrices Wi = (cid:15)iMi can be seen as draws from the
+approximate posterior over the BNN weights, replacing the
+deterministic NN’s weight matrices Mi. Our set of varia-
+tional parameters is then the set of matrices θ = {Mi}L
+i=1.
+For example, dropout can be seen as an approximation to
+Bayesian NN inference with dropout approximating distri-
+butions, where the rows of the matrices Wi distribute ac-
+cording to a mixture of two Gaussians with small variances
+
+and the mean of one of the Gaussians ﬁxed at zero. The un-
+certainty in the weights induces prediction uncertainty by
+marginalising over the approximate posterior using Monte
+Carlo integration:
+
+p(y = c|x, X, Y) =
+
+p(y = c|x, ω)p(ω|X, Y)dω
+
+(cid:90)
+
+(cid:90)
+
+≈
+
+≈
+
+p(y = c|x, ω)qθ(ω)dω
+
+1
+K
+
+K
+(cid:88)
+
+k=1
+
+p(y = c|x, (cid:98)ωk)
+
+with (cid:98)ωk ∼ qθ(ω), where qθ(ω) is the Dropout distribu-
+tion (Gal, 2016). Given its popularity, we concentrate on
+the dropout stochastic regularisation technique throughout
+the rest of the paper, although any other stochastic regulari-
+sation technique could be used instead (such as multiplica-
+tive Gaussian noise (Srivastava et al., 2014) or dropConnect
+(Wan et al., 2013)).
+
+Dropout VI is an example of practical approximate infer-
+ence, but it also underestimates model uncertainty (Gal,
+2016, Section 3.3.2). This is because minimising the KL di-
+vergence between q(ω) and p(ω|X, Y) penalises q(ω) for
+placing probability mass where p(ω|X, Y) has no mass,
+but does not penalise q(ω) for not placing probability mass
+at locations where p(ω|X, Y) does have mass. We next
+discuss α-divergences as an alternative to the VI objective.
+
+3. Black-box α-divergence minimisation
+
+In this section we provide a brief review of the black box al-
+pha (BB-α, Hern´andez-Lobato et al. (2016)) method upon
+which the main derivation in this paper is based. Consider
+approximating the following distribution:
+
+p(ω) =
+
+p0(ω)
+
+fn(ω).
+
+1
+Z
+
+(cid:89)
+
+n
+
+In Bayesian neural networks context, these factors fn(ω)
+represent the likelihood terms p(yn|xn, ω), Z = p(Y|X),
+and the approximation target p(ω) is the exact posterior
+p(ω|X, Y). Popular methods of approximate inference in-
+clude variational inference (VI) (Jordan et al., 1999) and
+expectation propagation (EP) (Minka, 2001), where these
+two algorithms are special cases of power EP (Minka,
+2004) that minimises Amari’s α-divergence (Amari, 1985)
+Dα[p||q] in a local way:
+
+Dα[p||q] =
+
+1
+α(1 − α)
+
+(cid:18)
+
+(cid:90)
+
+1 −
+
+p(ω)αq(ω)1−αdω
+
+.
+
+(cid:19)
+
+We provide details of α-divergences and local approxima-
+tion methods in the appendix, and in the rest of the paper
+we consider three special cases in this rich family:
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+1. Exclusive KL divergence:
+
+D0[p||q] = KL[q||p] = Eq
+
+log
+
+(cid:21)
+
+;
+
+q(ω)
+p(ω)
+
+2. Hellinger distance:
+
+D0.5[p||q] = 4Hel2[q||p] = 2
+
+(cid:90) (cid:16)(cid:112)p(ω) − (cid:112)q(ω)
+
+(cid:17)2
+
+dω;
+
+3. Inclusive KL divergence:
+
+D1[p||q] = KL[p||q] = Ep
+
+log
+
+(cid:21)
+
+.
+
+p(ω)
+q(ω)
+
+(cid:20)
+
+(cid:20)
+
+Given the success of α-divergence methods, it is a natural
+idea to extend these algorithms to other classes of approx-
+imations such as dropout. However this task is non-trivial.
+First, the original formulation of BB-α energy is an ad hoc
+adaptation of power-EP energy (see appendix), which ap-
+plies to exponential family q distributions only. Second,
+the energy function offers a limited intuitive interpretation
+to non-experts, thus of limited use for practitioners. Third
+and most importantly, a naive implementation of BB-α us-
+ing dropout would bring in a prohibitive computational bur-
+den. To see this, we ﬁrst review the BB-α energy function
+in the general case (Li & Turner, 2016) given α (cid:54)= 0:
+
+Since α = 0 is used in VI and α = 1.0 is used in EP, in
+later sections we will also refer to these alpha settings as
+the VI value, Hellinger value, and EP value, respectively.
+
+Lα(q) = −
+
+1
+α
+
+(cid:88)
+
+n
+
+log Eq
+
+(cid:34)(cid:32)
+
+fn(ω)p0(ω) 1
+q(ω) 1
+
+N
+
+N
+
+(cid:33)α(cid:35)
+
+.
+
+(2)
+
+Power-EP, though providing a generic variational frame-
+work, does not scale with big data. It maintains approx-
+imating factors attached to every likelihood term fn(ω),
+resulting in space complexity O(N ) for the posterior ap-
+proximation which is clearly undesirable. The recently pro-
+posed stochastic EP (Li et al., 2015) and BB-α (Hern´andez-
+Lobato et al., 2016) inference methods reduce this memory
+overhead to O(1) by sharing these approximating factors.
+Moreover, optimisation in BB-α is done by descending the
+so called BB-α energy function, where Monte Carlo (MC)
+methods and automatic differentiation are also deployed to
+allow fast prototyping.
+
+BB-α has been successfully applied to Bayesian neural
+networks for regression, classiﬁcation (Hern´andez-Lobato
+et al., 2016) and model-based reinforcement learning (De-
+peweg et al., 2016). They all found that using α (cid:54)= 0 often
+returns better approximations than the VI case. The rea-
+sons for the worse results of VI are two fold. From the
+perspective of inference, due to the zero-forcing behaviour
+of exclusive KL discussed before, VI often ﬁts to a local
+mode of the exact posterior and is over-conﬁdent in pre-
+diction. On hyper-parameter learning point of view, as the
+variational lower-bound is used as a (biased) approximation
+to the maximum likelihood objective, the learned model
+could be biased towards over-simpliﬁed cases (Turner &
+Sahani, 2011). These problems could potentially be ad-
+dressed by using α-divergences. For example, inclusive
+KL encourages the coverage of the support set (referred
+as mass-covering), and when used in local divergence min-
+imisation (Minka, 2005), it can ﬁt an approximation to a
+mode of p(ω) with better estimates of uncertainty. More-
+over the BB-α energy provides a better approximation to
+the marginal likelihood as well, meaning that the learned
+model will be less biased and thus ﬁtting the data distribu-
+tion better (Li & Turner, 2016). Hellinger distance seems
+to provide a good balance between zero-forcing and mass-
+covering, and empirically it has been found to achieve the
+best performance.
+
+One could verify that this is the same energy function as
+presented in (Hern´andez-Lobato et al., 2016) by consider-
+ing q an exponential family distribution.
+In practice (2)
+might be intractable, hence an MC approximation is intro-
+duced:
+
+LMC
+
+α (q) = −
+
+1
+α
+
+(cid:88)
+
+log
+
+n
+
+1
+K
+
+(cid:88)
+
+k
+
+(cid:34)(cid:32)
+
+fn((cid:98)ωk)p0((cid:98)ωk) 1
+q((cid:98)ωk) 1
+
+N
+
+N
+
+(cid:33)α(cid:35)
+
+(3)
+(cid:98)ωk ∼ q(ω). This is a biased approximation as the
+with
+expectation in (2) is computed before taking the logarithm.
+But empirically Hern´andez-Lobato et al. (2016) showed
+that the bias introduced by the MC approximation is of-
+ten dominated by the variance of the samples, meaning that
+the effect of the bias is negligible. When α → 0 it returns
+the variational free energy (the VI objective)
+
+L0(q) = LVFE(q) = KL[q||p0] −
+
+Eq [log fn(ω)] , (4)
+
+(cid:88)
+
+n
+
+and the corresponding MC approximation LMC
+an unbiased estimator of LVFE. Also LMC
+number of samples K → 1.
+
+α → LMC
+
+VFE becomes
+VFE as the
+
+The original paper (Hern´andez-Lobato et al., 2016) pro-
+posed a naive implementation which directly evaluates the
+MC estimation (3) with samples (cid:98)ωk ∼ q(ω). However
+as discussed before, dropout implicitly samples different
+masked weight matrices (cid:98)ω ∼ q for different data points.
+This indicates that the naive approach, when applied to
+dropout approximation, would gather all these samples for
+all M datapoints in a mini-batch (i.e. M K sets of neural
+network weight matrices in total), which brings prohibitive
+cost if the network is wide and deep. Interestingly, the min-
+imisation of the variational free energy (α = 0) with the
+dropout approximation can be computed very efﬁciently.
+The main reason for this success is due to the additive struc-
+ture of the variational free energy: no evaluation of q den-
+sity is required if the “regulariser” KL[q||p0] can be com-
+puted/approximated efﬁciently. In the following section we
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+propose an improved version of BB-α energy to allow ap-
+plications with dropout and other ﬂexible approximation
+structures.
+
+4. A New Reparameterisation of BB-α Energy
+
+We propose a reparamterisation of the BB-α energy to re-
+duce the computational overhead. First we denote ˜q(ω) as
+a free-form “cavity distribution” (see appendix), and write
+the approximate posterior q as
+
+q(ω) =
+
+˜q(ω)
+
+1
+Zq
+
+(cid:18) ˜q(ω)
+p0(ω)
+
+(cid:19) α
+
+N −α
+
+,
+
+(5)
+
+where we assume Zq < +∞ is the normalising constant
+to ensure q a valid distribution. When α/N → 0, the un-
+normalised density in (5) converges to ˜q(ω) for every ω,
+and Zq → 1 by the assumption of Zq < +∞ (Van Er-
+ven & Harremo¨es, 2014). Hence q → ˜q when α/N → 0,
+and this happens for example when we choose α → 0, or
+N → +∞ as well as when α grows sub-linearly to N .
+Now we rewrite the BB-alpha energy in terms of ˜q:
+
+Lα(q) = −
+
+(cid:90) (cid:32)
+
+(cid:88)
+
+log
+
+1
+α
+
+1
+α
+
+n
+
+n
+
+(cid:18)(cid:90)
+
+(cid:88)
+
+= −
+
+1
+Zq
+
+˜q(ω)
+
+p0(ω)
+
+α
+
+(cid:18) ˜q(ω)
+p0(ω)
+N fn(ω)αdω
+(cid:16)
+α
+N
+
+1 −
+
+˜q(ω)fn(ω)α −
+
+N −α (cid:33)1− α
+
+(cid:19) α
+
+N
+
+(cid:19)
+
+(cid:17)
+
+log Zq
+
+=
+
+N
+α
+
+(cid:16)
+
+1 −
+
+(cid:17)
+
+α
+N
+
+(cid:90)
+
+log
+
+˜q(ω)
+
+(cid:18) ˜q(ω)
+p0(ω)
+
+(cid:19) α
+
+N −α
+
+dω
+
+log E˜q [fn(ω)α]
+
+(cid:88)
+
+−
+
+1
+α
+
+n
+(cid:88)
+
+n
+
+1
+α
+
+= Rβ[˜q||p0] −
+
+log E˜q [fn(ω)α] , β =
+
+N
+N − α
+
+,
+
+where Rβ[˜q||p0] represents the R´enyi divergence (R´enyi
+(1961), see appendix) of order β. Furthermore, provided
+Rβ[˜q||p0] < +∞ (which holds when assuming Zq <
++∞), we have Rβ[˜q||p0] → KL[˜q||p0] = KL[q||p0] as
+α
+N → 0. This means that for a constant α that scales sub-
+linearly with N , in large data settings we can further ap-
+proximate the BB-α energy as
+
+Lα(q) ≈ ˜Lα(q) = KL[q||p0] −
+
+log Eq [fn(ω)α] .
+
+1
+α
+
+(cid:88)
+
+n
+
+Note that here we also use the fact that now q ≈ ˜q. Crit-
+ically, the proposed reparameterisation is continuous in α,
+and by taking α → 0 the variational free-energy (4) is re-
+covered.
+
+Given a loss function l(·, ·), e.g. l2 loss in regression or
+cross entropy in classiﬁcation, we can deﬁne the (un-
+normalised) likelihood term fn(ω) ∝ p(yn|xn, ω) ∝
+
+exp[−l(yn, f ω(xn))], e.g. see (LeCun et al., 2006)1.
+Swapping fn(ω) for this last expression, and approximat-
+ing the expectation over q using Monte Carlo sampling, we
+obtain our proposed minimisation objective:
+
+˜LMC
+
+α (q) = KL[q||p0] + const
+1
+α
+
+(cid:88)
+
+−
+
+n
+
+log-sum-exp[−αl(yn, f (cid:98)ωk (xn))]
+
+(6)
+
+with log-sum-exp being the log-sum-exp operator over K
+samples from the approximate posterior (cid:98)ωk ∼ q(ω). This
+objective function also approximates the marginal likeli-
+hood. Therefore, compared to the original formulation (2),
+the improved version (6) is considerably simpler (both to
+implement and to understand), has a similar form to stan-
+dard objective functions used in deep learning research, yet
+remains an approximate Bayesian inference algorithm.
+
+To gain some intuitive understanding of this objective, we
+observe what it reduces to for different α and K settings.
+By selecting α = 1 the per-point predictive log-likelihood
+log Eq[p(yn|xn, ω)] is directly optimised. On the other
+hand, picking the VI value (α → 0) would focus on in-
+creasing the training accuracy Eq[log p(yn|xn, ω)]. The
+Hellinger value could be used to achieve a balance between
+reducing training error and improving predictive likeli-
+hood, which has been found to be desirable (Hern´andez-
+Lobato et al., 2016; Depeweg et al., 2016). Lastly, for
+K = 1 the log-sum-exp disappears, the α’s cancel out, and
+the original (stochastic) VI objective is recovered.
+
+In summary, our proposal modiﬁes the loss function by
+multiplying it by α and then performing log-sum-exp with
+a sum over multiple stochastic forward passes sampled
+from the BNN approximate posterior. The remaining KL-
+divergence term (between q and the prior p) can often be
+approximated. It can be viewed as a regulariser added to
+the objective function, and reduces to L2-norm regulariser
+for certain popular q choices (Gal, 2016).
+
+4.1. Dropout BB-α
+
+We now provide a concrete example where the approximate
+distribution is deﬁned by dropout. With dropout VI, MC
+samples are used to approximate the expectation w.r.t. q,
+which in practice is implemented as performing stochastic
+forward passes through the dropout network – i.e. given an
+input x, the input is fed through the network and a new
+dropout mask is sampled and applied at each dropout layer.
+This gives a stochastic output – a sample from the dropout
+network on the input x. A similar approximation is used
+in our case as well, where to implement the MC sampling
+in eq. (6) we perform multiple stochastic forward passes
+
+1fn(ω) does not need to be a normalised density of yn unless
+
+one would like to optimise the associated hyper parameters.
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+through the network.
+
+Recall the neural network f ω(x) is parameterised by the
+variable ω. In classiﬁcation, cross entropy is often used as
+the loss function l(y, f ω(x)) = −yT log pω(x), where the
+label yn is a one-hot binary vector, and the network output
+pω(xn) = Softmax(f ω(xn)) encodes the probability vec-
+tor of class assignments. Applying the re-formulated BB-α
+energy (6) with a Bayesian equivalent of the network, we
+arrive at the objective function
+
+˜LMC
+
+α (q) =
+
+(cid:88)
+
+pi||Mi||2
+
+2 −
+
+yT
+
+n log
+
+(cid:88)
+
+(p (cid:98)ωk (xn))α
+
+1
+α
+
+(cid:88)
+
+n
+
+i
+
+1
+α
+
+(cid:88)
+
+n
+
+=
+
+(cid:32)
+
+l
+
+yn,
+
+1
+K
+
+(cid:88)
+
+k
+
+1
+K
+(cid:33)
+
+k
+
++
+
+(cid:88)
+
+i
+
+p (cid:98)ωk (xn)α
+
+L2(Mi)
+
+with {p (cid:98)ωk (xn)}K
+k=1 being K stochastic network outputs
+on input xn, pi equals to one minus the dropout rate of
+the ith layer, and the L2 regularization terms coming from
+an approximation to the KL-divergence (Gal, 2016). I.e.
+we raise network probability outputs to the power α and
+average them as an input to the standard cross entropy loss.
+Taking α (cid:54)= 1 can be viewed as training the neural network
+with an adjusted “power” loss, regularized by an L2 norm.
+Implementing this induced loss with Keras (Chollet, 2015)
+is as simple as a few lines of Python. A code snippet is
+given in Figure 1, with more details in the appendix.
+
+the loss function is deﬁned as
+In regression problems,
+l(y, f ω(x)) = τ
+2 and the likelihood term can
+be interpreted as y ∼ N (y; f ω(x), τ −1I). Plugging this
+into the energy function returns the following objective
+
+2 ||y − f ω(x)||2
+
+˜LMC
+
+α (q) = −
+
+log-sum-exp
+
+−
+
+||yn − f (cid:98)ωk (xn)||2
+2
+
+(cid:104)
+
+ατ
+2
+
+1
+α
+
++
+
+(cid:88)
+
+n
+N D
+2
+
+log τ +
+
+pi||Mi||2
+2,
+
+(cid:88)
+
+i
+
+(cid:105)
+
+(7)
+
+with {f (cid:98)ωk (xn)}K
+k=1 being K stochastic forward passes on
+input xn. Again, this is reminiscent of the l2 objective in
+standard deep learning, and can be implemented by sim-
+ply passing the input through the dropout network multiple
+times, collecting the stochastic outputs, and feeding the set
+of outputs through our new BB-alpha loss function.
+
+5. Experiments
+
+We test the reparameterised BB-α on Bayesian NNs with
+the dropout approximation. We assess the proposed in-
+ference in regression and classiﬁcation tasks on standard
+benchmarking datasets, comparing different values of α.
+This last experiment leads us to propose a technique that
+could be used to identify adversarial image attacks. In the
+appendix we further provide a study of run time trade-off.
+
+def softmax_cross_ent_with_mc_logits(alpha):
+
+def loss(y_true, mc_logits):
+
+# mc_logits: MC samples of shape MxKxD
+mc_log_softmax = mc_logits \
+
+- K.max(mc_logits, axis=2, keepdims=True)
+
+mc_log_softmax = mc_log_softmax - \
+
+logsumexp(mc_log_softmax, 2)
+
+mc_ll = K.sum(y_true*mc_log_softmax,-1)
+return -1./alpha * (logsumexp(alpha * \
+
+mc_ll, 1) + K.log(1.0 / K_mc))
+
+return loss
+
+Figure 1. Code snippet for our induced classiﬁcation loss.
+
+5.1. Regression
+
+The ﬁrst experiment considers Bayesian neural network re-
+gression with approximate posterior induced by dropout.
+We use benchmark UCI datasets2 that have been tested
+in related literature. The model is a single-layer neu-
+ral network with 50 ReLU units for all datasets except
+for Protein and Year, which use 100 units. We consider
+α ∈ {0.0, 0.5, 1.0} in order to examine the effect of mass-
+covering/zero-forcing behaviour in dropout. MC approxi-
+mation with K = 10 samples is also deployed to compute
+the energy function. Other initialisation settings are largely
+taken from (Li & Turner, 2016).
+
+We summarise the test negative log-likelihood (LL) and
+RMSE with standard error (across different random splits,
+the lower the better) for selected datasets in Figure 2 and 3,
+respectively. The full results are provided in the appendix.
+Although optimal α may vary for different datasets, using
+non-VI values has signiﬁcantly improved the test-LL per-
+formances, while remaining comparable in test error met-
+ric. In particular, α = 0.5 produced overall good results
+for both test LL and RMSE, which is consistent with pre-
+vious ﬁndings. We also compare with a BNN with a Gaus-
+sian approximation (VI-G) (Li & Turner, 2016), a BNN
+with HMC, and a sparse Gaussian process model with 50
+inducing points (Bui et al., 2016). In test-LL metric our
+best dropout model out-performs the Gaussian approxima-
+tion method on almost all datasets, and for some datasets
+is on par with HMC which is the current gold standard
+for Bayesian neural works, and with the GP model that is
+known to be superior in regression.
+
+5.2. Classiﬁcation
+
+We further experiment with a classiﬁcation task, comparing
+the accuracy of the various α values on the MNIST bench-
+mark (LeCun & Cortes, 1998). We assessed a fully connect
+NN with 2 hidden layers and 100 units in each layer. We
+used dropout probability 0.5 and α ∈ {0, 0.5, 1}. Again,
+we use K = 10 samples at training time for all α values,
+
+2http://archive.ics.uci.edu/ml/datasets.
+
+html
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+Figure 2. Negative test-LL results for Bayesian NN regression.
+
+Figure 3. Test RMSE results for Bayesian NN regression.
+
+and Ktest = 100 samples at test time. We use weight decay
+10−6, which is equivalent to prior lengthscale l2 = 0.1 (Gal
+& Ghahramani, 2016b). We repeat each experiment three
+times and plot mean and standard error. Test RMSE as well
+as test log likelihood are given in Figure 4. As can be seen,
+Hellinger value α = 0.5 gives best test RMSE, with test
+log likelihood matching that of the EP value α = 1. The
+VI value α = 0 under-performs according to both metrics.
+
+We next assess a convolutional neural network model
+(CNN). For this experiment we use the standard CNN ex-
+ample given in (Chollet, 2015) with 32 convolution ﬁlters,
+100 hidden units at the top layer, and dropout probability
+0.5 before each fully-connected layer. Other settings are as
+before. Average test accuracy and test log likelihood are
+given in Figure 5. In this case, VI value α = 0 seems to
+supersede the EP value α = 1, and performs similarly to
+the Hellinger value α = 0.5 according to both metrics.
+
+5.3. Detecting Adversarial Examples
+
+The third set of experiments considers adversarial attacks
+on dropout-trained Bayesian neural networks. We test the
+hypothesis that certain techniques for generating adversar-
+ial examples will give images that lie outside of the image
+
+manifold, i.e. far from the data distribution (note though
+that there exist techniques that will guarantee the images
+staying near the data manifold, by minimising the perturba-
+tion used to construct the adversarial example). By assess-
+ing the BNN uncertainty, we should see increased uncer-
+tainty for adversarial images if they indeed lie outside of the
+training data distribution. The tested models are fully con-
+nected networks with 3 hidden layers of 1000 units trained
+using dropout rate 0.5 and different alpha values. These
+models are also compared to a benchmark MLP with the
+same architecture but trained by maximum likelihood. The
+adversarial examples are generated on MNIST test data that
+is normalised to be in the range [0, 1]. For the dropout
+trained networks we perform MC dropout at test time with
+Ktest = 10 MC samples.
+
+The ﬁrst attack in consideration is the Fast Gradient Sign
+(FGS) method (Goodfellow et al., 2014). This is an un-
+targeted attack, which attempts to reduces the maximum
+value of the predicted class label probability
+
+xadv = x − η · sgn(∇x max
+
+log p(y|x)).
+
+y
+
+We use the single gradient step FGS implemented in Clev-
+erhans (Papernot et al., 2016) with the stepsize η varied
+
+(a) NN test accuracy
+
+(b) NN test log likelihood
+
+(a) CNN test accuracy
+
+(b) CNN test log likelihood
+
+Figure 4. MNIST test accuracy and test log likelihood for a fully
+connected NN in a classiﬁcation task.
+
+Figure 5. MNIST test accuracy and test log likelihood for a con-
+volutional neural network in a classiﬁcation task.
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+Figure 6. Un-targeted attack: classiﬁcation accuracy results as a
+function of perturbation stepsize. The adversarial examples are
+shown for (from top to bottom) MLP and BNN trained with
+dropout and α = 0.0, 0.5, 1.0.
+
+Figure 7. Targeted attack: classiﬁcation accuracy results (on both
+original and target class) as a function of the number of iterative
+gradient steps. Note the log scale x-axis in the left panel.
+
+between 0.0 and 0.5. The left panel in Figure 6 demon-
+strates the classiﬁcation accuracy on adversarial examples,
+which shows that the dropout networks, especially the one
+trained with α = 1.0, are signiﬁcantly more robust to ad-
+versarial attacks compared to the deterministic NN. For
+example, for η = 0.1 the adversarial samples still visu-
+ally close to the original class, and the BNN trained with
+α = 0.0 achieves an accuracy level almost 3 times higher
+than the MLP and around 20% higher than the VI-trained
+version. More interestingly, the test data examples and ad-
+versarial images can be told-apart by investigating the un-
+certainty representation of the dropout models. In the right
+panel of Figure 6 we depict the predictive entropy com-
+puted on the neural network output probability vector, and
+show example corresponding adversarial images below the
+axis for each corresponding stepsize. Clearly the determin-
+istic NN model produces over-conﬁdent predictions on ad-
+versarial samples, e.g. it predicts the wrong label very con-
+ﬁdently even when the input is still visually close to digit
+“7” (η = 0.2). While dropout models, though producing
+wrong labels, are very uncertain about their predictions.
+This uncertainty keeps increasing as we move away from
+the data manifold. Hence the dropout networks are much
+more immunised from noise-corrupted inputs, as they can
+be detected using uncertainty estimates in this example.
+
+The second attack we consider is a targeted version of FGS
+(Goodfellow et al., 2014; Carlini & Wagner, 2016), which
+maximises the predictive probability of a selected class in-
+stead. As an example, we ﬁx class 0 as the target and apply
+the iterative gradient-base attack to all non-zero digits in
+test data. At step t, the adversarial output is computed as
+
+adv = xt−1
+xt
+
+adv + η · sgn(∇x log p(ytarget|xt−1
+
+adv )),
+
+where the stepsize η is ﬁxed at 0.01 in this case. Results are
+presented in the left panel of Figure 7, and again dropout
+
+trained models are more robust to this attack compared with
+the MLP. Similarly these adversarial examples could be de-
+tected by the Bayesian neural networks’ uncertainty, by ex-
+amining the predictive entropy. By visually inspecting the
+generated adversarial examples in the right panel of Fig-
+ure 7, it is clear that the MLP overconﬁdently classiﬁes a
+digit 7 to class 0. On the other hand, the dropout models
+are still fairly uncertain about their predictions even after
+40 gradient steps. More interestingly, running this iterative
+attack on dropout models produces a smooth interpolation
+between different digits, and when the model is conﬁdent
+on predicting the target class, the corresponding adversarial
+images are visually close to digit zero.
+
+These initial results suggest that assessing the epistemic
+uncertainty of classiﬁcation models can be used as a vi-
+able technique to identify adversarial examples. We would
+note though that we used this experiment to demonstrate
+our techniques’ uncertainty estimates, and much more re-
+search is needed to solve the difﬁculties faced with adver-
+sarial inputs.
+
+6. Conclusions
+
+We presented a practical extension of the BB-alpha objec-
+tive which allows us to use the technique with dropout ap-
+proximating distributions. The technique often supersedes
+existing approximate inference techniques (even sparse
+Gaussian processes), and is easy to implement. A code
+snippet for our induced loss is given in the appendix.
+
+Acknowledgements
+
+We thank Rich Turner, Nicolas Papernot, and the reviewers
+for comments. YL thanks the Schlumberger Foundation
+FFTF fellowship for supporting her PhD study.
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+References
+
+Amari, Shun-ichi. Differential-Geometrical Methods in Statistic.
+
+Springer, New York, 1985.
+
+Amodei, Dario, Olah, Chris, Steinhardt, Jacob, Christiano, Paul,
+Schulman, John, and Mane, Dan. Concrete problems in ai
+safety. arXiv preprint arXiv:1606.06565, 2016.
+
+Angermueller, C and Stegle, O. Multi-task deep neural network to
+predict CpG methylation proﬁles from low-coverage sequenc-
+ing data. In NIPS MLCB workshop, 2015.
+
+Barber, David and Bishop, Christopher M. Ensemble learning in
+Bayesian neural networks. NATO ASI SERIES F COMPUTER
+AND SYSTEMS SCIENCES, 168:215–238, 1998.
+
+Blundell, Charles, Cornebise, Julien, Kavukcuoglu, Koray, and
+Wierstra, Daan. Weight uncertainty in neural network.
+In
+ICML, 2015.
+
+Bui, Thang D, Hern´andez-Lobato, Daniel, Li, Yingzhen,
+Hern´andez-Lobato, Jos´e Miguel, and Turner, Richard E. Deep
+gaussian processes for regression using approximate expecta-
+In Proceedings of The 33rd International
+tion propagation.
+Conference on Machine Learning (ICML), 2016.
+
+Carlini, Nicholas and Wagner, David. Towards evaluating the ro-
+bustness of neural networks. arXiv preprint arXiv:1608.04644,
+2016.
+
+Chollet, Francois.
+
+Keras.
+fchollet/keras, 2015.
+
+https://github.com/
+
+Denker, John and LeCun, Yann. Transforming neural-net output
+levels to probability distributions. In Advances in Neural In-
+formation Processing Systems 3. Citeseer, 1991.
+
+Depeweg, Stefan, Hern´andez-Lobato, Jos´e Miguel, Doshi-Velez,
+Finale, and Udluft, Steffen. Learning and policy search in
+stochastic dynamical systems with bayesian neural networks.
+arXiv preprint arXiv:1605.07127, 2016.
+
+Gal, Yarin. Uncertainty in Deep Learning. PhD thesis, University
+
+of Cambridge, 2016.
+
+Gal, Yarin and Ghahramani, Zoubin. Bayesian convolutional neu-
+ral networks with Bernoulli approximate variational inference.
+ICLR workshop track, 2016a.
+
+Gal, Yarin and Ghahramani, Zoubin. Dropout as a Bayesian ap-
+proximation: Representing model uncertainty in deep learning.
+ICML, 2016b.
+
+Goodfellow, Ian J, Shlens, Jonathon, and Szegedy, Christian. Ex-
+plaining and harnessing adversarial examples. arXiv preprint
+arXiv:1412.6572, 2014.
+
+Graves, Alex. Practical variational inference for neural networks.
+In Advances in Neural Information Processing Systems, pp.
+2348–2356, 2011.
+
+Hern´andez-Lobato, Jos´e Miguel, Li, Yingzhen, Hern´andez-
+Lobato, Daniel, Bui, Thang, and Turner, Richard E. Black-box
+alpha divergence minimization. In Proceedings of The 33rd In-
+ternational Conference on Machine Learning, pp. 1511–1520,
+2016.
+
+Hinton, Geoffrey E and Van Camp, Drew. Keeping the neural
+networks simple by minimizing the description length of the
+weights. In COLT, pp. 5–13. ACM, 1993.
+
+Hinton, Geoffrey E, Srivastava, Nitish, Krizhevsky, Alex,
+Sutskever, Ilya, and Salakhutdinov, Ruslan R. Improving neu-
+ral networks by preventing co-adaptation of feature detectors.
+arXiv preprint arXiv:1207.0580, 2012.
+
+Jordan, Michael I, Ghahramani, Zoubin, Jaakkola, Tommi S, and
+Saul, Lawrence K. An introduction to variational methods for
+graphical models. Machine learning, 37(2):183–233, 1999.
+
+Kalchbrenner, Nal and Blunsom, Phil. Recurrent continuous
+
+translation models. In EMNLP, 2013.
+
+Kendall, Alex and Cipolla, Roberto. Modelling uncertainty in
+deep learning for camera relocalization. In 2016 IEEE Inter-
+national Conference on Robotics and Automation (ICRA), pp.
+4762–4769. IEEE, 2016.
+
+Kendall, Alex, Badrinarayanan, Vijay, and Cipolla, Roberto.
+Bayesian segnet: Model uncertainty in deep convolutional
+encoder-decoder architectures for scene understanding. arXiv
+preprint arXiv:1511.02680, 2015.
+
+Krizhevsky, Alex, Sutskever, Ilya, and Hinton, Geoffrey E. Ima-
+genet classiﬁcation with deep convolutional neural networks.
+In Advances in neural information processing systems, pp.
+1097–1105, 2012.
+
+Kullback, Solomon. Information theory and statistics. John Wiley
+
+& Sons, 1959.
+
+Kullback, Solomon and Leibler, Richard A. On information and
+sufﬁciency. The annals of mathematical statistics, 22(1):79–
+86, 1951.
+
+LeCun, Yann and Cortes, Corinna. The mnist database of hand-
+
+written digits, 1998.
+
+LeCun, Yann, Boser, Bernhard, Denker, John S, Henderson,
+Donnie, Howard, Richard E, Hubbard, Wayne, and Jackel,
+Lawrence D. Backpropagation applied to handwritten zip code
+recognition. Neural Computation, 1(4):541–551, 1989.
+
+LeCun, Yann, Chopra, Sumit, Hadsell, Raia, Ranzato, M, and
+Huang, F. A tutorial on energy-based learning. Predicting
+structured data, 1:0, 2006.
+
+Li, Yingzhen and Turner, Richard E. R´enyi divergence variational
+
+inference. In NIPS, 2016.
+
+Hellinger, Ernst. Neue begr¨undung der theorie quadratischer for-
+men von unendlichvielen ver¨anderlichen. Journal f¨ur die reine
+und angewandte Mathematik, 136:210–271, 1909.
+
+Li, Yingzhen, Hern´andez-Lobato, Jos´e Miguel, and Turner,
+Richard E. Stochastic expectation propagation. In Advances
+in Neural Information Processing Systems (NIPS), 2015.
+
+Hernandez-Lobato, Jose Miguel and Adams, Ryan. Probabilistic
+backpropagation for scalable learning of Bayesian neural net-
+works. In ICML, 2015.
+
+MacKay, David JC. A practical Bayesian framework for back-
+propagation networks. Neural Computation, 4(3):448–472,
+1992.
+
+Dropout Inference in Bayesian Neural Networks with Alpha-divergences
+
+Mikolov, Tom´aˇs, Karaﬁ´at, Martin, Burget, Luk´aˇs, ˇCernock`y, Jan,
+and Khudanpur, Sanjeev. Recurrent neural network based lan-
+guage model. In Eleventh Annual Conference of the Interna-
+tional Speech Communication Association, 2010.
+
+Minka, Tom. Divergence measures and message passing. Techni-
+
+cal report, Microsoft Research, 2005.
+
+Minka, T.P. Expectation propagation for approximate Bayesian
+In Conference on Uncertainty in Artiﬁcial Intelli-
+
+inference.
+gence (UAI), 2001.
+
+Minka, T.P. Power EP. Technical Report MSR-TR-2004-149,
+
+Microsoft Research, 2004.
+
+Neal, Radford M. Bayesian learning for neural networks. PhD
+
+thesis, University of Toronto, 1995.
+
+Papernot, Nicolas, Goodfellow,
+
+man, Reuben, and McDaniel, Patrick.
+an adversarial machine learning library.
+arXiv:1610.00768, 2016.
+
+Ian, Sheatsley, Ryan, Fein-
+cleverhans v1.0.0:
+arXiv preprint
+
+R´enyi, Alfr´ed. On measures of entropy and information. Fourth
+Berkeley symposium on mathematical statistics and probabil-
+ity, 1, 1961.
+
+Rumelhart, David E, Hinton, Geoffrey E, and Williams, Ronald J.
+Learning internal representations by error propagation. Tech-
+nical report, DTIC Document, 1985.
+
+Sennrich, Rico, Haddow, Barry, and Birch, Alexandra. Edinburgh
+neural machine translation systems for wmt 16. In Proceedings
+of the First Conference on Machine Translation, pp. 371–376,
+Berlin, Germany, August 2016. Association for Computational
+Linguistics.
+
+Srivastava, Nitish, Hinton, Geoffrey, Krizhevsky, Alex, Sutskever,
+Ilya, and Salakhutdinov, Ruslan. Dropout: A simple way to
+prevent neural networks from overﬁtting. The Journal of Ma-
+chine Learning Research, 15(1):1929–1958, 2014.
+
+Sundermeyer, Martin, Schl¨uter, Ralf, and Ney, Hermann. LSTM
+In INTERSPEECH,
+
+neural networks for language modeling.
+2012.
+
+Sutskever, Ilya, Vinyals, Oriol, and Le, Quoc VV. Sequence to
+
+sequence learning with neural networks. In NIPS, 2014.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet, Pierre,
+Reed, Scott, Anguelov, Dragomir, Erhan, Dumitru, Van-
+houcke, Vincent, and Rabinovich, Andrew. Going deeper with
+convolutions. arXiv preprint arXiv:1409.4842, 2014.
+
+Turner, RE and Sahani, M. Two problems with variational ex-
+pectation maximisation for time-series models. Inference and
+Estimation in Probabilistic Time-Series Models, 2011.
+
+Van Erven, Tim and Harremo¨es, Peter.
+
+and Kullback-Leibler divergence.
+Transactions on, 60(7):3797–3820, 2014.
+
+R´enyi divergence
+Information Theory, IEEE
+
+Wan, L, Zeiler, M, Zhang, S, LeCun, Y, and Fergus, R. Regu-
+larization of neural networks using dropconnect. In ICML-13,
+2013.
+
+Yang, Xiao, Kwitt, Roland, and Niethammer, Marc. Fast pre-
+dictive image registration. arXiv preprint arXiv:1607.02504,
+2016.
+
+

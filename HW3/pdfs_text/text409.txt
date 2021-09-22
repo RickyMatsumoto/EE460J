@@ -1,0 +1,1062 @@
+Deciding How to Decide:
+Dynamic Routing in Artiﬁcial Neural Networks
+
+Mason McGill 1 Pietro Perona 1
+
+Milner, 1992), and faces and other behaviorally-relevant
+stimuli ellicit responses in anatomically distinct, special-
+ized regions (Moeller et al., 2008; Kornblith et al., 2013).
+However, state-of-the-art artiﬁcial neural networks (ANNs)
+for visual inference are routed statically (Simonyan & Zis-
+serman, 2014; He et al., 2016; Dosovitskiy et al., 2015;
+Newell et al., 2016); every input triggers an identical se-
+quence of operations.
+
+Abstract
+We propose and systematically evaluate three
+strategies for training dynamically-routed artiﬁ-
+cial neural networks: graphs of learned trans-
+formations through which different input sig-
+nals may take different paths. Though some ap-
+proaches have advantages over others, the re-
+sulting networks are often qualitatively similar.
+We ﬁnd that,
+in dynamically-routed networks
+trained to classify images, layers and branches
+become specialized to process distinct categories
+of images. Additionally, given a ﬁxed com-
+putational budget, dynamically-routed networks
+tend to perform better than comparable statically-
+routed networks.
+
+1. Introduction
+
+Some decisions are easier to make than others—for exam-
+ple, large, unoccluded objects are easier to recognize. Ad-
+ditionally, different difﬁcult decisions may require different
+expertise—an avid birder may know very little about iden-
+tifying cars. We hypothesize that complex decision-making
+tasks like visual classiﬁcation can be meaningfully divided
+into specialized subtasks, and that a system designed to
+perform a complex task should ﬁrst attempt to identify the
+subtask being presented to it, then use that information to
+select the most suitable algorithm for its solution.
+
+This approach—dynamically routing signals through an in-
+ference system, based on their content—has already been
+incorporated into machine vision pipelines via methods
+such as boosting (Viola et al., 2005), coarse-to-ﬁne cas-
+cades (Zhou et al., 2013), and random decision forests (Ho,
+1995). Dynamic routing is also performed in the primate
+visual system: spatial information is processed somewhat
+separately from object identity information (Goodale &
+
+1California Institute of Technology, Pasadena, Cali-
+fornia, USA. Correspondence to: Mason McGill <mm-
+cgill@caltech.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Figure 1. Motivation for dynamic routing. For a given data rep-
+resentation, some regions of the input space may be classiﬁed con-
+ﬁdently, while other regions may be ambiguous.
+
+With this in mind, we propose a mechanism for introducing
+cascaded evaluation to arbitrary feedforward ANNs, focus-
+ing on the task of object recognition as a proof of concept.
+Instead of classifying images only at the ﬁnal layer, every
+layer in the network may attempt to classify images in low-
+ambiguity regions of its input space, passing ambiguous
+images forward to subsequent layers for further considera-
+tion (see Fig. 1 for an illustration). We propose three ap-
+proaches to training these networks, test them on small im-
+age datasets synthesized from MNIST (LeCun et al., 1998)
+and CIFAR-10 (Krizhevsky & Hinton, 2009), and quantify
+the accuracy/efﬁciency trade-off that occurs when the net-
+work parameters are tuned to yield more aggressive early
+classiﬁcation policies. Additionally, we propose and evalu-
+ate methods for appropriating regularization and optimiza-
+tion techniques developed for statically-routed networks.
+
+2. Related Work
+
+Since the late 1980s,
+researchers have combined ar-
+tiﬁcial neural networks with decision trees in various
+
+Clearly Sticks(Classify)Clearly Insects(Classify)Ambiguous(Inspect Further)Deciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+ways (Utgoff, 1989) (Sirat & Nadal, 1990). More re-
+cently, Kontschieder et al. (2015) performed joint opti-
+mization of ANN and decision tree parameters, and Bulo
+& Kontschieder (2014) used randomized multi-layer net-
+works to compute decision tree split functions.
+
+To our knowledge, the family of inference systems we dis-
+cuss was ﬁrst described by Denoyer & Gallinari (2014).
+Additionally, Bengio et al. (2015) explored dynamically
+skipping layers in neural networks, and Ioannou et al.
+(2016) explored dynamic routing in networks with equal-
+length paths. Some recently-developed visual detection
+systems perform cascaded evaluation of convolutional neu-
+ral network layers (Li et al., 2015; Cai et al., 2015; Gir-
+shick, 2015; Ren et al., 2015); though highly specialized
+for the task of visual detection, these modiﬁcations can rad-
+ically improve efﬁciency.
+
+While these approaches lend evidence that dynamic routing
+can be effective, they either ignore the cost of computation,
+or do not represent it explicitly, and instead use opaque
+heuristics to trade accuracy for efﬁciency. We build on this
+foundation by deriving training procedures from arbitrary
+application-provided costs of error and computation, com-
+paring one actor-style and two critic-style strategies, and
+considering regularization and optimization in the context
+of dynamically-routed networks.
+
+3. Setup
+
+In a statically-routed, feedforward artiﬁcial neural network,
+every layer transforms a single input feature vector into a
+single output feature vector. The output feature vector is
+then used as the input to the following layer (which we’ll
+refer to as the current layer’s sink), if it exists, or as the
+ouptut of the network as a whole, if it does not.
+
+∈ {
+
+0..n
+
+We consider networks in which layers may have more than
+one sink.
+In such a network, for every n-way junction
+j a signal reaches, the network must make a decision,
+, such that the signal will propagate through
+dj
+}
+the ith sink if and only if dj = i (this is illustrated in Fig.
+2). We compute dj as the argmax of the score vector sj, a
+learned function of the last feature vector computed before
+reaching j. We’ll refer to this rule for generating d from s
+as the inference routing policy.
+
+3.1. Multipath Architectures for Convolutional
+
+Networks
+
+Convolutional network layers compute collections of local
+descriptions of the input signal. It is unreasonable to expect
+that this kind of feature vector can explicitly encode the
+global information relevant to deciding how to route the
+entire signal (e.g., in the case of object recognition, whether
+the image was taken indoors, whether the image contains
+
+Figure 2. A 2-way junction, j. dj is an integer function of the
+source features. When dj = 0, the signal is propagated through
+the top sink, and the bottom sink is inactive. When dj = 1, the
+signal is propagated through the bottom sink, and the top sink is
+inactive.
+
+an animal, or the prevalence of occlusion in the scene).
+
+To address this, instead of computing a 2-dimensional ar-
+ray of local features at each layer, we compute a pyramid
+of features (resembling the pyramids described by Ke et al.
+(2016)), with local descriptors at the bottom and global de-
+scriptors at the top. At every junction j, the score vector
+sj is computed by a small routing network operating on the
+last-computed global descriptor. Our multipath architec-
+ture is illustrated in Fig. 3.
+
+3.2. Balancing Accuracy and Efﬁciency
+
+For a given input, network ν, and set of routing decisions
+d, we deﬁne the cost of performing inference:
+
+cinf(ν, d) = cerr(ν, d) + ccpt(ν, d),
+
+(1)
+
+where cerr(ν, d) is the cost of the inference errors made by
+the network, and ccpt(ν, d) is the cost of computation. In
+our experiments, unless stated otherwise, cerr is the cross-
+entropy loss and
+
+ccpt(ν, d) = kcptnops(ν, d),
+
+(2)
+
+where nops(ν, d) is the number of multiply-accumulate
+operations performed and kcpt is a scalar hyperparame-
+ter. This deﬁnition assumes a time- or energy-constrained
+system—every operation consumes roughly the same
+amount of time and energy, so every operation is equally
+expensive. ccpt may be deﬁned differently under other con-
+straints (e.g. memory bandwidth).
+
+4. Training
+
+We propose three approaches to training dynamically-
+routed networks, along with complementary approaches to
+regularization and optimization, and a method for adapting
+to changes in the cost of computation.
+
+dj = 0dj = 1SourceSink 1Sink 0SourceSink 1Sink 0Deciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+Figure 3. Our multiscale convolutional architecture. Once a column is evaluated, the network decides whether to classify the image
+or evaluate subsequent columns. Deeper columns operate at coarser scales, but compute higher-dimensional representations at each
+location. All convolutions use 3×3 kernels, downsampling is achieved via 2×2 max pooling, and all routing layers have 16 channels.
+
+4.1. Training Strategy I: Actor Learning
+
+Since d is discrete, cinf(ν, d) cannot be minimized via
+gradient-based methods. However, if d is replaced by a
+stochastic approximation, ˆd, during training, we can engi-
+neer the gradient of E[cinf(ν, ˆd)] to be nonzero. We can then
+learn the routing parameters and classiﬁcation parameters
+simultaneously by minimizing the loss
+
+Lac = E[cinf(ν, ˆd)].
+
+(3)
+
+where
+
+In our experiments, the training routing policy samples ˆd
+such that
+
+Pr( ˆdj = i) = softmax(sj/τ )i,
+
+(4)
+
+where τ is the network “temperature”: a scalar hyperpa-
+rameter that decays over the course of training, converging
+the training routing policy towards the inference routing
+policy.
+
+4.2. Training Strategy II: Pragmatic Critic Learning
+
+Alternatively, we can attempt to learn to predict the ex-
+pected utility of making every routing decision.
+In this
+case, we minimize the loss
+
+Lcr = E
+
+
+cinf(ν, ˆd) +
+
+
+
+cj
+ure
+
+ ,
+
+(cid:88)
+
+j∈J
+
+(5)
+
+J
+
+where
+is the set of junctions encountered when making
+the routing decisions ˆd, and cure is the utility regression er-
+ror cost, deﬁned:
+
+cj
+ure = kure
+
+sj
+
+(cid:107)
+
+−
+
+uj
+
+2,
+(cid:107)
+
+ui
+j =
+
+cinf(νi
+
+j, d),
+
+−
+
+(6)
+
+(7)
+
+kure is a scalar hyperparameter, and νi
+j is the subnetwork
+consisting of the ith child of νj, and all of its descendants.
+Since we want to learn the policy indirectly (via cost pre-
+diction), ˆd is treated as constant with respect to optimiza-
+tion.
+
+4.3. Training Strategy III: Optimistic Critic Learning
+
+To improve the stability of the loss and potentially accel-
+erate training, we can adjust the routing utility function u
+such that, for every junction j, uj is independent of the
+Instead of predict-
+routing parameters downstream of j.
+ing the cost of making routing decisions given the current
+downstream routing policy, we can predict the cost of mak-
+ing routing decisions given the optimal downstream routing
+policy. In this optimistic variant of the critic method,
+
+ui
+j =
+
+mind(cid:48)(cinf(νi
+
+j, d(cid:48))).
+
+−
+
+(8)
+
+4×48×816×1632×3216 chan.16 chan.32 chan.32 chan.64 chan.64 chan.128 chan.128 chan.“Horse”Convolution, Batch Normalization, RectificationLinear Transformation, Batch Normalization, RectificationLinear Transformation, SoftmaxLinear Transformation, Argmax“Stop” Signal“Go” SignalRoutingSubnetworksDeciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+4.4. Regularization
+
+Many regularization techniques involve adding a model-
+complexity term, cmod, to the loss function to inﬂuence
+learning, effectively imposing soft constraints upon the net-
+work parameters (Hoerl & Kennard, 1970; Rudin et al.,
+1992; Tibshirani, 1996). However,
+if such a term af-
+fects layers in a way that is independent of the amount of
+signal routed through them, it will either underconstrain
+frequently-used layers or overconstrain infrequently-used
+layers. To support both frequently- and infrequently-used
+layers, we regularize subnetworks as they are activated by
+ˆd, instead of regularizing the entire network directly.
+
+For example, to apply L2 regularization to critic networks,
+we deﬁne cmod:
+
+quent layers based on ˆd. With this policy, at every training
+interation, mini-batch stochastic gradient descent shifts the
+parameters associated with layer (cid:96) by a vector δ∗
+(cid:96) , deﬁned:
+
+where λ is the global learning rate and gi
+(cid:96) is the gradient
+of the loss with respect to the parameters in (cid:96), for training
+example i, under d∗
+(cid:96) . Analogously, the scaled parameter
+adjustment under ˆd can be written
+
+δ∗
+(cid:96) =
+
+λ
+
+−
+
+(cid:88)
+
+gi
+(cid:96),
+
+i
+
+δ(cid:96) =
+
+α(cid:96)λ
+
+−
+
+(cid:88)
+
+(cid:96)gi
+pi
+(cid:96),
+
+i
+
+cmod = E
+
+kL2
+
+(cid:34)
+
+(cid:35)
+
+w2
+
+,
+
+(cid:88)
+
+w∈W
+
+where pi
+through (cid:96).
+
+(9)
+
+(cid:96) is the probability with which ˆd routes example i
+
+We want to select α(cid:96) such that
+
+where
+activated by ˆd, and kL2 is a scalar hyperparameter.
+
+is the set of weights associated with the layers
+
+W
+
+For actor networks, we apply an extra term to control the
+magnitude of s, and therefore the extent to which the net
+explores subpotimal paths:
+
+cmod = E
+
+kL2
+
+w2 + kdec
+
+(10)
+
+
+
+(cid:88)
+
+w∈W
+
+
+
+(cid:88)
+
+j∈J
+
+sj
+
+2
+(cid:107)
+
+(cid:107)
+
+ ,
+
+where kdec is a scalar hyperparameter indicating the relative
+cost of decisiveness.
+
+cmod is added to the loss function in all of our experiments.
+Within cmod, unless stated otherwise, ˆd is treated as con-
+stant with respect to optimization.
+
+4.5. Adjusting Learning Rates to Compensate for
+
+Throughput Variations
+
+Both training techniques attempt to minimize the expected
+cost of performing inference with the network, over the
+training routing policy. With this setup, if we use a constant
+learning rate for every layer in the network, then layers
+through which the policy routes examples more frequently
+will receive larger parameter updates, since they contribute
+more to the expected cost.
+
+To allow every layer to learn as quickly as possible, we
+scale the learning rate of each layer (cid:96) dynamically, by a
+factor α(cid:96), such that the elementwise variance of the loss
+gradient with respect to (cid:96)’s parameters is independent of
+the amount of probability density routed through it.
+
+To derive α(cid:96), we consider an alternative routing policy, d∗
+(cid:96) ,
+that routes all signals though (cid:96), then routes through subse-
+
+Var(δ(cid:96)) = Var(δ∗
+
+(cid:96) ).
+
+Substituting the deﬁnitions of δ(cid:96) and δ∗
+(cid:96) ,
+
+(cid:32)
+
+(cid:33)
+
+Var
+
+α(cid:96)
+
+(cid:88)
+
+(cid:96)gi
+pi
+(cid:96)
+
+= Var
+
+i
+
+(cid:32)
+
+(cid:88)
+
+(cid:33)
+
+gi
+(cid:96)
+
+.
+
+i
+
+Since every gi
+this equation:
+
+(cid:96) is sampled independently, we can rewrite
+
+nexv(cid:96)α2
+(cid:96) (cid:107)
+
+p(cid:96)
+
+2 = nexv(cid:96),
+(cid:107)
+
+where nex is the number of training examples in the mini-
+batch and v(cid:96) is the elementwise variance of gi
+(cid:96), for any i
+(since every example is sampled via the same mechanism).
+We can now show that
+
+α(cid:96) =
+
+p(cid:96)
+(cid:107)
+
+−1.
+(cid:107)
+
+So, for every layer (cid:96), we can scale the learning rate by
+−1, and the variance of the weight updates will be sim-
+p(cid:96)
+(cid:107)
+(cid:107)
+ilar thoughout the network. We use this technique, unless
+otherwise speciﬁed, in all of our experiments.
+
+4.6. Responding to Changes in the Cost of
+
+Computation
+
+We may want a single network to perform well in situations
+with various degrees of computational resource scarcity
+(e.g. computation may be more expensive when a device
+battery is low). To make the network’s routing behavior re-
+sponsive to a dynamic ccpt, we can concatenate ccpt’s known
+
+(11)
+
+(12)
+
+(13)
+
+(14)
+
+(15)
+
+(16)
+
+Deciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+networks to classify images from a small-image dataset
+synthesized from MNIST (LeCun et al., 1998) and CIFAR-
+10 (Krizhevsky & Hinton, 2009) (see Fig. 4). Our dataset
+includes the classes “0”, “1”, “2”, “3”, and “4” from
+MNIST and “airplane”, “automobile”, “deer”, “horse”, and
+“frog” from CIFAR-10 (see Fig. 4). The images from
+MNIST are resized to match the scale of images from
+CIFAR-10 (32
+32), via linear interpolation, and are color-
+modulated to make them more difﬁcult to trivially dis-
+tinguish from CIFAR-10 images (MNIST is a grayscale
+dataset).
+
+×
+
+parameters—in our case,
+—to the input of every rout-
+kcpt
+}
+{
+ing subnetwork, to allow them to modulate the routing pol-
+icy. To match the scale of the image features and facili-
+tate optimization, we express kcpt in units of cost per ten-
+million operations.
+
+4.7. Hyperparameters
+
+In all of our experiments, we use a mini-batch size, nex,
+of 128, and run 80,000 training iterations. We per-
+form stochastic gradient descent with initial learning rate
+0.1/nex and momentum 0.9. The learning rate decays con-
+tinuously with a half-life of 10,000 iterations.
+
+The weights of the ﬁnal layers of routing networks are
+zero-initialized, and we initialize all other weights using
+the Xavier initialization method (Glorot & Bengio, 2010).
+All biases are zero-initialized. We perform batch normal-
+ization (Ioffe & Szegedy, 2015) before every rectiﬁcation
+10−6, and an exponential moving
+operation, with an (cid:15) of 1
+average decay constant of 0.9.
+
+×
+
+τ is initialized to 1.0 for actor networks and 0.1 for critic
+networks, and decays with a half-life of 10,000 iterations.
+10−4. We se-
+kdec = 0.01, kure = 0.001, and kL2 = 1
+lected these values (for τ , kdec, kure, and kL2) by exploring
+the hyperparameter space logarithmically, by powers of 10,
+training and evaluating on the hybrid MNIST/CIFAR-10
+dataset (described in section 5.1). At a coarse level, these
+values are locally optimal—multiplying or dividing any of
+them by 10 will not improve performance.
+
+×
+
+4.8. Data Augmentation
+
+We augment our data using an approach that is popu-
+lar for use with CIFAR-10 (Lin et al., 2013) (Srivastava
+et al., 2015) (Clevert et al., 2015). We augment each im-
+age by applying vertical and horizontal shifts sampled uni-
+formly from the range [-4px,4px], and, if the image is from
+CIFAR-10, ﬂipping it horizontally with probability 0.5. We
+ﬁll blank pixels introduced by shifts with the mean color of
+the image (after gamma-decoding).
+
+5. Experiments
+
+We compare approaches to dynamic routing by train-
+ing 153 networks to classify small images, varying the
+policy-learning strategy, regularization strategy, optimiza-
+tion strategy, architecture, cost of computation, and details
+of the task. The results of these experiments are reported in
+Fig. 5–10. Our code is available via GitLab.
+
+5.1. Comparing Policy-Learning Strategies
+
+To compare routing strategies in the context of a simple
+dataset with a high degree of difﬁculty variation, we train
+
+Figure 4. Sample images from the hybrid MNIST/CIFAR-10
+dataset. We recolor images from MNIST via the following pro-
+cedure: we select two random colors at least 0.3 units away from
+each other in RGB space; we then map black pixels to the ﬁrst
+color, map white pixels to the second color, and linearly interpo-
+late in between.
+
+1..8
+
+∈ {
+
+For a given computational budget, dynamically-routed net-
+works achieve higher accuracy rates than architecture-
+matched statically-routed baselines (networks composed of
+the ﬁrst n columns of the architecture illustrated in Fig.
+3, for n
+). Additionally, dynamically-routed net-
+}
+works tend to avoid routing data along deep paths at the
+beginning of training (see Fig. 8). This is possibly be-
+cause the error surfaces of deeper networks are more com-
+plicated, or because deeper paths are less stable—changing
+the parameters in any component layer to better classify
+images routed along other, overlapping paths may decrease
+performance. Whatever the mechanism, this tendency to
+initially ﬁnd simpler solutions seems to prevent some of the
+overﬁtting that occurs with 7- and 8-layer statically-routed
+networks.
+
+Deciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+Figure 5. Hybrid dataset performance. Every point along the “statically-routed nets” curve corresponds to a network composed of the
+ﬁrst n columns of the architecture illustrated in Fig. 3, for 1 ≤ n ≤ 8. The points along the “actor net, dynamic kcpt” curve correspond
+to a single network evaluated with various values of kcpt, as described in section 4.6. The points along all other curves correspond to
+distinct networks, trained with different values of kcpt. kcpt ∈ {0, 1 × 10−
+
+9, ... 6.4 × 10−
+
+9, 2 × 10−
+
+9, 4 × 10−
+
+8}.
+
+Figure 6. Dataﬂow through actor networks trained to classify images from the hybrid MNIST/CIFAR-10 dataset. Every row is a
+node-link diagram corresponding to a network, trained with a different kcpt. Each circle indicates, by area, the fraction of examples that
+are classiﬁed at the corresponding layer. The circles are colored to indicate the accuracy of each layer (left) and the kinds of images
+classiﬁed at each layer (right).
+
+01×1072×1070.020.040.060.020.040.0601×1072×1070.020.040.0601×1072×10701×1072×10701×1072×107MeanOpCountErrorRateStatically-RoutedNetsPragmaticCriticNetsOptimisticCriticNetsPragmaticCriticNets,noTALRPragmaticCriticNets,ClassiﬁcationErrorActorNetsActorNets,noTALRActorNets,kdec=0ActorNets,RegularizedPolicyActorNet,BranchingActorNet,DynamickcptCostofComputationLayerIndexLayerIndexCorrectLabelsIncorrectLabels01234AirplaneAutomobileDeerFrogHorse01234AirplaneAutomobileDeerFrogHorseDeciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+Compared to other dynamically-routed networks, opti-
+mistic critic networks perform poorly, possibly because op-
+timal routers are a poor approximation for our small, low-
+capacity router networks. Actor networks perform better
+than critic networks, possibly because critic networks are
+forced to learn a potentially-intractable auxilliary task (i.e.
+it’s easier to decide who to call to ﬁx your printer than
+it is to predict exactly how quickly and effectively every-
+one you know would ﬁx it). Actor networks also consis-
+tently achieve higher peak accuracy rates than comparable
+statically-routed networks, across experiments.
+
+the cross-entropy error in the cure term with the classiﬁca-
+tion error. Although these networks do not perform as well
+as the original pragmatic critic networks, they still outper-
+form comparable statically-routed networks.
+
+5.2. Comparing Regularization Strategies
+
+Based on our experiments with the hybrid dataset, regular-
+izing ˆd, as described in section 4.4, discourages networks
+from routing data along deep paths, reducing peak accu-
+racy. Additionally, some mechanism for encouraging ex-
+ploration (in our case, a nonzero kdec) appears to be neces-
+sary to train effective actor networks.
+
+5.3. Comparing Optimization Strategies
+
+Throughput-adjusting the learning rates (TALR), as de-
+scribed in section 4.5, improves the hybrid dataset perfor-
+mance of both actor and critic networks in computational-
+resource-abundant, high-accuracy contexts.
+
+5.4. Comparing Architectures
+
+For a given computational budget, architectures with both
+2- and 3-way junctions have a higher capacity than sub-
+trees with only 2-way junctions. On the hybrid dataset, un-
+der tight computational constraints, we ﬁnd that trees with
+higher degrees of branching achieve higher accuracy rates.
+Unconstrained, however, they are prone to overﬁtting.
+
+In dynamically-routed networks, early classiﬁcation layers
+tend to have high accuracy rates, pushing difﬁcult decisions
+downstream. Even without energy contraints, terminal lay-
+ers specialize in detecting instances of certain classes of
+images. These classes are usually related (they either all
+come from MNIST or all come from CIFAR-10.) In net-
+works with both 2- and 3-way junctions, branches special-
+ize to an even greater extent. (See Fig. 6 and 7.)
+
+5.5. Comparing Specialized and Adaptive Networks
+
+We train a single actor network to classify images from the
+hybrid datset under various levels of computational con-
+straints, using the approach described in section 4.6, sam-
+pling kcpt randomly from the set mentioned in Fig. 5 for
+each training example. This network performs comparably
+to a collection of 8 actor nets trained with various static
+values of kcpt, over a signiﬁcant, central region of the accu-
+racy/efﬁciency curve, with an 8-fold reduction in memory
+consumption and training time.
+
+5.6. Exploring the Effects of the Decision Difﬁculty
+
+Distribution
+
+To probe the effect of the inference task’s difﬁculty dis-
+tribution on the performance of dynamically-routed net-
+
+Figure 7. Dataﬂow through a branching actor network trained
+to classify images in the hybrid dataset, illustrated as in Fig. 6.
+
+Figure 8. Dataﬂow over the course of training. The heatmaps
+illustrate the fraction of validation images classiﬁed at every ter-
+minal node in the bottom four networks in Fig. 6, over the course
+of training.
+
+Although actor networks may be more performant, critic
+networks are more ﬂexible. Since critic networks don’t re-
+quire E[cinf(ν, ˆd)] to be a differentiable function of ˆd, they
+can be trained by sampling ˆd, saving memory, and they
+support a wider selection of training routing policies (e.g.
+(cid:15)-greedy) and cinf deﬁnitions.
+In addition to training the
+standard critic networks, we train networks using a variant
+of the pragmatic critic training policy, in which we replace
+
+Dataﬂow01234AirplaneAutomobileDeerFrogHorse4840k80kEpochIndexkcpt=048kcpt=1×10−948kcpt=2×10−948kcpt=4×10−90.00.20.40.60.81.0LayerIndexDeciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+works, we train networks to classify images from CIFAR-
+10, adjusting the classiﬁcation task to vary the frequency
+of difﬁcult decisions (see Fig. 9). We call these vari-
+ants CIFAR-2—labelling images as “horse” or “other”—
+and CIFAR-5—labelling images as “cat”, “dog”, “deer”,
+“horse”, or “other”. In this experiment, we compare actor
+networks (the best-performing networks from the ﬁrst set
+of experiments) to architecture-matched statically-routed
+networks.
+
+5.7. Exploring the Effects of Model Capacity
+
+To test whether dynamic routing is advantageous in higher-
+capacity settings, we train actor networks and architecture-
+matched statically-routed networks to classify images from
+CIFAR-10, varying the width of the networks (see Fig.
+10). Increasing the model capacity either increases or does
+not affect the relative advantage of dynamically-routed net-
+works, suggesting that our approach is applicable to more
+complicated tasks.
+
+6. Discussion
+
+Our experiments suggest that dynamically-routed networks
+trained under mild computational constraints can oper-
+ate 2–3 times more efﬁciently than comparable statically-
+routed networks, without sacriﬁcing performance. Addi-
+tionally, despite their higher capacity, dynamically-routed
+networks may be less prone to overﬁtting.
+
+When designing a multipath architecture, we suggest sup-
+porting early decision-making wherever possible, since
+cheap, simple routing networks seem to work well. In con-
+volutional architectures, pyramidal layers appear to be rea-
+sonable sites for branching.
+
+The actor strategy described in section 4.1 is generally an
+effective way to learn a routing policy. However, the prag-
+matic critic strategy described in section 4.2 may be better
+suited for very large networks (trained via decision sam-
+pling to conserve memory) or networks designed for appli-
+cations with nonsmooth cost-of-inference functions—e.g.
+one in which kcpt has units errors/operation. Adjusting
+learning rates to compensate for throughput variations, as
+described in section 4.5, may improve the performance of
+deep networks. If the cost of computation is dynamic, a
+single network, trained with the procedure described in sec-
+tion 5.5, may still be sufﬁcient.
+
+While we test our approach on tasks with some degree of
+difﬁculty variation, it is possible that dynamic routing is
+even more advantageous when performing more complex
+tasks. For example, video annotation may require special-
+ized modules to recognize locations, objects, faces, human
+actions, and other scene components or attributes, but hav-
+ing every module constantly operating may be extremely
+inefﬁcient. A dynamic routing policy could fuse these
+modules, allowing them to share common components, and
+activate specialized components as necessary.
+
+Another interesting topic for future research is growing
+and shrinking dynamically-routed networks during train-
+ing. With such a network, it is not necessary to specify
+an architecture. The network will instead take shape over
+the course of training, as computational contraints, mem-
+ory contraints, and the data dictate.
+
+Figure 9. Performance effects of the task difﬁculty distribu-
+tion, as described in section 5.6. The “statically-routed nets” and
+“actor nets” curves are drawn analogously to their counterparts in
+Fig. 5.
+
+Figure 10. Performance effects of model capacity, training and
+testing on CIFAR-10. (Left) Networks with (subsets of) the archi-
+tecture illustrated in Fig. 3. (Center) Networks otherwise identi-
+cal to those presented in the left panel, with the number of output
+channels of every convolutional layer multiplied by 2, and kcpt
+divided by 4. (Right) Networks otherwise identical to those pre-
+sented in the left panel, with the number of output channels of
+every convolutional layer multiplied by 3, and kcpt divided by 9.
+
+We ﬁnd that dynamic routing is more beneﬁcial when the
+task involves many low-difﬁculty decisions, allowing the
+network to route more data along shorter paths. While dy-
+namic routing offers only a slight advantage on CIFAR-10,
+dynamically-routed networks achieve a higher peak accu-
+racy rate on CIFAR-2 than statically-routed networks, at a
+third of the computational cost.
+
+01×1072×107MeanOpCount0.00.10.20.3ErrorRateCIFAR-10:Statically-RoutedNetsCIFAR-10:ActorNetsCIFAR-5:Statically-RoutedNetsCIFAR-5:ActorNetsCIFAR-2:Statically-RoutedNetsCIFAR-2:ActorNets02×1070.150.200.25ErrorRate16≤nchan≤12808×107MeanOpCount0.100.150.2032≤nchan≤25601.8×1080.100.1548≤nchan≤384Statically-RoutedNetsActorNetsDeciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+Acknowledgements
+
+This work was funded by a generous grant from Google
+Inc. We would also like to thank Krzysztof Chalupka,
+Cristina Segalin, and Oisin Mac Aodha for their thought-
+ful comments.
+
+References
+
+Bengio, Emmanuel, Bacon, Pierre-Luc, Pineau, Joelle,
+Conditional computation in
+arXiv preprint
+
+and Precup, Doina.
+neural networks for faster models.
+arXiv:1511.06297, 2015.
+
+Bulo, Samuel and Kontschieder, Peter. Neural decision
+forests for semantic image labelling. In Proceedings of
+the IEEE Conference on Computer Vision and Pattern
+Recognition, pp. 81–88, 2014.
+
+Cai, Zhaowei, Saberian, Mohammad, and Vasconcelos,
+Nuno. Learning complexity-aware cascades for deep
+In Proceedings of the IEEE In-
+pedestrian detection.
+ternational Conference on Computer Vision, pp. 3361–
+3369, 2015.
+
+Clevert, Djork-Arn´e, Unterthiner, Thomas, and Hochre-
+iter, Sepp.
+Fast and accurate deep network learn-
+ing by exponential linear units (elus). arXiv preprint
+arXiv:1511.07289, 2015.
+
+Denoyer, Ludovic and Gallinari, Patrick. Deep sequential
+neural network. arXiv preprint arXiv:1410.0510, 2014.
+
+Dosovitskiy, Alexey, Fischer, Philipp, Ilg, Eddy, Hausser,
+Philip, Hazirbas, Caner, Golkov, Vladimir, van der
+Smagt, Patrick, Cremers, Daniel, and Brox, Thomas.
+Flownet: Learning optical ﬂow with convolutional net-
+works. In Proceedings of the IEEE International Con-
+ference on Computer Vision, pp. 2758–2766, 2015.
+
+Girshick, Ross. Fast r-cnn.
+
+In Proceedings of the IEEE
+International Conference on Computer Vision, pp. 1440–
+1448, 2015.
+
+Glorot, Xavier and Bengio, Yoshua. Understanding the dif-
+ﬁculty of training deep feedforward neural networks. In
+Aistats, volume 9, pp. 249–256, 2010.
+
+Goodale, Melvyn A and Milner, A David. Separate visual
+pathways for perception and action. Trends in neuro-
+sciences, 15(1):20–25, 1992.
+
+Ho, Tin Kam. Random decision forests. In Document Anal-
+ysis and Recognition, 1995., Proceedings of the Third
+International Conference on, volume 1, pp. 278–282.
+IEEE, 1995.
+
+Hoerl, Arthur E and Kennard, Robert W. Ridge regression:
+Biased estimation for nonorthogonal problems. Techno-
+metrics, 12(1):55–67, 1970.
+
+Ioannou, Yani, Robertson, Duncan, Zikic, Darko,
+Kontschieder, Peter, Shotton, Jamie, Brown, Matthew,
+and Criminisi, Antonio. Decision forests, convolutional
+networks and the models in-between. arXiv preprint
+arXiv:1603.01250, 2016.
+
+Ioffe, Sergey and Szegedy, Christian. Batch normalization:
+Accelerating deep network training by reducing internal
+covariate shift. arXiv preprint arXiv:1502.03167, 2015.
+
+Ke, Tsung-Wei, Maire, Michael, and Yu, Stella X. Neural
+
+multigrid. arXiv preprint arXiv:1611.07661, 2016.
+
+Kontschieder, Peter, Fiterau, Madalina, Criminisi, Antonio,
+and Rota Bulo, Samuel. Deep neural decision forests.
+In Proceedings of the IEEE International Conference on
+Computer Vision, pp. 1467–1475, 2015.
+
+Kornblith, Simon, Cheng, Xueqi, Ohayon, Shay, and Tsao,
+Doris Y. A network for scene processing in the macaque
+temporal lobe. Neuron, 79(4):766–781, 2013.
+
+Krizhevsky, Alex and Hinton, Geoffrey. Learning multiple
+
+layers of features from tiny images. 2009.
+
+LeCun, Yann, Cortes, Corinna, and Burges, Christo-
+pher JC. The mnist database of handwritten digits, 1998.
+
+Li, Haoxiang, Lin, Zhe, Shen, Xiaohui, Brandt, Jonathan,
+and Hua, Gang. A convolutional neural network cascade
+for face detection. In Proceedings of the IEEE Confer-
+ence on Computer Vision and Pattern Recognition, pp.
+5325–5334, 2015.
+
+Lin, Min, Chen, Qiang, and Yan, Shuicheng. Network in
+
+network. arXiv preprint arXiv:1312.4400, 2013.
+
+Moeller, Sebastian, Freiwald, Winrich A, and Tsao,
+Doris Y. Patches with links: a uniﬁed system for pro-
+cessing faces in the macaque temporal lobe. Science,
+320(5881):1355–1359, 2008.
+
+Newell, Alejandro, Yang, Kaiyu, and Deng, Jia. Stacked
+hourglass networks for human pose estimation. In Eu-
+ropean Conference on Computer Vision, pp. 483–499.
+Springer, 2016.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun,
+Jian. Deep residual learning for image recognition. In
+Proceedings of the IEEE Conference on Computer Vi-
+sion and Pattern Recognition, pp. 770–778, 2016.
+
+Ren, Shaoqing, He, Kaiming, Girshick, Ross, and Sun,
+Jian. Faster r-cnn: Towards real-time object detection
+with region proposal networks. In Advances in Neural
+Information Processing Systems, pp. 91–99, 2015.
+
+Deciding How to Decide: Dynamic Routing in Artiﬁcial Neural Networks
+
+Rudin, Leonid I, Osher, Stanley, and Fatemi, Emad. Non-
+linear total variation based noise removal algorithms.
+Physica D: Nonlinear Phenomena, 60(1-4):259–268,
+1992.
+
+Simonyan, Karen and Zisserman, Andrew. Very deep con-
+volutional networks for large-scale image recognition.
+arXiv preprint arXiv:1409.1556, 2014.
+
+Sirat, JA and Nadal, JP. Neural trees: a new tool for clas-
+siﬁcation. Network: Computation in Neural Systems, 1
+(4):423–438, 1990.
+
+Srivastava, Rupesh K, Greff, Klaus, and Schmidhuber,
+In Advances in
+J¨urgen. Training very deep networks.
+neural information processing systems, pp. 2377–2385,
+2015.
+
+Tibshirani, Robert. Regression shrinkage and selection via
+the lasso. Journal of the Royal Statistical Society. Series
+B (Methodological), pp. 267–288, 1996.
+
+Utgoff, Paul E. Perceptron trees: A case study in hybrid
+concept representations. Connection Science, 1(4):377–
+391, 1989.
+
+Viola, Paul, Jones, Michael J, and Snow, Daniel. Detecting
+pedestrians using patterns of motion and appearance. In-
+ternational Journal of Computer Vision, 63(2):153–161,
+2005.
+
+Zhou, Erjin, Fan, Haoqiang, Cao, Zhimin, Jiang, Yuning,
+and Yin, Qi. Extensive facial landmark localization with
+In Pro-
+coarse-to-ﬁne convolutional network cascade.
+ceedings of the IEEE International Conference on Com-
+puter Vision Workshops, pp. 386–391, 2013.
+
+

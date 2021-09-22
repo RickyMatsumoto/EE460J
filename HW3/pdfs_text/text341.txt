@@ -1,0 +1,1433 @@
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+Ashish Kumar 1 Saurabh Goyal 2 Manik Varma 1
+
+Abstract
+
+This paper develops a novel tree-based algo-
+rithm, called Bonsai, for efﬁcient prediction on
+IoT devices – such as those based on the Ar-
+duino Uno board having an 8 bit ATmega328P
+microcontroller operating at 16 MHz with no na-
+tive ﬂoating point support, 2 KB RAM and 32
+KB read-only ﬂash. Bonsai maintains predic-
+tion accuracy while minimizing model size and
+prediction costs by: (a) developing a tree model
+which learns a single, shallow, sparse tree with
+powerful nodes; (b) sparsely projecting all data
+into a low-dimensional space in which the tree is
+learnt; and (c) jointly learning all tree and pro-
+jection parameters. Experimental results on mul-
+tiple benchmark datasets demonstrate that Bon-
+sai can make predictions in milliseconds even on
+slow microcontrollers, can ﬁt in KB of memory,
+has lower battery consumption than all other al-
+gorithms while achieving prediction accuracies
+that can be as much as 30% higher than state-
+of-the-art methods for resource-efﬁcient machine
+learning. Bonsai is also shown to generalize to
+other resource constrained settings beyond IoT
+by generating signiﬁcantly better search results
+as compared to Bing’s L3 ranker when the model
+size is restricted to 300 bytes. Bonsai’s code can
+be downloaded from (BonsaiCode).
+
+1. Introduction
+
+Objective: This paper develops a novel tree-based algo-
+rithm, called Bonsai, which can be trained on a laptop, or
+the cloud, and can then be shipped onto severely resource
+constrained Internet of Things (IoT) devices.
+
+Resource constrained devices: The Arduino Uno board
+has an 8 bit ATmega328P microcontroller operating at 16
+MHz with 2 KB SRAM and 32 KB read-only ﬂash mem-
+
+1Microsoft Research, Bangalore, India 2CSE Department, IIT
+
+Delhi, India. Correspondence to: <manik@microsoft.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+ory. The BBC Micro:Bit has a 32 bit ARM Cortex M0 mi-
+crocontroller operating at 16 MHz with 16 KB SRAM and
+256 KB read-only ﬂash. Neither provides hardware sup-
+port for ﬂoating point operations. Billions of such tiny IoT
+microcontrollers have been deployed in the world (Meunier
+et al., 2014). Before deployment, the OS and all application
+code and data are burnt onto ﬂash, leaving only a few KB
+for storing the trained ML model, prediction code, feature
+extraction code and associated data and parameters. Af-
+ter deployment, the only writable memory available is the
+2 KB (Uno) or 16 KB (Micro:Bit) of SRAM which might
+not be sufﬁcient to hold even a single feature vector.
+
+The Internet of Things: A number of applications have
+been developed for consumer, enterprise and societal IoT
+including predictive maintenance, intelligent healthcare,
+smart cities and housing, etc. The dominant paradigm for
+these applications, given the severe resource constraints of
+IoT devices, has been that the IoT device is dumb – it just
+senses its environment and transmits the sensor readings to
+the cloud where all the decision making happens.
+
+Motivating scenarios: This paper proposes an alternative
+paradigm where the IoT device can make predictions lo-
+cally without necessarily connecting to the cloud. This en-
+ables many scenarios, beyond the pale of the traditional
+paradigm, where it is not possible to transmit data to the
+cloud due to latency, bandwidth, privacy and energy con-
+cerns. For instance, consider a microcontroller implanted
+in the brain which warns patients about impending seizures
+so that they can call for help, pull over if they are driving,
+etc. Making predictions locally would allow the device to
+work everywhere irrespective of cloud connectivity. Fur-
+thermore, alerts could be raised more quickly with local
+predictions than if all the sensor readings had to be ﬁrst
+transmitted to the cloud. In addition, since the energy re-
+quired for executing an instruction might be much lower
+than the energy required to transmit a byte, making predic-
+tions locally would extend battery life signiﬁcantly thereby
+avoiding repeated brain surgery and might also prevent
+brain tissue damage due to excess heat dissipation from the
+communicating radio. Finally, people might not be willing
+to transmit such sensitive data to the cloud. These charac-
+teristics are shared by many other scenarios including im-
+plants in the heart, precision agriculture on disconnected
+farms, smart spectacles for the visually impaired, etc.
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+Tree algorithms: Tree algorithms are general and can be
+used for classiﬁcation, regression, ranking and other prob-
+lems commonly found in the IoT setting. Even more impor-
+tantly, they are ideally suited to IoT applications as they can
+achieve good prediction accuracies with prediction times
+and energies that are logarithmic in the number of training
+points. Unfortunately, they do not directly ﬁt on tiny IoT
+devices as their space complexity is linear rather than log-
+arithmic. In particular, learning shallow trees, or aggres-
+sively pruning deep trees or large ensembles, to ﬁt in just a
+few KB often leads to poor prediction accuracy.
+
+Bonsai: This paper develops a novel tree learner, called
+Bonsai, designed speciﬁcally for severely resource con-
+strained IoT devices based on the following contributions.
+First, Bonsai learns a single, shallow, sparse tree so as to
+reduce model size but with powerful nodes for accurate
+prediction. Second, both internal and leaf nodes in Bonsai
+make non-linear predictions. Bonsai’s overall prediction
+for a point is the sum of the individual node predictions
+along the path traversed by the point. Path based predic-
+tion allows Bonsai to accurately learn non-linear decision
+boundaries while sharing parameters along paths to further
+reduce model size. Third, Bonsai learns a sparse matrix
+which projects all data points into a low-dimensional space
+in which the tree is learnt. This allows Bonsai to ﬁt in a few
+KB of ﬂash. Furthermore, the sparse projection is imple-
+mented in a streaming fashion thereby allowing Bonsai to
+tackle IoT applications where even a single feature vector
+might not ﬁt in 2 KB of RAM. Fourth, rather than learning
+the Bonsai tree node by node in a greedy fashion, all nodes
+are learnt jointly, along with the sparse projection matrix,
+so as to optimally allocate memory budgets to each node
+while maximising prediction accuracy.
+
+Implementation: Another contribution is an efﬁcient im-
+plementation of Bonsai which reduces its prediction costs
+on the Arduino and Micro:Bit to be even lower than that of
+an unoptimized linear classiﬁer. This allows Bonsai to en-
+joy the prediction accuracy of a non-linear classiﬁer while
+paying less than linear costs. This paper does not focus on
+the system and implementation details due to space limita-
+tions but the interested reader is referred to the publically
+available source code (BonsaiCode).
+
+Results: These contributions allow Bonsai to make pre-
+dictions in milliseconds even on slow microcontrollers, ﬁt
+in a few KB of ﬂash and extend battery life beyond all
+other algorithms. Furthermore, it is demonstrated on multi-
+ple benchmark datasets that Bonsai’s prediction accuracies
+can approach those of uncompressed kNN classiﬁers, RBF-
+SVMs, single hidden layer neural networks and gradient
+boosted decision tree ensembles whose models might take
+many MB of RAM. It is also demonstrated that Bonsai’s
+prediction accuracies for a given model size can be as much
+
+as 30% higher than state-of-the-art methods for resource-
+efﬁcient machine learning. Finally, Bonsai is shown to gen-
+eralize to other resource constrained settings beyond IoT by
+producing signiﬁcantly better search results than Bing’s L3
+ranker when the model size is restricted to 300 bytes.
+
+2. Related Work
+
+The literature on resource-efﬁcient machine learning is vast
+and specialized solutions have been developed for reduc-
+ing the prediction costs of kNN algorithms (Kusner et al.,
+2014b; Wang et al., 2016), SVMs (Hsieh et al., 2014; Jose
+et al., 2013; Le et al., 2013; Li et al., 2016), deep learn-
+ing (Iandola et al., 2016; Han et al., 2016; Yang et al., 2015;
+Denton et al., 2014; Wu et al., 2016; Rastegari et al., 2016;
+Hubara et al., 2016; Shankar et al., 2016; Ioannou et al.,
+2016a), model compression (Bucilua et al., 2006; Ba &
+Caruana, 2014), feature selection (Kusner et al., 2014a; Xu
+et al., 2013; 2012; Nan et al., 2015; Wang et al., 2015) and
+applications such as face detection (Viola & Jones, 2004).
+
+Resource-efﬁcient tree classiﬁers are particularly germane
+to this paper. The standard approach is to greedily grow
+the decision tree ensemble node by node until the predic-
+tion budget is exhausted. A popular alternative is to ﬁrst
+learn the random forest or gradient boosted decision tree
+ensemble to maximize prediction accuracy and then use
+pruning techniques to meet the budget constraints (Duda
+et al., 2002; Dekel et al., 2016; Nan et al., 2016; Li, 2001;
+Breiman et al., 1984; Zhang & Huei-chuen, 2005; Sherali
+et al., 2009; Kulkarni & Sinha, 2012; Rokach & Maimon,
+2014; Joly et al., 2012). Unfortunately, such techniques are
+fundamentally limited as they attempt to approximate com-
+plex non-linear decision boundaries using a small number
+of axis-aligned hyperplanes. This can lead to poor predic-
+tion accuracies as observed in Section 5.
+
+Tree models have also been developed to learn more com-
+plex decision boundaries by moving away from learning
+axis-aligned hyperplanes at internal nodes and constant
+predictors at the leaves. For instance, (Breiman, 2001;
+Murthy et al., 1994; Kontschieder et al., 2015) learnt more
+powerful branching functions at internal nodes based on
+oblique cuts and full hyperplanes while (Utgoff, 1989;
+Hsieh et al., 2014) learnt more powerful leaf node predic-
+tors based on linear classiﬁers, kernelized SVMs, etc. Bon-
+sai achieves better budget utilization than such models by
+learning shorter trees, typically depth 4 or lower, and by
+sharing the parameters between leaf node predictors.
+
+The models closest to Bonsai are Decision Jungles (Shot-
+ton et al., 2013) and LDKL (Jose et al., 2013). Bon-
+sai improves upon LDKL by learning its tree in a low-
+dimensional space, learning sparse branching functions and
+predictors and generalizing the model to multi-class classi-
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+ﬁcation, ranking, etc. Decision Jungles are similar to Bon-
+sai in that they share node parameters using a DAG struc-
+ture. Unfortunately, Decision Jungles need to learn deep
+tree ensembles with many nodes as they use weak constant
+classiﬁers as leaf node predictors. Bonsai can have lower
+model size and higher accuracy as it learns a single, shallow
+tree in a low-dimensional space with non-linear predictors.
+
+Note that while tree based cost-sensitive feature selection
+methods are not directly relevant, their performance is nev-
+ertheless empirically compared to Bonsai’s in Section 5.
+
+3. The Bonsai Model for Efﬁcient Prediction
+
+Overview: Bonsai learns a single, shallow sparse tree
+whose predictions for a point x are given by
+
+y(x) =
+
+Ik(x)W(cid:62)
+
+k Zx ◦ tanh(σV(cid:62)
+
+k Zx)
+
+(1)
+
+(cid:88)
+
+k
+
+where ◦ denotes the elementwise Hadamard product, σ is a
+user tunable hyper-parameter, Z is a sparse projection ma-
+trix and Bonsai’s tree is parameterized by Ik, Wk and Vk
+where Ik(x) is an indicator function taking the value 1 if
+node k lies along the path traversed by x and 0 otherwise
+and Wk and Vk are sparse predictors learnt at node k. The
+prediction function is designed to minimize the model size,
+prediction time and prediction energy, while maintaining
+prediction accuracy, even at the expense of increased train-
+ing costs. The function is also designed to minimize the
+working memory required as the Uno provides only 2 KB
+of writeable memory for storing the feature vector, pro-
+gramme variables and intermediate computations.
+
+Streaming sparse projection: Bonsai projects each
+input feature vector x into a low ˆD-
+D-dimensional
+dimensional space using a learnt sparse projection matrix
+Z ˆD×D. Bonsai uses ﬁxed point arithmetic for all math
+computation, including Zx, when implemented on the IoT
+device so as to avoid ﬂoating point overheads. Note that ˆD
+could be as low as 5 for many binary classiﬁcation applica-
+tions. This has the following advantages. First, it reduces
+Bonsai’s model size as all tree parameters are now learnt
+in the low-dimensional space. Second, when ˆD is small,
+Zx could be stored directly in the microcontroller’s regis-
+ters thereby reducing prediction time and energy. Third,
+learning the projection matrix jointly with the tree param-
+eters improves prediction accuracy. Fourth, since Zx can
+be computed in a streaming fashion, this allows Bonsai to
+tackle IoT applications where even a single feature vector
+cannot ﬁt in 2 KB of SRAM. This is critical since stan-
+dard tree implementations are unable to handle a stream-
+ing feature vector – the entire feature vector needs to be
+streamed for the root node to determine whether to pass the
+point down to the left or right child and therefore the vector
+is unavailable for processing at subsequent nodes. Some
+
+implementations work around this limitation by simultane-
+ously evaluating the branching function at all nodes as the
+vector is streamed but this increases the prediction costs
+from logarithmic to linear which might not be acceptable.
+
+Branching function at internal nodes: Bonsai computes
+Ik by learning a sparse vector θ at each internal node such
+that the sign of θ(cid:62)Zx determines whether point x should
+be branched to the node’s left or right child. Using more
+powerful branching functions than the axis-aligned hyper-
+planes in standard decision trees allows Bonsai to learn
+shallow trees which can ﬁt in a few KB. Of course, this
+is not a novel idea, and is insufﬁcient in itself to allow a
+single, shallow decision tree to make accurate predictions.
+
+Node predictors: Decision trees, random forests and
+boosted tree ensembles are limited to making constant pre-
+dictions at just the leaf nodes. This restricts their predic-
+tion accuracy when there are very few leaves. In contrast,
+for a multi-class, multi-label or regression problem with L
+targets, Bonsai learns matrices W ˆD×L and V ˆD×L at both
+leaf and internal nodes so that each node predicts the vec-
+tor W(cid:62)Zx◦tanh(σV(cid:62)Zx). Note that the functional form
+of the node predictor was chosen as it was found to work
+well empirically (other forms could be chosen if found to
+be more appropriate). Further note that W and V will re-
+duce to vectors for binary classiﬁcation, ranking and single-
+target regression. Bonsai’s overall predicted vector is given
+by (1) and is the sum of the individual vectors predicted
+by the nodes lying along the path traversed by x. This al-
+lows Bonsai to accurately learn non-linear decision bound-
+aries using shallow trees with just a few nodes. Further-
+more, path based prediction allows parameter sharing and
+therefore reduces model size as compared to putting inde-
+pendent classiﬁers of at least equal complexity in the leaf
+nodes alone. For instance, a depth 4 Bonsai tree with 15
+internal and 16 leaf nodes stores 31 W and 31 V matrices
+with overall predictions being the sum of 4 terms depend-
+ing on the path taken. If parameters were not shared and
+each leaf node independently learnt 4 W and 4 V matrices
+to make predictions of at least equal complexity, then a to-
+tal of 16 × 4 = 64 W and 64 V matrices would need to be
+stored thereby exceeding the memory budget. As an imple-
+mentation detail, note that Bonsai uses the approximation
+tanh(x) ≈ x if |x| < 1 and signum(x) otherwise in order
+to avoid ﬂoating point computation.
+
+4. Training Bonsai
+
+Notation: Bonsai learns a balanced tree of user speciﬁed
+height h with 2h − 1 internal nodes and 2h leaf nodes. The
+parameters that need to be learnt include: (a) Z: the sparse
+projection matrix; (b) θ = [θ1, . . . , θ2h−1]: the parame-
+ters of the branching function at each internal node; and (c)
+W = [W1, . . . , W2h+1−1] and V = [V1, . . . , V2h+1−1]:
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+the predictor parameters at each node. Let Θ = [θ, W, V]
+denote a matrix obtained by stacking all the parameters to-
+gether except for Z. Finally, it is assumed that N train-
+)N
+ing points {(xi, y
+i=1} have been provided and that bud-
+¯ i
+get constraints BZ and BΘ on the projection matrix and
+tree parameters have been speciﬁed depending on the ﬂash
+memory available on the IoT device.
+
+and smooths the objective function by initially allowing
+In particu-
+points to traverse multiple paths in the tree.
+lar, the indicator function Ik(x) is relaxed to Ik>1(x) =
+(cid:5) is
+2 Ij(x) (cid:0)1 + (−1)k−2j tanh(σI θ(cid:62)
+1
+k’s parent node in a balanced tree, I1(x) = 1 and the pa-
+rameter σI controls the ﬁdelity of the approximation. Gra-
+dients can now be computed as
+
+j Zx)(cid:1) where j = (cid:4) k
+
+2
+
+Optimization problem: Bonsai’s parameters are learnt as
+
+min
+Z,Θ
+
+J (Z, Θ) =
+
+Tr(θ(cid:62)θ) +
+
+Tr(W(cid:62)W)
+
+λW
+2
+
+λθ
+2
+
+∇θl Ik(x) = σI Ik(x)P l
+∇ZIk(x) =
+
+(cid:88)
+
+σI Ik(x)P l
+
+k(x)Zx
+
+k(x)θlx(cid:62)
+
+(3)
+
+(4)
+
+l
+
+Tr(V(cid:62)V) +
+
+Tr(ZZ(cid:62))
+
+λZ
+2
+
+L(xi, yi, y(xi); Z, Θ)
+
++
+
++
+
+λV
+2
+
+1
+N
+
+N
+(cid:88)
+
+i=1
+
+s. t. (cid:107)Z(cid:107)0 ≤ BZ, (cid:107)Θ(cid:107)0 ≤ BΘ
+
+(2)
+
+where y(xi) is Bonsai’s prediction for point xi as given
+in (1) and L is an appropriately chosen loss function for
+classiﬁcation, regression, ranking, etc. For instance, L =
+max(0, 1 − yiy(xi)) with yi ∈ {−1, +1} for binary clas-
+siﬁcation and L = maxy∈Y((yi − y)(cid:62)y(xi) + 1 − y(cid:62)
+i y)
+with Y = {y|y ∈ {0, 1}L, 1(cid:62)y = 1} and yi ∈ Y for
+multi-class classiﬁcation. It is worth emphasizing that the
+optimization problem is formulated such that all parame-
+ters are learnt jointly subject to the budget constraints. This
+leads to signiﬁcantly higher prediction accuracies than if Z
+were ﬁrst learnt independently, say using sparse PCA, and
+then Θ was learnt afterwards (see Section 5).
+
+Algorithm: Optimizing (2) over the space of all balanced
+trees of height h is a hard, non-convex problem. Tree grow-
+ing algorithms typically optimize such problems by greed-
+ily growing the tree a node at a time starting from the root.
+Unfortunately, this leads to a suboptimal utilization of the
+memory budget in Bonsai’s case as it is not clear a priori
+how much budget to allocate to each node. For instance,
+it is not apparent whether the budget should be distributed
+equally between all nodes or whether the root node should
+be allocated more budget and, if so, by how much.
+
+Algorithm - Joint learning of nodes: Bonsai therefore
+learns all node parameters jointly with the memory bud-
+get for each node being determined automatically as part
+of the optimization. The difﬁculty with joint learning is
+that a node’s ancestors need to be learnt before it can
+be determined which training points will reach the node.
+Furthermore, the path traversed by a training point is a
+sharply discontinuous function of θ and Z thereby ren-
+dering gradient based techniques ineffective. Various ap-
+proaches have been proposed in the literature for tackling
+these difﬁculties (Jose et al., 2013; Kontschieder et al.,
+2015; Norouzi et al., 2015; Xu et al., 2013; Ioannou et al.,
+2016b). Bonsai follows the approach of (Jose et al., 2013)
+
+l Zx)), δl
+
+k(x) = δl
+
+k((−1)Ck(l) − tanh(σI θ(cid:62)
+
+where P l
+k = 1
+if node l is an ancestor of node k and 0 otherwise and
+Ck(l) = 1 if node k is in the right subtree of node l and 0
+otherwise. Of course, allowing a point to traverse multiple
+paths increases prediction costs. Some approaches there-
+fore allow multiple paths during training but select a sin-
+gle path during prediction (Xu et al., 2013; Ioannou et al.,
+2016b). At each node, a point x is greedily branched to the
+child node having the greatest Ik(x). Unfortunately, this
+can lead to a drop in accuracy as the model learnt during
+training is different from the one used for prediction.
+
+Bonsai therefore follows an alternative strategy where σI
+is tuned during training to ensure that points gradually start
+traversing at most a single path as optimization progresses.
+In particular, σI is initialized to a small value, such as 0.01,
+so as to ensure that tanh values are not saturated. As opti-
+mization progresses, σI is gradually increased so that tanh
+tends to the signum function and Ik(x) goes back to being
+an indicator function by the time convergence is reached.
+This allows Bonsai to directly use the learnt model for pre-
+diction and was found to empirically lead to good results.
+
+Algorithm - Gradient descent with iterative hard
+thresholding: Various gradient based approaches, includ-
+ing those based on alternating minimization, were tried for
+optimizing (2). A gradient descent based algorithm with
+iterative hard thresholding (IHT) was empirically found
+to yield the best solutions. Gradient descent was chosen
+over stochastic gradient descent as it removed the burden of
+step size tuning, led to slightly better prediction accuracies
+while keeping training time acceptable. For instance, train-
+ing times range from 2 minutes for USPS-2 to 15 minutes
+for MNIST-2 on a single core of a laptop with an Intel Core
+i7-3667U processor at 2 GHz with 8 GB of RAM. Stochas-
+tic gradient descent could be utilized for larger datasets or
+if training costs also needed to be minimized. The algo-
+rithm proceeds iteratively based on the following gradient
+and IHT steps in each iteration.
+
+Algorithm - Gradient step: Given feasible Zt and Θt
+with a feasible allocation of the memory budget to various
+nodes at time step t, Bonsai applies M updates of gradi-
+ent descent keeping the support of Z and Θ ﬁxed so that
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+the budget allocations to nodes remain unchanged and the
+memory constraints are never violated. The update equa-
+tions at each time step are
+
+5. Experiments
+
+Zt+1 = Zt − ηt
+
+Θt+1 = Θt − ηt
+
+Z∇ZJ (Zt, Θt)|supp(Zt)
+Θ∇ΘJ (Zt, Θt)|supp(Θt)
+
+(5)
+
+(6)
+
+with step sizes ηZ and ηΘ being chosen according to the
+Armijo rule and |supp indicating that the gradient was be-
+ing computed only for the non-zero entries. M = 5 and
+M = 15 iterations were found to work well for binary and
+multi-class classiﬁcation respectively. This allows Bonsai
+to decrease the objective function value without changing
+the budget allocation of various nodes.
+
+Algorithm - IHT step: In order to improve the budget allo-
+cation, Bonsai performs a single gradient update with unre-
+stricted support. This violates the memory constraints and
+Bonsai therefore projects the solution onto the feasible set
+by retaining the parameters with the largest magnitudes
+
+Zt+M +1 = TBZ(Zt+M − ηt+M
+Θt+M +1 = TBΘ(Θt+M − ηt+M
+
+Z ∇ZJ (Zt+M , Θt+M ))
+Θ ∇ΘJ (Zt+M , Θt+M ))
+
+where Tk is an operator returning k of its arguments which
+have the largest magnitudes while setting the rest to 0. This
+allows Bonsai to move to another feasible solution with
+even lower objective function value by improving the mem-
+ory budget distribution across nodes.
+
+Algorithm - Convergence: In general, projected gradient
+descent based algorithms might oscillate for non-convex
+problems. However, (Blumensath & Davies, 2008) prove
+that for smooth objective functions, gradient descent algo-
+rithms with IHT do indeed converge to a saddle point solu-
+tion. Furthermore, if the objective function satisﬁes the Re-
+stricted Strong Convexity (RSC) property in a local region,
+then projected gradient descent with IHT will converge to
+the local minimum in that region (Jain et al., 2014). In prac-
+tice, it was observed that the algorithm generally converged
+to a good solution soon and therefore was terminated after
+T = 300 iterations were reached.
+
+Algorithm - Initialization & re-training: Z0 and Θ0
+could be set randomly. Prediction accuracy gains of up to
+1.5% could be observed if Bonsai was initialized by taking
+T steps of gradient descent without any budget constraints
+followed by a hard thresholding step. Further gains of 1.5%
+could be observed by taking another T steps of gradient de-
+scent with ﬁxed support after termination. This helped in
+ﬁne-tuning Bonsai’s parameters once the memory budget
+allocation had been ﬁnalized across the tree nodes.
+
+More details about the optimization can be found in the
+supplementary material by clicking here.
+
+Datasets: Experiments were carried out on a number of
+publically available binary and multi-class datasets includ-
+ing Chars4K (Campos et al., 2009), CIFAR10 (Krizhevsky,
+2009), MNIST (LeCun et al., 1998), WARD (Yang et al.,
+2009), USPS (Hull, 1994), Eye (Kasprowski & Ober,
+2004), RTWhale (RTW), and CUReT (Varma & Zisser-
+man, 2005). Binary versions of these datasets were down-
+loaded from (Jose et al., 2013). Bing’s L3 Ranking is a pro-
+prietary dataset where ground truth annotations specifying
+the relevance of query-document pairs have been provided
+on a scale of 0-4. Table 1 lists these datasets’ statistics.
+
+Baseline algorithms: Bonsai was compared to state-
+of-the-art algorithms for resource-efﬁcient ML spanning
+tree, kNN, SVM and single hidden layer neural network
+algorithms including Decision Jungles (Shotton et al.,
+2013; Pohlen), Feature Budgeted Random Forests (Bud-
+getRF) (Nan et al., 2015), Gradient Boosted Decision Tree
+Ensemble Pruning (Tree Pruning) (Dekel et al., 2016),
+Pruned Random Forests (BudgetPrune) (Nan et al., 2016),
+Local Deep Kernel Learning (LDKL) (Jose et al., 2013),
+Neural Network Pruning (NeuralNet Pruning) (Han et al.,
+2016) and Stochastic Neighbor Compression (SNC) (Kus-
+ner et al., 2014b). The differences between some of these
+algorithms and Bonsai is brieﬂy discussed in Section 2.
+Publically available implementations of all algorithms were
+used taking care to ensure that published results could be
+reproduced thereby verifying the code and hyper-parameter
+settings. Note that Bonsai is not compared to deep convo-
+lutional neural networks as they have not yet been demon-
+strated to ﬁt on such tiny IoT devices. In particular, con-
+volutions are computationally expensive, drain batteries
+and produce intermediate results which do not ﬁt in 2 KB
+RAM. Implementing them on tiny microcontrollers is still
+
+Table 1: Dataset statistics - the number after the dataset
+name represents the number of classes so as to distinguish
+between the binary and multi-class versions of the dataset.
+
+Dataset
+L3 Ranking
+Chars4K-2
+CIFAR10-2
+WARD-2
+USPS-2
+MNIST-2
+Eye-2
+RTWhale-2
+CUReT-61
+MNIST-10
+Chars4K-62
+
+# Train
+704,841
+4,397
+50,000
+4,503
+7,291
+60,000
+456
+5,265
+4,204
+60,000
+4,397
+
+# Test
+123,268
+1,886
+10,000
+1,931
+2,007
+10,000
+196
+5,264
+1,403
+10,000
+1,886
+
+# Features
+50
+400
+400
+1,000
+256
+784
+8,192
+2,000
+610
+784
+400
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+Figure 1: Multi-class & Ranking Datasets - Bonsai dominates over the state-of-the-art resource-efﬁcient ML algorithms
+by as much as 30.7% on Chars4K-62 and 28.9% on CUReT-61. BonsaiOpt’s gains are even higher. Some methods do not
+appear on the graphs as their accuracies were not high enough to fall within the y-axis limits. Bonsai also dominates Bing’s
+FastRank L3 ranker. Figure best viewed magniﬁed.
+
+Figure 2: Binary Datasets - Bonsai dominates over state-of-the-art resource-efﬁcient ML algorithms with gains of 8.6% on
+RTWhale-2 and 8.2% on Eye-2 in the 0-2 KB range. BonsaiOpt’s gains are even higher. Figure best viewed magniﬁed.
+
+an open research problem. Bonsai’s performance was how-
+ever compared to that of uncompressed single hidden layer
+neural networks without convolutions, Gradient Boosted
+Decision Trees (GBDT), kNN classiﬁers and RBF-SVMs.
+
+Hyper-parameters: The publically provided training set
+for each dataset was subdivided into 80% for training and
+20% for validation. The hyper-parameters of all algo-
+rithms were tuned on the validation set. Once the hyper-
+parameters had been ﬁxed, the algorithms were trained on
+the full training set and results were reported on the publi-
+cally available test set.
+
+of the algorithms were implemented on the Uno and their
+prediction times and energies were compared to Bonsai’s.
+
+Implementation: Results are presented throughout for an
+unoptimized implementation of Bonsai for a fair compar-
+ison with the other methods. For instance, 4 bytes were
+used to store ﬂoating point numbers for all algorithms, all
+ﬂoating point operations were simulated in software, etc.
+However, results are also presented for an optimized im-
+plementation of Bonsai, called BonsaiOpt, where numbers
+were stored in a 1 byte ﬁxed point format, tanh was ap-
+proximated, all ﬂoating point operations were avoided, etc.
+
+Evaluation: IoT applications would like to maximize their
+prediction accuracies using the best model that might ﬁt
+within the available ﬂash memory while minimizing their
+prediction times and energies. Accuracies of all algorithms
+are therefore presented for a range of model sizes. Some
+
+Comparison to uncompressed methods: The results in
+Tables 2 and 3 demonstrate that Bonsai’s prediction ac-
+curacies could compete with those of uncompressed kNN,
+GBDT, RBF-SVM and neural network classiﬁers with sig-
+niﬁcantly larger model sizes. On RTWhale-2, Chars4K-62
+
+050100102030405060Chars4K−62Model Size (KB)Accuracy (%)  BonsaiOptBonsaiNeuralNet PruningSNCDecision JungleBudgetPruneBudgetRF050100708090CUReT−61Model Size (KB)Accuracy (%)  BonsaiOptBonsaiNeuralNet PruningSNCDecision JungleBudgetPruneBudgetRF05010080859095MNIST−10Model Size (KB)Accuracy (%)  BonsaiOptBonsaiNeuralNet PruningSNCDecision JungleBudgetPruneBudgetRF0.20.40.60.81424446485052L3 RankingModel Size (KB)nDCG@1  BonsaiFastRank051015505560RTWhale−2Model Size (KB)Accuracy (%)051015808590Eye−2Model Size (KB)Accuracy (%)0510159092949698WARD−2Model Size (KB)Accuracy (%)0510158890929496MNIST−2Model Size (KB)Accuracy (%)05101566687072747678Chars4K−2Model Size (KB)Accuracy (%)0510156870727476CIFAR10−2Model Size (KB)Accuracy (%)05101590929496USPS−2Model Size (KB)Accuracy (%)Legend−−  BonsaiOptBonsaiGBDTTree PruningLDKLLDKL−L1NeuralNet PruningSNCDecision JungleBudgetPruneBudgetRFResource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+Table 2: Binary Datasets - Bonsai can sometimes outperform uncompressed methods with signiﬁcantly larger models.
+
+Dataset
+
+RTWhale-2
+Chars4K-2
+Eye-2
+WARD-2
+CIFAR10-2
+USPS-2
+MNIST-2
+
+Bonsai (%)
+2KB 16KB
+61.74
+61.74
+76.67
+74.28
+90.31
+88.26
+96.89
+95.85
+76.64
+73.02
+95.72
+94.42
+96.47
+94.38
+
+GBDT (%)
+
+kNN (%)
+
+RBF-SVM (%)
+
+NeuralNet (%)
+
+56.95 (1172 KB)
+72.38 ( 625 KB)
+83.16 ( 234 KB)
+97.77 (1172 KB)
+77.19 (1562 KB)
+95.91 ( 234 KB)
+98.36 (1172 KB)
+
+51.75 ( 41143 KB)
+67.28 ( 6870 KB)
+76.02 ( 14592 KB)
+94.98 ( 17590 KB)
+73.70 ( 78125 KB)
+96.70 ( 7291 KB)
+96.90 (183750 KB)
+
+53.82 (39905 KB)
+75.60 ( 6062 KB)
+93.88 ( 7937 KB)
+96.42 ( 7222 KB)
+81.68 (63934 KB)
+96.86 ( 1660 KB)
+98.08 (35159 KB)
+
+52.26 (3910 KB)
+72.53 ( 314 KB)
+90.31 (6402 KB)
+92.75 (3914 KB)
+75.90 ( 314 KB)
+95.86 ( 504 KB)
+98.33 (3070 KB)
+
+Table 3: Multi-class Datasets - Bonsai can sometimes outperform uncompressed methods with signiﬁcantly larger models.
+
+Dataset
+Chars4K-62
+CUReT-61
+MNIST-10
+
+Bonsai (%)
+58.59 (101 KB)
+95.23 (115 KB)
+97.01 ( 84 KB)
+
+GBDT (%)
+43.34 (9687 KB)
+90.81 (2383 KB)
+97.90 (5859 KB)
+
+kNN (%)
+39.32 ( 6833 KB)
+89.81 ( 10037 KB)
+94.34 (183984 KB)
+
+RBF-SVM (%)
+48.04 ( 7738 KB)
+97.43 ( 8941 KB)
+97.30 (39084 KB)
+
+NeuralNet (%)
+55.35 (1266 KB)
+95.51 (1310 KB)
+98.44 (4652 KB)
+
+Table 4: The effect of Bonsai’s components - Performing
+sparse PCA independently before training is not as effec-
+tive as Bonsai’s joint optimization of the projection matrix.
+
+multi-class datasets. These results validate Bonsai’s model,
+showing it to be accurate and compact and demonstrate that
+Bonsai’s optimization algorithm yields good solutions.
+
+Method
+
+Accuracy
+(%)
+
+Model
+size
+(KB)
+
+Bonsai with random initialization
+and without re-training
+Bonsai without re-training
+Bonsai
+Bonsai with sparse PCA
+Tree Pruning with sparse PCA
+Decision Jungle with sparse PCA
+RBF-SVM with sparse PCA
+
+74.12
+
+75.19
+76.67
+58.32
+63.57
+61.67
+71.10
+
+16
+
+16
+16
+16
+16
+16
+136
+
+and Chars4K-2, Bonsai’s accuracies were higher than all
+other methods by 4.8%, 3.2% and 1.1% while its model
+size was lower by 977x, 13x and 157x respectively. Bon-
+sai’s accuracies were lower by 1.0% - 5.0% on the other
+datasets with model size gains varying from 55x to 3996x.
+Note that, while BonsaiOpt’s accuracies were similar to
+Bonsai’s, its model sizes would be even lower.
+
+Comparison to resource-efﬁcient ML algorithms: The
+results in Figures 2 and 3 demonstrate that Bonsai’s predic-
+tion accuracies dominate those of state-of-the-art resource-
+efﬁcient ML algorithms for all model sizes. In fact, Bonsai
+could outperform all other algorithms, including tree algo-
+rithms by as much as 30.7% on Char4K-62 and 28.9% on
+CUReT-61 for a given model size. For binary datasets, the
+largest gains were observed in the 0-2 KB regime includ-
+ing 8.6% on RTWhale-2 and 8.2% on Eye-2. Of course,
+BonsaiOpt’s gains were even higher on both binary and
+
+L3 ranking: Bonsai was shown to generalise to other
+resource-constrained scenarios beyond IoT by ranking doc-
+uments in response to queries on Bing. Bonsai was trained
+by replacing the classiﬁcation gradients with rank-sensitive
+gradients approximating nDCG (Burges, 2010). As can be
+seen in Figure 1, using a 300 byte model, Bonsai could
+outperform Bing’s FastRank L3 ranker by 8.3%. In fact,
+Bonsai could achieve almost the same ranking accuracy as
+FastRank but with a 660x smaller model.
+
+Prediction on the Arduino Uno: Table 5 presents the pre-
+diction costs per test point for the highest accuracy models
+with size less than 2 KB for a few methods that were imple-
+mented on the Arduino Uno. The BonsaiOpt model was a
+more efﬁcient implementation of the chosen Bonsai model.
+The results indicate that BonsaiOpt could be signiﬁcantly
+more accurate, faster and energy-efﬁcient as compared to
+other algorithms including an unoptimized linear classiﬁer.
+Transmitting the test feature vector to the cloud, whenever
+possible, and running uncompressed GBDT might some-
+times yield higher accuracies but would also consume 47x-
+497x more energy which might not be feasible.
+
+Bonsai’s components: The contribution of Bonsai’s com-
+ponents on the Chars4K-2 dataset is presented in Ta-
+ble 4. Modest reductions in accuracy were observed with-
+out proper initialization or re-training. Learning a pro-
+jection matrix independently via sparse PCA before train-
+ing reduced accuracy signiﬁcantly as compared to Bonsai’s
+joint training of the projection matrix and tree parameters.
+Other tree and uncompressed methods also did not beneﬁt
+much by training in the sparse PCA space.
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+Table 5: Prediction costs per test point on the Arduino Uno with the highest accuracy model of size less than 2 KB – The
+BonsaiOpt model was a more efﬁcient implementation of the chosen Bonsai model. BonsaiOpt was signiﬁcantly more
+accurate, faster and energy-efﬁcient than all other methods. Transmitting the test feature vector to the cloud, whenever
+possible, and running uncompressed GBDT might sometimes yield higher accuracies but would also consume 47x-497x
+more energy which might not be feasible in many IoT applications.
+
+BonsaiOpt Bonsai Linear LDKL
+
+Cloud GBDT
+
+Dataset
+
+Eye-2
+
+RTWhale-2
+
+Chars4K-2
+
+WARD-2
+
+CIFAR10-2
+
+USPS-2
+
+MNIST-2
+
+Model Size (KB)
+Accuracy (%)
+Prediction Time (ms)
+Prediction Energy (mJ)
+Model Size (KB)
+Accuracy (%)
+Prediction Time (ms)
+Prediction Energy (mJ)
+Model Size (KB)
+Accuracy (%)
+Prediction Time (ms)
+Prediction Energy (mJ)
+Model Size (KB)
+Accuracy (%)
+Prediction Time (ms)
+Prediction Energy (mJ)
+Model Size (KB)
+Accuracy (%)
+Prediction Time (ms)
+Prediction Energy (mJ)
+Model Size (KB)
+Accuracy (%)
+Prediction Time (ms)
+Prediction Energy (mJ)
+Model Size (KB)
+Accuracy (%)
+Prediction Time (ms)
+Prediction Energy (mJ)
+
+0.30
+88.78
+10.75
+2.64
+0.33
+60.94
+5.24
+1.29
+0.50
+74.71
+4.21
+1.03
+0.47
+95.70
+4.85
+1.18
+0.50
+73.05
+4.55
+1.11
+0.50
+94.42
+2.93
+0.71
+0.49
+94.28
+5.17
+1.27
+
+1.20
+88.26
+12.26
+3.01
+1.32
+61.74
+7.11
+1.75
+2.00
+74.28
+8.55
+2.10
+1.86
+95.86
+8.13
+1.99
+1.98
+73.02
+8.16
+2.01
+2.00
+94.42
+5.57
+1.37
+1.96
+94.38
+8.90
+2.18
+
+2.00
+80.10
+15.13
+3.72
+0.86
+50.76
+4.68
+1.15
+1.56
+51.06
+7.39
+1.81
+1.99
+87.57
+7.48
+1.84
+1.56
+69.11
+7.73
+1.90
+1.02
+83.11
+4.15
+1.02
+1.93
+86.16
+6.72
+1.65
+
+NeuralNet
+Pruning
+1.96
+80.45
+15.48
+3.81
+1.17
+52.44
+8.86
+2.18
+1.96
+63.90
+14.09
+3.48
+1.91
+91.76
+14.22
+3.49
+1.96
+67.01
+13.87
+3.43
+2.00
+88.68
+9.51
+2.33
+1.90
+88.65
+14.67
+3.59
+
+1.88
+66.33
+15.80
+3.89
+1.00
+50.24
+6.16
+1.52
+1.95
+67.29
+8.61
+2.13
+1.99
+89.64
+9.99
+2.47
+1.88
+67.54
+8.12
+2.00
+1.87
+91.96
+5.59
+1.37
+1.87
+87.01
+8.72
+2.16
+
+234.00
+83.16
+2186.59
+1311.95
+1172.00
+56.95
+521.27
+312.76
+625.00
+72.38
+160.40
+63.52
+1172.00
+97.77
+293.13
+116.08
+1562.00
+77.19
+160.40
+63.52
+234.00
+95.91
+83.45
+33.05
+1172.00
+98.36
+264.96
+104.92
+
+6. Conclusions
+
+This paper proposed an alternative IoT paradigm, centric
+to the device rather than the cloud, where ML models run
+on tiny IoT devices without necessarily connecting to the
+cloud thereby engendering local decision making capabili-
+ties. The Bonsai tree learner was developed towards this
+end and demonstrated to be fast, accurate, compact and
+energy-efﬁcient at prediction time. Bonsai was deployed
+on the Arduino Uno board as it could ﬁt in a few KB of
+ﬂash, required only 70 bytes of writable memory for bi-
+nary classiﬁcation and 500 bytes for a 62 class problem,
+handled streaming features and made predictions in mil-
+liseconds taking only milliJoules of energy. Bonsai’s pre-
+diction accuracies could be as much as 30% higher as com-
+
+pared to state-of-the-art resource-efﬁcient ML algorithms
+for a ﬁxed model size and could even approach and outper-
+form those of uncompressed models taking many MB of
+RAM. Bonsai achieved these gains by developing a novel
+model based on a single, shallow, sparse tree learnt in a
+low-dimensional space. Predictions made by both inter-
+nal and leaf nodes and the sharing of parameters along
+paths allowed Bonsai to learn complex non-linear decision
+boundaries using a compact representation. Bonsai’s code
+is available from (BonsaiCode) and is part of Microsoft’s
+ELL machine learning compiler for IoT devices.
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+Acknowledgements
+
+We are grateful to Yeshwanth Cherapanamjeri, Ofer Dekel,
+Chirag Gupta, Prateek Jain, Ajay Manchepalli, Nagara-
+jan Natarajan, Praneeth Netrapalli, Bhargavi Paranjape,
+Suresh Parthasarathy, Vivek Seshadri, Rahul Sharma, Har-
+sha Vardhan Simhadri, Manish Singh and Raghavendra
+Udupa for many helpful discussions and feedback.
+
+References
+
+The right whale dataset. https://www.kaggle.com/
+
+c/whale-detection-challenge/data.
+
+Ba, J. and Caruana, R. Do deep nets really need to be deep?
+
+In NIPS, 2014.
+
+Blumensath, T. and Davies, M. E. Iterative thresholding for
+sparse approximations. Journal of Fourier Analysis and
+Applications, 14(5-6), 2008.
+
+BonsaiCode.
+
+Code for Bonsai.
+
+http://www.
+
+manikvarma.org/code/Bonsai/download.
+html.
+
+Breiman, L. Random forests. ML, 2001.
+
+Breiman, L., Friedman, J., Stone, C. J., and Olshen, R. A.
+Classiﬁcation and regression trees. In CRC press, 1984.
+
+Bucilua, C., Caruana, R., and Niculescu-Mizil, A. Model
+compression. In Proceedings of the 12th ACM SIGKDD
+international conference on Knowledge discovery and
+data mining, 2006.
+
+Hubara, I., Courbariaux, M., Soudry, D., El-Yaniv, R., and
+Bengio, Y. Quantized neural networks: Training neu-
+ral networks with low precision weights and activations.
+CoRR, abs/1609.07061, 2016.
+
+Hull, J. J. A database for handwritten text recognition re-
+
+search. IEEE PAMI, 16, 1994.
+
+Iandola, F. N., Moskewicz, M. W., Ashraf, K., Han, S.,
+Dally, W. J., and Keutzer, K. Squeezenet: Alexnet-level
+accuracy with 50x fewer parameters and <1MB model
+size. CoRR, abs/1602.07360, 2016.
+
+Ioannou, Y., Robertson, D., Cipolla, R., and Criminisi, A.
+Deep roots: Improving cnn efﬁciency with hierarchical
+ﬁlter groups. arXiv preprint arXiv:1605.06489, 2016a.
+
+Ioannou, Y., Robertson, D., Kontschieder, D. Zikicand P.,
+Shotton, J., Brown, M., and Criminisi, A. Deci-
+sion forests, convolutional networks and the models in-
+between. arXiv preprint arXiv:1603.01250, 2016b.
+
+Jain, P., Tewari, A., and Kar, P. On iterative hard thresh-
+olding methods for high-dimensional m-estimation. In
+NIPS, 2014.
+
+Joly, A., Schnitzler, F., Geurts, P., and Wehenkel, L. L1-
+based compression of random forest models. In ESANN,
+2012.
+
+Jose, C., Goyal, P., Aggrwal, P., and Varma, M. Local deep
+kernel learning for efﬁcient non-linear svm prediction.
+In ICML, 2013. https://manikvarma.github.
+io/code/LDKL/download.html.
+
+Kasprowski, P. and Ober, J. Eye movement in biometrics.
+
+Burges, C. J. From ranknet to lambdarank to lambdamart:
+
+An overview. Learning, 11(23-581), 2010.
+
+In eccv, 2004.
+
+Campos, T. E., Babu, B. R., and Varma, M. Character
+recognition in natural images. In VISAPP(2), 2009.
+
+Dekel, O., Jacobbs, C., and Xiao, L. Pruning decision
+
+forests. In Personal Communications, 2016.
+
+Denton, E. L., Zaremba, W., Bruna, J., LeCun, Y., and Fer-
+gus, R. Exploiting linear structure within convolutional
+networks for efﬁcient evaluation. In NIPS, 2014.
+
+Duda, R. O., Hart, P. E., and Stork, D. G. Pattern Classiﬁ-
+
+cation. John Wiley and Sons, 2nd edition, 2002.
+
+Kontschieder, P., Fiterau, M., Criminisi, A., and Bulo, S. R.
+
+Deep neural decision forests. In ICCV, 2015.
+
+Krizhevsky, A. Learning multiple layers of features from
+
+tiny images. Technical report, 2009.
+
+Kulkarni, V. Y. and Sinha, P. K. Pruning of random forest
+In ICDSE,
+
+classiﬁers: A survey and future directions.
+2012.
+
+Kusner, M. J., Chen, W., Zhou, Q., Xu, Z. E., Weinberger,
+K. Q., and Chen, Y. Feature-cost sensitive learning with
+submodular trees of classiﬁers. In AAAI, 2014a.
+
+Han, S., Mao, H., and Dally, W. J. Deep compression:
+Compressing deep neural networks with pruning, trained
+quantization and huffman coding. In ICLR, 2016.
+
+Kusner, M. J., Tyree, S., Weinberger, K. Q., and Agrawal,
+K. Stochastic neighbor compression. In ICML, 2014b.
+http://mkusner.github.io/#code.
+
+Hsieh, C. J., Si, S., and Dhillon, I. Fast prediction for large-
+
+scale kernel machines. In NIPS, 2014.
+
+Le, Q., Sarl´os, T., and Smola, A. Fastfood-approximating
+kernel expansions in loglinear time. In ICML, 2013.
+
+Resource-efﬁcient Machine Learning in 2 KB RAM for the Internet of Things
+
+LeCun, Y., Bottou, L., Bengio, Y., and Haffner, P. Gradient-
+based learning applied to document recognition. Pro-
+ceedings of the IEEE, 86(11):2278–2324, 1998.
+
+Wang, J., Trapeznikov, K., and Saligrama, V. Efﬁcient
+learning by directed acyclic graph for resource con-
+strained prediction. In NIPS, 2015.
+
+Li, S. Z. Markov Random Field Modeling in Image Analy-
+
+sis. Springer-Verlag, 2001.
+
+Li, Z., Yang, T., Zhang, L., and Jin, R. Fast and accurate
+
+reﬁned nystr¨om-based kernel svm. In AAAI, 2016.
+
+Meunier, F., Wood, A., Weiss, K., Huberty, K., Flannery,
+S., Moore, J., Hettenbach, C., and Lu, B. The internet
+of things is now connecting the real economy. Technical
+report, Morgan Stanley, 2014.
+
+Wang, W., Chen, C., Chen, W., Rai, P., and Carin, L. Deep
+In
+distance metric learning with data summarization.
+ECML PKDD, 2016.
+
+Wu, J., Leng, C., Wang, Y., Hu, Q., and Cheng, J. Quan-
+tized convolutional neural networks for mobile devices.
+In CVPR, 2016.
+
+Xu, Z., Weinberger, K. Q., and Chapelle, O. The greedy
+miser: Learning under test-time budgets. In ICML, 2012.
+
+Murthy, S. K., Kasif, S., and Salzberg, S. A system for
+
+Xu, Z. E., Kusner, M. J., Weinberger, K. Q., and Chen, M.
+
+induction of oblique decision trees. JAIR, 2, 1994.
+
+Cost-sensitive tree of classiﬁers. In ICML, 2013.
+
+Nan, F., Wang, J., and Saligrama, V. Feature-budgeted ran-
+In ICML, 2015. http://sites.bu.
+
+dom forest.
+edu/data/code-4/.
+
+Yang, J., Li, Y., Tian, Y., Duan, L., and Gao, W. Group-
+sensitive multiple kernel learning for object categoriza-
+tion. In ICCV, 2009.
+
+Yang, Z., Moczulski, M., Denil, M., Freitas, N., Smola,
+A. J., Song, L., and Wang, Z. Deep fried convnets. ICCV,
+2015.
+
+Zhang, Y. and Huei-chuen, H. Decision tree pruning via
+
+integer programming. Technical report, 2005.
+
+Nan, F., Wang, J., and Saligrama, V. Pruning random
+
+forests for prediction on a budget. In NIPS, 2016.
+
+Norouzi, M., Collins, M., Johnson, M. A., Fleet, D. J., and
+Kohli, P. Efﬁcient non-greedy optimization of decision
+trees. In NIPS, 2015.
+
+Pohlen, T. LibJungle - Decision Jungle Library. https:
+//bitbucket.org/geekStack/libjungle.
+
+Rastegari, M., Ordonez, V., Redmon, J., and Farhadi, A.
+Xnor-net: Imagenet classiﬁcation using binary convolu-
+tional neural networks. In ECCV, 2016.
+
+Rokach, L. and Maimon, O. Data mining with decision
+trees: theory and applications. World scientiﬁc, 2014.
+
+Shankar, S., Robertson, D., Ioannou, Y., Criminisi, A., and
+Cipolla, R. Reﬁning architectures of deep convolutional
+neural networks. In CVPR, 2016.
+
+Sherali, H. D., Hobeika, A. G., and Jeenanunta, C. An
+optimal constrained pruning strategy for decision trees.
+INFORMS Journal on Computing, 21(1), 2009.
+
+Shotton, J., Sharp, T., Kohli, P., Nowozin, S., Winn, J.,
+and Criminisi, A. Decision jungles: Compact and rich
+models for classiﬁcation. In NIPS, 2013.
+
+Utgoff, P. E. Perceptron trees: A case study in hybrid con-
+cept representations. Connection Science, 1(4), 1989.
+
+Varma, M. and Zisserman, A. A statistical approach to
+IJCV, 62(1–
+
+texture classiﬁcation from single images.
+2):61–81, 2005.
+
+Viola, P. and Jones, M. J. Robust real-time face detection.
+
+IJCV, 57(2), 2004.
+
+

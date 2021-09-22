@@ -1,0 +1,1319 @@
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+Jo˜ao F. Henriques 1 Andrea Vedaldi 1
+
+Abstract
+
+Convolutional Neural Networks (CNNs) are ex-
+tremely efﬁcient, since they exploit the inherent
+translation-invariance of natural images. How-
+ever, translation is just one of a myriad of use-
+ful spatial transformations. Can the same efﬁ-
+ciency be attained when considering other spa-
+tial invariances? Such generalized convolutions
+have been considered in the past, but at a high
+computational cost. We present a construction
+that is simple and exact, yet has the same com-
+putational complexity that standard convolutions
+enjoy. It consists of a constant image warp fol-
+lowed by a simple convolution, which are stan-
+dard blocks in deep learning toolboxes. With
+a carefully crafted warp, the resulting architec-
+ture can be made equivariant to a wide range of
+two-parameter spatial transformations. We show
+encouraging results in realistic scenarios, includ-
+ing the estimation of vehicle poses in the Google
+Earth dataset (rotation and scale), and face poses
+in Annotated Facial Landmarks in the Wild (3D
+rotations under perspective).
+
+1. Introduction
+
+A crucial aspect of current deep learning architectures is the
+encoding of invariances. This fact is epitomized in the suc-
+cess of convolutional neural networks (CNN), where equiv-
+ariance to image translation is key: translating the input
+results in a translated output. When invariances are present
+in the data, encoding them explicitly in an architecture pro-
+vides an important source of regularization, which reduces
+the amount of training data required for learning.
+
+Invariances may also be used to improve the efﬁciency of
+implementations. For instance, a convolutional layer re-
+quires orders of magnitude less memory (by reusing ﬁlters
+
+1Visual Geometry Group, University
+
+United Kingdom.
+<joao@robots.ox.ac.uk>.
+
+Correspondence to:
+
+of Oxford,
+Jo˜ao F. Henriques
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+across space) and less computation (due to their limited
+support) compared to a fully-connected layer. Its local and
+predictable memory access pattern also makes better use of
+modern hardware’s caching mechanisms.
+
+The success of CNNs indicates that translation invariance
+is an important property of images. However, this does
+not explain why translation equivariant operators work well
+for image understanding. The common interpretation is
+that such operators are matched to the statistics of nat-
+ural images, which are well known to be translation in-
+variant (Hyv¨arinen et al., 2009). However, natural image
+statistics are also (largely) invariant to other transforma-
+tions such as isotropic scaling and rotation, which suggests
+that alternative neural network designs may also work well
+with images. Furthermore, in speciﬁc applications, invari-
+ances other than translation may be more appropriate.
+
+Therefore, it is natural to consider generalizing convolu-
+tional architectures to other image transformations, and this
+has been the subject of extensive study (Kanazawa et al.,
+2014; Bruna et al., 2013; Cohen & Welling, 2016). Unfor-
+tunately these approaches do not possess the same memory
+and speed beneﬁts that CNNs enjoy. The reason is that, ul-
+timately, they have to transform (warp) an image or ﬁlter
+several times (Kanazawa et al., 2014; Marcos et al., 2016;
+Dieleman et al., 2015), incurring a high computational bur-
+den. Another approach is to consider a basis of ﬁlters
+(analogous to eigen-images) encoding the desired invari-
+ance (Cohen & Welling, 2014; Bruna et al., 2013; Cohen
+& Welling, 2016). Although they are able to handle trans-
+formations with many pose parameters, in practice most
+recent proposals are limited to very coarsely discretized
+transformations, such as horizontal/vertical ﬂips and 90◦
+rotations (Dieleman et al., 2015; Cohen & Welling, 2014).
+
+In this work we consider generalizations of CNNs that
+overcome these disadvantages. Well known constructions
+in group theory enable the extension of convolution to gen-
+eral transformation groups (Folland, 1995). However, this
+generality usually comes at an increased computational
+cost or complexity. Here we show that, by making ap-
+propriate assumptions, we can design convolution opera-
+tors that are equivariant to a large class of two-parameter
+transformations while reducing to a standard convolution
+in a warped image space. The ﬁxed image warp can be
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+implemented using bilinear resampling, a simple and fast
+operation that has been popularized by spatial transformer
+networks (Jaderberg et al., 2015; Heckbert, 1989) and is
+part of most deep learning toolboxes. Unlike previous pro-
+posals, the proposed warped convolutions can handle con-
+tinuous transformations, such as ﬁne rotation and scaling.
+
+This makes generalized convolution easily implementable
+in neural networks, reusing fast convolution algorithms on
+GPU hardware, such as Winograd (Lavin, 2015) or the Fast
+Fourier Transform (Lyons, 2010).
+
+2. Generalizing convolution
+
+2.1. Discrete and continuous convolution
+
+We start by looking at the basic building block of CNNs,
+i.e. the convolution operator. This operator computes the
+inner product of an image I ∈ RN ×N with a translated
+version of the ﬁlter F ∈ RM ×M , producing a new image
+as output:
+
+(I ∗ F )(j) =
+
+I(k)F (j − k),
+
+(1)
+
+(cid:88)
+
+k
+where k, j ∈ Z2 are two-dimensional vectors of indexes,
+and the summation ranges inside the extents of both arrays.
+Over the next sections it will be more convenient to trans-
+late the image I instead of the ﬁlter F . This alternative
+form of eq. (1) is obtained by the substitution k ← j + k:
+(cid:88)
+
+(I ∗ F )(j) =
+
+I(j + k)F (−k)
+
+(2)
+
+k
+
+(cid:88)
+
+k
+
+In the neural network literature, this is often written using
+the cross-correlation convention (Goodfellow et al., 2016),
+by considering the reﬂected ﬁlter F−(j) = F (−j):
+
+(I ∗ F )(j) =
+
+I(j + k)F−(k).
+
+(3)
+
+To handle continuous deformations of the input, it is more
+natural to express eq. (2) as an integral over continuous
+rather than discrete inputs:
+ˆ
+
+(I ∗ F )(y) =
+
+I(y + x) F (−x) dx,
+
+(4)
+
+where I, F : R2 → R are functions of continuous inputs
+in R2. The real-valued 2D vectors x, y ∈ R2 now play the
+role of the indexes k ∈ Z2. Equation (4) reduces to the
+discrete case of eq. (1) if we deﬁne I and F as the sum of
+delta functions on grids (Dirac comb). Intermediate values
+can be obtained by interpolation, such as bilinear (which
+amounts to convolution of the delta functions with a trian-
+gle ﬁlter (Jaderberg et al., 2015)). Importantly, such con-
+tinuous images can be deformed by a rich set of continuous
+transformations of the input coordinates, whereas strictly
+discrete operations would be more limiting.
+
+2.2. Convolution on groups
+
+The standard convolution operator of eq. (4) can be inter-
+preted as applying the ﬁlter to translated versions of the
+image. We wish to replace translations with other image
+transformations g, belonging to a group G.
+In the con-
+text of machine learning models for images, this general-
+ized (group) convolution can be understood to exhaustively
+search for a pattern at various poses g ∈ G (e.g. rotation
+angles or scale factors) (Dieleman et al., 2015; Kanazawa
+et al., 2014).
+
+Following standard derivations (Folland, 1995), the most
+common way of generalising convolution to transforma-
+tions other than translations starts from the Haar integral.
+Given a measure µ over a group G, one can deﬁne the inte-
+gral of a real function ˜I : G → R, written:
+ˆ
+
+˜I(g) dµ(g).
+
+G
+
+The (left) Haar measure is the most natural choice for µ;
+it is the only measure (up to scaling factors) that is (left)
+invariant to group translation. In other words, µ satisﬁes
+the equation:
+
+∀h ∈ G :
+
+˜I(hg) dµ(g) =
+
+˜I(g) dµ(g).
+
+ˆ
+
+G
+
+ˆ
+
+G
+
+Mirroring eq. (4), the group convolution of two functions ˜I
+and ˜F is deﬁned as1
+
+ˆ
+
+( ˜I ∗
+G
+
+˜F )(t) =
+
+˜I(tg) ˜F (g−1) dµ(g).
+
+(5)
+
+From the viewpoint of statistical learning, a key property of
+convolution is equivariance. Consider the (left) translation
+operator
+
+Lh( ˜I) :
+
+t (cid:55)−→ ˜I(h−1t).
+
+(6)
+
+Then:
+
+Lemma 1. (Folland, 1995) Convolution is equivariant with
+:
+group translations, in the sense that Lh commutes with ∗
+G
+
+Lh( ˜I ∗
+G
+
+˜F )(t) = (Lh( ˜I) ∗
+G
+
+˜F )(t).
+
+1Due to the Haar invariance property, this deﬁnition is equiva-
+lent to the following one, also commonly found in the literature:
+
+( ˜I ∗
+G
+
+˜F )(t) =
+
+˜I(g) ˜F (g−1t) dµ(g).
+
+The equivalence mirrors the one between eq. (1) and eq. (2), and
+can be easily proved:
+
+( ˜I ∗
+G
+
+˜F )(t) =
+
+˜I(tg) ˜F ((tg)−1t) dµ(g)
+
+=
+
+˜I(tg) ˜F (g−1) dµ(g).
+
+ˆ
+
+ˆ
+
+ˆ
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+´
+
+Proof. Lh( ˜I ∗
+´
+G
+
+˜F )(t) =
+˜I(h−1(tg)) ˜F (g−1) dµ(g) = (Lh( ˜I) ∗
+G
+
+˜I((h−1t)g) ˜F (g−1) dµ(g) =
+˜F )(t).
+
+and group convolution reduces to the standard notion of
+convolution ∗
+V
+
+on V :
+
+2.3. From groups to images
+The functions ˜I and ˜F above have been deﬁned on groups.
+In applications, however, we are interested in images, i.e.
+functions I : Ω → R deﬁned on a subset Ω of the real plane
+R2.
+
+The connection between the two function types is easy to
+establish. The assumption is that G acts2 on the image do-
+main Ω (i.e. G is a group of transformations of Ω). We can
+then deﬁne the ˜· operator as:
+
+˜I(g) = I(gx0)
+
+where x0 ∈ Ω is an arbitrary pivot point. Note that the
+values of ˜I depend only on the values of I on the orbit of
+x0, i.e. the set Gx0 = {gx0 : g ∈ G}. Therefore we
+typically set the domain Ω of I to be equal to Gx0.
+By this deﬁnition, left translation of ˜I by h corresponds to
+warping the image I by the transformation h:
+
+Lh( ˜I)(t) = I((h−1t)x0) = I(h−1(tx0)) = (cid:94)(I ◦ h−1)(t).
+
+We can then update eq. (5) to express group convolution as
+a function of images on the real plane:
+
+ˆ
+
+(I ∗
+G
+
+F )(t) =
+
+I(tgx0)F (g−1x0) dµ(g).
+
+(7)
+
+( ˜I ∗
+G
+
+˜F )(exp(v)) =
+
+Iw(v + u)Fw(−u) du.
+
+(8)
+
+ˆ
+
+V
+
+We refer to this standard convolution in warped space
+(eq. (8)) as warped convolution.
+
+Discussion. Note that the result is an image whose dimen-
+sionality P is that of the vector space V ; in the following,
+we mainly work in the case P = 2. By far, the strongest
+requirement is that the map is additive: this is the same as
+requiring the transformation group G to be Abelian, in the
+sense that transformations commute (hg = gh).
+In sec-
+tion 5 we will show a variety of useful image transforma-
+tions that respect this property. The advantage of intro-
+ducing this restriction is that calculations simplify tremen-
+dously, ultimately enabling a simple and efﬁcient imple-
+mentation of the operator as discussed below.
+
+3. Warped convolutions
+
+Our main contribution is to note that certain group convo-
+lutions can be implemented efﬁciently by a standard con-
+volution, by pre-warping the input image and ﬁlter appro-
+priately. The warp is the same for any image, depending
+solely on the nature of the relevant transformations, and
+can be written in closed form. This result allows one to
+implement very efﬁcient group convolutions using simple
+computational blocks, as shown in section 3.2.
+
+2.4. Standard convolutions with exponential maps
+
+3.1. Warped convolution layer
+
+In the deﬁnitions of sections 2.2 and 2.3, while we could
+reduce the functions ˜I and ˜F to images I and F , the re-
+sult of convolution is still a function deﬁned over a group.
+One needs therefore to understand how to represent such
+functions and calculate the corresponding integrals.
+
+the simplest case is when G is a
+We note here that
+Lie group parameterised by the exponential map exp :
+V → G, where V is a subset of RP , in such a way
+that exp is smooth, bijective and additive (exp(u + v) =
+exp(u) exp(v)). Then:
+ˆ
+
+ˆ
+
+˜I(g) dµ(g) =
+
+˜I(exp(u)) du.
+
+G
+
+V
+
+Hence we can deﬁne the warped image
+
+We can now reinterpret these results in terms of a new neu-
+ral network convolutional layer. The input of the layer is an
+image I and the learnable parameters are the coefﬁcients of
+the ﬁlter Fw. The output is a new “image” C(I; Fw)(v) de-
+ﬁned on the vector space V . This image is obtained by ﬁrst
+warping I using the exponential map and then by convolv-
+ing the result with Fw in the standard sense:
+
+C(I; Fw)(v) = (I(exp(·)x0) ∗
+V
+
+Fw)(v).
+
+(9)
+
+The most important property of this layer is equivariance:
+if we warp the image by the transformation h = exp(u),
+then the convolution result translates by u:
+
+C(I ◦ h−1; Fw) = C(I; Fw)(v − u),
+
+h = exp(u).
+
+Iw(u) = ˜I(exp(u)) = I(exp(u)x0),
+
+u ∈ V.
+
+2This means that g deﬁnes a mapping Ω (cid:55)→ Ω and that
+the group multiplication hg corresponds to function composition
+(hg)x = h(gx).
+
+Note that the output action equivalent to warping the input
+is simply to translate the result, as for standard convolu-
+tion. The second most important property is that this oper-
+ator can be implemented efﬁciently as the combination of
+warping and standard convolution.
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+3.2. Implementation and intuition
+
+Algorithm 1 Warped Convolution
+
+The warp (exponential map) that is applied to the input im-
+age eq. (9) can be implemented as follows. We start with
+an arbitrary pivot point x0 in the image, and then sample
+all possible transformations of that point, {gx0 : g ∈ G}.
+For discrete images, G will be implemented as a 2D grid of
+discrete transformations (e.g. rotations and scales at regu-
+lar intervals), and {gx0} will be a 2D grid as well, referred
+to as the warp grid. Finally, sampling the input image at the
+points {gx0} (for example, by bilinear interpolation) yields
+the warped image.
+
+An illustration is given in ﬁg. 1, for various transformations
+(each one is discussed in more detail in section 5). The red
+dot shows the pivot point x0, and the two arrows pointing
+away from it show the original axes of the sampled grid
+of parameters. The grids were generated by sampling the
+transformation parameters at regular intervals. Note that
+the warp grids are independent of the image contents – they
+can be computed once ofﬂine and then applied to any im-
+age.
+
+The steps for implementing a warped convolution block are
+outlined in algorithm 1. The main advantage of implement-
+ing group convolution as warped convolution is that it re-
+places a large number of warping operations (one per group
+element) with a single warp.
+
+4. Discussion
+
+space
+
+4.1. Interpretation as a ﬁltering operator in image
+
+When V ⊂ R2, we can often interpret group convolution
+as an integration over image space, instead of over group
+elements. For this, we introduce the map η(v) = exp(v)x0
+and assume that it is smooth, invertible, and surjective on
+the image domain Ω. Surjectivity means that G acts tran-
+sitively on Ω, in the sense that every point x ∈ Ω can be
+reached from x0 by a transformation g. Injectivity means
+that this transformation is unique.
+
+let h = exp(v) and note that exp(v + u) =
+
+Next,
+exp(v) exp(u) = h exp(u). Hence
+ˆ
+
+( ˜I ∗
+G
+
+˜F )(h) =
+
+Iw(v + u)Fw(−u) du
+
+=
+
+I(h exp(u)x0)F (exp(−u)x0) du.
+
+ˆ
+V
+
+V
+
+Let the ﬁlter F− be the reﬂection3 of F around the pivot
+point x0 by the group G, i.e. F−(gx0) = F (g−1x0). It
+
+3This is well deﬁned because η is invertible. In fact, if x =
+gx0 = exp(u)x0 = η(u), then u = η−1(x) and F−(x) =
+F (η(−η−1(x))).
+
+Grid generation (ofﬂine)
+
+• Compute the 2D warp grid w = gu(x0) by apply-
+ing a two-parameter spatial transformation g : R2 ×
+R2 → R2 to a single pivot point x0, using a 2D
+grid of parameters u = {(u1 + iδ1, u2 + jδ2) : i =
+0, . . . , m, j = 0, . . . , n}.
+
+Warped convolution
+
+1. Resample input image I using the warp grid w, by
+
+bilinear interpolation.
+
+2. Convolve warped image Iw with a learned ﬁlter Fw.
+
+By eq. (8), and for appropriate transformations, these steps
+are equivalent to group convolution (which performs an ex-
+haustive search across the pose-space of transformations),
+but at a much lower computational cost.
+
+follows that:
+
+( ˜I ∗
+G
+
+˜F )(h) =
+
+ˆ
+
+V
+
+I(h exp(u)x0)F−(exp(u)x0) du.
+
+We can now use the change of variable u ← η−1(x) to
+write
+
+( ˜I ∗
+G
+
+˜F )(h) =
+
+I(hη(u))F−(η(u)) du
+
+(10)
+
+=
+
+I(hx)F−(x)
+
+dx.
+
+(11)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+dη−1
+dx
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+ˆ
+
+V
+ˆ
+
+Ω
+
+Thus we see that the group convolution amounts to apply-
+ing a certain ﬁlter F− to the warped image I ◦ h. The ﬁlter
+elements are reweighed by the determinant of the Jacobian
+of η−1, which accounts for the stretching and shrinking of
+space due to the non-linear map. In practice, both the re-
+ﬂection and Jacobian can be absorbed into a learned ﬁlter,
+making such calculations unnecessary. Nevertheless, they
+offer a complementary view of warped convolutions.
+
+4.2. Efﬁciency vs. generality
+
+By reducing to standard convolution, warped convolu-
+tion allows one to take full advantage of modern convo-
+lution implementations (Lavin, 2015; Lyons, 2010), in-
+cluding those with lower computational complexity (e.g.
+FFT (Lyons, 2010)). However, while warped convolution
+works with an important class of transformations (includ-
+ing the ones considered in previous works Kanazawa et al.
+(2014); Cohen & Welling (2014); Marcos et al. (2016)),
+non-trivial restrictions are imposed on the transformation
+group: it must be Abelian and have only two parameters.
+
+By contrast,
+the group-theoretic convolution operator
+of eq. (5) does not make (almost) any restriction on the
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+(a) translation
+
+(b) scale/aspect ratio
+
+(c) scale/rotation
+
+(d) 3D rotation (yaw/pitch)
+
+Figure 1. First row: Sampling grids that deﬁne the warps associated with different spatial transformations. Second row: An example
+image (a) after warping with each grid (b-d). Third row: A small translation is applied to each warped image, which is then mapped
+back to the original space (by an inverse warp). Translation in one axis of the appropriate warped space is equivalent to (b) horizontal
+scaling; (c) planar rotation; (d) 3D rotation around the vertical axis.
+
+transformation group. Unfortunately, it is in general signif-
+icantly more difﬁcult to compute efﬁciently than the special
+case we consider here. To understand some of the imple-
+mentation challenges, consider specializing eq. (7) to a dis-
+crete group G such as a discrete set of planar rotations. In
+this case the Haar measure is trivial and equal to 1, and one
+has:
+
+(I ∗
+G
+
+F )(t) =
+
+(cid:88)
+
+g∈G
+
+I(tgx0)F (g−1x0).
+
+this equation has complexity
+Direct computation of
+O(|G|2) where |G| is the cardinality of the discrete group.
+Assuming that |G| is in the order of O(N 2) where N is the
+resolution of the input image (as it would be for standard
+convolution), one would obtain a complexity of O(N 4). In
+practice, since usually the support of a M ×M ﬁlter is much
+smaller than the image, this complexity might reduce to
+O(N 2M 2), which is the complexity for the spatial domain
+
+implementation of convolution; however, compared to the
+standard case, this has two major disadvantages. First, the
+image is sampled in a spatially-varying manner, using bi-
+linear or other interpolation, which foregoes the beneﬁt of
+the regular, predictable, and local pattern of computations
+in standard convolution. This makes high-performance im-
+plementation of the naive algorithm difﬁcult, particularly
+on GPUs. Secondly, it precludes the use of faster convolu-
+tion routines such as Winograd’s algorithm (Lavin, 2015)
+or the Fast Fourier Transform (Lyons, 2010), the later hav-
+ing lower computational complexity than exhaustive search
+(O(N 2 log N )). The development of analogues of the FFT
+for other general groups remains the subject of active re-
+search (Tygert, 2010; Li & Yang, 2016), which we sidestep
+by reusing highly optimized standard convolutions.
+
+In practice, most recent works focus on very coarse trans-
+formations that do not change the ﬁlter support and can
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+be implemented strictly via permutations, like horizon-
+tal/vertical ﬂips and 90◦ rotations (Dieleman et al., 2015;
+Cohen & Welling, 2014). Such difﬁculties may explain
+why group convolutions are not as widespread as CNNs.
+
+5. Examples of spatial transformations
+
+We now give some concrete examples of two-parameter
+spatial transformations that obey the conditions of sec-
+tion 2.4, and can be useful in practice.
+
+5.1. Scale and aspect ratio
+
+Visual object detection tasks require predicting the extent
+of an object as a bounding box. While the location can
+be found accurately by a standard CNN, which is equivari-
+ant to translation, the size prediction could similarly beneﬁt
+from equivariance to horizontal and vertical scale (equiva-
+lently, scale and aspect ratio).
+
+Such a spatial transformation, from which a warp can be
+constructed, is given by:
+
+gu(x) =
+
+(cid:21)
+
+(cid:20) x1su1
+x2su2
+
+(12)
+
+The s constant controls the total degree of scaling applied.
+Notice that the output must be exponential in the scale pa-
+rameters u; this ensures the additive structure of the expo-
+nential map (exp(v + u) = exp(v) exp(u)). The resulting
+warp grid can be visualized in ﬁg. 1-b. In this case, the do-
+main of the image must be Ω ∈ R2
++, since a pivot x0 in one
+quadrant cannot reach another quadrant by any amount of
+(positive) scaling.
+
+5.2. Scale and rotation (log-polar warp)
+
+Planar scale and rotation are perhaps the most obvious
+spatial transformations in images, and are a natural test
+case for works on spatial transformations (Kanazawa et al.,
+2014; Marcos et al., 2016). Rotating a point x by u1 radians
+and scaling it by u2, around the origin, can be performed
+with
+
+gu(x) =
+
+(cid:20) su2 (cid:107)x(cid:107) cos(atan2(x2, x1) + u1)
+su2 (cid:107)x(cid:107) sin(atan2(x2, x1) + u1)
+
+(cid:21)
+
+,
+
+(13)
+
+where atan2 is the standard 4-quadrant inverse tangent
+function (atan2). The domain in this case must exclude
+the origin (Ω ∈ R2 \ {0}), since a pivot x0 = 0 cannot
+reach any other points in the image by rotation or scaling.
+
+The resulting warp grid can be visualized in ﬁg. 1-c.
+It
+is interesting to observe that it corresponds exactly to the
+log-polar domain, which is used in the signal processing
+
+I
+
+Warp
+
+CNN
+
+Soft argmax
+
+Scale+bias
+
+ˆu
+
+Iw
+
+Figure 2. Equivariant pose estimation strategy used in the experi-
+ments (section 6). With an appropriate warp and a standard CNN,
+the shaded block becomes equivalent to a group-equivariant CNN,
+which performs exhaustive searches across pose-space instead of
+image-space.
+
+literature to perform correlation across scale and rotation
+(Tzimiropoulos et al., 2010; Reddy & Chatterji, 1996). In
+fact, it was the source of inspiration for this work, which
+can be seen as a generalization of the log-polar domain to
+other spatial transformations.
+
+5.3. 3D sphere rotation under perspective
+
+We will now tackle a more difﬁcult spatial transformation,
+in an attempt to demonstrate the generality of our result.
+The transformations we will consider are yaw and pitch ro-
+tations in 3D space, as seen by a perspective camera. In
+the experiments (section 6) we will show how to apply it to
+face pose estimation.
+
+In order to maintain additivity, the rotated 3D points must
+remain on the surface of a sphere. We consider a simpliﬁed
+camera and world model, whose only hyperparameters are
+a focal length f , the radius of a sphere r, and its distance
+from the camera center d. The equations for the spatial
+transformation corresponding to yaw and pitch rotation un-
+der this model are in appendix A.
+
+The corresponding warp grid can be seen in ﬁg. 1-d. It can
+be observed that the grid corresponds to what we would ex-
+pect of a 3D rendering of a sphere with a discrete mesh. An
+intuitive picture of the effect of the warp grid in such cases
+is that it wraps the 2D image around the surface of the 3D
+object, so that translation in the warped space corresponds
+to moving between vertexes of the 3D geometry.
+
+6. Experiments
+
+6.1. Architecture
+
+As mentioned in section 2.2, group convolution can per-
+form an exhaustive search for patterns across spatial trans-
+formations, by varying pose parameters. For tasks where
+invariance to that transformation is important, it is usual to
+pool the detection responses across all poses (Marcos et al.,
+2016; Kanazawa et al., 2014).
+
+In the experiments, however, we will test the framework in
+pose prediction tasks. As such, we do not want to pool the
+detection responses (e.g. with a max operation) but rather
+ﬁnd the pose with the strongest response (i.e., an argmax
+operation). To perform this operation in a differentiable
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+manner, we implement a soft argmax operation, deﬁned as
+follows:
+
+Table 1. Results of scale and rotation pose estimation of vehicles
+in the Google Earth dataset (errors in pixels and degrees, resp.).
+
+s1(a) =
+
+σij(a),
+
+s2(a) =
+
+σij(a),
+
+(14)
+
+mn
+(cid:88)
+
+ij
+
+i
+m
+
+mn
+(cid:88)
+
+ij
+
+j
+n
+
+where σ(a) ∈ Rm×n is the softmax over all spatial loca-
+tions, and σij(a) indexes the element at (i, j). The out-
+puts are the two spatial coordinates of the maximum value,
+s(a) ∈ R2.
+
+Our base architecture then consists of the following blocks,
+outlined in ﬁg. 2. First, the input image is warped with a
+pre-generated grid, according to section 4.1. The warped
+image is then processed by a standard CNN, which is now
+equivariant to the spatial transformation that was used to
+generate the warp grid. A soft argmax (eq. (14)) then ﬁnds
+the maximum over pose-space. To ensure the pose predic-
+tion is well registered to the reference coordinate system, a
+learnable scale and bias are applied to the outputs; multi-
+ple predictions can be linearly combined into a single one
+at this stage. Training proceeds by minimizing the L1 loss
+between the predicted pose and ground truth pose.
+
+6.2. Google Earth
+
+For the ﬁrst task in our experiments, we will consider aerial
+photos of vehicles, which have been used in several works
+that deal with rotation invariance (Liu et al., 2014; Schmidt
+& Roth, 2012; Henriques et al., 2014).
+
+Dataset. The Google Earth dataset (Heitz & Koller, 2008)
+contains bounding box annotations, supplemented with an-
+gle annotations from (Henriques et al., 2014), for 697 vehi-
+cles in 15 large images. We use the ﬁrst 10 for training and
+the rest for validation. Going beyond these previous works,
+we focus on the estimation of both rotation and scale pa-
+rameters. The object scale is taken to be the diagonal length
+of the bounding box. Due to its small size, we augment the
+dataset during training, by randomly rotating the images
+uniformly over 360◦ and scaling them by up to 20%.
+
+Implementation. A 48 × 48 image is cropped around
+each vehicle, and then fed to a network for pose predic-
+tion. The proposed method, Warped CNN, follows the ar-
+chitecture of section 6.1 (visualized in ﬁg. 2). The CNN
+block contains 3 convolutional layers with 3 × 3 ﬁlters,
+with 50, 20 and 50 output channels respectively. We use
+dilation factors of 2, 4 and 8 respectively (`a trous convo-
+lution (Chen et al., 2015)), which increases the receptive
+ﬁeld and resolution without adding paramenters. There is
+a batch normalization and ReLU layer after each convo-
+lution, and a 3 × 3 max-pooling operator (stride 2) after
+the second one. The CNN block outputs response maps
+
+ROT. ERR.
+
+SCALE ERR.
+
+CNN+FC
+CNN+SOFTARGMAX
+WARPED CNN
+(DIELEMAN ET AL., 2015)
+
+22.54
+9.36
+8.29
+31.11
+
+5.04
+4.87
+4.79
+4.29
+
+over 2D pose-space, which in this case consists of rotation
+and scale. All networks are trained for 40 epochs using
+the ADAM solver (Kingma & Ba, 2015) and implemented
+in MatConvNet (Vedaldi & Lenc, 2015). Angular error is
+taken modulo 180◦ due to annotation ambiguity. We report
+the average validation error over 3 runs.
+
+Baselines and results. The results of the experiments are
+presented in table 1, which shows angular and scale er-
+ror in the validation set. To verify whether the proposed
+warped convolution is indeed responsible for a boost in per-
+formance, rather than other architectural details, we com-
+pare it against a number of baselines with different compo-
+nents removed. The ﬁrst baseline, CNN+softargmax, con-
+sists of the same architecture but without the warp (sec-
+tion 5.2). This is a standard CNN, with the soft argmax at
+the end. Since CNNs are equivariant to translation, rather
+than scale and rotation, we observe a drop in performance.
+For the second baseline, CNN+FC, we replace the soft
+argmax with a fully-connected (FC) layer, to allow a pre-
+diction that is not equivariant with translation. Due to the
+larger number of parameters, there is overﬁtting and a large
+drop in performance. We also compare against the method
+of (Dieleman et al., 2015), which applies the same CNN to
+90◦ rotations and ﬂips of the image, combining the result
+with a FC layer. Just like with CNN+FC, there is overﬁt-
+ting on this small dataset, which requires very ﬁne angu-
+lar predictions. The proposed Warped CNN achieves the
+best results, except for scale prediction where (Dieleman
+et al., 2015) performs better. Our method has the same run-
+time performance as the CNN baselines, since the cost of a
+single warp is negligible, however (Dieleman et al., 2015)
+is 16× slower, since it applies the same CNN to multiple
+transformed images.
+
+6.3. Faces
+
+We now turn to face pose estimation in unconstrained pho-
+tos, which requires handling more complex 3D rotations
+under perspective.
+
+Dataset. For this task we use the Annotated Facial Land-
+marks in the Wild (AFLW) dataset (Koestinger et al.,
+2011).
+It contains about 25K faces found in Flickr pho-
+tos, and includes yaw (left-right) and pitch (up-down) an-
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+Table 2. Results of yaw and pitch pose estimation of faces on the
+AFLW dataset (error in degrees).
+
+7. Conclusions
+
+YAW ERR.
+
+PITCH ERR.
+
+CNN+FC
+STN (JADERBERG ET AL., 2015)
+WARPED CNN
+
+12.56
+13.65
+7.07
+
+6.59
+7.22
+5.28
+
+notations. We removed 933 faces with yaw larger than 90
+degrees (i.e., facing away from the camera), resulting in a
+set of 24,384 samples. 20% of the faces were set aside for
+validation.
+
+Implementation. The region in each face’s bounding box
+is resized to a 64 × 64 image, which is then processed by
+the network. Recall that our simpliﬁed 3D model of yaw
+and pitch rotation (section 5.3) assumes a spherical geom-
+etry. Although a person’s head roughly follows a spherical
+shape, the sample images are centered around the face, not
+the head. As such, we use an afﬁne Spatial Transformer
+Network (STN) (Jaderberg et al., 2015) as a ﬁrst step, to
+center the image correctly. Similarly, because the optimal
+camera parameters (f , r and d) are difﬁcult to set by hand,
+we let the network learn them, by computing their deriva-
+tives numerically (which has a low overhead, since they are
+scalars). The rest of the network follows the same diagram
+as before (ﬁg. 2). The main CNN has 4 convolutional lay-
+ers, the ﬁrst two with 5×5 ﬁlters, the others being 9×9. The
+numbers of output channels are 20, 50, 20 and 50, respec-
+tively. A 3 × 3 max-pooling with a stride of 2 is performed
+after the ﬁrst layer, and there are ReLU non-linearities be-
+tween the others. As for the STN, it has 3 convolutional
+layers (5 × 5), with 20, 50 and 6 output channels respec-
+tively, and 3 × 3 max-pooling (stride 2) between them. The
+remaining experimental settings are as in section 6.2.
+
+Baselines and results. The angular error of the proposed
+equivariant pose estimation, Warped CNN, is shown in ta-
+ble 2, along with a number of baselines. The goal of
+these experiments is to demonstrate that it is possible to
+achieve equivariance to complex 3D rotations. To compare
+with non-equivariant models, we test two baselines with
+the same CNN architecture, where the softargmax is re-
+placed with a fully-connected (FC) layer. We include the
+Spatial Transformer Network (Jaderberg et al., 2015) and
+CNN+FC, which is a standard CNN of equivalent (slightly
+larger) capacity. We observe that neither the FC or the STN
+components account for the performance of the warped
+convolution, which better exploits the natural 3D rotation
+equivariance of the data.
+
+In this work we show that it is possible to reuse highly opti-
+mized convolutional blocks, which are equivariant to image
+translation, and coax them to exhibit equivariance to other
+operators, including 3D transformations. This is achieved
+by a simple warp of the input image, implemented with off-
+the-shelf components of deep networks, and can be used
+for image recognition tasks involving a large range of im-
+age transformations. Compared to other works, warped
+convolutions are simpler, relying on highly optimized con-
+volution routines, and can ﬂexibly handle many types of
+continuous transformations. Studying generalizations that
+support more than two parameters seems like a fruitful di-
+rection for future work. In addition to the practical aspects,
+our analysis offers some insights into the fundamental rela-
+tionships between arbitrary image transformations and con-
+volutional architectures.
+
+A. Spatial transformation for 3D sphere
+
+rotation under perspective
+
+Our simpliﬁed model consists of a perspective camera with
+focal length f and all other camera parameters equal to
+identity, at a distance d from a centered sphere of radius
+r (see ﬁg. 1-d).
+
+A 2D point x in image-space corresponds to the 3D point
+
+p = (x1, x2, f ).
+
+(15)
+
+Raycasting it along the z axis, it will intersect the sphere
+surface at the 3D point
+
+q =
+
+k −
+
+k2 − d2 + r2
+
+, k =
+
+(16)
+
+(cid:16)
+
+p
+(cid:107)p(cid:107)
+
+(cid:112)
+
+(cid:17)
+
+f d
+(cid:107)p(cid:107)
+
+.
+
+If the argument of the square-root is negative, the ray does
+not intersect the sphere and so the point transformation is
+undeﬁned. This means that the domain of the image Ω
+should be restricted to the sphere region.
+In practice, in
+such cases we simply leave the point unmodiﬁed. Then,
+the yaw and pitch coordinates of the point q on the surface
+of the sphere are
+
+φ1 = cos−1 (cid:16)
+
+−
+
+(cid:17)
+
+q2
+r
+
+, φ2 = atan2
+
+−
+
+.
+
+(17)
+
+(cid:18)
+
+(cid:19)
+
+q1
+d − q3
+
+These polar coordinates are now rotated by the spatial
+transformation parameters, φ(cid:48) = φ + u. Converting them
+back to a 3D point q(cid:48)
+
+q(cid:48) = (r sin φ(cid:48)
+
+1 sin φ(cid:48)
+
+2, −r cos φ(cid:48)
+
+1, r sin φ(cid:48)
+
+1 cos φ(cid:48)
+
+2 − d) (18)
+
+Finally, projection of q(cid:48) into image-space yields
+
+gu(x) = − f
+q(cid:48)
+3
+
+(q(cid:48)
+
+1, q(cid:48)
+
+2) .
+
+(19)
+
+Warped Convolutions: Efﬁcient Invariance to Spatial Transformations
+
+Folland, Gerald B. A course in abstract harmonic analysis.
+
+ing. Pearson Education, 2010.
+
+CRC Press, 1995.
+
+References
+
+Bruna, Joan, Szlam, Arthur, and LeCun, Yann. Learning
+stable group invariant representations with convolutional
+networks. arXiv preprint arXiv:1301.3537, 2013.
+
+Chen, Liang-Chieh, Papandreou, George, Kokkinos, Ia-
+sonas, Murphy, Kevin, and Yuille, Alan L. Semantic im-
+age segmentation with deep convolutional nets and fully
+In Proceedings of the 2015 Interna-
+connected CRFs.
+tional Conference on Learning Representations, 2015.
+
+Cohen, Taco and Welling, Max. Learning the Irreducible
+In Pro-
+Representations of Commutative Lie Groups.
+ceedings of the 31st International Conference on Ma-
+chine Learning, 2014.
+
+Cohen, Taco and Welling, Max. Group equivariant convo-
+lutional networks. In Proceedings of the 33rd Interna-
+tional Conference on Machine Learning, 2016.
+
+Dieleman, Sander, Willett, Kyle W, and Dambre, Joni.
+Rotation-invariant convolutional neural networks for
+galaxy morphology prediction. Monthly notices of the
+royal astronomical society, 450(2):1441–1459, 2015.
+
+Goodfellow, Ian, Bengio, Yoshua, and Courville, Aaron.
+
+Deep learning. MIT Press, 2016.
+
+Heckbert, Paul S. Fundamentals of texture mapping and
+image warping. Master’s thesis, University of California,
+Berkeley, 1989.
+
+Heitz, Geremy and Koller, Daphne. Learning spatial con-
+text: Using stuff to ﬁnd things. In European Conference
+on Computer Vision, pp. 30–43. Springer, 2008.
+
+Henriques, J. F., Martins, P., Caseiro, R., and Batista, J.
+Fast training of pose detectors in the fourier domain.
+In Advances in Neural Information Processing Systems,
+2014.
+
+Hyv¨arinen, Aapo, Hurri, Jarmo, and Hoyer, Patrick O. Nat-
+ural Image Statistics: A Probabilistic Approach to Early
+Computational Vision., volume 39. Springer Science &
+Business Media, 2009.
+
+Jaderberg, Max, Simonyan, Karen, Zisserman, Andrew,
+In Advances in
+et al. Spatial transformer networks.
+Neural Information Processing Systems, pp. 2017–2025,
+2015.
+
+Kanazawa, Angjoo, Sharma, Abhishek, and Jacobs, David.
+Locally scale-invariant convolutional neural networks.
+arXiv preprint arXiv:1412.5104, 2014.
+
+Kingma, Diederik P and Ba, Jimmy Lei. Adam: A method
+for stochastic optimization. In Proceedings of the 2015
+International Conference on Learning Representations,
+2015.
+
+Koestinger, Martin, Wohlhart, Paul, Roth, Peter M., and
+Bischof, Horst. Annotated facial landmarks in the wild:
+A large-scale, real-world database for facial landmark
+localization. In IEEE International Workshop on Bench-
+marking Facial Image Analysis Technologies, 2011.
+
+Lavin, Andrew. Fast algorithms for convolutional neural
+
+networks. arXiv preprint arXiv:1509.09308, 2015.
+
+Li, Yingzhou and Yang, Haizhao.
+
+Interpolative butterﬂy
+
+factorization. arXiv preprint arXiv:1605.03616, 2016.
+
+Liu, Kun, Skibbe, Henrik, Schmidt, Thorsten, Blein,
+Thomas, Palme, Klaus, Brox, Thomas, and Ron-
+neberger, Olaf. Rotation-Invariant HOG Descriptors Us-
+ing Fourier Analysis in Polar and Spherical Coordinates.
+International Journal of Computer Vision, 106(3):342–
+364, February 2014. ISSN 0920-5691, 1573-1405. doi:
+10.1007/s11263-013-0634-z.
+
+Lyons, Richard G. Understanding digital signal process-
+
+Marcos, Diego, Volpi, Michele, and Tuia, Devis. Learning
+rotation invariant convolutional ﬁlters for texture classi-
+ﬁcation. arXiv preprint arXiv:1604.06720, 2016.
+
+Reddy, B. Srinivasa and Chatterji, Biswanath N. An
+FFT-based technique for translation, rotation, and scale-
+invariant image registration. IEEE Transactions on Im-
+age Processing, 5(8):1266–1271, 1996.
+
+Schmidt, Uwe and Roth, Stefan. Learning rotation-aware
+features: From invariant priors to equivariant descrip-
+In Computer Vision and Pattern Recognition
+tors.
+(CVPR), 2012 IEEE Conference on, pp. 2050–2057,
+2012.
+
+Tygert, Mark. Fast algorithms for spherical harmonic ex-
+pansions, iii. Journal of Computational Physics, 229
+(18):6181–6192, 2010.
+
+Tzimiropoulos, Georgios, Argyriou, Vasileios, Zafeiriou,
+Stefanos, and Stathaki, Tania. Robust FFT-based scale-
+invariant image registration with image gradients. IEEE
+Transactions on Pattern Analysis and Machine Intelli-
+gence, 32(10):1899–1906, 2010.
+
+Vedaldi, A. and Lenc, K. MatConvNet – Convolutional
+In Proceeding of the
+
+Neural Networks for MATLAB.
+ACM Int. Conf. on Multimedia, 2015.
+
+Acknowledgements. This research was funded by ERC
+677195-IDIU.
+
+

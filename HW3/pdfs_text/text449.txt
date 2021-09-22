@@ -1,0 +1,1233 @@
+Post-Inference Prior Swapping
+
+Willie Neiswanger 1 Eric Xing 2
+
+Abstract
+
+While Bayesian methods are praised for their
+ability to incorporate useful prior knowledge, in
+practice, convenient priors that allow for compu-
+tationally cheap or tractable inference are com-
+monly used. In this paper, we investigate the fol-
+lowing question: for a given model, is it possible
+to compute an inference result with any conve-
+nient false prior, and afterwards, given any tar-
+get prior of interest, quickly transform this re-
+sult into the target posterior? A potential solu-
+tion is to use importance sampling (IS). How-
+ever, we demonstrate that IS will fail for many
+choices of the target prior, depending on its para-
+metric form and similarity to the false prior. In-
+stead, we propose prior swapping, a method that
+leverages the pre-inferred false posterior to efﬁ-
+ciently generate accurate posterior samples un-
+der arbitrary target priors. Prior swapping lets us
+apply less-costly inference algorithms to certain
+models, and incorporate new or updated prior in-
+formation “post-inference”. We give theoretical
+guarantees about our method, and demonstrate it
+empirically on a number of models and priors.
+
+1. Introduction
+
+There are many cases in Bayesian modeling where a cer-
+tain choice of prior distribution allows for computationally
+simple or tractable inference. For example,
+
+• Conjugate priors yield posteriors with a known para-
+metric form and therefore allow for non-iterative, ex-
+act inference (Diaconis et al., 1979).
+
+• Certain priors yield models with tractable conditional
+or marginal distributions, which allows efﬁcient ap-
+proximate inference algorithms to be applied (e.g.
+Gibbs sampling (Smith & Roberts, 1993), sampling
+
+1Carnegie Mellon University, Machine Learning Department,
+Pittsburgh, USA 2CMU School of Computer Science. Correspon-
+dence to: Willie Neiswanger <willie@cs.cmu.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+in collapsed models (Teh et al., 2006), or mean-ﬁeld
+variational methods (Wang & Blei, 2013)).
+
+• Simple parametric priors allow for computationally
+cheap density queries, maximization, and sampling,
+which can reduce costs in iterative inference algo-
+rithms (e.g. Metropolis-Hastings (Metropolis et al.,
+1953), gradient-based MCMC (Neal, 2011), or se-
+quential Monte Carlo (Doucet et al., 2000)).
+
+For these reasons, one might hope to infer a result under a
+convenient-but-unrealistic prior, and afterwards, attempt to
+correct the result. More generally, given an inference result
+(under a convenient prior or otherwise), one might wish to
+incorporate updated prior information, or see a result un-
+der different prior assumptions, without having to re-run a
+costly inference algorithm.
+
+This leads to the main question of this paper: for a given
+model, is it possible to use any convenient false prior to
+infer a false posterior, and afterwards, given any target prior
+of interest, efﬁciently and accurately infer the associated
+target posterior?
+
+One potential strategy involves sampling from the false
+posterior and reweighting these samples via importance
+sampling (IS). However, depending on the chosen target
+prior—both its parametric form and similarity to the false
+prior—the resulting inference can be inaccurate due to high
+or inﬁnite variance IS estimates (demonstrated in Sec. 2.1).
+
+We instead aim to devise a method that yields accurate in-
+ferences for arbitrary target priors. Furthermore, like IS, we
+want to make use of the pre-inferred false posterior, without
+simply running standard inference algorithms on the target
+posterior. Note that most standard inference algorithms are
+iterative and data-dependent: parameter updates at each it-
+eration involve data, and the computational cost or quality
+of each update depends on the amount of data used. Hence,
+running inference algorithms directly on the target poste-
+rior can be costly (especially given a large amount of data
+or many target priors of interest) and defeats the purpose of
+using a convenient false prior.
+
+In this paper, we propose prior swapping, an iterative, data-
+independent method for generating accurate posterior sam-
+ples under arbitrary target priors. Prior swapping uses the
+pre-inferred false posterior to perform efﬁcient updates that
+
+Post-Inference Prior Swapping
+
+do not depend on the data, and thus proceeds very quickly.
+We therefore advocate breaking difﬁcult inference prob-
+lems into two easier steps: ﬁrst, do inference using the most
+computationally convenient prior for a given model, and
+then, for all future priors of interest, use prior swapping.
+
+In the following sections, we demonstrate the pitfalls of
+using IS, describe the proposed prior swapping methods
+for different types of false posterior inference results (e.g.
+exact or approximate density functions, or samples) and
+give theoretical guarantees for these methods. Finally, we
+show empirical results on heavy-tailed and sparsity priors
+in Bayesian generalized linear models, and relational priors
+over components in mixture and topic models.
+
+2. Methodology
+Suppose we have a dataset of n vectors xn = {x1, . . . , xn},
+xi ∈ Rp, and we have chosen a family of models with the
+likelihood function L(θ|xn) = p(xn|θ), parameterized by
+θ ∈ Rd. Suppose we have a prior distribution over the
+space of model parameters θ, with probability density func-
+tion (PDF) π(θ). The likelihood and prior deﬁne a joint
+model with PDF p(θ, xn) = π(θ)L(θ|xn). In Bayesian in-
+ference, we are interested in computing the posterior (con-
+ditional) distribution of this joint model, with PDF
+
+p(θ|xn) =
+
+π(θ)L(θ|xn)
+(cid:82) π(θ)L(θ|xn) dθ
+
+.
+
+Suppose we’ve chosen a different prior distribution πf (θ),
+which we refer to as a false prior (while we refer to π(θ)
+as the target prior). We can now deﬁne a new posterior
+
+pf (θ|xn) =
+
+πf (θ)L(θ|xn)
+(cid:82) πf (θ)L(θ)|xn) dθ
+
+which we refer to as a false posterior.
+
+We are interested in the following task: given a false poste-
+rior inference result (i.e. samples from pf (θ|xn), or some
+exact or approximate PDF), choose an arbitrary target prior
+π(θ) and efﬁciently sample from the associated target pos-
+terior p(θ|xn)—or, more generally, compute an expecta-
+tion µh = Ep [h(θ)] for some test function h(θ) with re-
+spect to the target posterior.
+
+2.1. Importance Sampling and Prior Sensitivity
+
+We begin by describing an initial strategy, and existing
+work in a related task known as prior sensitivity analysis.
+Suppose we have T false posterior samples {˜θt}T
+t=1 ∼
+pf (θ|xn). In importance sampling (IS), samples from an
+importance distribution are used to estimate the expecta-
+tion of a test function with respect to a target distribution.
+A straightforward idea is to use the false posterior as an
+
+(1)
+
+(2)
+
+importance distribution, and compute the IS estimate
+
+ˆµIS
+
+h =
+
+w(˜θt)h(˜θt)
+
+(3)
+
+T
+(cid:88)
+
+t=1
+
+where the weight function w(θ) ∝ p(θ|xn)
+the T weights are normalized to sum to one.
+
+pf (θ|xn) ∝ π(θ)
+
+πf (θ) , and
+
+IS-based methods have been developed for the task of prior
+sensitivity analysis (PSA). In PSA, the goal is to determine
+how the posterior varies over a sequence of priors (e.g. over
+a parameterized family of priors π(θ; γi), i = 0, 1, . . .).
+Existing work has proposed inferring a single posterior un-
+der prior π(θ; γ0), and then using IS methods to infer fur-
+ther posteriors in the sequence (Besag et al., 1995; Hast-
+ings, 1970; Bornn et al., 2010).
+
+This strategy is effective when subsequent priors are sim-
+ilar enough, but breaks down when two priors are sufﬁ-
+ciently dissimilar, or are from ill-matched parametric fam-
+ilies, which we illustrate in an example below.
+
+Note that, in general for IS, as T → ∞, ˆµIS
+h → µh al-
+most surely. However, IS estimates can still fail in practice
+if ˆµIS
+h has high or inﬁnite variance. If so, the variance of
+the weights w(˜θt) will be large (a problem often referred
+to as weight degeneracy), which can lead to inaccurate es-
+timates. In our case, the variance of ˆµIS
+
+Epf
+
+(cid:20)
+h(θ)2 π(θ)2
+πf (θ)2
+
+(cid:21)
+
+∝ Ep
+
+(cid:20)
+h(θ)2 π(θ)
+πf (θ)
+
+h is only ﬁnite if
+(cid:21)
+
+< ∞.
+
+(4)
+
+For a broad class of h, this is satisﬁed if there exists M ∈ R
+such that π(θ)
+πf (θ) < M, ∀θ (Geweke, 1989). Given some pre-
+inferred pf (θ|xn) with false prior πf (θ), the accuracy of IS
+thus depends on the target prior of interest. For example, if
+π(θ) has heavier tails than πf (θ), the variance of ˆµIS
+h will
+be inﬁnite for many h. Intuitively, we expect the variance
+to be higher for π that are more dissimilar to πf .
+
+We show a concrete example of this in Fig. 1. Consider a
+normal model for data xn ∼ N (θ, 1), with a standard nor-
+mal false prior πf (θ) = N (θ|0, 1). This yields a closed-
+form false posterior (due to the conjugate πf ), which is also
+normal. Suppose we’d like to estimate the posterior expec-
+tation under a Laplace target prior, with mean 10 and vari-
+ance 1, for test function h(θ) = θ (i.e. an estimate of the
+target posterior mean). We draw T false posterior samples
+t=1 ∼ pf (θ|xn), compute weights w(˜θt) and IS esti-
+{˜θt}T
+mate ˆµIS
+h , and compare it with the true expectation µh.
+
+We see in Fig. 1 that |µh − ˆµIS
+h | slows signiﬁcantly as T
+increases, and maintains a high error even as T is made
+very large. We can analyze this issue theoretically. Sup-
+h | < δ. Since we know pf (θ|xn)
+pose we want |µh − ˆµIS
+is normal, we can compute a lower bound on the num-
+ber of false posterior samples T that would be needed for
+
+Post-Inference Prior Swapping
+
+Figure 1. Importance sampling with false posterior samples. As the number of samples T grows, the difference between the IS estimate
+h and the true value µh decreases increasingly slowly. The difference remains large even when T = 108. See text for analysis.
+ˆµIS
+
+the expected estimate to be within δ of µh. Namely, if
+pf (θ|xn) = N (θ|m, s2), in order for |µh − Epf [ˆµIS
+h ]| < δ,
+we’d need
+
+T ≥ exp
+
+(cid:26) 1
+2s2 (|µh − m| − δ)2
+
+(cid:27)
+
+.
+
+In the example in Fig. 1, we have m = 1, s2 = 0.25, and
+µh = 7.9892. Hence, for |µh − Epf [ˆµIS
+h ]| < 1, we’d need
+T > 1031 samples (see appendix for full details of this
+analysis). Note that this bound actually has nothing to do
+with the parametric form of π(θ)—it is based solely on the
+normal false posterior, and its distance to the target poste-
+rior mean µh. However, even if this distance was small,
+the importance estimate would still have inﬁnite variance
+due to the Laplace target prior. Further, note that the sit-
+uation can signiﬁcantly worsen in higher dimensions, or if
+the false posterior has a lower variance.
+
+2.2. Prior Swapping
+
+We’d like a method that will work well even when false
+and target priors πf (θ) and π(θ) are signiﬁcantly different,
+or are from different parametric families, with performance
+that does not worsen (in accuracy nor computational com-
+plexity) as the priors are made more dissimilar.
+
+Redoing inference for each new target posterior can be
+very costly, especially when the data size n is large, be-
+cause the per-iteration cost of most standard inference al-
+gorithms scales with n, and many iterations may be needed
+for accurate inference. This includes both MCMC and se-
+quential monte carlo (SMC) algorithms (i.e. repeated-IS-
+methods that infer a sequence of distributions). In SMC,
+the per-iteration cost still scales with n, and the variance
+estimates can still be inﬁnite if subsequent distributions are
+ill-matched.
+
+later; assume for now that it is either equal to pf (θ|xn) or
+approximates it). We then deﬁne the prior swap density as
+
+ps(θ) ∝
+
+˜pf (θ)π(θ)
+πf (θ)
+
+.
+
+(5)
+
+Note that if ˜pf (θ) = pf (θ|xn), then ps(θ) = p(θ|xn).
+However, depending on how we represent ˜pf (θ), ps(θ) can
+have a much simpler analytic representation than p(θ|xn),
+which is typically deﬁned via a likelihood function (i.e. a
+function of the data) and causes inference algorithms to
+have costs that scale with the data size n. Speciﬁcally, we
+will only use low-complexity ˜pf (θ) that can be evaluated
+in constant time with respect to the data size n.
+
+Our general strategy is to use ps(θ) as a surrogate for
+p(θ|xn) in standard MCMC or optimization procedures, to
+yield data-independent algorithms with constant cost per it-
+eration. Intuitively, the likelihood information is captured
+by the false posterior—we make use of this instead of the
+likelihood function, which is costly to evaluate.
+
+More concretely, at each iteration in standard inference al-
+gorithms, we must evaluate a data-dependent function asso-
+ciated with the posterior density. For example, we evaluate
+a function proportional to p(θ|xn) in Metropolis-Hastings
+(MH) (Metropolis et al., 1953), and ∇θ log p(θ|xn) in
+gradient-based MCMC methods (such as Langevin dynam-
+ics (LD) (Rossky et al., 1978) and Hamiltonian Monte
+Carlo (HMC) (Neal, 2011)) and in optimization procedures
+that yield a MAP point estimate. In prior swapping, we in-
+stead evaluate ps(θ) in MH, or ∇θ log ps(θ) in LD, HMC,
+or gradient optimization to a MAP estimate (see appendix
+for algorithm pseudocode). Here, each iteration only re-
+quires evaluating a few simple analytic expressions, and
+thus has O(1) complexity with respect to data size.
+
+Instead, we aim to leverage the inferred false posterior to
+more-efﬁciently compute any future target posterior. We
+begin by deﬁning a prior swap density ps(θ). Suppose for
+now that a false posterior inference algorithm has returned
+a density function ˜pf (θ) (we will give more details on ˜pf
+
+We demonstrate prior swapping on our previous example
+(using a normal false prior and Laplace target prior) in
+Fig. 2, where we have a closed-form (normal PDF) ˜pf (θ).
+To do prior swapping, we run a Metropolis-Hastings algo-
+rithm on the target density ps(θ). Note that drawing each
+
+−202468101200.511.5PDFFalse posterior samples= Post-Inference Prior Swapping
+
+Figure 2. Using prior swapping to compute estimate ˆµPS
+
+h by drawing samples {θt}T
+
+t=1 ∼ ps(θ).
+
+sample in this Markov chain does not involve the data xn,
+and can be done in constant time with respect to n (which
+we can see by viewing the wall time for different T ). In
+Fig. 2, we draw T samples {θt}T
+t=1 ∼ ps(θ), compute a
+sample estimate ˆµPS
+t=1 θt, and compare it with
+the true value µh. We see that ˆµPS
+h converges to µh after a
+relatively small number of samples T.
+
+h = 1
+T
+
+(cid:80)T
+
+2.3. Prior Swapping with False Posterior Samples
+
+The previous method is only applicable if our false poste-
+rior inference result is a PDF ˜pf (θ) (such as in closed-form
+inference or variational approximations). Here, we develop
+prior swapping methods for the setting where we only have
+access to samples {˜θt}Tf
+t=1 ∼ pf (θ|xn). We propose the
+following procedure:
+1. Use {˜θt}Tf
+2. Sample from ps(θ) ∝ π(θ) ˜pf (θ)
+
+t=1 to form an estimate ˜pf (θ) ≈ pf (θ|xn).
+
+πf (θ) with prior swapping,
+
+as before.
+
+Note that, in general, ps(θ) only approximates p(θ|xn). As
+a ﬁnal step, after sampling from ps(θ), we can:
+
+3. Apply a correction to samples from ps(θ).
+
+We will describe two methods for applying a correction to
+ps samples—one involving importance sampling, and one
+involving semiparametric density estimation. Additionally,
+we will discuss forms for ˜pf (θ), guarantees about these
+forms, and how to optimize the choice of ˜pf (θ). In particu-
+lar, we will argue why (in constrast to the initial IS strategy)
+these methods do not fail when p(θ|xn) and pf (θ|xn) are
+very dissimilar or have ill-matching parametric forms.
+
+Prior swap importance sampling. Our ﬁrst proposal for
+applying a correction to prior swap samples involves IS: af-
+ter estimating some ˜pf (θ), and sampling {θt}T
+t=1 ∼ ps(θ),
+we can treat {θt}T
+t=1 as importance samples, and compute
+the IS estimate
+
+where the weight function is now
+
+w(θ) ∝
+
+p(θ|xn)
+ps(θ)
+
+∝
+
+pf (θ|xn)
+˜pf (θ)
+
+(7)
+
+and the weights are normalized so that (cid:80)T
+
+t=1 w(θt) = 1.
+
+The key difference between this and the previous IS strat-
+egy is the weight function. Recall that, previously, an accu-
+rate estimate depended on the similarity between π(θ) and
+πf (θ); both the distance to and parametric form of π(θ)
+could produce high or inﬁnite variance estimates. This was
+an issue because we wanted the procedure to work well for
+any π(θ). Now, however, the performance depends on the
+similarity between ˜pf (θ) and pf (θ|xn)—and by using the
+false posterior samples, we can estimate a ˜pf (θ) that well
+approximates pf (θ|xn). Additionally, we can prove that
+certain choices of ˜pf (θ) guarantee a ﬁnite variance IS esti-
+mate. Note that the variance of ˆµPSis
+
+is only ﬁnite if
+
+h
+
+Epf
+
+(cid:20)
+h(θ)2 pf (θ|xn)2
+˜pf (θ)2
+
+(cid:21)
+
+∝ Ep
+
+(cid:20)
+h(θ)2 pf (θ|xn)
+˜pf (θ)
+
+(cid:21)
+
+< ∞.
+
+To bound this, it is sufﬁcient to show that there exists
+M ∈ R such that pf (θ|xn)
+˜pf (θ) < M for all θ (assuming a
+test function h(θ) with ﬁnite variance) (Geweke, 1989). To
+satisfy this condition, we will propose a certain parametric
+family ˜pα
+f (θ). Note that, to maintain a prior swapping pro-
+cedure with O(1) cost, we want a ˜pα
+f (θ) that can be evalu-
+ated in constant time. In general, a ˜pα
+f (θ) with fewer terms
+will yield a faster procedure. With these in mind, we pro-
+pose the following family of densities.
+Deﬁnition. For a parameter α = (α1, . . . , αk), αj ∈ Rp,
+k > 0, let density ˜pα
+
+f (θ) satisfy
+
+˜pα
+f (θ) ∝ πf (θ)
+
+p(αj|θ)n/k
+
+(8)
+
+k
+(cid:89)
+
+j=1
+
+ˆµPSis
+
+h =
+
+w(θt)h(θt)
+
+T
+(cid:88)
+
+t=1
+
+where p(αj|θ) denotes the model conditional PDF.
+
+(6)
+
+The number of terms in ˜pα
+f (θ) (and cost to evaluate) is
+determined by the parameter k. Note that this family is
+
+−202468101200.511.5PDFPrior swapping samples= Post-Inference Prior Swapping
+
+inspired by the true form of the false posterior pf (θ|xn).
+However, ˜pα
+f (θ) has constant-time evaluation, and we
+can estimate its parameter α using samples {˜θt}Tf
+t=1 ∼
+pf (θ|xn). Furthermore, we have the following guarantees.
+Theorem 2.1. For any α = (α1, . . . , αk) ⊂ Rp and k > 0
+let ˜pα
+f (θ) be deﬁned as in Eq. (8). Then, there exists M > 0
+such that pf (θ|xn)
+
+f (θ) < M , for all θ ∈ Rd.
+Corollary 2.1.1. For {θt}T
+t=1 ∼ pα
+(cid:17)−1
+pf (θr|xn)
+w(θt) = pf (θt|xn)
+, and test function
+˜pα
+˜pα
+f (θr)
+f (θt)
+that satisﬁes Varp [h(θ)] < ∞, the variance of IS estimate
+h = (cid:80)T
+ˆµPSis
+
+t=1 h(θt)w(θt) is ﬁnite.
+
+˜pα
+f (θ)π(θ)
+πf (θ)
+
+s (θ) ∝
+
+(cid:16)(cid:80)T
+
+r=1
+
+˜pα
+
+,
+
+Proofs for these theorems are given in the appendix.
+
+Note that we do not know the normalization constant for
+˜pα
+f (θ). This is not an issue for its use in prior swapping,
+since we only need access to a function proportional to
+f (θ)π(θ)πf (θ)−1 in most MCMC algorithms.
+s (θ) ∝ ˜pα
+pα
+However, we still need to estimate α, which is an issue be-
+cause the unknown normalization constant is a function of
+α. Fortunately, we can use the method of score matching
+(Hyv¨arinen, 2005) to estimate α given a density such as
+˜pα
+f (θ) with unknown normalization constant.
+Once we have found an optimal parameter α∗, we draw
+samples from pα∗
+f (θ)π(θ)πf (θ)−1, compute
+weights for these samples (Eq. (7)), and compute the IS
+estimate ˆµPSis
+h . We give pseudocode for the full prior swap
+importance sampling procedure in Alg. 1.
+
+s (θ) ∝ ˜pα∗
+
+Algorithm 1: Prior Swap Importance Sampling
+Input: False posterior samples {˜θt}Tf
+Output: IS estimate ˆµPSis
+h .
+
+t=1 ∼ pf (θ|xn).
+
+1 Score matching: estimate α∗ using {˜θt}Tf
+2 Prior swapping: sample {θt}T
+3 Importance sampling: compute ˆµPSis
+
+t=1 ∼ pα∗
+
+s (θ) ∝
+h = (cid:80)T
+
+t=1.
+
+˜pα∗
+f (θ)π(θ)
+.
+πf (θ)
+t=1 h(θt)w(θt).
+
+swapping.
+
+Semiparametric prior
+In the previous
+method, we chose a parametric form for ˜pα
+f (θ); in general,
+even the optimal α will yield an inexact approximation to
+pf (θ|xn). Here, we aim to incorporate methods that return
+an increasingly exact estimate ˜pf (θ) when given more
+false posterior samples {˜θt}Tf
+t=1.
+
+One idea is to use a nonparametric kernel density estimate
+˜pnp
+f (θ)π(θ)πf (θ)−1.
+f (θ) and plug this into pnp
+However, nonparametric density estimates can yield inac-
+curate density tails and fare badly in high dimensions. To
+help mitigate these problems, we turn to a semiparamet-
+ric estimate, which begins with a parametric estimate, and
+
+s (θ) ∝ ˜pnp
+
+adjusts it as samples are generated. In particular, we use
+a density estimate that can be viewed as the product of a
+parametric density estimate and a nonparametric correc-
+tion function (Hjort & Glad, 1995). This density estimate
+is consistent as the number of samples Tf → ∞. Instead
+of (or in addition to) correcting prior swap samples with
+importance sampling, we can correct them by updating the
+nonparametric correction function as we continue to gener-
+ate false posterior samples.
+Given Tf samples {˜θt}Tf
+parametric false posterior estimate as
+
+t=1 ∼ pf (θ|xn), we write the semi-
+
+˜psp
+f (θ) =
+
+(cid:32)
+
+1
+Tf
+
+(cid:34)
+
+Tf
+(cid:88)
+
+t=1
+
+1
+bd K
+
+(cid:107)θ − (cid:101)θt(cid:107)
+b
+
+(cid:33) ˜pα
+f (θ)
+f (˜θt)
+˜pα
+
+(cid:35)
+
+,
+
+(9)
+
+where K denotes a probability density kernel, with band-
+width b, where b → 0 as Tf → ∞ (see (Wasserman, 2006)
+for details on probability density kernels and bandwidth se-
+lection). The semiparametric prior swap density is then
+
+psp
+s (θ) ∝
+
+˜psp
+f (θ)π(θ)
+πf (θ)
+
+
+=
+
+1
+Tf
+
+Tf
+(cid:88)
+
+K
+
+(cid:16) (cid:107)θ−˜θt(cid:107)
+b
+
+(cid:17)
+
+˜pα
+f (θ)π(θ)
+
+f (˜θt)πf (θ)bd
+˜pα
+t=1
+(cid:17)
+(cid:16) (cid:107)θ−˜θt(cid:107)
+b
+
+
+
+K
+
+ .
+
+f (˜θt)
+˜pα
+
+1
+Tf
+
+Tf
+(cid:88)
+
+t=1
+
+(10)
+
+∝ [pα
+
+s (θ)]
+
+
+
+Hence, the prior swap density psp
+s (θ) is proportional to the
+product of two densities: the parametric prior swap density
+pα
+s (θ), and a correction density. To estimate expectations
+with respect to psp
+s (θ), we can follow Alg. 1 as before, but
+replace the weight function in the ﬁnal IS estimate with
+
+w(θ) ∝
+
+psp
+s (θ)
+pα
+s (θ)
+
+∝
+
+1
+Tf
+
+Tf
+(cid:88)
+
+K
+
+(cid:16) (cid:107)θ−˜θt(cid:107)
+b
+
+(cid:17)
+
+t=1
+
+f (˜θt)
+˜pα
+
+.
+
+(11)
+
+One advantage of this strategy is that computing the
+weights doesn’t require the data—it thus has constant cost
+with respect to data size n (though its cost does increase
+with the number of false posterior samples Tf ). Addition-
+ally, as in importance sampling, we can prove that this pro-
+cedure yields an exact estimate of E[h(θ)], asymptotically,
+as Tf → ∞ (and we can provide an explicit bound on the
+s (θ) converges to p(θ|xn)). We do this by
+rate at which psp
+showing that psp
+s (θ) is consistent for p(θ|xn).
+Theorem 2.2. Given false posterior samples {˜θt}Tf
+pf (θ|xn) and b (cid:16) T −1/(4+d)
+tent for p(θ|xn), i.e. its mean-squared error satisﬁes
+
+t=1 ∼
+s is consis-
+
+, the estimator psp
+
+f
+
+(cid:20)(cid:90)
+
+E
+
+sup
+p(θ|xn)
+
+(psp
+
+s (θ) − p(θ|xn))2 dθ
+
+<
+
+(cid:21)
+
+c
+T 4/(4+d)
+f
+
+for some c > 0 and 0 < b ≤ 1.
+
+The proof for this theorem is given in the appendix.
+
+Post-Inference Prior Swapping
+
+3. Empirical Results
+
+We show empirical results on Bayesian generalized lin-
+ear models (including linear and logistic regression) with
+sparsity and heavy tailed priors, and on latent factor mod-
+els (including mixture models and topic models) with re-
+lational priors over factors (e.g.
+diversity-encouraging,
+agglomerate-encouraging, etc.). We aim to demonstrate
+empirically that prior swapping efﬁciently yields correct
+samples and, in some cases, allows us to apply certain infer-
+ence algorithms to more-complex models than was previ-
+ously possible. In the following experiments, we will refer
+to the following procedures:
+
+• Target posterior inference: some standard inference
+
+algorithm (e.g. MCMC) run on p(θ|xn).
+
+• False posterior inference: some standard inference
+
+algorithm run on pf (θ|xn).
+
+• False posterior IS: IS using samples from pf (θ|xn).
+
+• Prior swap exact: prior swapping with closed-form
+
+˜pf (θ) = pf (θ|xn).
+
+• Prior swap parametric: prior swapping with para-
+
+metric ˜pα
+
+f (θ) given by Eq. (8).
+
+• Prior swap IS: correcting samples from ˜pα
+
+f (θ) with
+
+• Prior swap semiparametric:
+
+correcting samples
+f (θ) with the semiparametric estimate IS pro-
+
+IS.
+
+from ˜pα
+cedure.
+
+To assess performance, we choose a test function h(θ), and
+compute the Euclidean distance between µh = Ep[h(θ)]
+and some estimate ˆµh returned by a procedure. We denote
+this performance metric by posterior error = (cid:107)µh − ˆµh(cid:107)2.
+Since µh is typically not available analytically, we run a
+single chain of MCMC on the target posterior for one mil-
+lion steps, and use these samples as ground truth to com-
+pute µh. For timing plots, to assess error of a method at a
+given time point, we collect samples drawn before this time
+point, remove the ﬁrst quarter as burn in, and add the time
+it takes to compute any of the corrections.
+
+3.1. Sparsity Inducing and Heavy Tailed Priors in
+
+Bayesian Generalized Linear Models
+
+Sparsity-encouraging regularizers have gained a high level
+of popularity over the past decade due to their ability to pro-
+duce models with greater interpretability and parsimony.
+For example, the L1 norm has been used to induce sparsity
+with great effect (Tibshirani, 1996), and has been shown
+to be equivalent to a mean-zero independent Laplace prior
+(Tibshirani, 1996; Seeger, 2008). In a Bayesian setting, in-
+ference given a sparsity prior can be difﬁcult, and often re-
+quires a computationally intensive method (such as MH or
+
+HMC) or posterior approximations (e.g. expectation prop-
+agation (Minka, 2001)) that make factorization or paramet-
+ric assumptions (Seeger, 2008; Gerwinn et al., 2010). We
+propose a cheap yet accurate solution: ﬁrst get an inference
+result with a more-tractable prior (such as a normal prior),
+and then use prior swapping to quickly convert the result to
+the posterior given a sparsity prior.
+
+1
+
+i=1
+
+Our ﬁrst set of experiments are on Bayesian linear re-
+gression models, which we can write as yi = Xiθ +
+(cid:15), (cid:15) ∼ N (0, σ2), θ ∼ π, i = 1,...,n.
+For π, we
+compute results on Laplace, Student’s t, and VerySparse
+(with PDF VerySparse(σ) = (cid:81)d
+2σ exp{−|θi|0.4/σ}
+(Seeger, 2008)) priors. Here, a normal πf is conjugate
+and allows for exact false posterior inference. Our sec-
+ond set of experiments are on Bayesian logistic regres-
+sion models, which we write as yi ∼ Bern(pi), pi =
+logistic(Xiθ), θ ∼ π, i = 1,...,n. which we will pair
+with both heavy tailed priors and a hierarchical target prior
+π = N (0, α−1I), α ∼ Gamma(γ, 1). For these experi-
+ments, we also use a normal πf . However, this false prior
+is no longer conjugate, and so we use MCMC to sample
+from pf (θ|xn).
+
+For linear regression, we use the YearPredictionMSD data
+set*, (n = 515345, d = 90), in which regression is used to
+predict the year associated with a a song, and for logistic re-
+gression we use the MiniBooNE particle identiﬁcation data
+set†, (n = 130065, d = 50), in which binary classiﬁcation
+is used to distinguish particles.
+
+In Fig. 3, we compare prior swapping and IS methods, in
+order to show that the prior swapping procedures yield ac-
+curate posterior estimates, and to compare their speeds of
+convergence. We plot posterior error vs. wall time for each
+method’s estimate of the posterior mean Ep[h(θ)] = Ep[θ]
+for two sparsity target priors (Laplace and VerySparse),
+for both linear and logistic regression. In linear regression
+(only), since the normal conjugate πf allows us to compute
+a closed form pf (θ|xn), we can run the prior swap exact
+method, where ˜pf (θ) = pf (θ|xn). However, we can also
+sample from pf (θ|xn) to compute ˜pα∗
+f (θ), and therefore
+compare methods such as prior swap parametric and the
+two correction methods. In logistic regression, we do not
+have a closed form pf (θ|xn); here, we only compare the
+methods that make use of samples from pf (θ|xn). In Fig. 3,
+we see that the prior swapping methods (particularly prior
+swap IS) quickly converge to nearly zero posterior error.
+Additionally, in linear regression, we see that prior swap
+parametric, using ˜pf (θ) = ˜pα∗
+f (θ), yields similar posterior
+error as prior swap exact, which uses ˜pf (θ) = p(θ|xn).
+
+*https://archive.ics.uci.edu/ml/datasets/
+
+YearPredictionMSD
+
+†https://archive.ics.uci.edu/ml/datasets/
+
+MiniBooNE+particle+identification
+
+Post-Inference Prior Swapping
+
+Figure 3. Comparison of prior swapping and IS methods for Bayesian linear and logistic regression under Laplace and VerySparse target
+priors. The prior swapping methods (particularly prior swap exact and prior swap IS) quickly converge to low posterior errors.
+
+Figure 4. Prior swapping for fast inference in Bayesian linear models with sparsity and heavy-tailed priors: (a-b) Convergence plots
+showing that prior swapping performs accurate inference faster than the comparison methods and is robust to changing π. (c) Inferred
+1-d density marginals when prior sparsity is increased. (d) Prior swapping results for a variety of different sparsity priors.
+
+In Fig. 4, we show how prior swapping can be used for
+fast inference in Bayesian linear models with sparsity or
+heavy-tailed priors. We plot the time needed to ﬁrst com-
+pute the false posterior (via exact inference) and then run
+prior swapping (via the MH procedure) on some target pos-
+terior, and compare this with the MH algorithm run directly
+on the target posterior. In (a) and (b) we show convergence
+plots and see that prior swapping performs faster inference
+(by a few orders of magnitude) than direct MH. In plot
+(b) we reduce the variance of the target prior; while this
+hurts the accuracy of false posterior IS, prior swapping still
+quickly converges to zero error. In (c) we show 1-d density
+marginals as we increase the prior sparsity, and in (d) we
+show prior swapping results for various sparsity priors.
+
+In the appendix, we also include results on logistic regres-
+sion with the hierarchical target prior, as well as results for
+synthetic data where we are able to compare timing and
+posterior error as we tune n and d.
+
+3.2. Priors over Factors in Latent Variable Models
+
+Many latent variable models in machine learning—such as
+mixture models, topic models, probabilistic matrix factor-
+ization, and others—involve a set of latent factors (e.g.
+components or topics). Often, we’d like to use priors
+that encourage interesting behaviors among the factors.
+For example, we might want dissimilar factors through
+a diversity-promoting prior (Kwok & Adams, 2012; Xie
+et al., 2016) or for the factors to show some sort of spar-
+sity pattern (Mayrink et al., 2013; Knowles & Ghahramani,
+2011). Inference in such models is often computationally
+expensive or designed on a case-by-case basis (Xie et al.,
+2016; Knowles & Ghahramani, 2011).
+
+However, when conjugate priors are placed over the factor
+parameters, collapsed Gibbs sampling can be applied. In
+this method, the factor parameters are integrated out, leav-
+ing only a subset of variables; on these, the conditional
+
+010020030040050060070080000.20.40.60.811.21.41.61.8010020030040050000.20.40.60.811.21.41.61.8010020030040050000.050.10.150.20.250.30.350.40.4505010015020025000.050.10.150.20.250.30.350.40.45             False posterior IS,              Prior swap exact,              Prior swap parametric,              Prior swap IS,             Prior swap SPPosterior errorPosterior errorPosterior errorPosterior errorWall time (s)Wall time (s)Wall time (s)Wall time (s)Bayesian Linear RegressionBayesian Logistic Regression−0.15−0.1−0.0500.050102030405060−0.15−0.1−0.0500.050102030405060−0.15−0.1−0.0500.050102030405060−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06−0.2−0.15−0.1−0.0500.05−0.2−0.100.1−0.2−0.15−0.1−0.0500.05−0.2−0.100.1−0.2−0.15−0.1−0.0500.05−0.2−0.100.1−0.2−0.15−0.1−0.0500.05−0.2−0.100.1−0.2−0.15−0.1−0.0500.05−0.2−0.100.1−0.2−0.15−0.1−0.0500.05−0.2−0.100.1       = Normal(0.1)= Student's t(0.1)= Laplace(0.1)= Laplace(0.01)= VerySparse(0.1)= VerySparse(0.01)PDFDimensions 2 and 3Dimensions 4 and 5PDFPDF     = Laplace(0.1)     = Laplace(0.01)      = Laplace(0.001)Dimension 1−0.06−0.04−0.0200.020.040.06−0.06−0.04−0.0200.020.040.06(a)(b)(c)(d)False posterior inference (exact)Target posterior inference (MCMC)False posterior ISPrior swap (exact)Wall time (s)Posterior errorWall time (s)Posterior error0200400600800100000.10.20.30.40.50.60.70.80.910200400600800100000.10.20.30.40.50.60.70.80.91Application: fast inference in Bayesian linear regressionPost-Inference Prior Swapping
+
+Figure 5. Latent factor models: (a) Prior swapping results for relational target priors (deﬁned in (b)) over components in a mixture
+model. (c) Prior swapping with a diversity-promoting target prior on an LDA topic model (Simple English Wikipedia corpus) to separate
+redundant topic clusters; the top 6 words per topic are shown. In (a, c) we show wall times for the initial inference and prior swapping.
+
+distributions can be computed analytically, which allows
+for Gibbs sampling over these variables. Afterwards, sam-
+ples of the collapsed factor parameters can be computed.
+Hence, we propose the following strategy: ﬁrst, assign a
+prior for the factor parameters that allows for collapsed
+Gibbs sampling; afterwards, reconstruct the factor samples
+and apply prior swapping for more complex relational pri-
+ors over the factors. We can thus perform convenient infer-
+ence in the collapsed model, yet apply more-sophisticated
+priors to variables in the uncollapsed model.
+
+We ﬁrst show results on a Gaussian mixture model (GMM),
+written xi ∼ N (µzi, Σzi), zi ∼ Dir(α), {µm}M
+m=1 ∼
+π, i = 1,...,n. Using a normal πf over {µm}M
+m=1 allows
+for collapsed Gibbs sampling. We also show results on a
+topic model (latent Dirichlet allocation (LDA) (Blei et al.,
+2003)) for text data (for the form of this model, see (Blei
+et al., 2003; Wang & Blei, 2011)). Here, using a Dirichlet
+πf over topics allows for collapsed Gibbs sampling. For
+mixture models, we generate synthetic data from the above
+model (n=10,000, d=2, M =9), and for topic models, we
+use the Simple English Wikipedia‡ corpus (n=27,443 doc-
+uments, vocab=10,192 words), and set M =400 topics.
+
+‡https://simple.wikipedia.org/
+
+In Fig. 5, we show results for mixture and topic models.
+In (a) we show inferred posteriors over GMM components
+for a number of relational target priors, which we deﬁne
+in (b).
+In (c), we apply the diversity-promoting target
+prior to LDA, to separate redundant topics. Here, we show
+two topic clusters (“geography” and “family”) in pf (θ|xn),
+which are separated into distinct, yet thematically-similar,
+topics after prior swapping. In (a) and (c) we also show
+wall times of the inference methods.
+
+4. Conclusion
+
+Given some false posterior inference result, and an arbi-
+trary target prior, we have studied methods to accurately
+compute the associated target posterior (or expectations
+with respect to it), and to do this efﬁciently by leverag-
+ing the pre-inferred result. We have argued and shown em-
+pirically that this strategy is effective even when the false
+and target posteriors are quite dissimilar. We believe that
+this strategy shows promise to allow a wider range of (and
+possibly less-costly) inference alorithms to be applied to
+certain models, and to allow updated or new prior infor-
+mation to be more-easily incorporated into models without
+re-incurring the full costs of standard inference algorithms.
+
+(a)(b)Collapsed GibbsPriorSwappingWall time (seconds)00.511.522.53x 1041. southern2. northern3. region4. western5. eastern6.southTopic 6Topic Model: False Posterior via Collapsed GibbsCluster:GeographyCluster:Family1. west2. south3. coast4. north5. east6.westernTopic 1711. north2. asia3. south4. western5. southern6.easternTopic 2851. father2. family3. brother4. born5. son6. childrenTopic 111. children2. daughter3. born4. son5. family6. fatherTopic 2431. born2. died3. father4. years5. family6. livedTopic 2801. born2. parents3. studied4. moved5. age6. yearTopic 3061. north2. west3. east4. south5. eastern6.westernTopic 353 Topic Model: Target Posterior via Prior Swapping1. brother2. sister3. younger4. older5. youngest6. sistersTopic 111. husband2. marriage3. wife4. death5. marry6. childrenTopic 2431. school2. college3. graduated4. studies5. university6. fellowTopic 306Topic 2801. important2. stayed3. wrote4. travelled5. started6. died1. territory2. region3. regions4. provinces5. capital6.territoriesTopic 6Territories1. bay2. south3. coast4. area5. land6.seaTopic 171Coast1. america2. europe3. asia4. world5. countries6.africaTopic 285Countries1. side2. east3. bordered4. west5. middle6.borderTopic 353BorderSiblingsMarriageBiographySchoolPrior swapping for diverse topics.       = Diverse(0.5)(c)Relational target priors (over factors            )−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−101234−3−2−1012343. Chain(0.1)7. SparseChain(0.1)8. Origin+Diverse(0.1)6. SparseAgglom(0.1)False-Posterior1. Origin(0.1)2. Agglom(0.1)4. Diverse(0.1)5. SparseOrigin(0.1)Wall time (seconds)Mixture Model: False Posterior via Collapsed Gibbs, Target Posterior via Prior SwappingPost-Inference Prior Swapping
+
+References
+
+Besag,
+
+Julian, Green, Peter, Higdon, David,
+and
+Mengersen, Kerrie. Bayesian computation and stochas-
+tic systems. Statistical science, pp. 3–41, 1995.
+
+Blei, David M, Ng, Andrew Y, and Jordan, Michael I. La-
+tent dirichlet allocation. The Journal of Machine Learn-
+ing Research, 3:993–1022, 2003.
+
+Bornn, Luke, Doucet, Arnaud, and Gottardo, Raphael.
+An efﬁcient computational approach for prior sensitiv-
+ity analysis and cross-validation. Canadian Journal of
+Statistics, 38(1):47–64, 2010.
+
+Diaconis, Persi, Ylvisaker, Donald, et al. Conjugate priors
+for exponential families. The Annals of statistics, 7(2):
+269–281, 1979.
+
+Doucet, Arnaud, Godsill, Simon, and Andrieu, Christophe.
+On sequential monte carlo sampling methods for
+bayesian ﬁltering. Statistics and computing, 10(3):197–
+208, 2000.
+
+Gerwinn, Sebastian, Macke,
+
+Jakob H, and Bethge,
+Matthias. Bayesian inference for generalized linear mod-
+els for spiking neurons. Frontiers in Computational Neu-
+roscience, 4(12), 2010.
+
+Geweke, John. Bayesian inference in econometric models
+using monte carlo integration. Econometrica: Journal of
+the Econometric Society, pp. 1317–1339, 1989.
+
+Hastings, W Keith. Monte carlo sampling methods using
+markov chains and their applications. Biometrika, 57(1):
+97–109, 1970.
+
+Hjort, Nils Lid and Glad, Ingrid K. Nonparametric density
+estimation with a parametric start. The Annals of Statis-
+tics, pp. 882–904, 1995.
+
+Hyv¨arinen, Aapo. Estimation of non-normalized statistical
+models by score matching. Journal of Machine Learning
+Research, 6(Apr):695–709, 2005.
+
+Knowles, David and Ghahramani, Zoubin. Nonparametric
+bayesian sparse factor models with application to gene
+expression modeling. The Annals of Applied Statistics,
+pp. 1534–1552, 2011.
+
+Kwok, James T and Adams, Ryan P. Priors for diversity in
+generative latent variable models. In Advances in Neural
+Information Processing Systems, pp. 2996–3004, 2012.
+
+Mayrink, Vinicius Diniz, Lucas, Joseph Edward, et al.
+Sparse latent factor models with interactions: Analysis
+of gene expression data. The Annals of Applied Statis-
+tics, 7(2):799–822, 2013.
+
+Metropolis, Nicholas, Rosenbluth, Arianna W, Rosenbluth,
+Marshall N, Teller, Augusta H, and Teller, Edward.
+Equation of state calculations by fast computing ma-
+chines. The journal of chemical physics, 21(6):1087–
+1092, 1953.
+
+Minka, Thomas P. Expectation propagation for approx-
+In Proceedings of the Sev-
+imate bayesian inference.
+enteenth conference on Uncertainty in artiﬁcial intelli-
+gence, pp. 362–369. Morgan Kaufmann Publishers Inc.,
+2001.
+
+Neal, R. MCMC using hamiltonian dynamics. Handbook
+
+of Markov Chain Monte Carlo, pp. 113–162, 2011.
+
+Rossky, PJ, Doll, JD, and Friedman, HL. Brownian dy-
+namics as smart monte carlo simulation. The Journal of
+Chemical Physics, 69(10):4628–4633, 1978.
+
+Seeger, Matthias W. Bayesian inference and optimal de-
+sign for the sparse linear model. The Journal of Machine
+Learning Research, 9:759–813, 2008.
+
+Smith, Adrian FM and Roberts, Gareth O. Bayesian com-
+putation via the gibbs sampler and related markov chain
+monte carlo methods. Journal of the Royal Statistical
+Society. Series B (Methodological), pp. 3–23, 1993.
+
+Teh, Yee W, Newman, David, and Welling, Max. A col-
+lapsed variational bayesian inference algorithm for latent
+dirichlet allocation. In Advances in neural information
+processing systems, pp. 1353–1360, 2006.
+
+Tibshirani, Robert. Regression shrinkage and selection via
+the lasso. Journal of the Royal Statistical Society. Series
+B (Methodological), pp. 267–288, 1996.
+
+Wang, Chong and Blei, David M. Collaborative topic mod-
+eling for recommending scientiﬁc articles. In Proceed-
+ings of the 17th ACM SIGKDD international conference
+on Knowledge discovery and data mining, pp. 448–456.
+ACM, 2011.
+
+Wang, Chong and Blei, David M. Variational inference in
+nonconjugate models. The Journal of Machine Learning
+Research, 14(1):1005–1031, 2013.
+
+Wasserman, Larry.
+
+All of nonparametric statistics.
+
+Springer Science & Business Media, 2006.
+
+Xie, Pengtao, Zhu, Jun, and Xing, Eric. Diversity-
+promoting bayesian learning of latent variable models.
+In Proceedings of the 33st International Conference on
+Machine Learning (ICML-16), 2016.
+
+

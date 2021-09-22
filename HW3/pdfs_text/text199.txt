@@ -1,0 +1,2315 @@
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+Gabriele Farina 1 Christian Kroer 1 Tuomas Sandholm 1
+
+Abstract
+
+No-regret learning has emerged as a powerful
+tool for solving extensive-form games. This was
+facilitated by the counterfactual-regret minimiza-
+tion (CFR) framework, which relies on the in-
+stantiation of regret minimizers for simplexes at
+each information set of the game. We use an
+instantiation of the CFR framework to develop
+algorithms for solving behaviorally-constrained
+(and, as a special case, perturbed in the Selten
+sense) extensive-form games, which allows us to
+compute approximate Nash equilibrium reﬁne-
+ments. Nash equilibrium reﬁnements are mo-
+tivated by a major deﬁciency in Nash equilib-
+rium: it provides virtually no guarantees on how
+it will play in parts of the game tree that are
+reached with zero probability. Reﬁnements can
+mend this issue, but have not been adopted in
+practice, mostly due to a lack of scalable algo-
+rithms. We show that, compared to standard al-
+gorithms, our method ﬁnds solutions that have
+substantially better reﬁnement properties, while
+enjoying a convergence rate that is comparable to
+that of state-of-the-art algorithms for Nash equi-
+librium computation both in theory and practice.
+
+1. Introduction
+
+No-regret learning algorithms have become a powerful
+tool for solving large-scale zero-sum extensive-form games
+(EFGs) (Bowling et al., 2015; Brown et al., 2015). This has
+largely been facilitated by the counterfactual-regret min-
+imization (CFR) algorithm (Zinkevich et al., 2007) and
+its newer variants (Lanctot et al., 2009; Sandholm, 2010;
+Bowling et al., 2015; Brown and Sandholm, 2015; Brown
+et al., 2017; Brown and Sandholm, 2017). This framework
+works by deﬁning a notion of regret local to an information
+
+1Carnegie Mellon University, Pittsburgh PA 15213 USA. Cor-
+respondence to: Gabriele Farina <gfarina@cs.cmu.edu>, Chris-
+tian Kroer <ckroer@cs.cmu.edu>, Tuomas Sandholm <sand-
+holm@cs.cmu.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+set, and instantiating a standard regret minimizer at each
+information set in order to minimize local regret. Zinke-
+vich et al. (2007) prove that this scheme of local regret
+minimization leads to a Nash equilibrium in two-player
+zero-sum extensive-form games of perfect recall. The
+framework works with any regret-minimizing algorithm,
+but in practice variants of the regret matching algorithm
+have been dominant (Hart and Mas-Colell, 2000; Bowl-
+ing et al., 2015; Brown and Sandholm, 2015; Brown et al.,
+2015). We investigate the extension of regret-matching+
+(RM+) (Tammelin et al., 2015), an even faster regret-
+matching algorithm, to more general regret-minimization
+problems over (ﬁnitely-generated) convex polytopes. We
+use these results to instantiate RM+ for linearly constrained
+simplexes, which in turn allows us to model and solve
+behaviorally-constrained EFGs (which are EFGs with ad-
+ditional linear constraints on the simplexes at each infor-
+mation set). An important special case of this framework is
+behaviorally-perturbed EFGs, which can be used to com-
+pute Nash equilibrium reﬁnements.1
+
+Nash equilibrium reﬁnements are motivated by major deﬁ-
+ciencies in the Nash equilibrium solution concept: Nash
+equilibria provide no guarantees on performance in in-
+formation sets that are reached with probability zero in
+equilibrium, beyond not giving up more utility than the
+value of the game. Thus, if an opponent makes a mistake,
+Nash equilibrium is not guaranteed to capitalize on it, but
+may instead give back up to all of that utility (Miltersen
+and Sørensen, 2010). This is especially relevant when
+Nash equilibria are used as a solution concept for play-
+ing against imperfect opponents. Equilibrium reﬁnements
+ameliorate this issue by introducing further constraints on
+behavior in information sets that are reached with proba-
+bility zero. We will be interested in equilibrium concepts
+
+1The idea of certain kinds of behavioral perturbations to CFR
+has been suggested by Neller and Lanctot (2013). They suggest
+that at every information set, with small probability (cid:15), a player
+will make a random move. However, they provide no results of
+what the reﬁnement consequences are (i.e., what kind of reﬁne-
+ment this would lead to), and it is unclear whether the proposed
+method actually leads to reﬁnements. In contrast, we establish a
+connection to (approximate) EFPEs in this paper. Furthermore,
+Neller and Lanctot cite Miltersen and Sørensen (2010) which is
+about quasi-perfect equilibrium (where a player assumes she will
+not make errors in the future), while the (cid:15) modeling of Neller and
+Lanctot makes (cid:15) errors at future information sets as well.
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+that achieve this through the notion of perturbations or
+trembling hands (Selten, 1975). At each decision-point, a
+player is assumed to tremble with some small probability,
+and a Nash equilibrium is then computed in this perturbed
+game. A reﬁnement is then a limit point of the sequence of
+Nash equilibria achieved as the probability of trembles is
+taken to zero. In quasi-perfect equilibria, players take into
+account only the trembles of their opponents (van Damme,
+1984), whereas in an extensive-form perfect equilibrium
+(EFPE), players take into account mistakes made both by
+themselves and opponents (Selten, 1975).
+
+We compare our algorithm for perturbed EFGs to state-of-
+the-art large-scale zero-sum EFG-solving algorithms: the
+standard CFR+ algorithm (Tammelin et al., 2015) and the
+excessive gap technique (EGT) (Nesterov, 2005a) instanti-
+ated with a state-of-the art smoothing function (Nesterov,
+2005b; Hoda et al., 2010; Kroer et al., 2015; 2017b). We
+ﬁnd that our perturbed variant of CFR+ converges (in the
+perturbed game) at the same rate as those algorithms con-
+verge while ours leads to orders of magnitude more reﬁned
+strategies. Our algorithm also converges at the same rate
+in the unperturbed game, almost until the point where the
+imposed behavioral constraints necessarily prevent further
+convergence.
+
+2. Related work
+
+No-regret algorithms have a long history in EFG solving.
+Gordon (2006) developed the Lagrangian Hedging algo-
+rithm, which can be used to ﬁnd a Nash equilibrium in
+EFGs. However, it suffers from a drawback:
+it requires
+projection onto the strategy space at each iteration. Zinke-
+vich et al. (2007) developed CFR, which avoids projection
+while maintaining the same convergence rate. It has since
+been extended in a number of ways. Lanctot et al. (2009)
+showed how to incorporate sampling in CFR. Brown and
+Sandholm (2015) showed how to achieve greater pruning
+in CFR, thereby reducing the iteration costs. CFR+ is
+a state-of-the-art variant of CFR (Tammelin et al., 2015),
+which has vastly superior practical performance compared
+to standard CFR, though it is not known to be stronger
+from a theoretical perspective. Gordon et al. (2008) shows
+how no-regret algorithms can also be utilized for comput-
+ing extensive-form correlated equilibria in EFGs.
+
+Polynomial-time algorithms have been proposed for com-
+puting certain equilibrium reﬁnements in two-player zero-
+sum perfect-recall EFGs. Miltersen and Sørensen (2010)
+develop a linear program (LP) for computing quasi-perfect
+equilibria by choosing a sufﬁciently small perturbation to
+realization plans. Farina and Gatti (2017) develop a similar
+approach for EFPE computation, but rely on perturbations
+to behavioral strategies of players. These approaches rely
+on solving modiﬁed variants of the sequence-form LP for
+
+computing Nash equilibrium (von Stengel, 1996) in EFGs.
+These algorithms are of theoretical interest only and do not
+work in practice. They require rational numbers of preci-
+sion n log n bits, where n is the number of sequences in the
+game. Another issue is that LP algorithms do not scale to
+large EFGs even when just ﬁnding Nash equilibria, and in
+practice CFR-based or EGT-based approaches are used to
+achieve scalability. Kroer et al. (2017a) recently showed
+how smoothing functions for ﬁrst-order methods such as
+EGT can be extended to games with perturbations.
+
+Johanson et al. (2007) consider robust strategies that arise
+from assuming that the opponent will randomize between
+playing a Nash equilibrium and a strategy within some
+Johanson and Bowling
+model of opponent behavior.
+(2009) consider a similar model-biased Nash equilibrium
+approach on games where an independent model is used at
+each information set. Ganzfried and Sandholm (2011) de-
+velop an opponent modeling approach that adds opponent-
+modeled constraints across information sets. Our approach
+provides a principled framework for solving model-biased
+games that use general constraints on per-information set
+behavioral strategies. Constraints across information sets
+currently require the much less scalable LP approach.
+
+3. Preliminaries
+
+We brieﬂy introduce several of the basic concepts we use
+in the rest of the paper. We denote by R+ and R
+the set
+−
+of non-negative and non-positive reals, respectively.
+
+3.1. Normal-Form Games
+
+Deﬁnition 1. A two-player zero-sum normal-form game
+(for the rest of the paper, simply normal-form game or
+NFG) is a tuple (A1, A2, u) where A1 represents the ﬁnite
+set of actions that player 1 can play, A2 represents the ﬁnite
+R
+set of actions that player 2 can play, and u : A1 ×
+is the payoff function for player 1, mapping the pair of ac-
+tions (a1, a2) of the players into the payoff for player 1. The
+u(a1, a2).
+corresponding payoff for player 2 is given by
+
+A2 →
+
+−
+
+a1,1, . . . , a1,n
+{
+
+Usually, the payoff function u is given as a matrix U , called
+the payoff matrix of the game. The rows of U represent
+= A1 of player 1, while the
+the actions
+columns of U represent the actions
+= A2
+a2,1, . . . , a2,m
+{
+of player 2. At the intersection of the i-th row and the j-th
+column is the payoff for the action pair (a1,i, a2,j).
+Deﬁnition 2. A mixed strategy π for player i
+probability mass function over the set Ai.
+
+1, 2
+}
+
+∈ {
+
+is a
+
+}
+
+}
+
+When players play according to mixed strategies π1 and π2
+respectively, the expected payoff is given by
+
+Eπ1,π2(u) =
+
+(cid:88)
+
+(cid:88)
+
+a1
+
+A1
+
+a2
+
+A2
+
+∈
+
+∈
+
+π1(a1)π2(a2)u(a1, a2).
+
+(1)
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+3.2. Generalized Normal-Form Games
+
+,
+
+Y
+
+X
+
+Rn,
+
+X ⊆
+
+Telgarsky (2011) and Abernethy et al. (2011) propose a
+generalization of the concept of normal-form games, which
+conveniently allows us to remove all expectation operators,
+making the notation lighter and more legible. In this gener-
+alization, players select deterministic strategies from a con-
+vex compact set. For a normal-form game, this set is the
+space of all mixed strategies.
+Deﬁnition 3. A two-player zero-sum generalized normal-
+, u) is a tuple deﬁned by a pair of
+form game Γ = (
+Rm,
+convex and compact action spaces
+one for each player, as well as a biafﬁne utility function
+R. The utility function u(x, y) maps the pair
+u :
+X × Y →
+of actions (x, y)
+of the players into the payoff
+for player 1, while the corresponding payoff for player 2 is
+given by
+Observation 1. Any normal-form game can be mapped
+to an instance of a generalized normal-form game. Given
+Γ = (A1, A2, u), where
+= m, the set of
+all mixed strategies for player 1 forms the n-dimensional
+= ∆n, while the set of all mixed strategies for
+simplex
+player 2 forms the m-dimensional simplex
+= ∆m. Let
+U be the payoff matrix associated with Γ. Using Equa-
+tion 1, we conclude that Γ is equivalent to the generalized
+two-player zero-sum normal-form game Γ∗ = (
+, u∗),
+X
+.
+where u∗(x, y) = x(cid:62)U y for all (x, y)
+
+∈ X × Y
+
+= n and
+
+u(x, y).
+
+A1|
+
+A2|
+
+Y ⊆
+
+−
+
+X
+
+Y
+
+Y
+
+|
+
+|
+
+,
+
+∈ X × Y
+
+3.3. Extensive-Form Games
+
+\
+
+•
+
+•
+
+•
+
+∈
+
+∈
+
+⊆
+
+H
+
+I1,
+
+H: the set of terminal histories, i.e.
+
+Deﬁnition 4. A two-player zero-sum extensive-form game
+with imperfect information and perfect recall Γ is a tuple
+I2, u) composed of:
+(H, Z, A, P, fc,
+H: a ﬁnite set of possible sequences (or histories) of
+actions, such that the empty sequence ∅
+H, and
+every preﬁx z of h in H is also in H.
+those se-
+Z
+quences that are not a proper preﬁx of any sequence.
+Z to the set of avail-
+A: a function mapping h
+able actions at non-terminal history h.
+P : the player function, mapping each non-terminal
+, representing the player
+history h
+1, 2, c
+}
+{
+who takes action after h. If P (h) = c, the player is
+chance.
+fc: a function assigning to each h
+P (h) = c a probability mass function over A(h).
+i, for i
+: partition of
+H : P (h) = i
+}
+}
+with the property that A(h) = A(h(cid:48)) for each h, h(cid:48)
+in the same set of the partition. For notational conve-
+nience, we will write A(I) to mean A(h) for any of the
+i is the information partition of
+h
+player i, while the sets in
+i are called the information
+sets of player i.
+
+Z such that
+
+I, where I
+
+Z to
+
+h
+{
+
+• I
+
+∈ {
+
+∈ I
+
+1, 2
+
+H
+
+H
+
+∈
+
+∈
+
+∈
+
+∈
+
+i.
+
+I
+
+I
+
+•
+
+\
+
+\
+
+•
+
+•
+
+u: utility function mapping z
+Z to the utility (a
+real number) gained by player 1 when the history is
+reached. The corresponding utility for player 2 is
+given by
+
+u(z).
+
+∈
+
+−
+
+We further assume that all players can recall their previous
+actions and the corresponding information sets.
+
+In the rest of the paper, we will use the more relaxed term
+extensive-form game, or EFG, to mean a two-player zero-
+sum extensive-form game with imperfect information and
+perfect recall.
+Observation 2. Extensive-form games can be represented
+as generalized NFGs, for example, via the normal form rep-
+resentation or sequence form representation (Romanovskii,
+1962; Koller et al., 1996; von Stengel, 1996).
+
+3.4. Regret and Regret Minimization
+
+Suppose there exists an iterative algorithm which, at each
+step t = 1, . . . , T , computes a strategy xt
+for player
+1, and plays a (generalized) normal-form game (
+, u)
+,
+against player 2 using such strategy. Let yt be the strategy
+used by player 2 at step t. The average external regret of
+player 1 up to step T against action ˆx
+
+∈ X
+
+X
+
+Y
+
+is
+
+∈ X
+
+¯RT
+
+1 (ˆx) =
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+u(ˆx, yt)
+
+u(xt, yt).
+
+−
+
+The case for player 2 is symmetrical. A regret-minimizing
+scheme is a function that assigns, for each sequence of
+1, an action xt such that
+past actions x1, y1, . . . , xt
+1, yt
+−
+¯RT
+0.
+lim supT
+
+maxˆx
+
+−
+1 (ˆx)
+
+→∞
+
+∈X
+
+≤
+
+Regret-matching (RM) (Hart and Mas-Colell, 2000) is a
+regret-minimizing scheme for normal-form games, based
+on Blackwell’s approachability theorem (Blackwell, 1956).
+The following theorem, a proof of which is given by Cesa-
+Bianchi and Lugosi (2006), characterizes the convergence
+rate of RM.
+Theorem 1. Given a normal-form game (A1, A2, u), the
+maximum average external regret for player 1 at iteration
+T , when player 1 plays according to the regret-matching
+algorithm, is
+
+max
+ˆx
+
+¯RT
+
+1 (ˆx)
+
+where γ
+
+.
+= maxx,y u(x, y)
+
+γ
+
+(cid:112)
+A1|
+|
+√T
+≤
+minx,y u(x, y).
+
+,
+
+−
+Regret-matching+ is an extension of RM, and converges
+signiﬁcantly faster in practice. Tammelin et al.
+(2015;
+Lemma 2) proved that the convergence rate of RM+ is the
+same as that of RM above.
+
+3.5. Nash Equilibria and Reﬁnements
+
+We now review the needed solution concepts from game
+theory. We mostly focus on generalized normal-form
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+games, allowing a compact presentation of concepts
+pertaining both normal-form games and extensive-form
+games.
+Deﬁnition 5 (Approximate best response). Given a gener-
+,
+alized normal-form game (
+,
+∈ Y
+is an (cid:15)-best response to y for player 1 if
+we say that x
+. Symmetrically, given
+u(x, y) + (cid:15)
+is an (cid:15)-best response to x for
+x
+∈ X
+u(x, ˆy) for all ˆy
+player 2 if
+
+∈ X
+u(ˆx, y) for all ˆx
+
+, u) and a strategy y
+
+, we say that y
+
+u(x, y) + (cid:15)
+
+∈ Y
+
+∈ X
+
+≥
+
+X
+
+Y
+
+.
+
+−
+
+≥ −
+
+∈ Y
+
+,
+
+X
+
+∈ X × Y
+
+Deﬁnition 6 (Approximate Nash equilibrium). Given a
+generalized normal-form game (
+, u), the strategy pair
+Y
+is a (cid:15)-Nash equilibrium for the game if x
+(x, y)
+is an (cid:15)-best response to y for player 1, and y is an (cid:15)-best
+response to x for player 2.
+Deﬁnition 7 (Nash equilibrium). Given a generalized
+normal-form game (
+, u), a Nash equilibrium for the
+game is a 0-Nash equilibrium.
+
+X
+
+Y
+
+,
+
+There exists a well-known relationship between regret and
+approximate Nash equilibria (Deﬁnition 6), as summarized
+in the next theorem.
+Theorem 2. In a zero-sum game, if the average external
+regrets of the players up to step T are such that
+
+¯RT
+for all actions ˆx
+
+1 (ˆx)
+
+(cid:15)1,
+
+≤
+, ˆy
+
+¯RT
+
+2 (ˆy)
+
+(cid:15)2
+
+≤
+, then the strategy pair
+
+(¯xT , ¯yT )
+
+∈ X
+(cid:32)
+
+.
+=
+
+1
+T
+
+∈ Y
+T
+(cid:88)
+
+i=1
+
+xi,
+
+(cid:33)
+
+1
+T
+
+T
+(cid:88)
+
+i=1
+
+yi
+
+∈ X × Y
+
+is an ((cid:15)1 + (cid:15)2)-Nash equilibrium.
+
+Theorem 2 basically says that if there exists an iterative al-
+gorithm able to progressively propose strategies so that the
+maximum average external regret go to zero, then recover-
+ing a Nash equilibrium is straightforward, and just a matter
+of averaging the individual strategies proposed.
+
+We now turn to the class of perturbed games (Selten, 1975).
+Intuitively, a perturbation restricts the set of playable strate-
+gies by enforcing a lower bound on the probability of play-
+ing each action. We recall the deﬁnition and some of the
+properties of game perturbations, starting from the normal-
+form case. We focus on player 1, but remark that the same
+deﬁnitions hold symmetrically for player 2 as well.
+Deﬁnition 8. Let Γ = (A1, A2, u) be an NFG and let
+, u∗) be its generalized NFG repre-
+Γ∗ = (∆
+A1
+|
+sentation (see Observation 1). A perturbation is a func-
+R+ such that (cid:80)
+A1 p(a) < 1 and
+tion p : A1 ∪
+(cid:80)
+∈
+A2 p(a) < 1. The corresponding perturbed NFG Γp is
+a
+the generalized NFG where each action a must be played
+with probability at least p(a). Formally, Γp = ( ˜
+p, ˜
+p, u∗)
+Y
+X
+(cid:9). ˜
+where ˜
+A1
+p is de-
+Y
+∈
+X
+ﬁned analogously.
+
+p = (cid:8)x
+
+A2 →
+
+| : xa
+
+p(a)
+
+A2
+|
+
+, ∆
+
+A1
+
+∆|
+
+≥
+
+∈
+
+∀
+
+a
+
+∈
+
+a
+
+|
+
+|
+
+In the case of extensive-form games, a perturbation for
+player 1 assigns a lower-bound on each action playable by
+the player. More precisely:
+Deﬁnition 9. Let Γ = (H, Z, A, P, fc,
+I2, u) be an
+extensive-form game. A perturbation is a function p map-
+ping each pair (I, a) where I
+A(I) to a
+non-negative real, such that
+
+I1,
+∈ I1 ∪ I2 and a
+
+∈
+
+(cid:88)
+
+a
+
+A(I)
+
+∈
+
+p(I, a) < 1
+
+I
+
+∈ I1 ∪ I2.
+
+∀
+
+The corresponding perturbed EFG Γp is the analogous
+game where each action a at each information set I has
+to be played with probability at least p(I, a).
+
+Perturbations play an important role in equilibrium reﬁne-
+ment, as they form the basis for the concept of equilibrium
+perfection (Selten, 1975). In this paper we only focus on
+the case of extensive-form perfect equilibria (EFPEs).
+Deﬁnition 10. A strategy pair (x, y)
+of Γ if it is a limit point of a sequence
+(xp, yp) is a Nash equilibrium of the perturbed game Γp.
+
+is an EFPE
+0 where
+
+∈ X × Y
+(xp, yp)
+p
+}
+{
+
+→
+
+Intuitively, an EFPE is an equilibrium reﬁnement that takes
+into account an imperfect ability to deterministically com-
+mit to a single action.
+
+4. Generalized Normal-Form Games over
+Finitely-Generated Convex Polytopes
+
+In this section, we show how to adapt a regret-minimization
+algorithm to handle generalized normal-form games played
+on ﬁnitely-generated convex polytopes. The key insight
+is that when the action space is a ﬁnitely-generated con-
+vex polytope,
+the generalized game can be cast back
+as a normal-form game, i.e. a generalized normal-form
+game played over simplexes, and “solved” by a regret-
+minimization algorithm; subsequently, the solution for the
+normal-form game gets mapped back into the polytope.
+This is achieved by constructing new simplex action spaces
+for the players, where each point in a simplex denotes a
+convex combination of weights on the vertices of that play-
+ers’ ﬁnitely-generated convex polytopal action space.
+, u) be a generalized normal-
+Theorem 3. Let Γ = (
+,
+form game played on the ﬁnitely-generated convex poly-
+topes
+. There exists a regret-minimizing scheme
+for player 1 in Γ.
+
+and
+
+X
+
+X
+
+Y
+
+Y
+
+be a convex basis for
+
+b1, . . . , bn
+{
+}
+be a convex basis for
+}
+
+Proof. Let
+c1, . . . , cm
+{
+· · · |
+X
+form game Γ∗ = (∆n, ∆m, u∗), where
+
+, and
+; also, let B = (b1 |
+cm) be the basis matrices for
+, respectively. We construct a generalized normal-
+
+bn) and C = (c1 | · · · |
+Y
+
+and
+
+X
+
+Y
+
+u∗(x, y)
+
+.
+= u(Bx, Cy)
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+∈
+
+∈
+
+∆n, y
+
+∆m. Of course Bx
+
+for all x
+∈ Y
+for all x and y, so the deﬁnition is valid. Let f ∗ be any of
+regret-minimizing schemes for normal-form games (e.g.,
+RM or RM+). We construct a regret-minimizing scheme f
+for Γ such that, at each iteration t = 1, 2, . . . ,
+
+∈ X
+
+, Cy
+
+Algorithm 1 RM+ algorithm for generalized normal-form
+games played over ﬁnitely-generated convex polytopes.
+1: procedure REGRET-MATCHING+(Γ)
+
+(cid:46) Γ = (
+(cid:46) note: this reﬂects the point of view of player 1
+
+, u), and B is a ﬁxed convex basis for
+
+Y
+
+,
+
+X
+
+f (x1, y1, . . . , xt
+
+1, yt
+
+−
+
+1) = Bf ∗(x∗1, y∗1, . . . , x∗t
+−
+
+1, y∗t
+−
+
+1),
+
+−
+
+where x∗, y∗ denotes the coordinates of x, y with respect to
+, respectively; note that this deﬁnition is
+the basis of
+well-deﬁned since the coordinates are guaranteed to belong
+2. The regret induced by this scheme is
+to ∆n, ∆m
+
+X
+
+Y
+
+,
+
+¯RT
+
+1 (ˆx) =
+
+u(ˆx, yt)
+
+u(xt, yt)
+
+−
+
+=
+
+u∗(ˆx∗, y∗t )
+
+u∗(x∗t , y∗t ).
+
+−
+
+1
+T
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+T
+(cid:88)
+
+t=1
+
+Notice that the last expression is exactly the average re-
+gret for player 1 up to iteration T against action ˆx∗ in
+Γ∗. Since f ∗ is a regret-minimizing scheme, the aver-
+age regret against any action converges to zero, mean-
+¯RT
+1 (ˆx)
+0 for each ˆx,
+i.e.
+ing that
+≤
+¯RT
+lim supT
+0. This proves that f is a
+1 (ˆx)
+regret-minimizing scheme for Γ, concluding the proof.
+
+lim supT
+maxˆx
+
+→∞
+
+→∞
+
+∈X
+
+≤
+
+Another way to think about the construction above is that at
+each iteration, we compute the regret for not playing each
+of the “strategies” forming the vertices of the polytope, and
+updating the next strategy by taking a convex combination
+of the vertices, in a way proportional to the regret against
+them.
+
+Algorithm 1 represents an instantiation of the construc-
+tion given in the proof of Theorem 3, where the regret-
+minimizing scheme for the normal-form game was cho-
+sen to be RM+. A careful analysis of the construction
+also reveals that the convergence bound for RM+ carries
+over, as expressed by Theorem 4. At time t, RM+ projects
+the cumulative regret rt
+1 onto the non-negative orthant
+Rn
+1]+, where
++; the projection is equal to the vector [rt
+[a]+
+i
+Theorem 4. Given a generalized normal-form game
+, the maximum
+(
+X
+average external regret for player 1 at iteration T , when
+player 1 plays according to Algorithm 1, is bounded by
+
+, u) with ﬁnitely generated
+
+.
+= max
+{
+
+0, ai
+
+and
+
+.
+}
+
+X
+
+Y
+
+Y
+
+−
+
+−
+
+,
+
+¯RT
+
+1 (ˆx)
+
+max
+ˆx
+∈X
+
+|X |
+√T
+
+≤
+minx,y u(x, y), and
+
+.
+= maxx,y u(x, y)
+
+where γ
+−
+notes the number of vertices of
+
+(cid:112)
+
+γ
+
+.
+
+X
+2Passage to coordinates might not be unique. In this case, any
+
+coordinate vector will do, as long as the choice is deterministic.
+
+de-
+
+|X |
+
+Rn
+Rn
+
+X
+(0, . . . , 0)(cid:62)
+r0 ←
+¯x
+(0, . . . , 0)(cid:62)
+←
+for t = 1, 2, 3, . . . do
+then
+1 ∈
+−
+xt
+any action
+←
+
+Rn
+−
+
+∈
+∈
+
+if rt
+
+else
+
+˜
+p
+X
+
+∈
+
+[rt
+
+1]+
+i
+−
+1]+
+
+n
+(cid:88)
+
+i=1
+[rt
+−
+Λt
+
+1
+
+−
+
+Λt
+
+1 ←
+−
+
+xt
+
+B
+
+←
+play action xt
+observe yt
+
+2:
+3:
+4:
+5:
+
+6:
+7:
+
+8:
+
+9:
+
+10:
+11:
+
+12:
+
+13:
+
+
+
+∈ Y
+
+played by opponent
+
+
+u(b1, yt)
+
+u(xt, yt)
+
+
+
+
+
++
+
+
+
+
+
+
+
+−
+...
+−
+
+u(bn, yt)
+
+u(xt, yt)
+
+rt
+
+←
+
+
+rt
+
+−
+
+1 +
+
+
+
+
+¯x
+
+←
+
+t
+
+1
+
+−
+t
+
+¯x +
+
+xt
+
+1
+t
+
+(cid:46) ¯x contains the average strategy for player 1
+
+5. Behavioral Constraints and Perturbations
+
+Behavioral constraint are linear constraints on the sim-
+plexes at each information set. In order to obtain a regret
+minimizer for a behaviorally-constrained EFG, we could
+try to cast the game as a generalized NFG by means of
+the normal-form or sequence form representation (see Ob-
+servation 2). However, the number of vertices of this rep-
+resentation is exponential, and therefore it does not work
+well with Theorem 4. Counterfactual Regret (CFR, Zinke-
+vich et al. 2007) solves this problem, by deﬁning a regret-
+minimizing scheme that runs in polynomial time in the size
+of the game. Intuitively, CFR minimizes a variant of in-
+stantaneous regret, called immediate counterfactual regret,
+at each information set separately, and later combines the
+strategies computed at each information set.
+It requires
+simplex regret minimizers for each information set. If we
+have a ﬁnite number of them, each information set can be
+modeled as a ﬁnitely-generated convex polytope. We can
+then use Theorem 4 to get regret minimizers for each infor-
+mation set. Perturbations can be handled as a special case.
+
+Theorem 5 below shows that CFR+ instantiated with such
+regret minimizers for each behaviorally-constrained infor-
+mation set converges to an equilibrium of the constrained
+EFG. For this approach to be practical, we need the set
+of vertices for each information set to be of manageable
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+size, as reﬂected in the dependence on maxI
+I
+Theorem 5, where
+|Q
+behaviorally-constrained simplex at information set I.
+
+in
+is the number of vertices in the
+
+∈I
+
+|
+
+|
+
+I
+|Q
+
+(cid:112)
+
+an
+be
+Theorem 5. Let
+(H, Z, A, P, fc,
+I
+represent the
+extensive-form game; let
+∆
+Q
+behaviorally-constrained strategy space at information set
+I, for all I
+∈ I1 ∪ I2. The maximum average external
+regret for player 1 in the constrained game at iteration T ,
+when player 1 plays according to CFR+, is bounded by
+
+I2, u)
+
+I1,
+
+A(I)
+
+⊆
+
+|
+
+|
+
+¯RT
+
+1 ≤
+
+γ
+
+|I1|
+
+(cid:112)
+
+maxI
+
+I
+1 |Q
+
+|
+
+,
+
+∈I
+√T
+
+where γ
+
+.
+= maxx,y u(x, y)
+
+minx,y u(x, y).
+
+−
+
+6. Perturbed Normal-Form Games
+
+Section 4 established that, in general, the problem of ﬁnd-
+ing an approximate Nash equilibrium for player 1 in the
+generalized normal-form game Γ = (
+is
+a convex polytope generated by n vectors, can be solved
+via regret-matching.
+
+, u), where
+
+X
+
+X
+
+Y
+
+,
+
+We now specialize this result for the speciﬁc case of per-
+turbed normal-form games. The following holds:
+
+Proposition 6. Let Γ = (A1, A2, u) be a normal-form
+, and let p be a perturba-
+game, where A1 =
+a1, . . . , an
+}
+{
+tion for player 1. Let Γp = ( ˜
+p, ˜
+p, u∗) be the generalized
+Y
+X
+normal-form game corresponding to the perturbation (Def-
+inition 8). Then the perturbed action space ˜
+p is a ﬁnitely
+X
+generated convex polytope of dimension n, a basis of which
+is given by the columns of the following invertible matrix:
+
+.
+=
+
+Bp
+
+
+
+
+
+
+
+
+τp + p(a1)
+p(a2)
+...
+p(an)
+
+p(a1)
+τp + p(a2)
+...
+p(an)
+
+
+
+
+
+
+
+
+p(a1)
+p(a2)
+...
+τp + p(an)
+
+· · ·
+· · ·
+. . .
+
+· · ·
+
+where τp
+
+.
+= 1
+
+p(a1)
+
+−
+
+− · · · −
+
+p(an).
+
+b1, . . . , bn
+{
+
+This means that Algorithm 1 is applicable and provides a
+regret-minimizing scheme. We remark that when comput-
+ing the instantaneous regrets (Algorithm 1, Line 12), it is
+important to remember these values have to be computed
+p. However, comput-
+against the basis
+}
+ing the (expected) utility of the game when player 1 plays
+according to a mixed strategy is usually more expensive
+than the same task when player 1 plays a deterministic ac-
+tion. For this reason, we express the instantaneous regret
+b1, . . . , bn
+in terms of instantaneous
+calculation against
+}
+{
+e1, . . . , en
+regrets against the pure actions
+in the unper-
+{
+turbed game. In particular, by using the fact that the utility
+
+of ˜
+X
+
+}
+
+n
+(cid:88)
+
+j=1
+
+n
+(cid:88)
+
+j=1
+
+function is biafﬁne, we can write, for each i
+
+
+∈ {
+
+
+1, . . . , n
+
+,
+}
+
+u(bi, yt) = u
+
+τpei +
+
+p(aj)ej, yt
+
+
+
+= τpu(ei, yt) +
+
+p(aj)u(ej, yt),
+
+so that, by introducing φt,i
+.
+−
+= (φt,1, . . . , φt,n)(cid:62), we have
+corresponding vector φt
+
+u(xt, yt) and the
+
+.
+= u(ei, ut)
+
+rt = rt
+
+1 + τpφt + 1
+
+−
+
+
+
+(cid:62)
+
+
+
+
+
+
+
+
+
+p(a1)
+...
+p(an)
+
+φt.
+
+This allows us to compute the regret update in terms of
+the instantaneous regret against
+in the unper-
+turbed game, without introducing any overhead from an
+asymptotic point of view.
+
+e1, . . . , en
+
+{
+
+}
+
+The maximum average external regret for player 1 at itera-
+tion T is given by Theorem 4; in this case
+
+=
+
+˜
+p
+X
+
+|
+
+|
+
+A1|
+.
+|
+
+7. Perturbed Extensive-Form Games
+
+As discussed in Section 5, it is possible to use CFR in con-
+junction with any regret-minimizing scheme for general-
+ized NFGs, in order to deﬁne a regret-minimizing scheme
+able to support any behaviorally-perturbed EFG (thus in-
+cluding the restricted case of perturbed EFGs). In Algo-
+rithm 2, we propose an implementation of CFR+, i.e. CFR
+instantiated with the RM+ algorithm able to handle per-
+turbed EFGs. Algorithm 2 assumes that we are given a
+I
+perturbation p of the extensive-form game,
+p denotes the
+perturbed simplex for information set I, and τp(I) is as in
+Proposition 6.
+
+X
+
+The following theorem characterizes the convergence guar-
+antee of the proposed algorithm.
+I2, u) be an exten-
+Theorem 7. Let (H, Z, A, P, fc,
+sive-form game; let p be the perturbation applied to the
+game. The maximum average external regret for player 1
+in the perturbed game at iteration T , when player 1 plays
+according to Algorithm 2, is bounded by
+
+I1,
+
+¯RT
+
+γ
+
+|I1|
+1 ≤
+.
+= maxx,y u(x, y)
+
+where γ
+
+(cid:112)
+
+maxI
+
+A(I)
+|
+
+,
+
+1 |
+
+∈I
+√T
+
+minx,y u(x, y).
+
+−
+
+Proof. Follows as a corollary of Theorem 5.
+
+Notice that
+the bound provided by Theorem 5 is the
+same provided by the original CFR algorithm proposed
+by Zinkevich et al. (2007). In other words, our modiﬁca-
+tion does not impair the convergence and speed guarantees
+given by the original algorithm.
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+Algorithm 2 Regret minimization algorithm for perturbed
+extensive-form games.
+1: procedure REGRET-MATCH+-INFOSET(I, t)
+
+a1, . . . , an
+
+.
+
+}
+
+(cid:46) we assume A(I) =
+{
+then
+any action
+
+if rI
+t
+1 ∈
+−
+xI
+t ←
+
+Rn
+−
+
+else
+
+˜
+I
+p
+X
+
+∈
+
+ΛI
+
+←
+
+xI
+t ←
+
+
+
+
+n
+(cid:88)
+
+i=1
+
+
+(cid:2)rI
+
+t
+
+1
+
+−
+
+(cid:3)+
+i
+
+
+
+p(I, a1)
+...
+p(I, an)
+
+
+ + τp(I)
+
+(cid:3)+
+
+(cid:2)rI
+
+t
+1
+−
+ΛI
+
+1: procedure TRAVERSE(h, i, t, π1, π2)
+
+(cid:46) assume h belongs to information set I
+
+if h
+
+Z then
+∈
+return u(h)
+if P (h) = c then
+sample a
+fc(h)
+return TRAVERSE(ha, t, π1, π2)
+
+∼
+
+else if P (h) = 2 then
+
+
+TRAVERSE(ha1, t, π1, yI
+
+t,1π2)
+
+(cid:46) chance node
+
+...
+
+...
+
+vI
+t ←
+
+
+
+
+else
+
+
+
+
+
+
+vI
+t ←
+
+¯v
+←
+φI
+t ←
+
+TRAVERSE(han, t, π1, yI
+
+t,nπ2)
+
+(cid:46) player 1’s turn
+
+REGRET-MATCH-INFOSET(I, t)
+
+TRAVERSE(ha1, t, xI
+
+t,1π1, π2)
+
+t,nπ1, π2)
+
+TRAVERSE(han, t, xI
+t )(cid:62)vI
+(xI
+t
+π2(vI
+
+
+t −
+
+1 ¯v)
+
+rI
+t ←
+
+
+
+
+
+rI
+t
+−
+
+1 + τp(I)φI
+
+t + 1
+
+
+
+
+
+
+p(I, a1)
+...
+p(I, an)
+
+
+(cid:62)
+
+
+
+
+
+
++
+
+φI
+t
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+15:
+
+¯xI + π1xI
+t
+
+¯xI
+←
+return ¯v
+16:
+1: procedure CFR+(Γ)
+∈ I1 do
+for all I
+2:
+rI
+(0, . . . , 0)(cid:62)
+3:
+0 ←
+¯xI
+(0, . . . , 0)(cid:62)
+←
+for t = 1, 2, 3, . . . do
+
+4:
+
+R|
+R|
+
+A(I)
+|
+A(I)
+|
+
+∈
+∈
+
+(cid:46) Γ = (H, Z, A, P, fc, I1, I2, u)
+
+play according to strategy xt
+observe strategy yt played by opponent
+TRAVERSE(∅, t, 1, 1)
+∈ I1 do
+(cid:16)
+¯xI /(cid:80)|
+←
+
+A(I)
+i=1
+
+¯xI
+i
+
+(cid:17)
+
+|
+
+for all I
+¯xI
+
+(cid:46) ¯x contains the average strategy for player 1.
+
+2:
+
+3:
+4:
+
+5:
+
+6:
+
+2:
+3:
+
+4:
+5:
+6:
+7:
+
+8:
+
+9:
+
+10:
+
+11:
+
+12:
+
+13:
+
+14:
+
+5:
+6:
+7:
+8:
+
+9:
+
+10:
+
+8. Experimental Evaluation
+We conducted experiments to investigate the practical per-
+formance of our perturbed-regret-minimization approach
+when used to instantiate the CFR and CFR+ algorithms for
+computing approximate EFPE in EFGs. We compare these
+algorithms to state-of-the-art Nash-equilibrium-ﬁnding al-
+gorithms: EGT (Nesterov, 2005a) on an unperturbed poly-
+tope using the state-of-the-art smoothing technique by
+al. (Kroer et al., 2017b), CFR (Zinkevich et
+Kroer et.
+al., 2007) and CFR+ (Tammelin et al., 2015). We con-
+ducted the experiments on Leduc hold’em poker (Southey
+et al., 2005), a widely-used benchmark in the imperfect-
+information game-solving community.
+In our variant,
+Leduc k, the deck consists of k pairs of cards 1 . . . k, for
+a total deck size of 2k. We experiment on the standard
+Leduc game where k = 3 and a larger game where k = 5.
+Each player initially pays one chip to the pot, and is dealt
+a single private card. After a round of betting, a com-
+munity card is dealt face up. After a subsequent round
+of betting, if neither player has folded, both players re-
+veal their private cards.
+If either player pairs their card
+with the community card they win the pot. Otherwise,
+the player with the highest private card wins. In the event
+that both players have the same private card, they draw and
+split the pot. We consider k
+. We test our ap-
+}
+proach on games subject to different uniform perturbations
+p(I, a) = ξ for all information sets I and actions a
+A(I),
+for ξ
+
+0.1, 0.05, 0.01, 0.005, 0.001
+
+∈ {
+
+3, 5
+
+∈
+
+∈ {
+
+.
+}
+
+Figure 1 reports on convergence to Nash equilibrium. The
+x-axis shows the number of tree traversals performed. We
+use tree traversals rather than iterations because EGT re-
+quires more tree traversals than CFR+ per iteration. The
+y-axis shows the sum of player regrets in the full (unper-
+turbed) game. For both Leduc 3 and 5, we ﬁnd that the
+ξ perturbations have only a small effect on overall conver-
+gence rate until convergence within the perturbed polytope,
+at which point the regret in the unperturbed game stops
+decreasing, as expected. Until bottoming out, the conver-
+gence is almost identical for all CFR+ algorithms. This
+shows that our approach can be utilized in practice: there
+is no substantial loss of convergence rate. Later in the run
+once the perturbed algorithms have bottomed out, there is a
+tradeoff between exploitability in the full game and reﬁne-
+ment (i.e., better performance in low-probability informa-
+tion sets).
+
+The second set of experiments, Figure 2, investigates the
+improvement that our perturbation approach achieves com-
+pared to standard Nash equilibrium solutions in terms of
+equilibrium reﬁnement. Our measure of reﬁnement is the
+maximum regret at any information set, conditioned on
+reaching that information set. As discussed, convergence
+to a Nash Equilibrium does not guarantee that this mea-
+sure goes to zero. Again, the x-axis shows the number
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+Figure 1. Regret in Leduc 3 and Leduc 5 as a function of the num-
+ber of iterations for EGT and CFR+ with various ξ perturbations
+(denoted in parentheses). Both axes are on a log scale.
+
+of tree traversals performed. The y-axis shows the max-
+imum regret at any individual information set. Both un-
+perturbed CFR+ and EGT perform badly in both games
+with respect to this measure of reﬁnement.
+In Leduc 5,
+both have maximum regret two orders of magnitude worse
+than the perturbed approach. In Leduc 3, EGT still does as
+poorly. CFR+ does slightly better, but is still worse than
+our stronger reﬁnements by more than an order of magni-
+tude. The maximum regret one can possibly cause in an
+information set in either Leduc game is 23, so CFR+ and
+unperturbed EGT also do poorly in that sense.
+
+In contrast to this, we ﬁnd that our ξ-perturbed solution
+concepts converge to a strategy with low regret at every in-
+formation set. The choice of ξ is important: for ξ = 0.001,
+the smallest perturbation, we see that it takes a long time to
+converge at low-probability information sets, whereas we
+converge reasonably quickly for ξ = 0.01 or ξ = 0.005; for
+ξ = 0.1 and ξ = 0.05 the perturbations are too large, and
+we end up converging with relatively high regret (due to
+being forced to play every action with probability ξ). Thus,
+within this set of experiments, ξ
+[0.005, 0.01] seems to
+∈
+be the ideal amount of perturbation.
+
+9. Discussion
+
+We extended the RM and RM+ regret minimization al-
+gorithms to ﬁnitely-generated convex polytopes, and spe-
+cialized our results to linearly-constrained simplexes and
+behaviorally-perturbed EFGs. We then showed how this
+allows us to compute an approximate EFPE. Our experi-
+
+Figure 2. Maximum regret at any individual information set in
+Leduc 3 and Leduc 5, as a function of the number of iterations,
+for standard EGT as well as with various ξ perturbations (denoted
+EGT(ξ)) and CFR+. The y-axis is on a log scale.
+
+ments showed that this approach leads to much stronger
+strategies for information sets reached with low probability,
+while maintaining the strong convergence rate of CFR+.
+
+Our experiments raise an interesting question. Across both
+games, we see that the maximum information set regret
+goes down much faster for larger amounts of perturbation,
+but then it bottoms out earlier than for smaller perturbations
+(as expected). To get the best of both large and small per-
+turbations, it may be possible to decrease the perturbations
+over time, leading to faster convergence rate, while never
+bottoming out. However, this has a number of challenges
+associated with it. Most importantly, we need a variant of
+RM or RM+ that can handle a slowly expanding feasible
+set within the simplex. This would also require decreas-
+ing the perturbations at the correct rate; if decreased too
+quickly, it is unlikely that we will converge to a reﬁnement,
+and if decreased too slowly, we might still bottom out.
+
+The CFR algorithms have been shown to work well with a
+number of other techniques, notably sampling (Lanctot et
+al., 2009) and abstraction (Lanctot et al., 2012; Kroer and
+Sandholm, 2016). It would be both theoretically and prac-
+tically interesting to see how well our reﬁnement approach
+works in conjunction with these techniques.
+
+Acknowledgments
+
+This material is based on work supported by NSF grant IIS-
+1617590 and ARO award W911NF-17-1-0082.
+
+10110210310410510610−510−410−310−210−1100CFR+(0.1)CFR+(0.05)CFR+(0.01)EGTCFR+(0.001)CFR+(0.005)CFR+Numberoftreetraversals(cid:15)-approx.ofNEinunpert.gameLeduc310110210310410510610−410−310−210−1100101CFR+(0.1)CFR+(0.05)CFR+(0.01)EGTCFR+(0.001)CFR+(0.005)CFR+Numberoftreetraversals(cid:15)-approx.ofNEinunpert.gameLeduc502·1054·1056·1058·1051·1060.1110CFR+(0.1)CFR+(0.05)CFR+(0.01)EGTCFR+(0.001)CFR+(0.005)CFR+NumberoftreetraversalsMaxinformationsetregretLeduc301·1052·1053·1054·1055·1056·1050.1110CFR+(0.1)CFR+(0.05)CFR+(0.01)EGTCFR+(0.001)CFR+(0.005)CFR+NumberoftreetraversalsMaxinformationsetregretLeduc5Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+References
+
+Jacob Abernethy, Peter L Bartlett, and Elad Hazan. Black-
+well approachability and no-regret learning are equiva-
+lent. In Conference on Learning Theory (COLT), pages
+27–46, 2011.
+
+David Blackwell. An analog of the minmax theorem for
+vector payoffs. Paciﬁc Journal of Mathematics, 6:1–8,
+1956.
+
+Michael Bowling, Neil Burch, Michael Johanson, and Os-
+kari Tammelin. Heads-up limit hold’em poker is solved.
+Science, 347(6218), January 2015.
+
+Noam Brown and Tuomas Sandholm. Regret-based prun-
+ing in extensive-form games. In Proceedings of the An-
+nual Conference on Neural Information Processing Sys-
+tems (NIPS), 2015.
+
+Noam Brown and Tuomas Sandholm. Reduced space and
+faster convergence in imperfect-information games via
+pruning. In International Conference on Machine Learn-
+ing (ICML), 2017.
+
+Noam Brown, Sam Ganzfried, and Tuomas Sandholm. Hi-
+erarchical abstraction, distributed equilibrium computa-
+tion, and post-processing, with application to a cham-
+In International
+pion no-limit Texas Hold’em agent.
+Conference on Autonomous Agents and Multi-Agent Sys-
+tems (AAMAS), 2015.
+
+Noam Brown, Christian Kroer, and Tuomas Sandholm. Dy-
+namic thresholding and pruning for regret minimization.
+In AAAI Conference on Artiﬁcial Intelligence (AAAI),
+2017.
+
+Nicolo Cesa-Bianchi and G´abor Lugosi. Prediction, learn-
+
+ing, and games. Cambridge university press, 2006.
+
+Gabriele Farina and Nicola Gatti. Extensive-form perfect
+equilibrium computation in two-player games. In AAAI
+Conference on Artiﬁcial Intelligence (AAAI), 2017.
+
+Sam Ganzfried and Tuomas Sandholm. Game theory-
+based opponent modeling in large imperfect-information
+In International Conference on Autonomous
+games.
+Agents and Multi-Agent Systems (AAMAS), 2011.
+
+Geoffrey J. Gordon, Amy Greenwald, and Casey Marks.
+In International
+No-regret learning in convex games.
+Conference on Machine Learning (ICML), pages 360–
+367. ACM, 2008.
+
+Geoffrey J. Gordon. No-regret algorithms for online con-
+
+vex programs. NIPS, 19:489, 2006.
+
+Samid Hoda, Andrew Gilpin, Javier Pe˜na, and Tuomas
+Sandholm. Smoothing techniques for computing Nash
+equilibria of sequential games. Mathematics of Opera-
+tions Research, 35(2), 2010.
+
+Michael Johanson and Michael Bowling. Data biased ro-
+bust counter strategies. In International Conference on
+Artiﬁcial Intelligence and Statistics (AISTATS), 2009.
+
+Michael Johanson, Martin Zinkevich, and Michael Bowl-
+ing. Computing robust counter-strategies. In Proceed-
+ings of the Annual Conference on Neural Information
+Processing Systems (NIPS), 2007.
+
+Daphne Koller, Nimrod Megiddo, and Bernhard von Sten-
+gel. Efﬁcient computation of equilibria for extensive
+two-person games. Games and Economic Behavior,
+14(2), 1996.
+
+Christian Kroer and Tuomas Sandholm.
+
+Imperfect-recall
+abstractions with bounds in games. In Proceedings of the
+ACM Conference on Economics and Computation (EC),
+2016.
+
+Christian Kroer, Kevin Waugh, Fatma Kılınc¸-Karzan, and
+Faster ﬁrst-order methods for
+Tuomas Sandholm.
+In Proceedings of the
+extensive-form game solving.
+ACM Conference on Economics and Computation (EC),
+2015.
+
+Christian Kroer, Gabriele Farina, and Tuomas Sand-
+holm. Smoothing method for approximate extensive-
+In Proceedings of the Inter-
+form perfect equilibrium.
+national Joint Conference on Artiﬁcial Intelligence (IJ-
+CAI), 2017.
+
+Christian Kroer, Kevin Waugh, Fatma Kilinc-Karzan, and
+Tuomas Sandholm. Theoretical and practical advances
+on smoothing for extensive-form games. In Proceedings
+of the ACM Conference on Economics and Computation
+(EC), 2017.
+
+Marc Lanctot, Kevin Waugh, Martin Zinkevich, and
+Michael Bowling. Monte Carlo sampling for regret min-
+imization in extensive games. In Proceedings of the An-
+nual Conference on Neural Information Processing Sys-
+tems (NIPS), 2009.
+
+Marc Lanctot, Richard Gibson, Neil Burch, Martin Zinke-
+vich, and Michael Bowling. No-regret
+learning in
+extensive-form games with imperfect recall. In Interna-
+tional Conference on Machine Learning (ICML), 2012.
+
+Sergiu Hart and Andreu Mas-Colell. A simple adaptive
+procedure leading to correlated equilibrium. Economet-
+rica, 68:1127–1150, 2000.
+
+Peter Bro Miltersen and Troels Bjerre Sørensen. Comput-
+ing a quasi-perfect equilibrium of a two-player game.
+Economic Theory, 42(1), 2010.
+
+Regret Minimization in Behaviorally-Constrained Zero-Sum Games
+
+Todd N. Neller and Marc Lanctot. An introduction to coun-
+terfactual regret minimization. Tutorial, 2013. Available
+from http://modelai.gettysburg.edu/2013/cfr/cfr.pdf.
+
+Yurii Nesterov. Excessive gap technique in nonsmooth con-
+vex minimization. SIAM Journal of Optimization, 16(1),
+2005.
+
+Yurii Nesterov. Smooth minimization of non-smooth func-
+
+tions. Mathematical Programming, 103, 2005.
+
+I. Romanovskii. Reduction of a game with complete mem-
+ory to a matrix game. Soviet Mathematics, 3, 1962.
+
+Tuomas Sandholm. The state of solving large incomplete-
+information games, and application to poker. AI Maga-
+zine, 2010. Special issue on Algorithmic Game Theory.
+
+Reinhard Selten. Reexamination of the perfectness concept
+for equilibrium points in extensive games. International
+Journal of Game Theory, 1975.
+
+Finnegan Southey, Michael Bowling, Bryce Larson,
+Carmelo Piccione, Neil Burch, Darse Billings, and Chris
+Rayner. Bayes’ bluff: Opponent modelling in poker. In
+Proceedings of the 21st Annual Conference on Uncer-
+tainty in Artiﬁcial Intelligence (UAI), July 2005.
+
+Oskari Tammelin, Neil Burch, Michael Johanson, and
+Michael Bowling.
+Solving heads-up limit Texas
+hold’em. In Proceedings of the 24th International Joint
+Conference on Artiﬁcial Intelligence (IJCAI), 2015.
+
+Matus Telgarsky. Blackwell Approachability and Minimax
+
+Theory. ArXiv e-prints, October 2011.
+
+Eric van Damme. A relation between perfect equilibria
+in extensive form games and proper equilibria in nor-
+mal form games. International Journal of Game Theory,
+1984.
+
+Bernhard von Stengel. Efﬁcient computation of behavior
+strategies. Games and Economic Behavior, 14(2), 1996.
+
+Martin Zinkevich, Michael Bowling, Michael Johanson,
+and Carmelo Piccione. Regret minimization in games
+with incomplete information. In Proceedings of the An-
+nual Conference on Neural Information Processing Sys-
+tems (NIPS), 2007.
+
+

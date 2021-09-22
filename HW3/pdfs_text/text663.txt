@@ -1,0 +1,2114 @@
+Adaptive Consensus ADMM for Distributed Optimization
+
+Zheng Xu 1 Gavin Taylor 2 Hao Li 1 M´ario A. T. Figueiredo 3 Xiaoming Yuan 4 Tom Goldstein 1
+
+Abstract
+
+each worker, and then apply ADMM to solve
+
+The alternating direction method of multi-
+pliers (ADMM) is commonly used for dis-
+tributed model ﬁtting problems, but its perfor-
+mance and reliability depend strongly on user-
+deﬁned penalty parameters. We study distributed
+ADMM methods that boost performance by us-
+ing different ﬁne-tuned algorithm parameters on
+each worker node. We present a O(1/k) con-
+vergence rate for adaptive ADMM methods with
+node-speciﬁc parameters, and propose adaptive
+consensus ADMM (ACADMM), which automati-
+cally tunes parameters without user oversight.
+
+1. Introduction
+
+The alternating direction method of multipliers (ADMM)
+is a popular tool for solving problems of the form,
+
+min
+u∈Rn,v∈Rm
+
+f (u) + g(v),
+
+subject to Au + Bv = b,
+
+(1)
+
+where f : Rn → R and g : Rm → R are convex functions,
+A ∈ Rp×n, B ∈ Rp×m, and b ∈ Rp. ADMM was ﬁrst
+introduced in (Glowinski & Marroco, 1975) and (Gabay &
+Mercier, 1976), and has found applications in many opti-
+mization problems in machine learning, distributed com-
+puting and many other areas (Boyd et al., 2011).
+
+Consensus ADMM (Boyd et al., 2011) solves minimiza-
+tion problems involving a composite objective f (v) =
+(cid:80)
+i fi(v), where worker i stores the data needed to com-
+pute fi, and so is well suited for distributed model ﬁtting
+problems (Boyd et al., 2011; Zhang & Kwok, 2014; Song
+et al., 2016; Chang et al., 2016; Goldstein et al., 2016;
+Taylor et al., 2016). To distribute this problem, consen-
+sus methods assign a separate copy of the unknowns, ui, to
+
+1University of Maryland, College Park; 2United States Naval
+Academy, Annapolis; 3Instituto de Telecomunicac¸ ˜oes, IST, ULis-
+boa, Portugal; 4Hong Kong Baptist University, Hong Kong. Cor-
+respondence to: Zheng Xu <xuzhustc@gmail.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+min
+ui∈Rd,v∈Rd
+
+N
+(cid:88)
+
+i=1
+
+fi(ui) + g(v),
+
+subject to ui = v,
+
+(2)
+
+where v is the “central” copy of the unknowns, and g(v)
+is a regularizer. The consensus problem (2) coincides with
+(1) by deﬁning u = (u1; . . . ; uN ) ∈ RdN , A = IdN ∈
+RdN ×dN , and B = −(Id; . . . ; Id) ∈ RdN ×d, where Id
+represents the d × d identity matrix.
+
+ADMM methods rely on a penalty parameter (stepsize) that
+is chosen by the user. In theory, ADMM converges for any
+constant penalty parameter (Eckstein & Bertsekas, 1992;
+He & Yuan, 2012; Ouyang et al., 2013). In practice, how-
+ever, the efﬁciency of ADMM is highly sensitive to this
+parameter choice (Nishihara et al., 2015; Ghadimi et al.,
+2015), and can be improved via adaptive penalty selec-
+tion methods (He et al., 2000; Song et al., 2016; Xu et al.,
+2017a).
+
+One such approach, residual balancing (RB) (He et al.,
+2000), adapts the penalty parameter so that the residu-
+als (derivatives of the Lagrangian with respect to primal
+and dual variables) have similar magnitudes. When the
+same penalty parameter is used across nodes, RB is known
+to converge, although without a known rate guarantee.
+A more recent approach, AADMM (Xu et al., 2017a),
+achieves impressive practical convergence speed on many
+applications, including consensus problems, with adaptive
+penalty parameters by estimating the local curvature of the
+dual functions. However, the dimension of the unknown
+variables in consensus problems grows with the number of
+distributed nodes, causing the curvature estimation to be
+inaccurate and unstable. AADMM uses the same conver-
+gence analysis as RB. Consensus residual balancing (CRB)
+(Song et al., 2016) extends residual balancing to consensus-
+based ADMM for distributed optimization by balancing the
+local primal and dual residuals on each node. However,
+convergence guarantees for this method are fairly weak,
+and adaptive penalties need to be reset after several iter-
+ations to guarantee convergence.
+
+We study the use of adaptive ADMM in the distributed set-
+ting, where different workers use different local algorithm
+parameters to accelerate convergence. We begin by study-
+ing the theory and provide convergence guarantees when
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+node-speciﬁc penalty parameters are used. We demon-
+strate a O(1/k) convergence rate under mild conditions
+that is applicable for many forms of adaptive ADMM in-
+cluding all the above methods. Our theory is more gen-
+eral than the convergence guarantee in (He et al., 2000; Xu
+et al., 2017a) that only shows convergence when the scalar
+penalty parameter is adapted. Next, we propose an adap-
+tive consensus ADMM (ACADMM) method to automate
+local algorithm parameters selection. Instead of estimating
+one global penalty parameter for all workers, different local
+penalty parameters are estimated using the local curvature
+of subproblems on each node.
+
+2. Related work
+
+ADMM is known to have a O(1/k) convergence rate under
+mild conditions for convex problems (He & Yuan, 2012;
+2015), while a O(1/k2) rate is possible when at least one
+of the functions is strongly convex or smooth (Goldfarb
+et al., 2013; Goldstein et al., 2014; Kadkhodaie et al., 2015;
+Tian & Yuan, 2016). Linear convergence can be achieved
+with strong convexity assumptions (Davis & Yin, 2014;
+Nishihara et al., 2015; Giselsson & Boyd, 2016). All of
+these results assume constant parameters; to the best of
+our knowledge, no convergence rate has been proven for
+ADMM with an adaptive penalty: (He et al., 2000; Xu
+et al., 2017b) proves convergence without providing a rate,
+and (Lin et al., 2011; Banert et al., 2016; Goldstein et al.,
+2015) prove convergence for some particular variants of
+ADMM (“linearized” or “preconditioned”).
+
+To improve practical convergence of ADMM, ﬁxed optimal
+parameters are discussed in (Raghunathan & Di Cairano,
+2014; Ghadimi et al., 2015; Nishihara et al., 2015; Franc¸a
+& Bento, 2016). These methods make strong assumptions
+about the objective and require information about the spec-
+trum of A and/or B. Additionally, adaptive methods have
+been proposed; the most closely related work to our own
+is (Song et al., 2016), which extends the results of (He
+et al., 2000) to consensus problems, where communication
+is controlled by predeﬁned network structure and the reg-
+ularizer g(v) is absent. In contrast to these methods, the
+proposed ACADMM extends the spectral penalty in (Xu
+et al., 2017a) to consensus problems and provides conver-
+gence theory that can be applied to a broad range of adap-
+tive ADMM variants.
+
+3. Consensus ADMM
+
+In the following, we use the subscript i to denote iter-
+ates computed on the ith node, superscript k is the itera-
+tion number, λk
+i is the dual vector of Lagrange multipliers,
+and {τ k
+i } are iteration/worker-speciﬁc penalty parameters
+(contrasted with the single constant penalty parameter τ of
+
+“vanilla” ADMM). Consensus methods apply ADMM to
+(2), resulting in the steps
+
+uk+1
+i = arg min
+ui
+
+fi(ui) +
+
+(cid:107)vk − ui +
+
+τ k
+i
+2
+
+N
+(cid:88)
+
+i=1
+
+τ k
+i
+2
+
+λk
+i
+τ k
+i
+
+(cid:107)2
+
+λk
+i
+τ k
+i
+
+(3)
+
+(5)
+
+vk+1 = arg min
+
+g(v) +
+
+v
+
+(cid:107)v − uk+1
+
+i +
+
+(cid:107)2
+
+(4)
+
+λk+1
+i = λk
+
+i + τ k
+
+i (vk+1 − uk+1
+
+i
+
+).
+
+The primal and dual residuals, rk and dk, are used to mon-
+itor convergence.
+
+rk =
+
+
+
+
+
+
+rk
+1
+...
+rk
+N
+
+
+ , dk =
+
+
+
+
+
+
+
+
+
+
+ ,
+
+dk
+1
+...
+dk
+N
+
+(cid:40)
+
+rk
+i = vk − uk
+i
+i (vk−1 − vk).
+i = τ k
+dk
+
+(6)
+
+The primal residual rk approaches zero when the iterates
+accurately satisfy the linear constraints in (2), and the dual
+residual dk approaches zero as the iterates near a minimizer
+of the objective. Iteration can be terminated when
+
+(cid:88)N
+
+(cid:107)rk(cid:107)2 ≤ (cid:15)tol max{
+and (cid:107)dk(cid:107)2 ≤ (cid:15)tol (cid:88)N
+
+i=1
+
+(cid:107)λk
+
+i (cid:107)2,
+
+i=1
+
+(cid:107)uk
+
+i (cid:107)2, N (cid:107)vk(cid:107)2}
+
+(7)
+
+where (cid:15)tol is the stopping tolerance. The residuals in (6)
+and stopping criterion in (7) are adopted from the general
+problem (Boyd et al., 2011) to the consensus problem. The
+observation that residuals rk, dk can be decomposed into
+“local residuals” rk
+i has been exploited to generalize the
+residual balancing method (He et al., 2000) for distributed
+consensus problems (Song et al., 2016).
+
+i , dk
+
+4. Convergence analysis
+
+We now study the convergence of ADMM with node-
+speciﬁc adaptive penalty parameters. We provide condi-
+tions on penalty parameters that guarantee convergence,
+and also a convergence rate. The issue of how to automati-
+cally tune penalty parameters effectively will be discussed
+in Section 5.
+
+4.1. Diagonal penalty parameters for ADMM
+
+1 Id, . . . , τ k
+
+Let T k = diag(τ k
+N Id) be a diagonal matrix con-
+taining non-negative penalty parameters on iteration k. De-
+ﬁne the norm (cid:107)u(cid:107)2
+T = uT T u. Using the notation deﬁned
+above with u = (u1; . . . ; uN ) ∈ RdN , we can rewrite the
+consensus ADMM steps (3)–(5) as
+
+uk+1 = arg min
+
+f (u) + (cid:104)−Au, λk(cid:105)
+
+u
++ 1/2(cid:107)b − Au − Bvk(cid:107)2
+T k
+
+(8)
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+vk+1 = arg min
+
+g(v) + (cid:104)−Bv, λk(cid:105)
+
+v
++ 1/2(cid:107)b − Auk+1 − Bv(cid:107)2
+T k
+
+(9)
+
+λk+1 = λk + T k(b − Auk+1 − Bvk+1).
+
+(10)
+
+When using a diagonal penalty matrix, the generalized
+residuals become
+
+(cid:40)
+
+rk = b − Auk − Buk
+dk = AT T kB(vk − vk−1).
+
+(11)
+
+The sequel contains a convergence proof for generalized
+ADMM with adaptive penalty matrix T k. Our proof is in-
+spired by the variational inequality (VI) approach in (He
+et al., 2000; He & Yuan, 2012; 2015).
+
+4.2. Preliminaries
+
+Notation. We use the following notation to simplify the
+discussions. Deﬁne the combined variables y = (u; v) ∈
+Rn+m and z = (u; v; λ) ∈ Rn+m+p, and denote iter-
+ates as yk = (uk; vk) and zk = (uk; vk; λk). Let y∗ and
+z∗ denote optimal primal/dual solutions. Further deﬁne
+∆z+
+k =
+(∆u∗
+
+k ) := zk+1 − zk and ∆z∗
+
+k = (∆u+
+k; ∆λ∗
+k; ∆v∗
+
+k ; ∆v+
+
+k ; ∆λ+
+k) := z∗ − zk. Set
+
+
+
+
+−AT λ
+−BT λ
+Au + Bv − b
+
+ ,
+
+H k =
+
+0
+
+
+0
+0
+0 BT T kB 0
+
+0
+
+0
+
+(T k)−1
+
+
+, M k =
+
+
+
+
+
+0
+0
+In
+0
+0
+Im
+0 −T kB Ip
+
+
+
+.
+
+is a monotone operator
+
+Note that F (z)
+satisfying
+∀z, z(cid:48), (z − z(cid:48))T (F (z) − F (z(cid:48))) ≥ 0. We introduce in-
+termediate variable ˜zk+1 = (uk+1; vk+1; ˆλk+1), where
+ˆλk+1 = λk + T k(b − Auk+1 − Bvk). We thus have
+
+∆z+
+
+k = M k(˜zk+1 − zk).
+
+(12)
+
+Variational inequality formulation. The optimal solution
+z∗ of problem (1) satisﬁes the variational inequality (VI),
+
+∀z, φ(y) − φ(y∗) + (z − z∗)T F (z∗) ≥ 0.
+
+(13)
+
+From the optimality conditions for the sub-steps (8, 9), we
+see that yk+1 satisﬁes the variational inequalities
+
+∀u, f (u) − f (uk+1) + (u − uk+1)T
+
+(AT T k(Auk+1 + Bvk − b) − AT λk) ≥ 0
+
+∀v, g(v) − g(vk+1) + (v − vk+1)T
+
+(BT T k(Auk+1 + Bvk+1 − b) − BT λk) ≥ 0,
+
+(14)
+
+(15)
+
+which can be combined as
+
+φ(y) − φ(yk+1)
+
++ (z − ˜zk+1)T (cid:0)F (˜zk+1) + H k∆z+
+
+(cid:1) ≥ 0.
+
+(16)
+
+k
+
+Lemmas. We present several lemmas to facilitate the
+proof of our main convergence theory, which extend pre-
+vious results regarding ADMM (He & Yuan, 2012; 2015)
+to ADMM with a diagonal penalty matrix. Lemma 1 shows
+the difference between iterates decreases as the iterates ap-
+proach the true solution, while Lemma 2 implies a contrac-
+tion in the VI sense. Full proofs are provided in supple-
+mentary material; Eq. (17) and Eq. (18) are supported us-
+ing equations (13, 15, 16) and standard techniques, while
+Eq. (19) is proven from Eq. (18). Lemma 2 is supported by
+the relationship in Eq. (12).
+Lemma 1. The optimal solution z∗ = (u∗; v∗; λ∗) and
+sequence zk = (uk; vk; λk) of generalized ADMM satisfy
+
+(B∆v+
+∆z∗
+
+k )T ∆λ+
+k+1H k∆z+
+(cid:107)∆z+
+
+k ≥ 0,
+k ≥ 0,
+H k ≤ (cid:107)∆z∗
+
+k (cid:107)2
+
+k(cid:107)2
+
+H k − (cid:107)∆z∗
+
+k+1(cid:107)2
+
+H k .
+
+(17)
+
+(18)
+
+(19)
+
+Lemma 2. The sequence ˜zk = (uk; vk; ˆλk) and zk =
+(uk; vk; λk)T from generalized ADMM satisfy, ∀z,
+
+(˜zk+1 −z)T H k∆z+
+
+k ≥
+
+((cid:107)zk+1 −z(cid:107)2
+
+Hk −(cid:107)zk −z(cid:107)2
+
+Hk ). (20)
+
+1
+2
+
+We provide a convergence analysis of ADMM with an
+adaptive diagonal penalty matrix by showing (i) the norm
+of the residuals converges to zero; (ii) the method attains
+a worst-case ergodic O(1/k) convergence rate in the VI
+sense. The key idea of the proof is to bound the adaptivity
+of T k so that ADMM is stable enough to converge, which
+is presented as the following assumption.
+Assumption 1. The adaptivity of the diagonal penalty ma-
+trix T k = diag(τ k
+
+p ) is bounded by
+
+i , . . . , τ k
+
+∞
+(cid:88)
+
+k=1
+
+(ηk)2 < ∞, where (ηk)2 = max
+
+{(ηk
+
+i )2},
+
+i∈{1,...,p}
+
+(21)
+
+(ηk
+
+i )2 = max{τ k
+
+i /τ k−1
+i
+
+− 1, τ k−1
+i
+
+/τ k
+
+i − 1}.
+
+We can apply Assumption 1 to verify that
+
+1
+1 + (ηk)2 ≤
+
+τ k
+i
+τ k−1
+i
+
+≤ 1 + (ηk)2.
+
+(22)
+
+which is needed to prove Lemma 3.
+Lemma 3. Suppose Assumption 1 holds.
+(u; v; λ) and z(cid:48) = (u(cid:48); v(cid:48); λ(cid:48)) satisfy, ∀z, z(cid:48)
+
+Then z =
+
+(cid:107)z − z(cid:48)(cid:107)2
+
+H k ≤ (1 + (ηk)2)(cid:107)z − z(cid:48)(cid:107)2
+
+H k−1.
+
+(23)
+
+φ(y) = f (u) + g(v), F (z) =
+
+
+
+4.3. Convergence criteria
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+Now we are ready to prove the convergence of generalized
+ADMM with adaptive penalty under Assumption 1. We
+prove the following quantity, which is a norm of the resid-
+uals, converges to zero.
+
+Theorem 2. Suppose Assumption 1 holds. Consider the
+sequence ˜zk = (uk; vk; ˆλk) of generalized ADMM and de-
+ﬁne ¯zl = 1
+k=1 ˜zk. Then sequence ¯zl satisﬁes the con-
+l
+vergence bound
+
+(cid:80)l
+
+(cid:107)∆z+
+
+k (cid:107)2
+
+H k =(cid:107)B∆v+
+
+k (cid:107)2
+
+T k + (cid:107)∆λ+
+
+=(cid:107)(AT T k)†dk(cid:107)2
+
+k (cid:107)2
+T k + (cid:107)rk(cid:107)2
+
+(T k)−1
+T k ,
+
+k (cid:107)2
+
+where A† denotes generalized inverse of a matrix A. Note
+that (cid:107)∆z+
+H k converges to zero only if (cid:107)rk(cid:107) and (cid:107)dk(cid:107)
+converge to zero, provided A and T k are bounded.
+Theorem 1. Suppose Assumption 1 holds. Then the iter-
+ates zk = (uk; vk; λk) of generalized ADMM satisfy
+
+(24)
+
+φ(y) − φ(¯yl) + (z − ¯zl)T F (¯zl) ≥ −
+
+((cid:107)z − z0(cid:107)2
+
+H 0
+
++ C Σ
+
+η C Π
+
+η (cid:107)z − z∗(cid:107)2
+
+H 0 + C Σ
+
+η C Π
+
+1 (cid:107)2
+
+H 0).
+
+(31)
+
+1
+2 l
+η (cid:107)∆z∗
+
+Proof. We can verify with simple algebra that
+
+(z − z(cid:48))T F (z) = (z − z(cid:48))T F (z(cid:48)).
+
+(32)
+
+lim
+k→∞
+
+(cid:107)∆z+
+
+k (cid:107)2
+
+H k = 0.
+
+(25)
+
+Apply (32) with z(cid:48) = ˜zk+1, and combine VI (16) and
+Lemma 2 to get
+
+Proof. Let z = zk, z(cid:48) = z∗ in Lemma 3 to achieve
+
+(cid:107)∆z∗
+
+k(cid:107)2
+
+H k ≤ (1 + (ηk)2)(cid:107)∆z∗
+
+k(cid:107)2
+
+H k−1.
+
+(26)
+
+Combine (26) with Lemma 1 (19) to get
+
+(cid:107)∆z+
+
+k (cid:107)2
+
+H k ≤ (1+(ηk)2)(cid:107)∆z∗
+
+k(cid:107)2
+
+H k−1 −(cid:107)∆z∗
+
+k+1(cid:107)2
+
+H k . (27)
+
+Accumulate (27) for k = 1 to l,
+
+φ(y) − φ(yk+1) + (z − ˜zk+1)T F (z)
+=φ(y) − φ(yk+1) + (z − ˜zk+1)T F (˜zk+1)
+≥(˜zk+1 − z)T H k∆z+
+k
+
+≥
+
+1
+2
+
+((cid:107)zk+1 − z(cid:107)2
+
+H k − (cid:107)zk − z(cid:107)2
+
+H k ).
+
+Summing for k = 0 to l − 1 gives us
+
+(cid:88)l
+
+k=1
+(cid:88)l
+
+k=1
+
+≥
+
+1
+2
+
+(28)
+
+φ(y) − φ(yk) + (z − ˜zk)T F (z)
+
+((cid:107)z − zk(cid:107)2
+
+H k−1 − (cid:107)z − zk−1(cid:107)2
+
+H k−1).
+
+(1 + (ηt)2)(cid:107)∆z∗
+
+1 (cid:107)2
+
+H 0 − (cid:107)∆z∗
+
+l+1(cid:107)2
+
+H l .
+
+Since φ(y) is convex, the left hand side of (37) satisﬁes,
+
+LHS = l φ(y) −
+
+φ(yk) + (l z −
+
+˜zk)T F (z)
+
+l
+(cid:88)
+
+k=1
+
+l
+(cid:88)
+
+k=1
+
+(cid:107)∆z+
+
+k (cid:107)2
+
+H k ≤
+
+(1 + (ηt)2)(cid:107)∆z∗
+
+1 (cid:107)2
+
+H 0.
+
+(29)
+
+≤ l φ(y) − l φ(¯yl) + (l z − l ¯zl)T F (z).
+
+(38)
+
+When l → ∞, Assumption 1 suggests (cid:81)∞
+(ηt)2) < ∞, which means (cid:80)∞
+limk→∞ (cid:107)∆z+
+k (cid:107)2
+
+k=1 (cid:107)∆z+
+
+t=1(1 +
+H k < ∞. Hence
+
+H k = 0.
+
+k (cid:107)2
+
+We further exploit Assumption 1 and Lemma 3 to prove
+Lemma 4, and combine VI (16), Lemma 2, and Lemma 4
+to prove the O(1/k) convergence rate in Theorem 2.
+
+Lemma 4. Suppose Assumption 1 holds.
+Then z =
+(u; v; λ) ∈ Rm+n+p and the iterates zk = (uk; vk; λk)
+of generalized ADMM satisfy, ∀z
+
+l
+(cid:88)
+
+k=1
+
+((cid:107)z − zk(cid:107)2
+
+H k − (cid:107)z − zk(cid:107)2
+
+H k−1 ) ≤
+
+(30)
+
+C Σ
+
+η C Π
+
+η ((cid:107)z − z∗(cid:107)2
+
+1 (cid:107)2
+
+H 0) < ∞,
+
+where C Σ
+
+η = (cid:80)∞
+
+k=1(ηk)2, C Π
+
+t=1(1 + (ηt)2).
+
+H 0 + (cid:107)∆z∗
+η = (cid:81)∞
+
+Applying Lemma 4, we see the right hand side satisﬁes,
+
+RHS =
+
+((cid:107)z − zk(cid:107)2
+
+H k − (cid:107)z − zk−1(cid:107)2
+
+H k−1)+
+
+1
+2
+
+l
+(cid:88)
+
+k=1
+
+1
+2
+
+l
+(cid:88)
+
+k=1
+
+((cid:107)z − zk(cid:107)2
+
+H k−1 − (cid:107)z − zk(cid:107)2
+
+H k )
+
+≥
+
+1
+2
+
+≥ −
+
+((cid:107)z − zl(cid:107)2
+
+H l − (cid:107)z − z0(cid:107)2
+
+H 0)+
+
+η ((cid:107)z − z∗(cid:107)2
+
+H 0 + (cid:107)∆z∗
+
+1 (cid:107)2
+
+H 0)
+
+η C Π
+
+η (cid:107)z − z∗(cid:107)2
+
+H 0+
+
+C Σ
+
+η C Π
+
+1
+2
+((cid:107)z − z0(cid:107)2
+
+−
+
+1
+2
+
+C Σ
+
+η C Π
+
+η (cid:107)∆z∗
+
+H 0 + C Σ
+1 (cid:107)2
+
+H 0 ).
+
+Combining inequalities (37), (38) and (41), and letting z(cid:48) =
+¯zk in (32) yields the O(1/k) convergence rate in (31)
+
+(1 + (ηt)2)(cid:107)∆z+
+
+k (cid:107)2
+
+H k ≤
+
+l
+(cid:88)
+
+l
+(cid:89)
+
+k=1
+
+t=k+1
+
+l
+(cid:89)
+
+t=1
+
+Then we have
+
+l
+(cid:88)
+
+k=1
+
+l
+(cid:89)
+
+t=1
+
+(33)
+
+(34)
+
+(35)
+
+(36)
+
+(37)
+
+(39)
+
+(40)
+
+(41)
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+5. Adaptive Consensus ADMM (ACADMM)
+
+To address the issue of how to automatically tune pa-
+rameters on each node for optimal performance, we pro-
+pose adaptive consensus ADMM (ACADMM), which sets
+worker-speciﬁc penalty parameters by exploiting curvature
+information. We derive our method from the dual interpre-
+tation of ADMM – Douglas-Rachford splitting (DRS) – us-
+ing a diagonal penalty matrix. We then derive the spectral
+stepsizes for consensus problems by assuming the curva-
+tures of the objectives are diagonal matrices with diverse
+parameters on different nodes. At last, we discuss the prac-
+tical computation of the spectral stepsizes from consensus
+ADMM iterates and apply our theory in Section 4 to guar-
+antee convergence.
+
+5.1. Dual interpretation of generalized ADMM
+
+The dual form of problem (1) can be written
+
+min
+λ∈Rp
+
+f ∗(AT λ) − (cid:104)λ, b(cid:105)
+(cid:125)
+(cid:123)(cid:122)
+(cid:124)
+ˆf (λ)
+
++ g∗(BT λ)
+,
+(cid:123)(cid:122)
+(cid:125)
+ˆg(λ)
+
+(cid:124)
+
+(42)
+
+where λ denotes the dual variable, while f ∗, g∗ denote the
+Fenchel conjugate of f, g (Rockafellar, 1970). It is known
+that ADMM steps for the primal problem (1) are equiv-
+alent to performing Douglas-Rachford splitting (DRS) on
+the dual problem (42) (Eckstein & Bertsekas, 1992; Xu
+et al., 2017a). In particular, the generalized ADMM iter-
+ates satisfy the DRS update formulas
+
+0 ∈ (T k)−1(ˆλk+1 − λk) + ∂ ˆf (ˆλk+1) + ∂ˆg(λk)
+(43)
+0 ∈ (T k)−1(λk+1 − λk) + ∂ ˆf (ˆλk+1) + ∂ˆg(λk+1), (44)
+
+where ˆλ denotes the intermediate variable deﬁned in Sec-
+tion 4.2. We prove the equivalence of generalized ADMM
+and DRS in the supplementary material.
+
+5.2. Generalized spectral stepsize rule
+
+Xu et al. (2017a) ﬁrst derived spectral penalty parameters
+for ADMM using the DRS. Proposition 1 in (Xu et al.,
+2017a) proved that the minimum residual of DRS can be
+obtained by setting the scalar penalty to τ k = 1/
+α β,
+where we assume the subgradients are locally linear as
+
+√
+
+∂ ˆf (ˆλ) = α ˆλ + Ψ and
+
+∂ˆg(λ) = β λ + Φ,
+
+(45)
+
+α, β ∈ R represent scalar curvatures, and Ψ, Φ ⊂ Rp.
+
+We now present generalized spectral stepsize rules that can
+accomodate consensus problems.
+Proposition 1 (Generalized spectral DRS). Suppose the
+generalized DRS steps (43, 44) are used, and assume the
+subgradients are locally linear,
+
+∂ ˆf (ˆλ) = Mα
+
+ˆλ + Ψ and
+
+∂ˆg(λ) = Mβ λ + Φ.
+
+(46)
+
+for matrices Mα = diag(α1Id, . . . , αN Id) and Mβ =
+diag(β1Id, . . . , βN Id), and some Ψ, Φ ⊂ Rp. Then the
+minimal residual of ˆf (λk+1) + ˆg(λk+1) is obtained by set-
+ting τ k
+
+αi βi, ∀i = 1, . . . , N .
+
+i = 1/
+
+√
+
+Proof. Substituting subgradients ∂ ˆf (ˆλ), ∂ˆg(λ) into the
+generalized DRS steps (43, 44), and using our linear as-
+sumption (46) yields
+
+0 ∈ (T k)−1(ˆλk+1 − λk) + (Mα ˆλk+1 + Ψ) + (Mβ λk + Φ)
+0 ∈ (T k)−1(λk+1 − λk) + (Mα ˆλk+1 + Ψ) + (Mβ λk+1 + Φ).
+
+Since T k, Mα, Mβ are diagonal matrices, we can split the
+equations into independent blocks, ∀i = 1, . . . , N,
+
+0 ∈ (ˆλk+1
+0 ∈ (λk+1
+
+i − λk
+i − λk
+
+i )/τ k
+i )/τ k
+
+i + (αi ˆλk+1 + Ψi) + (βi λk + Φi)
+i + (αi ˆλk+1 + Ψi) + (βi λk+1 + Φi).
+
+√
+
+Applying Proposition 1 in (Xu et al., 2017a) to each block,
+τ k
+i = 1/
+αi βi minimizes the block residual represented
+by rk+1
+DR,i = (cid:107)(αi + βi)λk+1 + (ai + bi)(cid:107), where ai ∈
+Ψi, bi ∈ Φi. Hence the residual norm at step k + 1, which
+is (cid:107)(Mα + Mβ)λk+1 + (a + b)(cid:107) =
+DR,i)2 is
+minimized by setting τ k
+
+i=1(rk+1
+αi βi, ∀i = 1, . . . , N .
+
+(cid:113)(cid:80)N
+
+i = 1/
+
+√
+
+5.3. Stepsize estimation for consensus problems
+
+Thanks to the equivalence of ADMM and DRS, Proposi-
+tion 1 can also be used to guide the selection of the “opti-
+mal” penalty parameter. We now show that the generalized
+spectral stepsizes can be estimated from the ADMM iter-
+ates for the primal consensus problem (2), without explic-
+itly supplying the dual functions.
+The subgradients of dual functions ∂ ˆf , ∂ˆg can be com-
+puted from the ADMM iterates using the identities derived
+from (8, 9),
+
+Auk+1 − b ∈ ∂ ˆf (ˆλk+1) and Bvk+1 ∈ ∂ˆg(λk+1). (47)
+
+For the consensus problem we have A = IdN , B =
+−(Id; . . . ; Id), and b = 0, and so
+
+(uk+1
+1
+
+; . . . ; uk+1
+−(vk+1; . . . ; vk+1
+(cid:124)
+(cid:125)
+(cid:123)(cid:122)
+N duplicates of vk+1
+
+N ) ∈ ∂ ˆf (ˆλk+1)
+) ∈ ∂ˆg(λk+1).
+
+(48)
+
+(49)
+
+If we approximate the behavior of these sub-gradients
+using the linear approximation (46), and break the sub-
+gradients into blocks (one for each worker node), we get
+(omitting iteration index k for clarity)
+
+ui = αi
+
+ˆλi + ai and − v = βi λi + bi, ∀i
+
+(50)
+
+where αi and βi represent the curvature of local functions
+ˆfi and ˆgi on the ith node.
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+We select stepsizes with a two step procedure, which fol-
+lows the spectral stepsize literature. First, we estimate the
+local curvature parameters, αi and βi, by ﬁnding least-
+squares solutions to (50). Second, we plug these curvature
+estimates into the formula τ k
+αi βi. This formula
+produces the optimal stepsize when ˆf and ˆg are well ap-
+proximated by a linear function, as shown in Proposition 1.
+
+i = 1/
+
+√
+
+For notational convenience, we work with the quantities
+i = 1/αi, ˆβk
+ˆαk
+i = 1/βi, which are estimated on each
+i , ˆλk
+node using the current iterates uk
+i , vk, λk
+i and also an
+older iterate uk0
+, k0 < k. Deﬁning ∆uk
+i =
+i
+, ∆ˆλk
+i − uk0
+uk
+and following the literature
+i
+for Barzilai-Borwein/spectral stepsize estimation, there are
+two least squares estimators that can be obtained from (50):
+
+, vk0, λk0
+i
+i = ˆλk
+
+, ˆλk0
+i
+i − ˆλk0
+
+i
+
+ˆαk
+
+SD,i =
+
+(cid:104)∆ˆλk
+(cid:104)∆uk
+
+i , ∆ˆλk
+i (cid:105)
+i , ∆ˆλk
+i (cid:105)
+
+and ˆαk
+
+MG,i =
+
+(cid:104)∆uk
+(cid:104)∆uk
+
+i , ∆ˆλk(cid:105)
+i , ∆uk
+i (cid:105)
+
+(51)
+
+where SD stands for steepest descent, and MG stands for
+minimum gradient. (Zhou et al., 2006) recommend using a
+hybrid of these two estimators, and choosing
+
+(cid:40)
+
+ˆαk
+
+i =
+
+ˆαk
+MG,i
+SD,i − ˆαk
+ˆαk
+
+MG,i/2
+
+MG,i > ˆαk
+
+if 2 ˆαk
+otherwise.
+
+SD,i
+
+(52)
+
+ˆτ k+1
+i
+
+=
+
+i
+
+i = λk
+
+It was observed that this choice worked well for non-
+distributed ADMM in (Xu et al., 2017a). We can similarly
+estimate ˆβk
+i − λk0
+i from ∆vk = −vk + vk0 and ∆λk
+.
+ACADMM estimates the curvatures in the original d-
+dimensional feature space, and avoids estimating the cur-
+vature in the higher N d-dimensional feature space (which
+grows with the number of nodes N in AADMM (Xu et al.,
+2017a)), which is especially useful for heterogeneous data
+with different distributions allocated to different nodes.
+The overhead of our adaptive scheme is only a few inner
+products, and the computation is naturally distributed on
+different workers.
+
+i , k0 = 0,
+
+i on each node by (3)
+
+Algorithm 1 Adaptive consensus ADMM (ACADMM)
+Input: initialize v0, λ0
+i , τ 0
+1: while not converge by (7) and k < maxiter do
+2:
+3:
+4:
+5:
+6:
+7:
+8:
+
+Locally update uk
+Globally update vk on central server by (4)
+Locally update dual variable λk
+if mod(k, Tf ) = 1 then
+Locally update ˆλk
+Locally compute spectral stepsizes ˆαk
+Locally estimate correlations αk
+cor,i , βk
+Locally update τ k+1
+using (54)
+k0 ← k
+
+i (vk−1 − uk
+i )
+
+i = λk−1
+
+i + τ k
+
+i , ˆβk
+
+cor,i
+
+i
+
+i
+
+i on each node by (5)
+
+else
+
+9:
+10:
+11:
+12:
+13:
+14:
+15: end while
+
+τ k+1
+i ← τ k
+i
+end if
+k ← k + 1
+
+and Theorem 2 to guarantee convergence. The ﬁnal safe-
+guarded ACADMM rule is
+
+ˆαk
+i
+
+ˆβk
+i
+
+(cid:113)
+
+
+ˆαk
+i
+ˆβk
+
+i
+τ k
+i
+
+cor,i > (cid:15)cor and βk
+cor,i > (cid:15)cor and βk
+cor,i ≤ (cid:15)cor and βk
+
+if αk
+if αk
+if αk
+otherwise,
+
+cor,i > (cid:15)cor
+cor,i ≤ (cid:15)cor
+cor,i > (cid:15)cor
+
+(54)
+
+τ k+1
+i
+
+= max{min{ˆτ k+1
+
+, (1 +
+
+i
+
+Ccg
+k2 )τ k
+
+i } ,
+
+τ k
+i
+1 + Ccg/k2
+
+}.
+
+The complete adaptive consensus ADMM is shown in Al-
+gorithm 1. We suggest updating the stepsize every Tf = 2
+iterations, ﬁxing the safeguarding threshold (cid:15)cor = 0.2, and
+choosing a large convergence constant Ccg = 1010.
+
+6. Experiments & Applications
+
+We now study the performance of ACADMM on bench-
+mark problems, and compare to other methods.
+
+5.4. Safeguarding and convergence
+
+6.1. Applications
+
+Spectral stepsizes for gradient descent methods are
+equipped with safeguarding strategies like backtracking
+line search to handle inaccurate curvature estimation and to
+guarantee convergence. To safeguard the proposed spectral
+penalty parameters, we check whether our linear subgradi-
+ent assumption is reasonable before updating the stepsizes.
+We do this by testing that the correlations
+
+αk
+
+cor,i =
+
+(cid:104)∆uk
+(cid:107)∆uk
+
+i , ∆ˆλk
+i (cid:105)
+i (cid:107) (cid:107)∆ˆλk
+i (cid:107)
+
+and βk
+
+cor,i =
+
+(cid:104)∆vk, ∆λk
+i (cid:105)
+(cid:107)∆vk(cid:107) (cid:107)∆λk
+i (cid:107)
+
+,
+
+(53)
+
+are bounded away from zero by a ﬁxed threshold. We also
+bound changes in the penalty parameter by (1 + Ccg/k2) ac-
+cording to Assumption 1, which was shown in Theorem 1
+
+Our experiments use the following test problems that are
+commonly solved using consensus methods.
+
+Linear regression with elastic net regularizer. We con-
+sider consensus formulations of the elastic net (Zou &
+Hastie, 2005) with fi and g deﬁned as,
+
+fi(ui) =
+
+(cid:107)Diui − ci(cid:107)2, g(v) = ρ1|v| +
+
+(cid:107)v(cid:107)2, (55)
+
+ρ2
+2
+
+1
+2
+
+where Di ∈ Rni×m is the data matrix on node i, and ci is
+a vector of measurements.
+
+Sparse logistic regression with (cid:96)1 regularizer can be
+written in the consensus form for distributed computing,
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+Table 1: Iterations (and runtime in seconds);128 cores are used; absence of convergence after n iterations is indicated as n+.
+
+Application
+
+Elastic net
+regression
+
+Dataset
+
+RB-ADMM
+(He et al., 2000)
+
+AADMM
+(Xu et al., 2017a)
+
+CADMM
+(Boyd et al., 2011)
+
+#samples ×
+#features 1
+64000 × 100
+64000 × 100
+60000 × 784
+10000 × 3072
+19996 × 1355191
+20242 × 47236
+72309 × 20958
+64000 × 100
+64000 × 100
+60000 × 784
+10000 × 3072
+19996 × 1355191
+20242 × 47236
+72309 × 20958
+64000 × 100
+64000 × 100
+60000 × 784
+10000 × 3072
+19996 × 1355191
+20242 × 47236
+72309 × 20958
+512 × 53760
+
+Synthetic1
+Synthetic2
+MNIST
+CIFAR10 2
+News20
+RCV1
+Realsim
+Synthetic1
+Synthetic2
+MNIST
+CIFAR10
+News20
+RCV1
+Realsim
+Synthetic1
+Synthetic2
+MNIST
+CIFAR10
+News20
+RCV1
+Realsim
+SDP
+Ham-9-5-6
+1 #vertices × #edges for SDP;
+
+20(666)
+14(2.70e3)
+80(101)
+
+43(563)
+341(4.38e3)
+40(5.99e3)
+
+1000+(1.27e4)
+94(1.22e3)
+1000+(1.27e4) 130(1.69e3)
+100+(1.49e4)
+88(1.29e3)
+100+(1.04e3) 100+(1.06e3) 100+(1.05e3)
+100+(4.61e3) 100+(4.60e3) 100+(5.17e3)
+31(1.00e3)
+33(1.06e3)
+30(5.59e3)
+32(5.91e3)
+78(114)
+138(137)
+247(356)
+317(314)
+212(387)
+325(444)
+152(402)
+310(700)
+211(3.84e3)
+316(4.96e3)
+155(116)
+155(115)
+184(77)
+184(77)
+33(49.8)
+33(35.0)
+69(112)
+283(276)
+172(287)
+1000+(930)
+227(253)
+1000+(774)
+262(2.74e3)
+259(2.63e3)
+47(21.6)
+47(21.7)
+1000+(76.8)
+1000+(77.6)
+100+(2.01e3) 100+(2.14e3)
+2We only use the ﬁrst training batch of CIFAR10.
+
+325(516)
+310(727)
+316(6.36e3)
+155(137)
+184(85)
+19(27)
+1000+(1.59e3)
+73(127)
+231(249)
+259(3.83e3)
+47(31.1)
+442(74.4)
+35(860)
+
+Support
+Vector
+Machine
+
+Sparse
+logistic
+regression
+
+CRB-ADMM
+(Song et al., 2016)
+
+106(1.36e3)
+140(1.79e3)
+87(1.27e4)
+100+(1.05e3)
+100+(4.60e3)
+31(1.00e3)
+30(5.57e3)
+48(51.9)
+
+203(286)
+149(368)
+207(3.73e3)
+155(115)
+183(77)
+26(28.4)
+81(97.4)
+285(340)
+1000+(1.00e3)
+267(2.78e3)
+40(19.0)
+1000+(79.3)
+100+(2.14e3)
+
+Proposed
+ACADMM
+48(623)
+57(738)
+14(2.18e3)
+35(376)
+78(3.54e3)
+8(284)
+9(1.80e3)
+24(29.9)
+114(119)
+149(218)
+44(118)
+137(2.71e3)
+150(114)
+159(68)
+21(25.3)
+25(39.0)
+41(88.0)
+62(60.2)
+217(2.37e3)
+27(15.4)
+347(41.6)
+30(703)
+
+1000+(1.25e3) 1000+(1.00e3)
+
+ni(cid:88)
+
+j=1
+
+ni(cid:88)
+
+j=1
+
+fi(ui) =
+
+log(1 + exp(−ci,jDT
+
+i,jui)), g(v) = ρ|v|
+
+(56)
+
+where Di,j ∈ Rm is the jth sample, and ci,j ∈ {−1, 1} is
+the corresponding label. The minimization sub-step (3) in
+this case is solved by L-BFGS (Liu & Nocedal, 1989).
+
+Support Vector Machines (SVMs) minimize the dis-
+tributed objective function (Goldstein et al., 2016)
+
+fi(ui) = C
+
+max{1 − ci,jDT
+
+i,jui, 0}, g(v) =
+
+(cid:107)v(cid:107)2
+
+2 (57)
+
+1
+2
+
+where Di,j ∈ Rm is the jth sample on the ith node, and
+ci,j ∈ {−1, 1} is its label. The minimization (3) is solved
+by dual coordinate ascent (Chang & Lin, 2011).
+
+Semideﬁnite programming (SDP) can be distributed as,
+
+fi(Ui) = ι{Di(Ui) = ci}, g(v) = (cid:104)F, V (cid:105) + ι{V (cid:23) 0} (58)
+
+where ι{S} is a characteristic function that is 0 if condition
+S is satisﬁed and inﬁnity otherwise. V (cid:23)0 indicates that V
+is positive semideﬁnite. V, F, Di,j ∈ Rn×n are symmetric
+matrices, (cid:104)X, Y (cid:105) = trace(X T Y ) denotes the inner product
+of X and Y , and Di(X) = ((cid:104)Di,1, X(cid:105); . . . ; (cid:104)Di,mi, X(cid:105)).
+
+6.2. Experimental Setup
+
+We test the problems in Section 6.1 with synthetic and real
+datasets. The number of samples and features are speci-
+ﬁed in Table 1. Synthetic1 contains samples from a nor-
+mal distribution, and Synthetic2 contains samples from a
+
+mixture of 10 random Gaussians. Synthetic2 is heteroge-
+neous because the data block on each individual node is
+sampled from only 1 of the 10 Gaussians. We also ac-
+quire large empirical datasets from the LIBSVM webpage
+(Liu et al., 2009), as well as MNIST digital images (LeCun
+et al., 1998), and CIFAR10 object images (Krizhevsky &
+Hinton, 2009). For binary classiﬁcation tasks (SVM and
+logreg), we equally split the 10 category labels of MNIST
+and CIFAR into “positive” and “negative” groups. We use
+a graph from the Seventh DIMACS Implementation Chal-
+lenge on Semideﬁnite and Related Optimization Problems
+following (Burer & Monteiro, 2003) for Semideﬁnite Pro-
+gramming (SDP). The regularization parameter is ﬁxed at
+ρ = 10 in all experiments.
+
+Consensus ADMM (CADMM) (Boyd et al., 2011), resid-
+ual balancing (RB-ADMM) (He et al., 2000), adaptive
+ADMM (AADMM) (Xu et al., 2017a), and consensus
+residual balancing (CRB-ADMM) (Song et al., 2016)
+are implemented and reported for comparison. Hyper-
+parameters of these methods are set as suggested by their
+creators. The initial penalty is ﬁxed at τ0 = 1 for all meth-
+ods unless otherwise speciﬁed.
+
+6.3. Convergence results
+
+Table 1 reports the convergence speed in iterations and
+wall-clock time (secs) for various test cases. These exper-
+iments are performed with 128 cores on a Cray XC-30 su-
+percomputer. CADMM with default penalty τ = 1 (Boyd
+et al., 2011) is often slow to converge. ACADMM out-
+performs the other ADMM variants on all the real-world
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+(a) Sensitivity of iteration count to initial
+penalty τ0. Synthetic problems of EN re-
+gression are studied with 128 cores.
+
+(b) Sensitivity of iteration count to number
+of cores (top) and number of samples (bot-
+tom).
+
+(c) Sensitivity of iteration count (top) and
+wall time (bottom) to number of cores.
+
+Figure 1: ACADMM is robust to the initial penalty τ , number of cores N , and number of training samples.
+
+datasets, and is competitive with AADMM on two ho-
+mogeneous synthetic datasets where the curvature may be
+globally estimated with a scalar.
+
+ACADMM is more reliable than AADMM since the cur-
+vature estimation becomes difﬁcult for high dimensional
+variables. RB is relatively stable but sometimes has difﬁ-
+culty ﬁnding the exact optimal penalty, as the adaptation
+can stop because the difference of residuals are not signif-
+icant enough to trigger changes. RB does not change the
+initial penalty in several experiments such as logistic re-
+gression on RCV1. CRB achieves comparable results with
+RB, which suggests that the relative sizes of local residuals
+may not always be very informative. ACADMM signiﬁ-
+cantly boosts AADMM and the local curvature estimations
+are helpful in practice.
+
+ally performs well when small numbers of nodes are used,
+while ACADMM is much more stable. RB and CRB
+are more stable than AADMM, but cannot compete with
+ACADMM. Fig. 1c (bottom) presents the acceleration in
+(wall-clock secs) achieved by increasing the number of
+workers.
+
+Finally, ACADMM is insensitive to the safeguarding
+hyper-parameters, correlation threshold (cid:15)cor and conver-
+gence constant Ccg. Though tuning these parameters may
+further improve the performance, the ﬁxed default val-
+ues generally perform well in our experiments and enable
+ACADMM to run without user oversight.
+In further ex-
+periments in the supplementary material, we also show that
+ACADMM is fairly insensitive to the regularization param-
+eter ρ in our classiﬁcation/regression models.
+
+6.4. Robustness and sensitivity
+
+7. Conclusion
+
+Fig. 1a shows that the practical convergence of ADMM is
+sensitive to the choice of penalty parameter. ACADMM is
+robust to the selection of the initial penalty parameter and
+achieves promising results for both homogeneous and het-
+erogeneous data, comparable to ADMM with a ﬁne-tuned
+penalty parameter.
+
+We study scalability of the method by varying the num-
+ber of workers and training samples (Fig. 1b). ACADMM
+is fairly robust to the scaling factor. AADMM occasion-
+
+We propose ACADMM, a fully automated algorithm for
+distributed optimization. Numerical experiments on var-
+ious applications and real-world datasets demonstrate the
+efﬁciency and robustness of ACADMM. We also prove a
+O(1/k) convergence rate for ADMM with adaptive penal-
+ties under mild conditions. By automating the selection of
+algorithm parameters, adaptive methods make distributed
+systems more reliable, and more accessible to users that
+lack expertise in optimization.
+
+10-2100102104Initial penalty parameter101102103IterationsENRegression-Synthetic1CADMMRB-ADMMAADMMCRB-ADMMACADMM101102Number of cores101102103IterationsENRegression-Synthetic2CADMMRB-ADMMAADMMCRB-ADMMACADMM101102Number of cores101102103IterationsSVM-Synthetic2CADMMRB-ADMMAADMMCRB-ADMMACADMM10-2100102104Initial penalty parameter101102103IterationsENRegression-Synthetic2CADMMRB-ADMMAADMMCRB-ADMMACADMM104105Number of samples101102103IterationsENRegression-Synthetic2CADMMRB-ADMMAADMMCRB-ADMMACADMM101102Number of cores101102103104SecondsSVM-Synthetic2CADMMRB-ADMMAADMMCRB-ADMMACADMMAdaptive Consensus ADMM for Distributed Optimization
+
+Acknowledgements
+
+ZX , GT, HL and TG were supported by the US Ofﬁce of
+Naval Research under grant N00014-17-1-2078 and by the
+US National Science Foundation (NSF) under grant CCF-
+1535902. GT was partially supported by the DOD High
+Performance Computing Modernization Program. MF was
+partially supported by the Fundac¸ ˜ao para a Ciˆencia e Tec-
+nologia, grant UID/EEA/5008/2013. XY was supported
+by the General Research Fund from Hong Kong Research
+Grants Council under grant HKBU-12313516.
+
+References
+
+Banert, Sebastian, Bot, Radu Ioan,
+
+Ern¨o Robert.
+results on the admm algorithm.
+arXiv:1612.05057, 2016.
+
+and Csetnek,
+Fixing and extending some recent
+arXiv preprint
+
+Boyd, Stephen, Parikh, Neal, Chu, Eric, Peleato, Borja, and
+Eckstein, Jonathan. Distributed optimization and statisti-
+cal learning via the alternating direction method of mul-
+tipliers. Found. and Trends in Mach. Learning, 3:1–122,
+2011.
+
+Burer, Samuel and Monteiro, Renato DC. A nonlinear pro-
+gramming algorithm for solving semideﬁnite programs
+via low-rank factorization. Mathematical Programming,
+95(2):329–357, 2003.
+
+Chang, Chih-Chung and Lin, Chih-Jen. LIBSVM: a library
+for support vector machines. ACM Transactions on In-
+telligent Systems and Technology (TIST), 2(3):27, 2011.
+
+Chang, Tsung-Hui, Hong, Mingyi, Liao, Wei-Cheng, and
+Wang, Xiangfeng. Asynchronous distributed alternating
+direction method of multipliers: Algorithm and conver-
+gence analysis. In 2016 IEEE International Conference
+on Acoustics, Speech and Signal Processing (ICASSP),
+pp. 4781–4785. IEEE, 2016.
+
+Davis, Damek and Yin, Wotao. Faster convergence rates of
+relaxed peaceman-rachford and admm under regularity
+assumptions. arXiv preprint arXiv:1407.5210, 2014.
+
+Eckstein, Jonathan and Bertsekas, Dimitri.
+
+On the
+Douglas-Rachford splitting method and the proximal
+point algorithm for maximal monotone operators. Math-
+ematical Programming, 55(1-3):293–318, 1992.
+
+Franc¸a, Guilherme and Bento, Jos´e. An explicit rate bound
+In Information Theory (ISIT),
+for over-relaxed admm.
+2016 IEEE International Symposium on, pp. 2104–2108.
+IEEE, 2016.
+
+Gabay, Daniel and Mercier, Bertrand. A dual algorithm for
+the solution of nonlinear variational problems via ﬁnite
+element approximation. Computers & Mathematics with
+Applications, 2(1):17–40, 1976.
+
+Ghadimi, Euhanna, Teixeira, Andr´e, Shames, Iman, and Jo-
+hansson, Mikael. Optimal parameter selection for the
+alternating direction method of multipliers: quadratic
+IEEE Trans. Autom. Control, 60:644–658,
+problems.
+2015.
+
+Giselsson, Pontus and Boyd, Stephen. Linear convergence
+and metric selection in douglas-rachford splitting and
+admm. 2016.
+
+Glowinski, Roland and Marroco, A. Sur l’approximation,
+par ´el´ements ﬁnis d’ordre un, et
+la r´esolution, par
+p´enalisation-dualit´e d’une classe de probl´emes de
+Dirichlet non lin´eaires. ESAIM: Modlisation Mathma-
+tique et Analyse Numrique, 9:41–76, 1975.
+
+Goldfarb, Donald, Ma, Shiqian, and Scheinberg, Katya.
+Fast alternating linearization methods for minimizing the
+sum of two convex functions. Mathematical Program-
+ming, 141(1-2):349–382, 2013.
+
+Goldstein, Tom and Setzer, Simon. High-order methods for
+basis pursuit. UCLA CAM Report, pp. 10–41, 2010.
+
+Goldstein, Tom, O’Donoghue, Brendan, Setzer, Simon,
+and Baraniuk, Richard. Fast alternating direction opti-
+mization methods. SIAM Journal on Imaging Sciences,
+7(3):1588–1623, 2014.
+
+Goldstein, Tom, Li, Min, and Yuan, Xiaoming. Adaptive
+primal-dual splitting methods for statistical learning and
+In Advances in Neural Information
+image processing.
+Processing Systems, pp. 2080–2088, 2015.
+
+Goldstein, Tom, Taylor, Gavin, Barabin, Kawika, and
+Sayre, Kent. Unwrapping ADMM: efﬁcient distributed
+computing via transpose reduction. In AISTATS, 2016.
+
+He, Bingsheng and Yuan, Xiaoming. On the o(1/n) conver-
+gence rate of the douglas-rachford alternating direction
+method. SIAM Journal on Numerical Analysis, 50(2):
+700–709, 2012.
+
+He, Bingsheng and Yuan, Xiaoming. On non-ergodic con-
+vergence rate of Douglas-Rachford alternating direction
+method of multipliers. Numerische Mathematik, 130:
+567–577, 2015.
+
+He, Bingsheng, Yang, Hai, and Wang, Shengli. Alternating
+direction method with self-adaptive penalty parameters
+for monotone variational inequalities. Jour. Optim. The-
+ory and Appl., 106(2):337–356, 2000.
+
+Kadkhodaie, Mojtaba, Christakopoulou, Konstantina, San-
+jabi, Maziar, and Banerjee, Arindam. Accelerated alter-
+nating direction method of multipliers. In Proceedings
+of the 21th ACM SIGKDD, pp. 497–506, 2015.
+
+Adaptive Consensus ADMM for Distributed Optimization
+
+Krizhevsky, Alex and Hinton, Geoffrey. Learning multiple
+
+layers of features from tiny images. 2009.
+
+LeCun, Yann, Bottou, L´eon, Bengio, Yoshua, and Haffner,
+Patrick. Gradient-based learning applied to document
+recognition. Proceedings of the IEEE, 86(11):2278–
+2324, 1998.
+
+Lin, Zhouchen, Liu, Risheng, and Su, Zhixun. Linearized
+alternating direction method with adaptive penalty for
+low-rank representation. In NIPS, pp. 612–620, 2011.
+
+Liu, Dong C and Nocedal, Jorge. On the limited memory
+bfgs method for large scale optimization. Mathematical
+programming, 45(1):503–528, 1989.
+
+Liu, Jun, Chen, Jianhui, and Ye, Jieping. Large-scale sparse
+In ACM SIGKDD, pp. 547–556,
+
+logistic regression.
+2009.
+
+Nishihara, R., Lessard, L., Recht, B., Packard, A., and
+Jordan, M. A general analysis of the convergence of
+ADMM. In ICML, 2015.
+
+Ouyang, Hua, He, Niao, Tran, Long, and Gray, Alexan-
+der G. Stochastic alternating direction method of multi-
+pliers. ICML (1), 28:80–88, 2013.
+
+Raghunathan, Arvind and Di Cairano, Stefano. Alternat-
+ing direction method of multipliers for strictly convex
+quadratic programs: Optimal parameter selection.
+In
+American Control Conf., pp. 4324–4329, 2014.
+
+Rockafellar, R. Convex Analysis. Princeton University
+
+Press, 1970.
+
+Song, Changkyu, Yoon, Sejong, and Pavlovic, Vladimir.
+Fast ADMM algorithm for distributed optimization with
+adaptive penalty. AAAI, 2016.
+
+Studer, Christoph, Goldstein, Tom, Yin, Wotao, and Bara-
+niuk, Richard G. Democratic representations. arXiv
+preprint arXiv:1401.3420, 2014.
+
+Taylor, Gavin, Burmeister, Ryan, Xu, Zheng, Singh,
+Bharat, Patel, Ankit, and Goldstein, Tom. Training neu-
+ral networks without gradients: A scalable ADMM ap-
+proach. ICML, 2016.
+
+Tian, Wenyi and Yuan, Xiaoming. Faster alternating di-
+rection method of multipliers with a worst-case o (1/n2)
+convergence rate. 2016.
+
+Xu, Zheng, Figueiredo, Mario AT, and Goldstein, Thomas.
+Adaptive ADMM with spectral penalty parameter selec-
+tion. AISTATS, 2017a.
+
+Xu, Zheng, Figueiredo, Mario AT, Yuan, Xiaoming, Studer,
+Christoph, and Goldstein, Thomas. Adaptive relaxed
+ADMM: Convergence theory and practical implementa-
+tion. CVPR, 2017b.
+
+Zhang, Ruiliang and Kwok, James T. Asynchronous dis-
+tributed ADMM for consensus optimization. In ICML,
+pp. 1701–1709, 2014.
+
+Zhou, Bin, Gao, Li, and Dai, Yu-Hong. Gradient methods
+with adaptive step-sizes. Computational Optimization
+and Applications, 35:69–86, 2006.
+
+Zou, Hui and Hastie, Trevor. Regularization and variable
+selection via the elastic net. Journal of the Royal Statis-
+tical Society: Series B (Statistical Methodology), 67(2):
+301–320, 2005.
+
+

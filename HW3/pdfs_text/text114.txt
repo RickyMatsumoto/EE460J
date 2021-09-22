@@ -1,0 +1,5294 @@
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+R´obert Busa-Fekete 1 Bal´azs Sz¨or´enyi 2 3 Paul Weng 4 5 Shie Mannor 3
+
+Abstract
+
+We study the multi-armed bandit (MAB) problem
+where the agent receives a vectorial feedback that
+encodes many possibly competing objectives to
+be optimized. The goal of the agent is to ﬁnd
+a policy, which can optimize these objectives
+simultaneously in a fair way. This multi-objective
+online optimization problem is formalized by us-
+ing the Generalized Gini Index (GGI) aggregation
+function. We propose an online gradient descent
+algorithm which exploits the convexity of the GGI
+aggregation function, and controls the exploration
+in a careful way achieving a distribution-free regret
+˜O(T −1/2) with high probability. We test our
+algorithm on synthetic data as well as on an electric
+battery control problem where the goal is to trade
+off the use of the different cells of a battery in
+order to balance their respective degradation rates.
+
+1. Introduction
+
+The multi-armed bandit (MAB) problem (or bandit problem)
+refers to an iterative decision making problem in which an
+agent repeatedly chooses among K options, metaphorically
+corresponding to pulling one of K arms of a bandit machine.
+In each round, the agent receives a random payoff, which
+is a reward or a cost that depends on the arm being selected.
+The agent’s goal is to optimize an evaluation metric, e.g., the
+error rate (expected percentage of times a suboptimal arm is
+played) or the cumulative regret (difference between the sum
+of payoffs obtained and the (expected) payoffs that could
+have been obtained by selecting the best arm in each round).
+In the stochastic multi-armed bandit setup, the payoffs are
+assumed to obey ﬁxed distributions that can vary with the
+arms but do not change with time. To achieve the desired goal,
+
+*Equal contribution 1Yahoo Research, New York, NY, USA
+2Research Group on AI, Hungarian Acad. Sci. and Univ. of
+Szeged, Szeged, Hungary 3Technion Institute of Technology, Haifa,
+Israel 4SYSU-CMU JIE, SEIT, SYSU, Guangzhou, P.R. China
+5SYSU-CMU JRI, Shunde, P.R. China. Correspondence to: Paul
+Weng <paul@weng.fr>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+the agent has to tackle the classical exploration/exploitation
+dilemma: It has to properly balance the pulling of arms
+that were found to yield low costs in earlier rounds and the
+selection of arms that have not yet been tested often enough
+(Auer et al., 2002a; Lai & Robbins, 1985).
+
+The bandit setup has become the standard modeling
+framework for many practical applications, such as online
+advertisement (Slivkins, 2014) or medical treatment design
+(Press, 2009) to name a few. In these tasks, the feedback is
+formulated as a single real value. However many real-world
+online learning problems are rather multi-objective, i.e., the
+feedback consists of a vectorial payoffs. For example, in our
+motivating example, namely an electric battery control prob-
+lem, the learner tries to discover a “best” battery controller,
+which balances the degradation rates of the battery cells (i.e.,
+components of a battery), among a set of controllers while
+facing a stochastic power demand. Besides, there are several
+studies published recently that consider multi-objective
+sequential decision problem under uncertainty (Drugan &
+Now´e, 2013; Roijers et al., 2013; Mahdavi et al., 2013).
+
+In this paper, we formalize the multi-objective multi-armed
+bandit setting where the feedback received by the agent is in
+the form of a D-dimensional cost vector. The goal here is to
+be both efﬁcient, i.e., minimize the cumulative cost for each
+objective, and fair, i.e., balance the different objectives. One
+natural way to ensure this is to try to ﬁnd a cost vector on the
+Pareto front that is closest to the origin or to some other ideal
+point. A generalization of this approach (when using the
+inﬁnite norm) is the Generalized Gini Index (GGI), a well-
+known inequality measure in economics (Weymark, 1981).
+
+GGI is convex, which suggests applying the Online
+Convex Optimization (OCO) techniques (Hazan, 2016;
+Shalev-Shwartz, 2012). However, a direct application of this
+technique may fail to optimize GGI under noise, because
+the objective can be only observed with a bias that is induced
+by the randomness of the cost vectors and by the fact that the
+performance is measured by the function value of the average
+cost instead of the average of the costs’ function value. The
+solution we propose is an online learning algorithm which
+is based on Online Gradient Descent (OGD) (Zinkevich,
+2003; Hazan, 2016) with additional exploration that enables
+us to control the bias of the objective function. We also show
+that its regret is almost optimal: up to a logarithmic factor,
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+it matches the distribution-free lower bound of the stochastic
+bandit problem (Auer et al., 2002b), which naturally applies
+to our setup when the feedback is one-dimensional.
+
+The paper is organized as follows: after we introduce the
+formal learning setup, we brieﬂy recall the necessary notions
+from multi-objective optimization in Section 3. Next, in
+Section 4, GGI is introduced and some of its properties are
+described. In Sections 5 and 6, we present how to compute
+the optimal policy for GGI, and deﬁne the regret notion.
+Section 7 contains our main results where we deﬁne our
+OGD-based algorithm and analyze its regret. In Section
+8, we test our algorithm and demonstrate its versatility in
+synthetic and real-world battery-control experiments. In
+Section 9, we provide a survey of related work, and ﬁnally
+conclude the paper in Section 10.
+
+2. Formal setup
+
+The multi-armed or K-armed bandit problem is speciﬁed
+by real-valued random variables X1, . . . , XK associated,
+respectively, with K arms (that we simply identify by
+In each time step t, the online
+the numbers 1, . . . , K).
+learner selects one and obtains a random sample of the
+corresponding distributions. These samples, which are
+called costs, are assumed to be independent of all previous
+actions and costs.1 The goal of the learner can be deﬁned
+in different ways, such as minimizing the sum of costs over
+time (Lai & Robbins, 1985; Auer et al., 2002a).
+
+In the multi-objective multi-armed bandit (MO-MAB)
+problem, costs are not scalar real values, but real vectors.
+More speciﬁcally, a D-objective K-armed bandit problem
+(D ≥ 2, K ≥ 2) is speciﬁed by K real-valued multi-
+variate random variables X1, . . . , XK over [0, 1]D. Let
+µk = E[Xk] denote the expected vectorial cost of arm k
+where µk = (µk,1, . . . , µk,D). Furthermore, µ denotes the
+matrix whose rows are the µk’s.
+
+In each time step the learner can select one of the arms
+and obtain a sample, which is a cost vector, from the
+corresponding distribution. Samples are also assumed
+to be independent over time and across the arms, but not
+necessarily across the components of cost vectors. At time
+step t, kt denotes the index of the arm played by the learner
+and X(t)
+kt,D) the resulting payoff. After
+kt
+playing t time steps, the empirical estimate of the expected
+cost µk of the kth arm is:
+
+kt,1, . . . X (t)
+
+= (X (t)
+
+1Our setup is motivated by a practical application where
+feedback is more naturally formulated in terms of cost. However the
+stochastic bandit problem is generally based on rewards, which can
+be easily turned into costs by using the transformation x (cid:55)→ 1 − x
+assuming that the rewards are from [0, 1].
+
+(cid:98)µ(t)
+k =
+
+1
+Tk(t)
+
+t
+(cid:88)
+
+τ =1
+
+X(τ )
+kτ
+
+1(kτ = k)
+
+(1)
+
+where all operations are meant elementwise, Tk(t) is the
+number of times the kth arm has been played (i.e., Tk(t) =
+(cid:80)t
+
+τ =1 1(kτ = k)) and 1(·) is the indicator function.
+
+3. Multi-objective optimization
+
+In order to complete the MO-MAB setting, we need to
+introduce the notion of optimality of the arms. First, we
+introduce the Pareto dominance relation (cid:22) deﬁned as
+follows, for any v, v(cid:48) ∈ RD:
+
+v (cid:22) v(cid:48) ⇔ ∀d = 1, . . . , D, vd ≤ v(cid:48)
+
+d .
+
+(2)
+
+Let O ⊆ RD be a set of D-dimension vectors. The Pareto
+front of O, denoted O∗, is the set of vectors such that:
+
+v∗ ∈ O∗ ⇔ (cid:0)∀v ∈ O, v (cid:22) v∗ ⇒ v = v∗(cid:1) .
+
+(3)
+
+In multi-objective optimization, one usually wants to
+compute the Pareto front, or search for a particular element
+of the Pareto front. In practice, it may be costly (and even
+infeasible depending on the size of the solution space) to
+determine all the solutions of the Pareto front. One may
+then prefer to directly aim for a particular solution in the
+Pareto front. This problem is formalized as a single objective
+optimization problem, using an aggregation function.
+
+An aggregation (or scalarizing) function, which is a
+non-decreasing function φ : RD → R, allows every vector
+to receive a scalar value to be optimized2. The initial
+multi-objective problem is then rewritten as follows:
+
+min φ(v)
+
+s.t. v ∈ O .
+
+(4)
+
+A solution to this problem yields a particular solution on the
+Pareto front. Note that if φ is not strictly increasing in every
+component, some care is needed to ensure that the solution
+of (4) is on the Pareto front.
+
+Different aggregation function can be used depending on
+the problem at hand, such as sum, weighted sum, min,
+max, (augmented) weighted Chebyshev norm (Steuer &
+Choo, 1983), Ordered Weighted Averages (OWA) (Yager,
+1988) or Ordered Weighted Regret (OWR) (Ogryczak et al.,
+2011) and its weighted version (Ogryczak et al., 2013).
+In this study, we focus on the Generalized Gini Index
+(GGI) (Weymark, 1981), a special case of OWA.
+
+2A multivariate function f : RD → R is said to be monotone
+(non-decreasing) if for all ﬁxed x, x(cid:48) ∈ RD such that x (cid:22) x(cid:48)
+implies that f (x) ≤ f (x(cid:48)).
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+4. Generalized Gini Index
+
+For a given n ∈ N, [n] denotes the set {1, 2, . . . , n}. The
+Generalized Gini Index (GGI) (Weymark, 1981) is deﬁned
+as follows for a cost vector x = (x1, . . . , xD) ∈ RD:
+
+Gw(x) =
+
+wdxσ(d) = w(cid:124)xσ
+
+D
+(cid:88)
+
+d=1
+
+where σ ∈ SD, which depends on x,
+is the permu-
+tation that sorts the components of x in a decreasing
+order, xσ = (xσ(1), · · · , xσ(D)) is the sorted vector
+and weights wi’s are assumed to be non-increasing,
+i.e., w1 ≥ w2 ≥ . . . ≥ wD. Given this assumption,
+Gw(x) = maxπ∈SD w(cid:124)xπ = maxπ∈SD w(cid:124)
+πx and is
+therefore a piecewise-linear convex function. Figure 1
+illustrates GGI on a bi-objective optimization task.
+
+To better understand GGI, we introduce its formulation in
+terms of Lorenz vectors. The Lorenz vector of x is the vector
+L(x) = (L1(x), . . . , LD(x)) where Ld(x) is the sum of the
+d smallest components of x. Then, GGI can be rewritten as
+follows:
+
+Gw(x) =
+
+w(cid:48)
+
+dLd(x)
+
+D
+(cid:88)
+
+d=1
+
+1, . . . , w(cid:48)
+
+where w(cid:48) = (w(cid:48)
+D) is the vector deﬁned by
+∀d ∈ [D], w(cid:48)
+d = wd − wd+1 with wD+1 = 0. Note that all
+the components of w(cid:48) are nonnegative as we assume that
+those of w are non-increasing.
+
+GGI3 was originally introduced for quantifying the inequal-
+ity of income distribution in economics. It is also known in
+statistics (Buczolich & Sz´ekely, 1989) as a special case of
+Weighted Average Ordered Sample statistics, which does not
+require that weights be non-increasing and is therefore not
+necessarily convex. GGI has been characterized by Weymark
+(1981). It encodes both efﬁciency as it is monotone with
+Pareto dominance and fairness as it is non-increasing with
+Pigou-Dalton transfers (1912; 1920); they are two principles
+formulating natural requirements, which is an important
+reason why GGI became a well-established measure of bal-
+ancedness. Informally, a Pigou-Dalton transfer amounts to
+increasing a lower-valued objective while decreasing another
+higher-valued objective by the same quantity such that the or-
+der between the two objectives is not reversed. The effect of
+such a transfer is to balance a cost vector. Formally, GGI sat-
+isﬁes the following fairness property: ∀x such that xi < xj,
+
+∀(cid:15) ∈ (0, xj − xi), Gw(x + (cid:15)ei − (cid:15)ej) ≤ Gw(x)
+
+Figure 1. Point A is always preferred (w.r.t. GGI) to B due to Pareto
+dominance; A is always preferred to C due to the Pigou-Dalton
+transfer principle; depending on the weights of GGI, A may be
+preferred to D or the other way around; with w = (1, 1/2), A is
+preferred to D (points equivalent to A are on the dashed green line).
+The optimal mixed solution is the black dot.
+
+cost vector (w.r.t. GGI) is the one with equal values in all
+objectives if feasible.
+
+(5)
+
+The original Gini index can be recovered as a special case
+of GGI by setting the weights as follows:
+
+∀d ∈ [D], wd = (2(D − d) + 1)/D2.
+
+(6)
+
+This yields a nice graphical interpretation. For a ﬁxed
+vector x,
+the distribution of costs can be represented
+as a curve connecting the points (0, 0), (1/D, L1(x)),
+(2/D, L2(x)), . . . , (1, LD(x)). An ideally fair distribution
+with an identical total cost is given by the straight line con-
+necting (0, 0), (1/D, LD(x)/D), (2/D, 2LD(x)/D), . . . ,
+(1, LD(x)), which equally distributes the total cost over all
+components. Then 1 − Gw(x)/¯x with weights (6) and ¯x =
+(cid:80) xi/D is equal to twice the area between the two curves.
+
+From now on, to simplify the presentation, we focus on GGI
+with strictly decreasing weights in [0, 1]D, i.e., d < d(cid:48) im-
+plies wd > wd(cid:48). This means that GGI is strictly decreasing
+with Pigou-Dalton transfers and all the components of w(cid:48)
+are positive. Based on formulation (5), Ogryczak & Sliwin-
+ski (2003) showed that the GGI value of a vector x can be
+obtained by solving a linear program. We shall recall their re-
+sults and deﬁne the linear program-based formulation of GGI.
+
+Proposition 1. The GGI score Gw(x) of vector x is the
+optimal value of the following linear program
+
+where ei and ej are two vectors of the canonical basis.
+As a consequence, among vectors of equal sum, the best
+
+3Note that in this paper GGI is expressed in terms of costs and
+
+therefore lower GGI values are preferred.
+
+(cid:18)
+
+D
+(cid:88)
+
+w(cid:48)
+d
+
+minimize
+
+D
+(cid:80)
+j=1
+d=1
+subject to rd + bj,d ≥ xj
+≥ 0
+bj,d
+
+drd+
+
+(cid:19)
+
+bj,d
+
+∀j, d ∈ [D]
+∀j, d ∈ [D]
+
+0.00.20.40.60.81.01.20.00.20.40.60.81.01.2ABCDmeans of armsMulti-objective Bandits: Optimizing the Generalized Gini Index
+
+5. Optimal policy
+
+In the single objective case, arms are compared in terms of
+their means, which induce a total ordering over arms. In the
+multi-objective setting, we use the GGI criterion to compare
+arms. One can compute the GGI score of each arm k as
+Gw(µk) if its vectorial mean µk is known. Then an optimal
+arm k∗ minimizes the GGI score, i.e.,
+
+k∗ ∈ argmin
+k∈[K]
+
+Gw(µk) .
+
+However, in this work, we also consider mixed strategies,
+which can be deﬁned as A = {α ∈ RK| (cid:80)K
+k=1 αk =
+1 ∧ 0 (cid:22) α}, because they may allow to reach lower
+GGI values than any ﬁxed arm (see Figure 1). A policy
+parameterized by α chooses arm k with probability αk. An
+optimal mixed policy can then be obtained as follows:
+
+α∗ ∈ argmin
+
+Gw
+
+α∈A
+
+(cid:33)
+
+αkµk
+
+.
+
+(7)
+
+(cid:32) K
+(cid:88)
+
+k=1
+
+(cid:17)
+
+(cid:16)(cid:80)K
+
+k=1 α∗
+
+In general, Gw
+kµk
+≤ Gw(µk∗ ), therefore
+using mixed strategies is justiﬁed in our setting. Based on
+Proposition 1, if the arms’ means were known, α∗ could be
+computed by solving the following linear program:
+
+minimize
+
+w(cid:48)
+d
+
+drd +
+
+
+
+D
+(cid:88)
+
+d=1
+
+
+
+bj,d
+
+
+
+D
+(cid:88)
+
+j=1
+
+subject to rd + bj,d ≥
+
+αkµk,j
+
+∀j, d ∈ [D]
+
+(8)
+
+K
+(cid:88)
+
+k=1
+
+k=1 αk = 1
+
+(cid:80)K
+bj,d ≥ 0
+
+α (cid:23) 0
+
+∀j, d ∈ [D]
+
+6. Regret
+
+After playing T rounds, the average cost can be written as
+
+¯X(T ) =
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+X(t)
+kt
+
+.
+
+Our goal is to minimize the GGI index of this term. Accord-
+ingly we expect the learner to collect costs so as their average
+(cid:0) ¯X(T )(cid:1) should be as small as
+in terms of GGI, that is, Gw
+possible. As shown in the previous section, for a given bandit
+instance with arm means µ = (µ1, . . . , µK), the optimal
+(cid:16)(cid:80)K
+= Gw (µα∗) if
+policy α∗ achieves Gw
+the randomness of the costs are not taken into account. We
+consider the performance of the optimal policy as a reference
+value, and deﬁne the regret of the learner as the difference of
+the GGI of its average cost and the GGI of the optimal policy:
+(cid:16) ¯X(T )(cid:17)
+
+− Gw (µα∗) .
+
+R(T ) = Gw
+
+k=1 α∗
+
+kµk
+
+(9)
+
+(cid:17)
+
+Note that GGI is a continuous function, therefore if the
+learner follows a policy α(T ) that is “approaching” α∗ as
+T → ∞, then the regret is vanishing.
+
+We shall also investigate a slightly different regret notion
+called pseudo-regret:
+
+(T )
+
+R
+
+= Gw
+
+(cid:16)
+
+µ ¯α(T )(cid:17)
+
+− Gw (µα∗)
+
+(10)
+
+(cid:80)T
+
+where ¯α(T ) = 1
+t=1 α(t). We will show that the
+T
+difference between the regret and pseudo-regret of our
+algorithm is ˜O(T −1/2) with high probability, thus having
+a high probability regret bound ˜O(T −1/2) for one of them
+implies a regret bound ˜O(T −1/2) for the other one.
+Remark 1. The single objective stochastic multi-armed
+bandit problem (Auer et al., 2002a; Bubeck & Cesa-Bianchi,
+2012) can be naturally accommodated into our setup with
+D = 1 and w1 = 1. In this case, α∗ implements the pure
+strategy that always pulls the optimal arm with the highest
+mean denoted by µk∗ . Thus Gw (µα∗) = µk∗ in this case.
+Assuming that the learner plays only with pure strategies,
+the pseudo-regret deﬁned in (10) can be written as:
+
+(T )
+
+R
+
+=
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+1
+T
+
+K
+(cid:88)
+
+k=1
+
+(µkt − T µk∗ ) =
+
+Tk(T ) (µk − µk∗ )
+
+which coincides with the single objective pseudo-regret
+(see for example (Auer et al., 2002a)), apart from the fact
+that we work with costs instead of rewards. Therefore our
+notion of multi-objective pseudo-regret can be seen as a
+generalization of the single objective pseudo-regret.
+
+into a single real value Gw(X(t)
+kt
+
+Remark 2. Single-objective bandit algorithm can be ap-
+plied in our multi-objective setting by transforming the multi-
+variate payoffs X(t)
+) in
+kt
+every time step t. However, in general, this approach fails to
+optimize GGI as formulated in (7) due to GGI’s non-linearity,
+even if the optimal policy is a pure strategy. Moreover, ap-
+plying a multi-objective bandit algorithm such as MO-UCB
+(Drugan & Now´e, 2013) would be inefﬁcient as they were
+developed to ﬁnd all Pareto-optimal arms and then to sample
+them uniformly at random. This approach may be reason-
+able to apply only when α∗
+k = 1/#K where K = {k ∈
+[K] : α∗
+k > 0} contains all the Pareto optimal arms, which
+is clearly not the case for every MO-MAB instance.
+
+7. Learning algorithm based on OCO
+
+In this section we propose an online learning algorithm called
+MO-OGDE, to optimize the regret deﬁned in the previous
+section. Our method exploits the convexity of the GGI opera-
+tor and formalizes the policy search problem as an online con-
+vex optimization problem, which is solved by Online Gradi-
+ent Descent (OGD) (Zinkevich, 2003) algorithm with projec-
+tion to a gradually expanding truncated probability simplex.
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Algorithm 1 MO-OGDE(δ)
+
+1: Pull each arm once
+2: Set α(K+1) = (1/K, · · · , 1/K)
+3: for rounds t = K + 1, K + 2, . . . do
+4:
+
+Choose an arm kt according to α(t)
+Observe the sample X(t)
+kt
+(cid:113) ln(2/δ)
+√
+t
+
+Set ηt =
+α(t+1) = OGDEstep(α(t), ηt, ∇f (t))
+
+2
+√
+(1−1/
+
+K)
+
+and compute f (t)
+
+5:
+
+6:
+
+7:
+
+return 1
+T
+
+(cid:80)T
+
+t=1 α(t)
+
+Then we shall provide a regret analysis of our method. Due
+to space limitation, the proofs are deferred to the appendix.
+
+7.1. MO-OGDE
+
+Our objective function to be minimized can be viewed as a
+function of α, i.e., f (α) = Gw(µα) where the matrix µ =
+(µ1, . . . , µK) contains the means of the arm distributions as
+its columns. Note that the convexity of GGI implies the con-
+vexity of f (α). Since we play with mixed strategies, the do-
+main of our optimization problem is the K-dimensional prob-
+ability simplex ∆K = {α ∈ RK| (cid:80)K
+k=1 αk = 1 ∧ 0 (cid:22) α},
+which is a convex set. Then the gradient of f (α) with respect
+to αk can be computed as ∂f (α)
+d=1 wdµk,π(d)where
+∂αk
+π is the permutation that sorts the components of µα in
+a decreasing order. The means µk’s are not known but
+they can be estimated based on the costs observed so far as
+given in (1). The objective function based on the empirical
+mean estimates is denoted by f (t)(α) = Gw( (cid:98)µ(t)α) where
+(cid:98)µ(t) = ( (cid:98)µ(t)
+K ) contains the empirical estimates for
+µ1, . . . , µK in time step t as its columns.
+
+1 , . . . , (cid:98)µ(t)
+
+= (cid:80)D
+
+Our Multi-Objective Online Gradient Descent algorithm with
+Exploration is deﬁned in Algorithm 1, which we shall refer
+to as MO-OGDE. Our algorithm is based on the well-known
+Online Gradient Descent (Zinkevich, 2003; Hazan, 2016)
+that carries out the gradient step and the projection back onto
+the domain in each round. The MO-OGDE algorithm ﬁrst
+pulls each arm at once as an initialization step. Then in each
+iteration, it chooses each arm k with probability α(t)
+k , and it
+computes f (t) based on the empirical mean estimates. Next,
+it carries out the gradient step based on ∇f (t)(α(t)) with a
+step size ηt as deﬁned in line 6, and computes the projection
+Π∆β
+
+onto the nearest point of the convex set:
+
+K
+
+(cid:40)
+
+(cid:41)
+
+∆β
+
+K =
+
+α ∈ RK|
+
+αk = 1 ∧ β/K (cid:22) α
+
+K
+(cid:88)
+
+k=1
+
+with β = ηt. The gradient step and projection are carried
+out using
+
+The key ingredient of MO-OGDE is the projection step
+onto the truncated probability simplex ∆ηt
+K which ensures
+that α(t)
+k > ηt/K for every k ∈ [K] and t ∈ [T ]. This
+forced exploration is indispensable in our setup, since the
+objective function f (α) depends on the means of the arm
+distributions, which are not known. To control the difference
+between f (α) and f (t)(α), we need “good” estimates for
+µ1, . . . , µK, which are obtained via forced exploration.
+That is why, the original OGD (Hazan, 2016) algorithm, in
+general, fails to optimize GGI in our setting. Our analysis,
+presented in the next section, focuses on the interplay
+between the forced exploration and the bias of the loss
+functions f (1)(α), . . . , f (T )(α).
+
+7.2. Regret analysis
+
+The technical difﬁculty in optimizing GGI in an on-
+in general, f (t)(α) − f (α) (=
+line fashion is that,
+Gw( (cid:98)µ(t)α) − Gw(µα)) is of order mink(Tk(t))−1/2,
+which, unless all the arms are sampled a linear number of
+times, incurs a regret of the same order of magnitude, which
+is typically too large. Nevertheless, an optimal policy α∗
+determines a convex combination of several arms in the
+form of µα∗, which is the optimal cost vector in terms
+of GGI given the arm distribution at hand. Let us denote
+K = {k ∈ [K] : α∗
+k > 0}. Note that #K ≤ D. Moreover,
+arms in [K] \ K with an individual GGI lower than arms in
+K do not necessarily participate in the optimal combination.
+Obviously, an algorithm that achieves a O(T −1/2) needs
+to pull the arms in #K linear time, and at the same time,
+estimate the arms in [K] \ K with a certain precision.
+
+(cid:80)T
+
+The main idea in the approach proposed in this paper
+is, despite the above remarks,
+to apply some online
+convex optimization algorithm on the current esti-
+mate f (t)(α) = Gw( (cid:98)µ(t)α) of the objective function
+f (α) = Gw(µα), use forced exploration of order T 1/2, and
+ﬁnally show that the estimate f (t) of the objective function
+has error ˜O(T −1/2) along the trajectory generated by the
+online convex optimization algorithm. In particular, we show
+(cid:80)T
+t=1 f (t)(α(t)) + ˜O(T −1/2).
+t=1 α(t)) ≤ 1
+that f ( 1
+T
+T
+The intuitive reason for this is that (cid:107) 1
+t=1 (cid:98)µ(t)α(t) −
+T
+t=1 µα(t)(cid:107) = ˜O(T −1/2), which is based on the
+1
+T
+following observation: an arm in K is either pulled often,
+thus its mean estimate is then accurate enough, or an arm in
+[K] \ K is pulled only a few times, nevertheless (cid:80)T
+t=1 α(t)
+is then small enough to make the poor accuracy of its mean
+estimate insigniﬁcant. Below we make this argument formal
+by proving the following theorem:
+Theorem 1. With probability at least 1 − δ:
+
+(cid:80)T
+
+(cid:80)T
+
+k
+
+(cid:16) 1
+T
+
+f
+
+T
+(cid:88)
+
+t=1
+
+α(t)(cid:17)
+
+− f (α∗) ≤ 2L
+
+(cid:113)
+
+6D ln3(8DKT 2/δ)
+T
+
+,
+
+OGDEstep(α, η, g) = Π∆η
+
+(α − ηg(α))
+
+(11)
+
+K
+
+for any big enough T , where L is the Lipschitz constant of
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Gw(x).
+
+Its proof follows four subsequent steps presented next.
+
+Step 1 As a point of departure, we analyze OGDEstep in
+(11). In particular, we compute the regret that is commonly
+used in OCO setup for f (t)(α(t)).
+Lemma 1. Deﬁne (cid:8)α(t)(cid:9)
+
+t=1,...,T as:
+
+α(1) = (1/K, . . . , 1/K)
+
+α(t+1) = OGDEstep(α(t), ηt, ∇f (t))
+
+with η1, . . . , ηT ∈ [0, 1]. Then the following upper bound
+is guaranteed for all T ≥ 1 and for any α ∈ ∆K:
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+f (t)(α(t)) −
+
+f (t)(α) ≤
+
+1
+ηT
+
++
+
+G2 + 1
+2
+
+T
+(cid:88)
+
+t=1
+
+ηt
+
+√
+
+where supα∈∆K (cid:107)∇f (t)(α)(cid:107) < G ≤
+
+KD for all t ∈ [T ].
+
+The proof of Lemma 1 is presented in Appendix A. If the
+projection is carried out onto ∆K according to the OGE
+algorithm instead of the truncated probability ∆ηt
+K , the regret
+bound in Lemma 1 would be improved only by a constant
+factor (see Theorem 3.1 in (Hazan, 2016)). As a side remark,
+note that Lemma 1 holds for arbitrary convex function since
+only the convexity of f (t)(α) is used in the proof.
+
+Step 2 Next, we show that f (t)(α) converges to f (α) as fast
+as ˜O(T −1/2) along the trajectory (cid:8)α(t)(cid:9)
+t=1,...,T generated
+by MO-OGDE.
+Proposition 2. With probability at least 1 − 2(DT + 1)Kδ,
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+Gw
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+µα(t)
+
+− Gw
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:98)µ(t)α(t)
+
+(cid:33)(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:115)
+
+≤ L
+
+6D(1 + ln2 T ) ln(2/δ)
+T
+
+.
+
+Step 3 Next, we provide a regret bound for the pseudo-regret
+of MO-OGDE by using Lemma 1 and Corollary 1. To this
+end, we introduce some further notations. First of all, let
+
+∆∗
+
+K = argmin
+α∈∆K
+
+f (α)
+
+denote the set of all the minimum points of f over ∆K. As
+we show later in Lemma 3, ∆∗
+K is a convex polytope, and
+thus the set ext(∆∗
+Proposition 3. With probability at least 1 − 4DT 2Kδ:
+
+K) of its extreme points is ﬁnite.
+
+(cid:32)
+
+f
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+(cid:115)
+
+α(t)
+
+− f (α∗) ≤ L
+
+6D(1 + ln2 T ) ln(2/δ)
+T
+(cid:115)
+
++
+
+1
+T ηT
+
++
+
+KD2 + 1
+T
+
+T
+(cid:88)
+
+t=1
+
+ηt +
+
+LK
+T
+
+T
+(cid:88)
+
+t=1
+
+D ln(2/δ)
+2χ1(t)
+
+where χ1(t) = 1(t ≤ τ1) + 1(t > τ1)(ta0/(2|ext(∆∗
+
+(cid:104)
+(2|ext(∆∗
+and τ1 =
+with
+a0
+=
+g∗ = inf α∈∆K \∆∗
+
+K
+
+√
+
+(cid:104)
+2 + 10
+
+3LKD2
+g∗
+
+K)|)
+
+(cid:105) (cid:113)
+
+minα∈ext(∆∗
+
+maxα∗∈∆∗
+
+K
+
+K ) mink:αk>0 αk
+f (α)−f (α∗)
+(cid:107)α−α∗(cid:107) .
+
+K)|))
+(cid:105)4
+
+2 ln 2
+δ
+and
+
+(cid:80)T
+
+The proof is deferred to Appendix C. In the proof ﬁrst
+we decompose the regret into various terms which can be
+upper bounded based on Lemma 1 and Corollary 1. This
+implies that 1
+k will get arbitrarily close to some
+T
+α∗
+k ∈ ∆∗
+K if T is big enough because, as we show later
+in Lemma 3, g∗ is strictly positive (see Appendix D). As
+a consequence, for a big enough T > τ1, the difference
+between the f (t)(α∗) and f (α∗) is vanishing as fast as
+O(T −1/2) which is crucial for a regret bound of order T −1/2.
+
+t=1 α(t)
+
+Step 4 Finally, Theorem 1 yields from Proposition 3 by
+simplifying the right hand side. The calculation is presented
+in Appendix E.
+
+The proof of Proposition 2 is deferred to Appendix B.
+Proposition 2, combined with the fact that
+
+7.3. Regret vs. pseudo-regret
+
+Gw
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+(cid:98)µ(t)α(t)
+
+≤
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+Gw( (cid:98)µ(t)α(t)) =
+
+f (t)(α(t))
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+used
+t=1 µα(t)(cid:17)
+
+the
+where we
+(cid:16) 1
+(cid:80)T
+= f
+Gw
+T
+implies the following result.
+Corollary 1. With probability at least 1 − 2(DT + 1)Kδ,
+
+convexity
+(cid:16) 1
+(cid:80)T
+T
+
+and
+= f (cid:0) ¯α(t)(cid:1)
+
+t=1 α(t)(cid:17)
+
+of GGI,
+
+f (cid:0) ¯α(t)(cid:1) ≤
+
+f (t)(cid:0)α(t)(cid:1) + L
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:115)
+
+6D(1 + ln2 T ) ln 2
+δ
+T
+
+.
+
+Next, we upper-bound the difference of regret deﬁned in (9)
+and the pseudo-regret deﬁned in (10). To that aim, we ﬁrst
+upper-bound the difference of Tk(t) and (cid:80)t
+Claim 1. For any t = 1, 2, . . . and any k = 1, . . . , K it
+τ =1 α(τ )
+holds that P
+
+(cid:12)
+(cid:105)
+(cid:12) ≥ (cid:112)2t ln(2/δ)
+(cid:12)
+
+(cid:104)(cid:12)
+(cid:12)Tk(t) − (cid:80)t
+(cid:12)
+
+τ =1 α(τ )
+k .
+
+≤ δ.
+
+k
+
+As P[kt = k] = αk,
+τ =1 α(τ )
+
+Proof :
+it holds that
+Tk(t) − (cid:80)t
+k ] is
+a martingale. Besides, |1(kτ = k) − αk| ≤ 1 by construc-
+tion. The claim then follows by Azuma’s inequality.
+
+τ =1[1(kτ = k) − α(τ )
+
+k = (cid:80)t
+
+Based on Claim 1 and Prop. 2, we upper-bound the difference
+between the pseudo-regret and regret of MO-OGDE.
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Corollary 2. With probability at least 1 − δ
+
+|R(T ) − ¯R(T )| ≤ L
+
+(cid:114)
+
+12D ln(4(DT + 1)/δ)
+T
+
+The proof of Corollary 2 is deferred to Appendix F.
+According to Corollary 2, the difference between the regret
+and pseudo regret is ˜O(T −1/2) with high probability, hence
+Theorem 1 implies a ˜O(T −1/2) bound for the regret of
+MO-OGDE.
+
+8. Experiments
+
+To test our algorithm, we carried out two sets of experiments.
+In the ﬁrst we generated synthetic data from multi-objective
+bandit instances with known parameters. In this way, we
+could compute the pseudo-regret (10) and, thus investigate
+the empirical performance of the algorithms. In the second
+set of experiments, we run our algorithm on a complex
+multi-objective online optimization problem, namely an
+electric battery control problem. Before presenting those
+experiments, we introduce another algorithm that will serve
+as a baseline.
+
+8.1. A baseline method
+
+In the previous section we introduced a gradient-based
+approach that uses the mean estimates to approximate the
+gradient of the objective function. Nevertheless, using
+the mean estimates, the optimal policy can be directly
+approximated by solving the the linear program given in
+(8). We use the same exploration as MO-OGDE, see line
+6 of Algorithm 1. More concretely, the learner solves the
+following linear program in each time step t:
+
+
+
+
+minimize
+
+w(cid:48)
+d
+
+drd +
+
+bj,d
+
+
+
+D
+(cid:88)
+
+d=1
+
+subject to rd + bj,d ≥
+
+∀j, d ∈ [D]
+
+D
+(cid:88)
+
+j=1
+
+K
+(cid:88)
+
+k=1
+
+αk (cid:98)µ(t)
+
+k,j
+
+αT 1 = 1
+α ≥ ηt/K
+bj,d ≥ 0
+
+∀j, d ∈ [D]
+
+Note that the solution of the learner program above regarding
+α is in ∆ηt
+K . We refer to this algorithm as MO-LP. Note that
+this approach is computationally expensive, since a linear
+program needs to be solved at each time step. But the policy
+of each step is always optimal restricted to the truncated
+simplex ∆ηt
+K with respect to the mean estimates, unlike the
+gradient descent method.
+
+8.2. Synthetic Experiments
+
+We generated random multi-objective bandit instances for
+which each component of the multivariate cost distributions
+
+Figure 2. The regret of the MO-LP and MO-OGDE. The regret and
+its error is computed based on 100 repetitions and plotted in terms
+of the number of rounds. The dimension of the arm distributions
+was set to D ∈ {5, 10}, which is indicated in the title of the panels.
+
+obeys Bernoulli distributions with various parameters. The
+parameters of each Bernoulli distributions are drawn uni-
+formly at random from [0, 1] independently from each other.
+The number of arms K was set to {5, 20} and the dimension
+of the cost distribution was taken from D ∈ {5, 10}. The
+weight vector w of GGI was set to wd = 1/2d−1. Since
+the parameters of the bandit instance are known, the regret
+deﬁned in Section 6 can be computed. We ran the MO-
+OGDE and MO-LP algorithms with 100 repetitions. The
+multi-objective bandit instance were regenerated after each
+run. The regrets of the two algorithms, which are averaged
+out over the repetitions, are plotted in Figure 2 along with the
+error bars. The results reveal some general trends. First, the
+average regrets of both algorithms converge to zero. Second
+the MO-LP algorithm outperforms the gradient descent algo-
+rithm for small number of round, typically T < 5000 on the
+more complex bandit instances (K = 20). This fact might be
+explained by the fact that the MO-LP solves a linear program
+for estimating α∗ whereas the MO-OGDE minimizes the
+same objective but using a gradient descent approach with
+projection, which might achieve slower convergence in terms
+of regret, nevertheless its computational time is signiﬁcantly
+decreased compared to the baseline method.
+
+8.3. Battery control task
+
+We also tried our algorithms on a more realistic domain: the
+cell balancing problem. As the performance proﬁle of battery
+cells, subcomponents of an electric battery, may vary due
+to small physical and manufacturing differences, efﬁcient
+balancing of those cells is needed for better performance and
+longer battery life. We model this problem as a MO-MAB
+where the arms are different cell control strategies and the
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+1 (x), . . . , f (t)
+
+In the online convex optimization setup with multiple
+objectives (Mahdavi et al., 2013), the learner’s forecast
+x(t) is evaluated in terms of multiple convex loss functions
+f (t)
+0 (x), f (t)
+K (x) in each time step t. The
+goal of the learner is then to minimize (cid:80)t
+(x(τ ))
+while keeping the other objectives below some predeﬁned
+threshold, i.e. 1
+(x(τ )) ≤ γi for all i ∈ [K].
+t
+Note that, with linear loss functions, the multiple-objective
+convex optimization setup boils down to linear optimization
+with stochastic constraints, and thus it can be applied to solve
+the linear program given in Section 5 whose solution is the
+optimal policy in our setup. For doing this, however, each
+linear stochastic constraint needs to be observed, whereas
+we only assume bandit information.
+
+τ =1 f (τ )
+
+τ =1 f (τ )
+
+(cid:80)t
+
+0
+
+i
+
+In the approachability problem (Mannor et al., 2014; 2009;
+Abernethy et al., 2011), there are two players, say A and B.
+Players A and B choose actions from the compact convex
+sets X ⊂ RK and Y ⊂ RD, respectively. The feedback to
+the players is computed as a function u : X × Y (cid:55)→ Rp. A
+given convex set S ⊂ Rp is known to both players. Player
+A wants to land inside with the cumulative payoffs, i.e.,
+player A’s goal is to minimize dist( 1
+t=1 u(x(t), y(t)), S)
+T
+where x(t) and y(t) are the actions chosen by player A and
+B respectively, and dist(s, S) = inf s(cid:48)∈S (cid:107)s(cid:48) − s(cid:107), whereas
+player B, called adversary, wants to prevent player A to
+land in set S. In our setup, Player B who generates the cost
+vectors, is assumed to be stochastic. The set S consists of a
+single value which is µα∗, and u corresponds to µIbalpha,
+thus p = D. What makes our setup essentially different
+from approachability is that, S is not known to any player.
+That is why Player A, i.e. the learner, needs to explore the
+action space which is achieved by forced exploration.
+
+(cid:80)T
+
+10. Conclusion and future work
+
+We introduced a new problem in the context of multi-
+objective multi-armed bandit (MOMAB). Contrary to
+most previously proposed approaches in MOMAB, we
+do not search for the Pareto front, instead we aim for a
+fair solution, which is important for instance when each
+objective corresponds to the payoff of a different agent. To
+encode fairness, we use the Generalized Gini Index (GGI),
+a well-known criterion developed in economics. To optimize
+this criterion, we proposed a gradient-based algorithm that
+exploits the convexity of GGI. We evaluated our algorithm on
+two domains and obtained promising experimental results.
+
+Several multi-objective reinforcement learning algorithm
+have been proposed in the literature (G´abor et al., 1998;
+Roijers et al., 2013). Most of these methods make use of
+a simple linear aggregation function. As a future work, it
+would be interesting to extend our work to the reinforcement
+learning setting, which would be useful to solve the electric
+battery control problem even more ﬁnely.
+
+Figure 3. The regret of the MO-OGDE and MO-LP on the battery
+control task. The regret is averaged over 100 repetitions and
+plotted in terms of the number of rounds. The dimension of the arm
+distributions was D = 12.
+
+goal is to balance several objectives: state-of-charge (SOC),
+temperature and aging. More concretely, the learner loops
+over the following two steps: (1) she chooses a control
+strategy for a short duration and (2) she observes its effect
+on the objectives (due to stochastic electric consumption).
+For the technical details of this experiments see Appendix G.
+
+We tackled this problem as a GGI optimization problem. The
+results (averaged over 100 runs) are presented in Figure 3
+where we evaluated MO-OGDE vs. MO-LP. The dashed
+green lines represent the regrets of playing ﬁxed determin-
+istic arms. Although MO-OGDE and MO-LP both learn to
+play a mixed policy that is greatly better than any individual
+arm, MO-OGDE is computationally much more efﬁcient.
+
+9. Related work
+
+The single-objective MAB problem has been intensively
+studied especially in recent years (Bubeck & Cesa-Bianchi,
+2012), nevertheless there is only a very limited number of
+work concerning the multi-objective setting. To the best of
+our best knowledge, Drugan & Now´e (2013) considered ﬁrst
+the multi-objective multi-armed problem in a regret optimiza-
+tion framework with a stochastic assumption. Their work
+consists of extending the UCB algorithm (Auer et al., 2002a)
+so as to be able to handle multi-dimensional feedback vectors
+with the goal of determining all arms on the Pareto front.
+
+Azar et al. (2014) investigated a sequential decision making
+problem with vectorial feedback. In their setup the agent
+is allowed to choose from a ﬁnite set of actions and then it
+observes the vectorial feedback for each action, thus it is a full
+information setup unlike our setup. Moreover, the feedback
+is non-stochastic in their setup, as it is chosen by an adversary.
+They propose an algorithm that can handle a general class
+of aggregation functions, such as the set of bounded domain,
+continuous, Lipschitz and quasi-concave functions.
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Acknowledgements
+
+The authors would like to thank Vikram Bhattacharjee and
+Orkun Karabasoglu for providing the battery model. This
+research was supported in part by the European Communi-
+tys Seventh Framework Programme (FP7/2007-2013) under
+grant agreement 306638 (SUPREL).
+
+References
+
+Abernethy, Jacob D., Bartlett, Peter L., and Hazan, Elad.
+Blackwell approachability and no-regret learning are
+equivalent. In COLT 2011 - The 24th Annual Conference
+on Learning Theory, June 9-11, 2011, Budapest, Hungary,
+pp. 27–46, 2011.
+
+Auer, P., Cesa-Bianchi, N., and Fischer, P. Finite-time
+analysis of the multiarmed bandit problem. Machine
+Learning, 47:235–256, 2002a.
+
+Auer, P., Cesa-Bianchi, N., Freund, Y., and Schapire, R.E.
+The nonstochastic multiarmed bandit problem. SIAM
+Journal on Computing, 32(1):48–77, 2002b.
+
+Azar, Yossi, Feige, Uriel, Feldman, Michal, and Tennenholtz,
+Moshe. Sequential decision making with vector outcomes.
+In ITCS, pp. 195–206, 2014.
+
+Boyd, Stephen and Vandenberghe, Lieven.
+
+Convex
+Optimization. Cambridge University Press, New York,
+NY, USA, 2004.
+
+Bubeck, S. and Cesa-Bianchi, N. Regret analysis of
+stochastic and nonstochastic multi-armed bandit problems.
+Foundations and Trends in Machine Learning, 5(1):1–122,
+2012.
+
+Buczolich, Zolt´an and Sz´ekely, G´abor J. When is a
+weighted average of ordered sample elements a maximum
+likelihood estimator of the location parameter? Advances
+in Applied Mathematics, 10(4):439 – 456, 1989.
+
+Dalton, H. The measurement of inequality of incomes.
+
+Economic J., 30(348–361), 1920.
+
+Gao, Lijun, Chen, Shenyi, and Dougal, Roger A. Dynamic
+lithium-ion battery model for system simulation. IEEE
+Trans. on Components and Packaging Technologies, 25
+(3):495–505, 2002.
+
+Hazan, Elad. Introduction to Online Convex Optimization.
+
+NOW, 2016.
+
+Johnson, V.H. Battery performance models in ADVISOR.
+
+Journal of Power Sources, 110:312–329, 2002.
+
+Lai, T. L. and Robbins, Herbert. Asymptotically efﬁ-
+cient adaptive allocation rules. Advances in Applied
+Mathematics, 6(1):4–22, 1985.
+
+Mahdavi, Mehrdad, Yang, Tianbao, and Jin, Rong. Stochas-
+tic convex optimization with multiple objectives. In NIPS,
+pp. 1115–1123. 2013.
+
+Mannor, Shie, Tsitsiklis, John N., and Yu, Jia Yuan. Online
+Journal of
+learning with sample path constraints.
+Machine Learning Research, 10:569–590, 2009. doi:
+10.1145/1577069.1577089.
+
+Mannor, Shie, Perchet, Vianney, and Stoltz, Gilles. Ap-
+proachability in unknown games: Online learning meets
+multi-objective optimization. In Proceedings of The 27th
+Conference on Learning Theory, COLT 2014, Barcelona,
+Spain, June 13-15, 2014, pp. 339–355, 2014.
+
+Ogryczak, W. and Sliwinski, T. On solving linear programs
+with the ordered weighted averaging objective. Eur. J.
+Operational Research, 148:80–91, 2003.
+
+Ogryczak, W., Perny, P., and Weng, P. On minimizing
+ordered weighted regrets in multiobjective Markov
+decision processes. In ADT, Lecture Notes in Artiﬁcial
+Intelligence, 2011.
+
+Ogryczak, W., Perny, P., and Weng, P. A compromise
+programming approach to multiobjective Markov
+decision processes. International Journal of Information
+Technology & Decision Making, 12:1021–1053, 2013.
+
+Pigou, A. Wealth and Welfare. Macmillan, 1912.
+
+Dambrowski, J. Review on methods of state-of-charge esti-
+mation with viewpoint to the modern LiFePO4/Li4Ti5O12
+lithium-ion systems. In International Telecommunication
+Energy Conference, 2013.
+
+Drugan, M. M. and Now´e, A. Designing multi-objective
+multi-armed bandits algorithms: A study. In IJCNN, pp.
+1–8, 2013.
+
+Press, W.H. Bandit solutions provide uniﬁed ethical models
+for randomized clinical trials and comparative effective-
+ness research. PNAS, 106(52):22398–22392, 2009.
+
+Roijers, Diederik M., Vamplew, Peter, Whiteson, Shimon,
+and Dazeley, Richard. A survey of multi-objective
+J. Artif. Intell. Res., 48:
+sequential decision-making.
+67–113, 2013.
+
+G´abor, Zolt´an, Kalm´ar, Zsolt, and Szepesv´ari, Csaba.
+In ICML, pp.
+
+Multi-criteria reinforcement learning.
+197–205, 1998.
+
+Shalev-Shwartz, Shai. Online learning and online convex
+Foundations and Trends in Machine
+
+optimization.
+Learning, 4(2):107–194, 2012.
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Slivkins, A. Contextual bandits with similarity information.
+
+J. Mach. Learn. Res., 15:2533–2568, 2014.
+
+Steuer, R.E. and Choo, E.-U. An interactive weighted
+Tchebycheff procedure for multiple objective program-
+ming. Mathematical Programming, 26:326–344, 1983.
+
+Tao, Gao. Research on LiMn2O4 battery’s state of charge es-
+timation with the consideration of degradation. Technical
+report, Tsinghua University, 2012.
+
+Weymark, John A. Generalized gini inequality indices.
+Mathematical Social Sciences, 1(4):409 – 430, 1981.
+
+Yager, R.R. On ordered weighted averaging aggregation
+operators in multi-criteria decision making. IEEE Trans.
+on Syst., Man and Cyb., 18:183–190, 1988.
+
+Zinkevich, Martin. Online convex programming and
+generalized inﬁnitesimal gradient ascent. In ICML, 2003.
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Supplementary material for “Multi-objective Bandits: Optimizing the
+Generalized Gini Index”
+
+For reading convenience, we restate all claims in the appendix.
+
+A. Lemma 1
+Lemma 1. Deﬁne (cid:8)α(t)(cid:9)
+
+t=1,...,T as:
+
+α(1) = (1/K, . . . , 1/K)
+
+α(t+1) = OGDEstep(α(t), ηt, ∇f (t))
+
+with η1, . . . , ηT ∈ [0, 1]. Then the following upper bound is guaranteed for all T ≥ 1 and for any α ∈ ∆K:
+
+f (t)(α(t)) −
+
+f (t)(α) ≤
+
+T
+(cid:88)
+
+t=1
+
+1
+ηT
+
++
+
+G2 + 1
+2
+
+T
+(cid:88)
+
+t=1
+
+ηt
+
+T
+(cid:88)
+
+t=1
+
+√
+
+where supα∈∆K (cid:107)∇f (t)(α)(cid:107) < G ≤
+
+KD for all t ∈ [T ].
+
+Proof : The proof follows closely the proof of Theorem 3.1 of Hazan (2016), however the projection step is slightly different
+in our case. First, let us note that ηt ≤ 1 for all t ∈ [T ], thus ∆ηt
+K is never an empty set. Then, for an arbitrary α ∈ ∆K, we have
+
+(cid:107)α(t+1) − α(cid:107)2 =
+
+− α
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+− Π∆K
+(cid:13)
+(cid:17)
+2
+(cid:13)
+(cid:13)
+
+− α
+
+(cid:16)
+
+(cid:16)
+
+(cid:13)
+(cid:13)
+(cid:13)Π∆ηt
+(cid:13)
+(cid:13)
+(cid:13)Π∆ηt
+
+K
+
+K
+
+(cid:16)
+
+(cid:16)
+
+(cid:17)
+α(t) − ηt∇αf (t)(α(t))
+(cid:17)
+α(t) − ηt∇αf (t)(α(t))
+(cid:16)
+
++
+
+K
+
+α(t) − ηt∇αf (t)(α(t))
+(cid:17)
+α(t) − ηt∇αf (t)(α(t))
+(cid:16)
+
++ Π∆K
+(cid:13)
+(cid:16)
+(cid:13)
+(cid:13)Π∆ηt
+(cid:13)
+(cid:13)
+(cid:13)Π∆K
+(cid:13)
+(cid:13)
+(cid:13)Π∆K
+(cid:13)
+(cid:13)α(t) − ηt∇αf (t)(α(t)) − α
+(cid:13)
+
+α(t) − ηt∇αf (t)(α(t))
+
+η2
+t
+K
+η2
+t
+K
+
++
+
++
+
+(cid:16)
+
+(cid:17)
+α(t) − ηt∇αf (t)(α(t))
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+− Π∆K
+(cid:13)
+(cid:17)
+2
+(cid:13)
+(cid:13)
+
+− α
+
+− α
+
+(cid:13)
+2
+(cid:13)
+(cid:13)
+
+=
+
+≤
+
+≤
+
+≤
+
+α(t) − ηt∇αf (t)(α(t))
+
+(cid:17)
+
+α(t) − ηt∇αf (t)(α(t))
+
+(cid:17)(cid:13)
+2
+(cid:13)
+(cid:13)
+
+where (12) follows from the convexity of the set ∆K. Thus we have
+
+(cid:107)α(t+1) − α(cid:107)2 ≤ (cid:107)α(t) − α(cid:107)2 + η2
+
+t (cid:107)∇αf (t)(α(t))(cid:107)2 − 2ηt
+
+∇αf (t)(α(t))
+
+(cid:16)
+
+(cid:17)(cid:124) (cid:16)
+
+α(t) − α
+
++
+
+(cid:17)
+
+η2
+t
+K
+
+The convexity of f (t) implies that
+
+f (t)(α(t)) − f (t)(α) ≤
+
+∇αf (t)(α(t))
+
+(cid:16)
+
+(cid:17)(cid:124) (cid:16)
+
+α(t) − α
+
+(cid:17)
+
+≤
+
+(cid:107)α(t) − α(cid:107)2 − (cid:107)α(t+1) − α(cid:107)2
+2ηt
+
++
+
+G2 +
+
+ηt
+2
+
+ηt
+2K
+
+Therefore the regret can be upper bounded as
+
+T
+(cid:88)
+
+t=1
+
+(f (t)(α(t)) − f (t)(α)) ≤
+
+T
+(cid:88)
+
+t=1
+
+≤
+
+1
+2
+
+T
+(cid:88)
+
+t=1
+
+(cid:107)α(t) − α(cid:107)2 − (cid:107)α(t+1) − α(cid:107)2
+2ηt
+
++
+
+G2 + 1
+2
+
+T
+(cid:88)
+
+t=1
+
+ηt
+
+(cid:107)α(t) − α(cid:107)2
+
+(cid:18) 1
+ηt
+
+−
+
+1
+ηt−1
+
+(cid:19)
+
++
+
+G2 + 1
+2
+
+T
+(cid:88)
+
+t=1
+
+ηt
+
+based on (13)
+
+(12)
+
+(13)
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+≤
+
++
+
+1
+ηT
+
+G2 + 1
+2
+
+T
+(cid:88)
+
+t=1
+
+ηt
+
+√
+
+.
+
+(14)
+
+We now show that G ≤ D
+of f (t) in α is given by w(cid:124)µ(t)
+
+K. By assumption w ∈ [0, 1]D and µ ∈ [0, 1]D×K, therefore w(cid:124)µ ∈ [0, D]K. As the gradient
+σ with σ the permutation that orders µ(t)α in a decreasing order, we have G ≤ D
+
+K.
+
+√
+
+B. ˜O(T −1/2) convergence along the trajectory
+
+Proposition 2. With probability at least 1 − 2(DT + 1)Kδ,
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+Gw
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+µα(t)
+
+− Gw
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:98)µ(t)α(t)
+
+(cid:33)(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:115)
+
+≤ L
+
+6D(1 + ln2 T ) ln(2/δ)
+T
+
+.
+
+√
+
+As the Gini
+
+Proof :
+(cid:80)T
+
+t=1 (cid:98)µ(t)α(t) − (cid:80)T
+
+D), we simply need to bound the difference
+t=1 µα(t). The main difﬁculty is that the (cid:98)µ(t) and the α(t) vectors are not independent, so
+one cannot directly apply the standard concentration inequalities. In order to obtain the claimed bound, we ﬁrst divide the
+above expression into several parts, and deal with these parts separately.
+
+index is L-Lipschitz (with L ≤ K
+
+Let k ∈ [K]. The division we need is obtained as follows:
+
+T
+(cid:88)
+
+t=1
+
+k α(t)
+(cid:98)µ(t)
+
+k − µk
+
+α(τ )
+
+k =
+
+T
+(cid:88)
+
+τ =1
+
+k −
+
+k
+
+(cid:88)
+
+(cid:34) t
+
+α(τ )
+
+(cid:32)
+(cid:98)µ(t)
+(cid:32)
+(cid:104)
+k − (cid:98)µ(t+1)
+(cid:98)µ(t)
+
+τ =1
+
+k
+
+T
+(cid:88)
+
+t=1
+
+T −1
+(cid:88)
+
+t=1
+
+(cid:105) t
+(cid:88)
+
+τ =1
+
+(cid:35)(cid:33)
+
+t−1
+(cid:88)
+
+τ =1
+
+α(τ )
+k
+
+(cid:33)
+
+=
+
+T
+(cid:88)
+
+τ =1
+
+T
+(cid:88)
+
+τ =1
+
+− µk
+
+α(τ )
+k
+
+T
+(cid:88)
+
+τ =1
+
+α(τ )
+k
+
++ (cid:98)µ(T )
+
+k
+
+α(τ )
+
+k − µk
+
+α(τ )
+k
+
+.
+
+(15)
+
+For ease of notation, let Nk(n) = argmin{τ ≥ 1 : Tk(τ ) ≥ n}, and let Z n
+
+k = X (Nk(n))
+
+k
+
+.
+
+The last two terms in (15) can be handled as follows:
+
+α(τ )
+
+k − µk
+
+α(τ )
+k
+
+> (cid:112)5DT ln(2/δ)
+
+T
+(cid:88)
+
+τ =1
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:35)
+
+τ =1
+
+T
+(cid:88)
+
+(cid:35)
+k > (cid:112)5DT ln(2/δ)
+α(τ )
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13) Tk(T ) + (cid:112)2DT ln(2/δ) > (cid:112)5DT ln(2/δ)
+(cid:13)
+
+
+(cid:105)
+
++ δ
+
+ − Tk(T )µk
+
+
++ (cid:112)2DT ln(2/δ) > (cid:112)5DT ln(2/δ)
+
+ + δ
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:33)
+
+(cid:88)
+
+(cid:32) t
+
+Z n
+k
+
+− tµk
+
+(cid:34)(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:104)(cid:112)D(t/2) ln(2/δ) + (cid:112)2DT ln(2/δ) > (cid:112)5DT ln(2/δ)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+n=1
+
+(cid:105)
+
++ (cid:112)2DT ln(2/δ) > (cid:112)5DT ln(2/δ) ; Tk(T ) = t
+
++ δ
+
++ (DT + 1)δ
+
+(cid:35)
+
+P
+
+(cid:34)(cid:13)
+(cid:13)
+(cid:98)µ(T )
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:34)
+
+k
+
+T
+(cid:88)
+
+τ =1
+
+=P
+
+≤P
+
+≤P
+
+k − µk
+
+(cid:13)
+(cid:13) (cid:98)µ(T )
+(cid:13)
+(cid:104)(cid:13)
+(cid:13) (cid:98)µ(T )
+(cid:13)
+k − µk
+(cid:13)
+
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+Tk(T )
+(cid:88)
+
+n=1
+
+
+
+
+
+Z n
+k
+
+T
+(cid:88)
+
+P
+
+=
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+≤
+
+P
+
+=(DT + 1)δ ,
+
+(16)
+
+(17)
+
+(18)
+
+(19)
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+where in (17) we used Claim 1 and the fact that each component of (cid:98)µ(T )
+(18) we used the Chernoff-Hoeffding’s inequality with bound (cid:112)(t/2) ln(2/δ) on each of the D components.
+
+k − µk is bounded by 1 in absolute value, and in
+
+Handling the ﬁrst term requires signiﬁcantly more work, because the terms within the sum are neither independent nor sub-
+or supermartingales. In order to overcome this, we apply a series of rewriting/decoupling iterations. First of all, note that
+
+and thus
+
+T −1
+(cid:88)
+
+(cid:16)(cid:104)
+
+t=1
+
+(cid:98)µ(t)
+k − (cid:98)µ(t+1)
+
+k
+
+(cid:105)
+
+(cid:17)
+
+Tk(t)
+
+=
+
+(cid:98)µ(Nk(n))
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+(cid:105)
+
+(cid:17)
+
+n
+
+Tk(T )−1
+(cid:88)
+
+(cid:16)(cid:104)
+
+Tk(T )−1
+(cid:88)
+
+(cid:16)(cid:104)(cid:16)
+
+n=1
+
+n=1
+
+Tk(T )−1
+(cid:88)
+
+(cid:32)(cid:34) n
+(cid:88)
+
+n=1
+
+τ =1
+
+=
+
+=
+
+=
+
+(cid:98)µ(Nk(n))
+
+k
+
+(cid:17)
+
+(cid:16)
+
+− µk
+
+−
+
+(cid:98)µ(Nk(n+1))
+
+k
+
+− µk
+
+(cid:17)(cid:105)
+
+(cid:17)
+
+n
+
+(cid:35)(cid:33)
+
+(Z τ
+
+k − µk) −
+
+
+
+
+
+Tk(T )−1
+(cid:88)
+
+n=τ
+
+n+1
+(cid:88)
+
+τ =1
+
+
+ −
+
+n
+n + 1
+
+1
+n + 1
+
+(Z τ
+
+k − µk)
+
+
+
+ ,
+
+τ − 1
+τ
+
+Tk(T )
+(cid:88)
+
+τ =1
+
+(Z τ
+
+k − µk)
+
+
+
+
+
+Tk(T )−1
+(cid:88)
+
+(cid:16)(cid:104)
+
+(cid:98)µ(Nk(n))
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+(cid:113)
+
+≥
+
+DT (ln2 T ) ln(2/δ)
+
+
+
+
+
+(cid:105)
+
+(cid:17)
+
+n
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:107)Z τ
+
+k − µk(cid:107)
+
+
+
+
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+Tk(T )−1
+(cid:88)
+
+n=τ
+
+
+
+ −
+
+1
+n + 1
+
+τ − 1
+τ
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:113)
+
+≥
+
+DT (ln2 T ) ln(2/δ)
+
+
+
+
+
+P
+
+
+
+
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+≤ P
+
+n=1
+
+Tk(T )
+(cid:88)
+
+
+
+
+
+τ =1
+
+
+T
+(cid:88)
+
+P
+
+≤
+
+t=1
+
+T
+(cid:88)
+
+≤
+
+(cid:34) t
+
+(cid:88)
+
+P
+
+t=1
+
+τ =1
+
+≤
+
+D exp
+
+
+
+
+
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+Tk(T ) = t ;
+
+(cid:107)Z τ
+
+k − µk(cid:107)
+
+Tk(T )
+(cid:88)
+
+(cid:107)Z τ
+
+k − µk(cid:107)
+
+τ =1
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:34) t−1
+(cid:88)
+
+n=τ
+
+(cid:35)
+
+1
+n + 1
+
+
+
+
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+−
+
+Tk(T )−1
+(cid:88)
+
+n=τ
+
+τ − 1
+τ
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+
+
+
+
+(cid:17)2
+
+−T (ln2 T ) ln(2/δ)
+(cid:16)(cid:104)(cid:80)t−1
+n=τ
+
+1
+n+1
+
+(cid:105)
+
+− τ −1
+τ
+
+(cid:80)t
+
+τ =1
+
+≤
+
+D exp
+
+(cid:18) −T (ln2 T ) ln(2/δ)
+t ln2 t
+
+(cid:19)
+
+≤ DT δ ,
+
+
+
+ −
+
+1
+n + 1
+
+τ − 1
+τ
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:113)
+
+≥
+
+DT (ln2 T ) ln(2/δ)
+
+
+
+
+
+(cid:113)
+
+(cid:35)
+DT (ln2 T ) ln(2/δ)
+
+≥
+
+where in (20) we applied the Chernoff-Hoeffding’s inequality with bound
+
+T (ln2 T ) ln(2/δ) to each of the D components.
+
+(cid:113)
+
+Now, deﬁne χ(T ) as
+
+(cid:113)
+
+χ(T ) =
+
+6DT (ln2 T ) ln(2/δ) .
+
+We then have:
+
+(cid:32)
+
+T −1
+(cid:88)
+
+P
+
+(cid:34)(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+
+=P
+
+
+
+(cid:16)
+k − (cid:98)µ(t+1)
+(cid:98)µ(t)
+
+
+k
+
+t=1
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+Tk(T )−1
+(cid:88)
+
+(cid:16)
+
+
+
+n=1
+
+(cid:17) t
+(cid:88)
+
+τ =1
+
+α(τ )
+k
+
+(cid:33)(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:35)
+
+> χ(T )
+
+(cid:98)µ(Nk(n))
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+α(τ )
+k
+
+
+
+> χ(T )
+
+(cid:17)
+
+Nk(n)
+(cid:88)
+
+τ =1
+
+
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+
+
+
+
+(20)
+
+(21)
+
+(22)
+
+(23)
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Tk(T )−1
+(cid:88)
+
+(cid:16)(cid:16)
+
+(cid:98)µ(Nk(n))
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+(cid:17)
+
+(cid:17)
+
+n
+
++
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+Tk(T )−1
+(cid:88)
+
+n=1
+
+
+
+
+
+(cid:16)
+
+(cid:98)µ(Nk(n))
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+n −
+
+
+
+(cid:17)
+
+Nk(n)
+(cid:88)
+
+τ =1
+
+
+
+
+
+α(τ )
+k
+
+
+
+
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+
+
+
+
+> χ(T )
+
+Tk(T )−1
+(cid:88)
+
+(cid:16)(cid:16)
+
+Tk(T )−1
+(cid:88)
+
+(cid:16)(cid:16)
+
+n=1
+
+n=1
+
+n=1
+
+(cid:98)µ(Nk(n))
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+(cid:98)µ(Nk(n))
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+(cid:17)
+
+(cid:17)
+
+n
+
++
+
+Tk(T )−1
+(cid:88)
+
+
+
+
+
+n=1
+
+(cid:17)
+
+(cid:17)
+
+n
+
+√
+
++
+
+D
+
+Tk(T )−1
+(cid:88)
+
+(cid:13)
+(cid:13) (cid:98)µ(Nk(n))
+(cid:13)
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+k
+
+(cid:13)
+(cid:13)
+(cid:13) ·
+
+
+
+
+
+2
+n + 1
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+n −
+
+Nk(n)
+(cid:88)
+
+τ =1
+
+α(τ )
+k
+
+
+
+α(τ )
+k
+
+ > χ(T )
+
+
+
+
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+τ =1
+
+n −
+
+Nk(n)
+(cid:88)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:12)
+(cid:12)
+ > χ(T )
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:35)
+
+
+
+
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+≤P
+
+DT (ln2 T ) ln(2/δ) +
+
+D
+
+n −
+
+α(τ )
+k
+
+ > χ(T ) , E1 ∩ E2
+
++ P[E c
+
+1] + P[E c
+2]
+
+n=1
+
+Nk(n)
+(cid:88)
+
+τ =1
+
+
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+√
+
+Tk(T )−1
+(cid:88)
+
+n=1
+
+
+
+
+
+2
+n + 1
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+√
+
+Tk(T )−1
+(cid:88)
+
+(cid:18) 2
+
+n + 1
+
+n=1
+
+≤P
+
+DT (ln2 T ) ln(2/δ) +
+
+D
+
+(cid:112)2Nk(n) ln(2/δ)
+
+(cid:19)
+
+> χ(T )
+
+ + (DT + 1)δ
+
+
+
+≤P
+
+DT (ln2 T ) ln(2/δ) +
+
+(cid:113)
+
+(cid:21)
+2DT (ln2 T ) ln(2/δ) > χ(T )
+
++ (DT + 1)δ
+
+≤P
+
+≤P
+
+≤P
+
+
+
+
+
+
+
+
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:34)(cid:113)
+
+
+
+
+
+(cid:113)
+
+
+
+
+
+(cid:20)(cid:113)
+
+=(DT + 1)δ
+
+(24)
+
+(25)
+
+(26)
+
+(27)
+
+where (23) follows from the fact that (cid:98)µ(t)
+that (1/
+
+D)
+
+(cid:12)
+(cid:12) (cid:98)µ(Nk(n))
+(cid:12)
+
+√
+
+k
+
+− (cid:98)µ(Nk(n+1))
+
+(cid:12)
+(cid:12) ≤ 1
+(cid:12)
+k
+(cid:12)
+(cid:12)Tk(t) − (cid:80)t
+t=1 α(t)
+(cid:12)
+(cid:17)(cid:12)
+(cid:17)
+− (cid:98)µ(Nk(n+1))
+(cid:12)
+(cid:12) ≤
+n
+
+k
+
+E1 denotes the event that
+(cid:12)
+(cid:16)(cid:16)
+(cid:12)
+(cid:12)
+follows from Claim 1 and the fact that Tk(Nk(n)) = n.
+
+(cid:80)Tk(T )−1
+n=1
+
+(cid:98)µ(Nk(n))
+
+k
+
+k
+
+unless t + 1 = Nk(n) for some n, (24) follows from the fact
+(cid:107) + (cid:80)n
+n+1 , (25) follows from (21) and
+
+k = (cid:98)µ(t+1)
+n+1 (cid:107)Z n+1
+n − 1
+(cid:12)
+(cid:12) ≤ (cid:112)2t ln(2/δ) for all t = 1, . . . , T and E c
+(cid:12)
+(cid:113)
+
+2 denotes the event that
+
+k(cid:107) = 2
+
+n+1 )(cid:107)Z i
+
+i=1( 1
+
+k
+
+k
+
+DT (ln2 T ) ln(2/δ) (E c
+
+1 and E c
+
+2 denote the complementary events), (26)
+
+The claimed bound now follows from (15), (19) and (27) because the Gini index is L-Lipschitz.
+
+Corollary 1. With probability at least 1 − 2(DT + 1)Kδ,
+
+f (cid:0) ¯α(t)(cid:1) ≤
+
+f (t)(cid:0)α(t)(cid:1) + L
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:115)
+
+6D(1 + ln2 T ) ln 2
+δ
+T
+
+.
+
+C. Proof of Proposition 3
+
+In order to ease technicalities, we deﬁne events
+
+and
+
+Eµ =
+
+(cid:110)
+(∀1 ≤ t ≤ T )(cid:112)2Tk(t)
+(cid:40)
+
+Eα =
+
+(∀1 ≤ t ≤ T )
+
+(cid:12)
+(cid:12)
+(cid:12)
+Tk(t) −
+(cid:12)
+(cid:12)
+
+k − µk
+
+(cid:13)
+(cid:13) ˆµ(t)
+(cid:13)
+t
+(cid:88)
+
+τ =1
+
+α(τ )
+k
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:13)
+(cid:111)
+(cid:13) < (cid:112)D ln(2δ)
+(cid:13)
+(cid:41)
+< (cid:112)2t ln(2/δ)
+
+,
+
+(cid:40)
+
+Ef =
+
+f (cid:0) ¯α(t)(cid:1) ≤
+
+f (t)(cid:0)α(t)(cid:1) + L
+
+6D(1+ln2 T ) ln(2/δ)
+T
+
+.
+
+(cid:113)
+
+(cid:41)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+The following technical lemma will also be useful later.
+Lemma 2. Let α∗ ∈ argminα∈∆K f (α), and χ = χα∗ : N (cid:55)→ R+ be some function and deﬁne event
+
+E(χ, α∗) = {(∀1 ≤ t ≤ T ) (∀k ∈ [K] with α∗
+
+k > 0) Tk(t) > χ(t)} ,
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Then, conditioned on the event Eµ ∩ Ef ∩ E(χ, α∗),
+
+(cid:32)
+
+f
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+α(t)
+
+− f (α∗) ≤
+
+ζ χ(T )
+T
+
+,
+
+where
+
+(cid:113)
+
+ζ χ(τ ) = L
+
+6Dτ (1 + ln2 τ ) ln(2/δ) +
+
+1
+ητ
+
++
+
+G2 + 1
+2
+
+τ
+(cid:88)
+
+t=1
+
+ηt + LK
+
+(cid:115)
+
+τ
+(cid:88)
+
+t=1
+
+D ln(2/δ)
+2χ(t)
+
+.
+
+Proof : Throughout the proof condition on the event Eµ ∩ Ef ∩ E(χ, α∗).
+
+First of all, as the generalized Gini index is L-Lipschitz, it holds for any α ∈ ∆K that
+
+T
+(cid:88)
+
+(cid:16)
+
+t=1
+
+f (t)(α) − f (α)
+
+≤ L
+
+(cid:17)
+
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:16)
+
+(cid:17)
+(cid:98)µ(t) − µ
+
+α
+
+(cid:13)
+(cid:13)
+(cid:13) ≤ LK max
+
+k∈K:αk>0
+
+(cid:13)
+(cid:13) (cid:98)µ(t)
+(cid:13)
+
+k − µk
+
+(cid:13)
+(cid:13)
+(cid:13) .
+
+T
+(cid:88)
+
+t=1
+
+T
+(cid:88)
+
+t=1
+
+Thus, due to the conditioning on the event Eµ ∩ E(χ, α∗),
+
+f (t)(α∗) − f (α∗)
+
+≤ LK
+
+(cid:17)
+
+T
+(cid:88)
+
+(cid:16)
+
+t=1
+
+(cid:115)
+
+T
+(cid:88)
+
+t=1
+
+D ln(2/δ)
+2χ(t)
+
+.
+
+It then follows, however, that
+
+(cid:33)
+
+T f
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+α(t)
+
+− T f (α∗)=T f
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+α(t)
+
+−
+
+(cid:34) T
+
+(cid:88)
+
+t=1
+
+(cid:35)
+
+f (t) (cid:16)
+
+α(t)(cid:17)
+
++
+
+(cid:35)
+
+f (t) (cid:16)
+
+α(t)(cid:17)
+
+− T f (α∗)
+
+(cid:34) T
+
+(cid:88)
+
+t=1
+
+(cid:113)
+
+< L
+
+6DT (1 + ln2 T ) ln(2/δ) +
+
+1
+ηT
+
++
+
+G2 + 1
+2
+
+T
+(cid:88)
+
+t=1
+
+ηt +
+
+T
+(cid:88)
+
+t=1
+
+(cid:104)
+f (t)(α∗) − f (α∗)
+
+(cid:105)
+
+(29)
+
+< ζ χ(T ) ,
+
+where (29) is due to (14) and the conditioning on Ef , and (30) is due to (28) and the deﬁnition of ζ χ.
+
+Now we are ready to prove the proposition. For convenience, we recall the statement.
+Proposition 3. With probability at least 1 − 4DT 2Kδ:
+
+(28)
+
+(30)
+
+(cid:32)
+
+f
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+(cid:115)
+
+α(t)
+
+− f (α∗) ≤ L
+
+6D(1 + ln2 T ) ln(2/δ)
+T
+(cid:115)
+
++
+
+1
+T ηT
+
++
+
+KD2 + 1
+T
+
+T
+(cid:88)
+
+t=1
+
+ηt +
+
+LK
+T
+
+T
+(cid:88)
+
+t=1
+
+D ln(2/δ)
+2χ1(t)
+
+where χ1(t) = 1(t ≤ τ1) + 1(t > τ1)(ta0/(2|ext(∆∗
+K ) mink:αk>0 αk and g∗ = inf α∈∆K \∆∗
+
+a0 = minα∈ext(∆∗
+
+K)|)) and τ1 =
+maxα∗∈∆∗
+
+K
+
+K
+
+K)|)
+
+(2|ext(∆∗
+f (α)−f (α∗)
+(cid:107)α−α∗(cid:107) .
+
+(cid:104)
+
+√
+
+(cid:104)
+
+2 + 10
+
+3LKD2
+g∗
+
+(cid:105) (cid:113)
+
+2 ln 2
+δ
+
+(cid:105)4
+
+with
+
+Proof : Let ∆∗
+
+t ≥ 1 and every k ∈ [K], therefore, setting χ0(τ ) = max
+
+K = argminα∈∆K f (α) denote the set of optimal solutions of f over ∆K. By construction, α(t)
+(cid:110)
+1, ((cid:80)τ
+
+t=1 ηt) − (cid:112)2τ ln(2/δ)
+
+k ≥ ηt for every
+K that
+
+, it holds for every α∗ ∈ ∆∗
+
+(cid:111)
+
+Eα ⊆ E(χ0, α∗) ,
+
+(31)
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+where event E(χ0, α∗) is deﬁned as in Lemma 2. Noting that
+√
+
+√
+
+ηt =
+
+2 ln(2/δ)
+√
+
+1−1/
+
+K
+
+1√
+t
+
+≥
+
+2 ln(2/δ)
+√
+
+1−1/
+
+K
+
+τ
+(cid:88)
+
+t=1
+
+τ
+(cid:88)
+
+t=1
+
+it follows that for every τ ≥ K − 1
+
+(cid:90) τ +1
+
+1
+
+√
+
+1√
+t
+
+dt =
+
+2 ln(2/δ)
+√
+
+1−1/
+
+K
+
+(cid:2)2
+
+√
+
+τ + 1 − 2(cid:3) ,
+
+χ0(τ ) ≥
+
+(cid:113)
+
+2 ln 2
+δ
+
+√
+
+(cid:104) 2
+
+τ +1−2
+√
+K
+
+1−1/
+
+−
+
+√
+
+(cid:105)
+
+τ
+
+≥
+
+(cid:113)
+
+2 ln 2
+δ
+
+(cid:104) (1+1/
+
+√
+
+K)
+1−1/
+
+√
+√
+
+τ +1−2
+K
+
+(cid:105)
+
+≥
+
+(cid:113)
+
+2τ ln 2
+
+δ ,
+
+which further implies
+
+ζ χ0 (τ )
+
+(cid:113)
+
+≤ L
+
+6Dτ (1 + ln2 τ ) ln 2
+
+δ +
+
+≤ 10LKD2(cid:112)6 ln(2/δ)τ 3/4 ,
+
+where (34) follows from (33) and
+
+and (35) follows from Lemma 1
+
+(cid:18)
+
+1√
+K
+
+1−
+√
+
+(cid:19)√
+τ
+
+2 ln(2/δ)
+
++
+
+G2 + 1
+2
+
+√
+
+2 ln(2/δ)
+√
+
+1−1/
+
+K
+
+√
+
+(cid:2)2
+
+τ − 1(cid:3) + (K − 1) + LK
+
+√
+
+(cid:114)
+D 4
+
+ln(2/δ)
+8
+
+τ
+(cid:88)
+
+t=K
+
+(cid:113)
+
+≤ L
+
+600Dτ 3/2 ln 2
+
+δ +
+
+√
+
+τ
+
+(cid:20) 1
+2 ln 2
+δ
+
++ (KD2 + 1)
+
++ K + LK
+
+(cid:21)
+
+(cid:113)
+
+2 ln 2
+δ
+
+√
+
+D 4(cid:113) ln(2/δ)
+
+8
+
+(cid:16) 4
+3 τ 3/4 + K −1/4 − 4
+
+3 K 3/4(cid:17)
+
+τ
+(cid:88)
+
+t=1
+
+√
+
+√
+
+ηt =
+
+2 ln(2/δ)
+√
+
+1−1/
+
+K
+
+1√
+t
+
+≤
+
+2 ln(2/δ)
+√
+
+1−1/
+
+K
+
+τ
+(cid:88)
+
+t=1
+
+(cid:20)
+
+(cid:90) τ
+
+1 +
+
+1
+
+(cid:21)
+
+√
+
+1√
+t
+
+dt
+
+=
+
+2 ln(2/δ)
+√
+
+1−1/
+
+K
+
+√
+
+(cid:2)2
+
+τ − 1(cid:3) ,
+
+τ
+(cid:88)
+
+t=K
+
+1
+√
+4
+
+t
+
+(cid:90) τ
+
+K
+
+1
+√
+4
+
+t
+
+≤ K −1/4 +
+
+dt ≤ K −1/4 + 4
+
+3 [τ 3/4 − K 3/4]
+
+Choose α∗∈ argminα∈∆∗
+
+K
+
+(cid:107)α − (cid:80)T
+
+t=1 α(t)(cid:107). By Lemma 3, it holds that
+
+g∗ max
+k∈K
+
+(cid:34)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:35)
+
+α(t)
+k
+
+− α∗
+k
+
+≤ f
+
+(cid:32)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+(cid:33)
+
+α(t)
+
+− f (α∗) .
+
+Therefore, on event Eµ ∩ Ef ∩ Eα,
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+(cid:35)
+
+(cid:34)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+1
+T
+
+T
+(cid:88)
+
+t=1
+
+max
+k∈K
+
+α(t)
+k
+
+− α∗
+k
+
+≤
+
+ζ χ0(T )
+g∗T
+
+,
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+where (40) follows from (39) by Lemma 2 due to the conditioning on event Eµ ∩ Ef ∩ Eα and recalling (31).
+K, it can be represented as a convex combination of the extreme points of ∆∗
+
+K) to be the one with maximal coefﬁcient; note that this coefﬁcient must be at least 1/|ext(∆∗
+
+K. Consider such a representation,
+K)|;
+
+Now, as α∗ ∈ ∆∗
+and choose α+ ∈ ext(∆∗
+that is,
+
+Then, conditioned on event Eα ∩ Eµ ∩ Ef , for every k ∈ [K],
+
+α∗
+
+k ≥
+
+ext(|∆∗
+
+1
+
+K |) α+
+k .
+
+Tk(τ ) ≥
+
+k − (cid:112)2τ ln(2/δ)
+α(t)
+
+τ
+(cid:88)
+
+t=1
+
+(32)
+
+(33)
+
+1
+√
+4
+
+t
+(34)
+
+(35)
+
+(36)
+
+(37)
+
+(38)
+
+(39)
+
+(40)
+
+(41)
+
+(42)
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+≥ τ α∗
+
+k − ζχ0 (τ )
+α+
+k
+|ext(∆∗
+
+g∗ − (cid:112)2τ ln(2/δ)
+K )| − ζχ0 (τ )
+
+g∗ − (cid:112)2τ ln(2/δ)
+
+≥ τ
+
+where (42) follows from conditioning on event Eα, (43) follows because of (40) due to the conditioning on Eα ∩ Eµ ∩ Ef ,
+and (44) follows by (41).
+
+Let, now, a0 = minα∈ext(∆∗
+K is a convex
+polytope due to Lemma 3, and thus has ﬁnite number of extreme points, justifying the min and implying that a0 > 0. As
+α+ ∈ ext(∆∗
+k > 0. Then, by (44), conditioned on event Eα ∩ Eµ ∩ Ef , for
+every k ∈ [K] with α+
+
+k ≥ a0 for every k with α+
+
+K) denotes the extreme points of ∆∗
+
+K ) mink:αk>0 αk, where ext(∆∗
+
+K), it follows that α+
+
+K. Note that ∆∗
+
+k > 0 and τ ≥ 1,
+
+Tk(τ ) ≥ τ
+
+a0
+
+|ext(∆∗
+
+K )| − ζχ0 (τ )
+
+g∗ − (cid:112)2τ ln(2/δ) ,
+
+implying Tk(τ ) ≥ a0τ /(2|ext(∆∗
+
+K)|) with
+
+(cid:20)
+
+τ1 =
+
+(2|ext(∆∗
+
+K)|)
+
+2 + 10
+
+(cid:104)
+
+√
+
+3LKD2
+g∗
+
+(cid:105) (cid:113)
+
+2 ln 2
+δ
+
+(cid:21)4
+
+(cid:26)
+
+≥ 1 + max
+
+τ ∈ N :
+
+τ a0
+
+2|ext(∆∗
+
+K )| < ζ χ0(τ )/g∗ +
+
+2τ ln @
+2 δ
+
+,
+
+(cid:113)
+
+(cid:27)
+
+where the inequality is due to (36). Consequently, setting
+
+χ1(τ ) = 1(τ ≤ τ1) + 1(τ > τ1)(τ a0/(2|ext(∆∗
+
+K)|)),
+
+it follows that Eα ∩ Eµ ∩ Ef ⊆ E(χ1, α+). This completes the proof due to Lemma 2 and the upper bound on G from Lemma 1,
+noting that P[E c
+f ] ≤ 2(DT + 1)Kδ
+due to Corollary 1, and
+
+α] ≤ δ due to Claim 1 (here, for event E, we denote its complementer event by E c), P[E c
+
+P[E c
+
+µ] ≤
+
+(cid:104)(cid:112)2Tk(t)
+
+k − µk
+
+(cid:13)
+(cid:13) ˆµ(t)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:34)(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+τ
+(cid:88)
+
+n=1
+
+Z n
+
+k − µk
+
+≥
+
+D ln(2δ)
+2τ
+
+(cid:13)
+(cid:13) ≥ (cid:112)D ln(2δ) & Tk(t) = τ
+(cid:13)
+(cid:114)
+
+(cid:35)
+
+(cid:105)
+
+T
+(cid:88)
+
+T
+(cid:88)
+
+t=1
+
+τ =1
+
+T
+(cid:88)
+
+T
+(cid:88)
+
+≤
+
+τ =1
+t=1
+≤ 2T 2Dδ
+
+(43)
+
+(44)
+
+(45)
+
+(46)
+
+(47)
+
+(48)
+
+where (46) follows due to the union bound, Z n
+(48) follows due to the Chernoff-Hoeffding bound.
+
+k = X (Nk(n))
+
+k
+
+with Nk(n) = argmin{τ ≥ 1 : Tk(τ ) ≥ n} in (47), and ﬁnally
+
+D. The proof of g∗ > 0
+
+Proof :
+
+Lemma 3. The set ∆∗
+g∗ = inf α∈∆K \∆∗
+
+K
+
+K = argminα∈∆K f (α) of optimal solutions is a convex polytope. Additionally, it also holds that
+maxα∗∈∆∗
+
+is positive.
+
+f (α)−f (α∗)
+(cid:107)α−α∗(cid:107)
+
+K
+
+Deﬁning, for a permutation π over [D] = {1, 2, . . . , D}, the set Aπ = {α ∈ ∆K : ∀i, j ∈ [D], (wi − wj)((µα)π(i) −
+(µα)π(j)) ≥ 0}, it follows that f (α) = Gw(µα) is linear over each Aπ; that is, f (α) = f (cid:124)
+π α, ∀α ∈ Aπ for some fπ ∈ RK
+with component k deﬁned as (cid:80)D
+d=1(wdµk,π(d)). (Observe that sets associated with different permutations can coincide when
+w has identical components, and that non-coinciding Aπ and Aπ(cid:48) overlap each other on some lower dimensional faces.) It is
+clear that ∆K = ∪πAπ . Additionally, it is also easy to see that Aπ is a polytope, noting that Aπ = ∆K ∩ (cid:84)
+1≤i<j≤D{α ∈
+RK : α(cid:124)bi,j,π ≥ 0}, where vector bi,j,π ∈ RK has component k deﬁned as [(wi − wj)(µk,π(i) − µk,π(j))] for 1 ≤ k ≤ K.
+Finally, from all the above it also follows that f is a piecewise-linear convex function with linear regions {Aπ}π, thus the
+minimal set ∆∗
+
+K = argminα∈∆K f (α) is a face of one of the Aπ polytopes. 4 The ﬁrst claim of the lemma follows.
+
+4See (Boyd & Vandenberghe, 2004) for more about piecewise-linear convex functions.
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Let ext(A) denote the extreme points of a convex polytope A, and deﬁne
+
+g+ = min
+
+π
+
+min
+α∈ext(Aπ)\∆∗
+K
+
+min
+α∗∈∆∗
+K
+
+f (α) − f (α∗)
+(cid:107)α − α∗(cid:107)
+
+.
+
+Note that the deﬁnition makes sense and that
+
+because ∆∗
+
+K is bounded and convex and ext(Aπ) \ ∆∗
+Now, choose some permutation π and some α ∈ Aπ \ ∆∗
+α = (cid:80)
+possibly non-unique.) Let N ∗ = {α ∈ ext(Aπ) ∩ ∆∗
+N ∗ (cid:54)= ∅, otherwise chose α∗ ∈ ∆∗
+
+α(cid:48)∈ext(Aπ) α(cid:48)ω(α(cid:48)) for some weight vector ω : ext(Aπ) → [0, 1] with (cid:80)
+K : ω(α) > 0}, and let α∗ =
+
+0 < g+ < ∞ ,
+K is a ﬁnite set with no elements from ∆∗
+K.
+K. Then α can be written as a convex combination
+α(cid:48)∈ext(Aπ) ω(α(cid:48)) = 1. (This form is
+1
+α(cid:48)∈N ∗ α(cid:48)ω(α(cid:48)) when
+α(cid:48) ∈N ∗ ω(α(cid:48))
+
+K in an arbitrary fashion. In either case,
+
+(cid:80)
+
+(cid:80)
+
+Then, since f is linear over Aπ,
+
+f (α) − f (α∗)
+(cid:107)α∗ − α(cid:107)
+
+(cid:88)
+
+α(cid:48)∈N ∗
+
+ω(α(cid:48))(α∗ − α(cid:48)) = 0 .
+
+=
+
+≥
+
+(cid:80)
+
+(cid:13)
+(cid:16)(cid:80)
+(cid:13)
+(cid:13)
+(cid:80)
+
+α(cid:48)(cid:54)∈N ∗ ω(α(cid:48))(f (α(cid:48)) − f (α∗))
+− (cid:0)(cid:80)
+
+(cid:17)
+α(cid:48)(cid:54)∈N ∗ ω(α(cid:48))(α∗ − α(cid:48))
+α(cid:48)(cid:54)∈N ∗ ω(α(cid:48))(f (α(cid:48)) − f (α∗))
+(cid:80)
+α(cid:48)(cid:54)∈N ∗ ω(α(cid:48)) (cid:107)α∗ − α(cid:48)(cid:107)
+α(cid:48)(cid:54)∈N ∗ ω(α(cid:48))(f (α(cid:48)) − f (α∗))
+α(cid:48)(cid:54)∈N ∗ ω(α(cid:48))(f (α(cid:48)) − f (α∗))/g+ = g+ .
+
+(cid:80)
+
+≥
+
+(cid:80)
+
+α(cid:48)∈N ∗ ω(α(cid:48))(α∗ − α(cid:48))(cid:1)(cid:13)
+(cid:13)
+(cid:13)
+
+(49)
+
+(50)
+
+where (50) follows because of (49) and the triangle inequality. As α∗ ∈ ∆∗
+the second claim of the lemma.
+
+K we obtain that g∗ ≥ g+, completing the proof of
+
+E. Proof of Theorem 1
+
+Theorem 1. With probability at least 1 − δ:
+
+(cid:16) 1
+T
+
+f
+
+T
+(cid:88)
+
+t=1
+
+α(t)(cid:17)
+
+− f (α∗) ≤ 2L
+
+(cid:113)
+
+6D ln3(8DKT 2/δ)
+T
+
+,
+
+for any big enough T , where L is the Lipschitz constant of Gw(x).
+
+Proof : First we upper-bound the following sum that appears in the last term of Proposition 3:
+
+T
+(cid:88)
+
+t=1
+
+1
+(cid:112)χ1(t)
+
+= τ1 +
+
+K)|
+
+2|ext(∆∗
+a0
+
+T
+(cid:88)
+
+1
+√
+τ
+
+≤ τ1 +
+
+K)|
+
+2|ext(∆∗
+a0
+
+τ =τ1+1
+(cid:34)
+
+√
+
+τ1 +
+
+(cid:35)
+
+(cid:90) T
+
+τ1
+
+1
+√
+τ
+
+dτ
+
+(cid:115)
+
+(cid:115)
+
+√
+
+(cid:104)
+τ1 + 2
+
+T −
+
+√
+
+(cid:105)
+
+τ1
+
+(cid:115)
+
+(cid:115)
+
+K)|
+
+2|ext(∆∗
+a0
+
+K)|
+
+2|ext(∆∗
+a0
+
+≤
+
+≤
+
+≤
+
+(cid:20)
+(2|ext(∆∗
+
+(cid:104)
+
+K)|)
+
+2 + 10
+
+√
+
+3LKD2
+g∗
+
+(cid:105) (cid:113)
+
+2 ln 2
+δ
+
+(cid:115)
+
+(cid:21)4
+
++
+
+8|ext(∆∗
+a0
+
+√
+
+K)|
+
+T
+
+(2|ext(∆∗
+K)|)9/2
+a0
+
+√
+
+(cid:104)
+
+2 + 10
+
+√
+
+3LKD2
+g∗
+
+(cid:105)4 (cid:0)2 ln 2
+
+(cid:1)2
+
++
+
+δ
+
+(cid:115)
+
+8|ext(∆∗
+a0
+
+√
+
+K)|
+
+T
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+According to Proposition 3, using δ/4DKT 2 in place of δ and recalling (37),
+
+(cid:33)
+
+α(t)
+
+− f (α∗)
+
+T
+(cid:88)
+
+t=1
+
+f
+
+(cid:32)
+
+1
+T
+(cid:115)
+
+≤L
+
+(cid:113)
+
++ LK
+
+(cid:115)
+
+6D(1 + ln2 T ) ln 8DKT 2
+T
+
+δ
+
+√
+
++
+
+1 − 1/
+K
+(cid:112)2T ln(2/δ)
+
++ [KD2 + 1]
+
+(cid:112)2 ln(2/δ)
+K
+1 − 1/
+
+√
+
+(cid:104) 2√
+
+(cid:105)
+
+− 1
+T
+
+T
+
+(cid:115)
+
+D ln 8DKT 2
+δ√
+2T
+
+K)|)9/2
+(2|ext(∆∗
+a0
+
+√
+
+(cid:104)
+
+2 + 10
+
+√
+
+3LKD2
+g∗
+
+(cid:105)4 (cid:0)2 ln 2
+
+(cid:1)2
+
+δ
+
++ 2LK
+
+D|ext(∆∗
+
+K)| ln 8DKT 2
+a0T
+
+δ
+
+≤2L
+
+6D ln 8DKT 2
+T
+
+δ
+
+(cid:26)
+
+max
+
+ln(2T ), 1 + 4(KD)3/2 + 2K |ext(∆∗
+K )|9/2
+a0
+
+√
+
+(cid:104)
+
+√
+
+(cid:105)4
+
+2 + 10
+
+3LKD
+g∗
+
+(2 ln(2/δ))
+
+(cid:27)
+
+(51)
+
+which completes the proof.
+
+F. Regret vs. pseudo regret
+
+Corollary 2. With probability at least 1 − δ
+
+|R(T ) − ¯R(T )| ≤ L
+
+(cid:114)
+
+12D ln(4(DT + 1)/δ)
+T
+
+Proof : The average cost can be written as
+
+¯X(T ) =
+
+Tk(T )
+
+1
+T
+
+K
+(cid:88)
+
+k=1
+
+1
+Tk(T )
+
+T
+(cid:88)
+
+t=1
+
+1(kt = k)X(t)
+
+k =
+
+Tk(T ) ˆµ(T )
+
+k
+
+1
+T
+
+K
+(cid:88)
+
+k=1
+
+According to Claim 1, with probability at least 1 − δ/2, it holds
+
+(cid:107) ¯X(T ) − ˆµ(T ) ¯α(T )(cid:107) =
+
+Tk(T ) ˆµ(T )
+
+k −
+
+ˆµ(T )
+k
+
+α(t)
+k
+
+T
+(cid:88)
+
+t=1
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+1
+T
+
+K
+(cid:88)
+
+k=1
+
+T
+(cid:88)
+
+t=1
+
+(cid:32)
+
+=
+
+ˆµ(T )
+k
+
+Tk(T ) −
+
+α(t)
+k
+
+(cid:33)(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+1
+T
+
+1
+T
+
+K
+(cid:88)
+
+k=1
+
+K
+(cid:88)
+
+k=1
+
+(cid:114)
+
+≤ K
+
+2D ln(4K/δ)
+T
+
+and since GGI is L-Lipschitz, with probability at least 1 − δ/2,
+
+|Gw( ¯X(T )) − Gw( ˆµ(T ) ¯α(T ))| ≤ LK
+
+(cid:114)
+
+2D ln(4K/δ)
+T
+
+In addition, one can show (see (19)) that
+
+P
+
+(cid:34)(cid:13)
+(cid:13)
+(cid:98)µ(T )
+(cid:13)
+(cid:13)
+(cid:13)
+
+k
+
+T
+(cid:88)
+
+τ =1
+
+T
+(cid:88)
+
+τ =1
+
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+(cid:13)
+
+α(τ )
+
+k − µk
+
+α(τ )
+k
+
+> (cid:112)5DT ln(2/δ)
+
+= (DT + 1)δ ,
+
+(cid:35)
+
+which implies that with probability 1 − δ/2 we have
+
+(cid:13)
+(cid:13) (cid:98)µ(T )
+(cid:13)
+
+k ¯α(T ) − µk ¯α(T )(cid:13)
+(cid:13)
+(cid:13) ≤
+
+5D ln(4(DT + 1)/δ)
+T
+
+(cid:114)
+
+(52)
+
+(53)
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+Hence, the difference of regret and pseudo-regret can be upper-bounded with probability at least 1 − δ as
+(cid:16) ¯X(T )(cid:17)
+
+− f ( ¯α(T ))|
+
+|R(T ) − R
+
+(T )
+
+| = |Gw
+
+≤ |f (T )( ¯α(T )) − f ( ¯α(T ))| + LK
+
+(cid:114)
+
+D
+
+(cid:114)
+
+2 ln(4K/δ)
+T
+
+(cid:33)
+
+5D ln(4(DT + 1)/δ)
+T
+
++ K
+
+2D ln(4K/δ)
+T
+
+(cid:32)(cid:114)
+
+≤ L
+
+(cid:114)
+
+≤ L
+
+12D ln(4(DT + 1)/δ)
+T
+
+(54)
+
+(55)
+
+(56)
+
+where (54) follows from (52), (55) follows from (52) and (56) holds because DT + 1 ≥ K.
+
+G. Battery control task
+
+Efﬁcient management of electric batteries leads to better performance and longer battery life, which is important for instance
+for electric vehicles whose range is still limited compared to those with petrol or diesel engines. An electric battery is
+composed of several cells whose capacity varies extensively due to inconsistencies in weight and volume of the active material
+in their individual components, different internal resistance and higher temperatures leading to different aging rates. As
+a consequence, the energy output at any instant is different from each cell, which results in different aging rates and ultimately
+leads to a premature battery failure. To address this problem, a control strategy called cell balancing is utilized, which aims
+at maintaining a constant energy level — mainly state-of-charge (SOC) — in each cell, while controlling for temperature
+and aging. Many cell-balancing controllers can be deﬁned, depending on the importance given to the three objectives: SOC,
+temperature and aging. The values of those objectives should be balanced between the cells because a balanced use of all
+cells leads to a longer lasting system. Moreover, those objectives values should also be balanced within a cell, because for
+example, a cell can have higher capacity on a higher temperature, but at the same time it has a higher risk to explode.
+
+Our battery control task consists in learning and selecting the “best” cell balancing controller in an online fashion, so that
+it can dynamically adapt to the consumption proﬁle and environment, such as outdoor temperature. In the case of electric
+cars, this means that the controller needs to be able to adapt to the driving habits of the driver and to the terrain, such as hilly
+roads or desert roads. In this experiment, our goal was more speciﬁcally to test our multi-objective online learning algorithms
+in the battery control task, and verify that our online learning algorithms can indeed ﬁnd a policy for this control task that
+leads to a balanced parameter values of the cells.
+
+The battery is modeled using the internal resistance (Rint) model (Johnson, 2002). The estimation of SOC is based on the
+Ampere Hour Counting method (Dambrowski, 2013). The variation of temperature in the system is determined according
+to the dissipative heat loss due to the internal resistance and thermal convection (Gao et al., 2002). Cell degradation or aging
+is a function of temperature, charging/discharging rates and cumulative charge (Tao, 2012). Moreover, the battery model is
+complemented with 10 different cell-balancing controllers. The whole model is implemented in the Matlab/Simulink software
+package and can emulate any virtual situation whose electric consumption is described by a time series, which is given as
+input to the model. In practice, such a time series would correspond to a short period of battery usage (e.g., a brief segment
+of a driving session). For a chosen controller, the output of the model comprises of the objective values of each battery cell
+at the end of the simulation. Note that the output of the battery model is a multivariate random vector since the power demand
+is randomized, therefore this control task can be readily accommodated into our setup. In our experiments, the battery consists
+of 4 cells, thus D = 12 in this case. The cell-balancing controllers correspond to the arms, thus K = 10.
+
+The online learning task consists of selecting among these controllers/arms so that the ﬁnal objective values are as balanced
+as possible. The experiment was carried out as follows: in each iteration, the learner selects a controller according to its
+policy, then the battery model is run with the selected controller by using a random consumption time series. At the end of the
+simulation, the learner receives the objective values of each cell output by the battery model as feedback and updates its policy.
+The goal of the learner is to ﬁnd a policy over the controllers, which leads to a balanced state of cells in terms of cumulative value.
+
+The results are shown in Figure 3. In this experiment we do not know the means of the arms, but we estimated them based on
+100000 runs of the simulator for each arm. These mean estimates were used for computing the optimal policy and the regret.
+We run the MO-OGDE and MO-LP over 100 repetitions. Their average regret exhibits the same trend as in the synthetic
+
+Multi-objective Bandits: Optimizing the Generalized Gini Index
+
+experiments: the MO-LP achieved faster convergence. The blue lines shows the regret of the pure policies, which always
+selects the same arm, i.e., the performance of single strategies. It is important to mention that the optimal mixed controller
+has a lower GGI value since the regret of any arm is positive, and more importantly, the two learners converge to optimal
+mixed policies in terms of regret.
+
+

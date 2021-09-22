@@ -1,0 +1,1232 @@
+Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+Benjamin I. P. Rubinstein 1 Francesco Ald`a 2
+
+Abstract
+
+Popular approaches to differential privacy, such
+as the Laplace and exponential mechanisms, cal-
+ibrate randomised smoothing through global sen-
+sitivity of the target non-private function. Bound-
+ing such sensitivity is often a prohibitively com-
+plex analytic calculation. As an alternative, we
+propose a straightforward sampler for estimat-
+ing sensitivity of non-private mechanisms. Since
+our sensitivity estimates hold with high prob-
+ability, any mechanism that would be ((cid:15), δ)-
+differentially private under bounded global sen-
+sitivity automatically achieves ((cid:15), δ, γ)-random
+differential privacy (Hall et al., 2012), without
+any target-speciﬁc calculations required. We
+demonstrate on worked example learners how
+our usable approach adopts a naturally-relaxed
+privacy guarantee, while achieving more accu-
+rate releases even for non-private functions that
+are black-box computer programs.
+
+1. Introduction
+
+Differential privacy (Dwork et al., 2006) has emerged as
+the dominant framework for protected privacy of sensitive
+training data when releasing learned models to untrusted
+third parties. This paradigm owes its popularity in part
+to the strong privacy model provided, and in part to the
+availability of general building block mechanisms such as
+the Laplace (Dwork et al., 2006) & exponential (McSherry
+& Talwar, 2007), and to composition lemmas for building
+up more complex mechanisms. These generic mechanisms
+come endowed with privacy and utility bounds that hold
+for any appropriate application. Such tools almost alle-
+viate the burden of performing theoretical analysis in de-
+veloping privacy-preserving learners. However a persis-
+
+1School of Computing and Information Systems, Univer-
+sity of Melbourne, Australia 2Horst G¨ortz Institute for IT Secu-
+rity and Faculty of Mathematics, Ruhr-Universit¨at Bochum, Ger-
+many. Correspondence to: BR <brubinstein@unimelb.edu.au>,
+FA <francesco.alda@rub.de>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+tent requirement is the need to bound global sensitivity—a
+Lipschitz constant of the target, non-private function. For
+simple scalar statistics of the private database, sensitivity
+can be easily bounded (Dwork et al., 2006). However in
+many applications—from collaborative ﬁltering (McSherry
+& Mironov, 2009) to Bayesian inference (Dimitrakakis
+et al., 2014; 2017; Wang et al., 2015)—the principal chal-
+lenge in privatisation is completing this calculation.
+
+In this work we develop a simple approach to approxi-
+mating global sensitivity with high probability, assuming
+only oracle access to target function evaluations. Com-
+bined with generic mechanisms like Laplace, exponential,
+Gaussian or Bernstein, our sampler enables systematising
+of privatisation: arbitrary computer programs can be made
+differentially private with no additional mathematical anal-
+ysis nor dynamic/static analysis, whatsoever. Our approach
+does not make any assumptions about the function under
+evaluation or underlying sampling distribution.
+
+Contributions. This paper contributes:
+i) SENSITIVI-
+TYSAMPLER for easily-implemented empirical estimation
+of global sensitivity of (potentially black-box) non-private
+mechanisms; ii) Empirical process theory for guaranteeing
+random differential privacy for any mechanism that pre-
+serves (stronger) differential privacy under bounded global
+sensitivity; iii) Experiments demonstrating our sampler on
+learners for which analytical sensitivity bounds are highly
+involved; and iv) Examples where sensitivity estimates beat
+(pessimistic) bounds, delivering pain-free random differen-
+tial privacy at higher levels of accuracy, when used in con-
+cert with generic privacy-preserving mechanisms.
+
+Related Work. This paper builds on the large body of
+work in differential privacy (Dwork et al., 2006; Dwork
+& Roth, 2014), which has gained broad interest in part
+due the framework’s strong guarantees of data privacy
+when releasing aggregate statistics or models, and due to
+availability of many generic privatising mechanisms e.g.,:
+Laplace (Dwork et al., 2006), exponential (McSherry &
+Talwar, 2007), Gaussian (Dwork & Roth, 2014), Bern-
+stein (Ald`a & Rubinstein, 2017) and many more. While
+these mechanisms present a path to privatisation without
+need for reproving differential privacy or utility, they do
+have in common a need to analytically bound sensitivity—
+a Lipschitz-type condition on the target non-private func-
+
+Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+tion. Often derivations are intricate e.g., for collabora-
+tive ﬁltering (McSherry & Mironov, 2009), SVMs (Ru-
+binstein et al., 2012; Chaudhuri et al., 2011), model se-
+lection (Thakurta & Smith, 2013), feature selection (Kifer
+et al., 2012), Bayesian inference (Dimitrakakis et al., 2014;
+2017; Wang et al., 2015), SGD in deep learning (Abadi
+et al., 2016), etc. Undoubtedly the non-trivial nature of
+bounding sensitivity prohibits adoption by some domain
+experts. We address this challenge through the SENSITIVI-
+TYSAMPLER that estimates sensitivity empirically—even
+for privatising black-box computer programs—providing
+high probability privacy guarantees generically.
+
+Several systems have been developed to ease deployment
+of differentially privacy, with Barthe et al. (2016) overview-
+ing contributions from Programming Languages. Dynamic
+approaches track privacy budget expended at runtime, e.g.,
+the PINQ (McSherry, 2009; McSherry & Mahajan, 2010)
+and Airavat (Roy et al., 2010) systems. Static check-
+ing approaches provide privacy usage forewarning, e.g.,:
+Fuzz (Reed & Pierce, 2010; Palamidessi & Stronati, 2012),
+DFuzz (Gaboardi et al., 2013). While promoting privacy-
+by-design, such approaches impose specialised languages
+or limit target feasibility—challenges addressed by this
+work. Moreover our SENSITIVITYSAMPLER mechanism
+complements such systems, e.g., within broader frame-
+works for protecting against side-channel attacks (Hae-
+berlen et al., 2011; Mohan et al., 2012).
+
+Minami et al. (2016) show that special-case Gibbs sam-
+pler is ((cid:15), δ)-DP without bounded sensitivity. Nissim et al.
+(2007) ask: Why calibrate for worst-case global sensitiv-
+ity when the actual database does not witness worst-case
+neighbours? Their smoothed sensitivity approach priva-
+tises local sensitivity, which itself is sensitive to perturba-
+tion. While this can lead to better sensitivity estimates, our
+sampled sensitivity still does not require analytical bounds.
+A related approach is the sample-and-aggregate mecha-
+nism (Nissim et al., 2007) which avoids computation of
+sensitivity of the underlying target function and instead re-
+quires sensitivity of an aggregator combining the outputs of
+the non-private target run repeatedly on subsamples of the
+data. By contrast, our approach provides direct sensitivity
+estimates, permitting direct privatisation.
+
+Our application of empirical process theory to estimate
+hard-to-compute quantities resembles the work of Riondato
+& Upfal (2015). They use VC-theory and sampling to ap-
+proximate mining frequent itemsets. Here we approximate
+analytical computations, and to our knowledge provide a
+ﬁrst generic mechanism that preserves random differen-
+tial privacy (Hall et al., 2012)—a natural weakening of the
+strong guarantee of differential privacy. Hall et al. (2012)
+leverage empirical process theory for a speciﬁc worked ex-
+ample, while our setting is general sensitivity estimation.
+
+2. Background
+
+We are interested in non-private mechanism f : Dn →
+B that maps databases in product space over domain D
+to responses in a normed space B. The terminology
+of “database” (DB) comes from statistical databases, and
+should be understood as a dataset.
+
+Example 1. For instance, in supervised learning of linear
+classiﬁers, the domain could be Euclidean vectors compris-
+ing features & labels, and responses might be parameteri-
+sations of learned classiﬁers such as a normal vector.
+
+We aim to estimate sensitivity which is commonly used to
+calibrate noise in differentially-private mechanisms.
+
+Deﬁnition 2. The global sensitivity of non-private f :
+Dn → B is given by ∆ = supD,D(cid:48) (cid:107)f (D) − f (D(cid:48))(cid:107)B,
+where the supremum is taken over all pairs of neighbour-
+ing databases D, D(cid:48) in Dn that differ in one point.
+Deﬁnition 3. Randomized mechanism M : Dn → R
+responding with values in arbitrary response set R pre-
+serves (cid:15)-differential privacy for (cid:15) > 0 if for all neigh-
+bouring D, D(cid:48) ∈ Dn and measurable R ⊂ R it holds
+that Pr (M (D) ∈ R) ≤ exp((cid:15))Pr (M (D(cid:48)) ∈ R).
+If in-
+stead for 0 < δ < 1 it holds that Pr (M (D) ∈ R) ≤
+exp((cid:15))Pr (M (D(cid:48)) ∈ R) + δ then the mechanism preserves
+the weaker notion of ((cid:15), δ)-differential privacy.
+
+In Section 4, we recall a number of key mechanisms that
+preserve these notions of privacy by virtue of target non-
+private function sensitivity.
+
+The following deﬁnition due to Hall et al. (2012) relaxes
+the requirement that uniform smoothness of response dis-
+tribution holds on all pairs of databases, to the requirement
+that uniform smoothness holds for likely database pairs.
+Deﬁnition 4. Randomized mechanism M : Dn → R
+responding with values in an arbitrary response set R
+((cid:15), γ)-random differential
+at
+preserves
+privacy level (cid:15) > 0 and conﬁdence γ ∈ (0, 1),
+if
+Pr (∀R ⊂ R, Pr (M (D) ∈ R) ≤ e(cid:15)Pr (M (D(cid:48)) ∈ R)) ≥
+1 − γ, with the inner probabilities over the mechanism’s
+randomization, and the outer probability over neighbour-
+ing D, D(cid:48) ∈ Dn drawn from some P n+1. The weaker
+((cid:15), δ)-DP has analogous deﬁnition as ((cid:15), δ, γ)-RDP.
+
+privacy,
+
+Remark 5. While strong (cid:15)-DP is ideal, utility may demand
+compromise. Precedent exists for weaker privacy, with the
+deﬁnition of ((cid:15), δ)-DP wherein on any databases (including
+likely ones) a private mechanism may leak sensitive infor-
+mation on low probability responses, forgiven by the addi-
+tive δ relaxation. ((cid:15), γ)-RDP offers an alternate relaxation,
+where on all but a small γ-proportion of unlikely database
+pairs, strong (cid:15)-DP holds—RDP plays a useful role.
+
+Example 6. Consider a database on unbounded posi-
+tive reals D ∈ Rn
++ representing loan default times of
+
+Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+a bank’s customers, and target release statistic f (D) =
+n−1 (cid:80)n
+i=1 Di the sample mean. To (cid:15)-DP privatise scalar-
+valued f (D) it is natural to look to the Laplace mechanism.
+However the mechanism requires a bound on the statistic’s
+global sensitivity, impossible under unbounded D. Note
+for ∆ > 0, when neighbouring D, D(cid:48) satisfy {|f (D) −
+f (D(cid:48))| ≤ ∆} then Laplace mechanism M∆,(cid:15)(f (D)) en-
+joys (cid:15)-DP on that DB pair. Therefore the probability of
+the latter event is bounded below by the probability of the
+former. Modelling the default times by iid exponential vari-
+ables of rate λ > 0, then |f (D) − f (D(cid:48))| = |Dn − D(cid:48)
+n|/n
+is distributed as Exp(nλ), and so
+
+Pr (∀t ∈ R, Pr (M∆,(cid:15)(D) = t) ≤ e(cid:15)Pr (M∆,(cid:15)(D(cid:48)) = t))
+
+≥Pr (|f (D) − f (D(cid:48))| ≤ ∆) = 1 − e−λn∆ ≥ 1 − γ ,
+
+provided that ∆ ≥ log(1/γ)/(λn). While (cid:15)-DP fails due
+to unboundedness, the data is likely bounded and so the
+mechanism is likely strongly private: M∆,(cid:15) is ((cid:15), γ)-RDP.
+
+3. Problem Statement
+
+We consider a statistician looking to apply a differentially-
+private mechanism to an f : Dn → B whose sensitivity
+cannot easily be bounded analytically (cf. Example 6 or
+the case of a computer program).
+
+Instead we assume that the statistician has the ability to
+sample from some arbitrary product space P n+1 on Dn+1,
+can evaluate f arbitrarily (and in particular on the result
+of this sampling), and is interested in applying a privatis-
+ing mechanism with the guarantee of random differential
+privacy (Deﬁnition 4).
+Remark 7. Natural choices for P present themselves for
+sampling or deﬁning random differential privacy. P could
+be taken as the underlying distribution from which a sensi-
+tive DB was drawn—in the case of sensitive training data
+but insensitive data source; an alternate test distribution
+of interest in the case of domain adaptation; or P could
+be uniform or an otherwise non-informative likelihood (cf.
+Example 6). Proved in full report (Rubinstein & Ald`a,
+2017), the following relates RDP of similar distributions.
+Proposition 8. Let P, Q be distributions on D with
+bounded KL divergence KL(P (cid:107)Q) ≤ τ . If mechanism
+M on databases in Dn is RDP with conﬁdence γ > 0 wrt
+P then it is also RDP with conﬁdence γ + (cid:112)(n + 1)τ /2
+wrt Q, with the same privacy parameters (cid:15) (or (cid:15), δ).
+
+4. Sensitivity-Induced Differential Privacy
+
+When a privatising mechanism M is known to achieve
+differential privacy for some mapping f : Dn → B
+under bounded global sensitivity,
+then our approach’s
+high-probability estimates of sensitivity will imply high-
+probability preservation of differential privacy. In order to
+
+reason about such arguments, we introduce the concept of
+sensitivity-induced differential privacy.
+Deﬁnition 9. For arbitrary mapping f : Dn → B and
+randomised mechanism M∆ : B → R, we say that M∆
+is sensitivity-induced (cid:15)-differentially private if for a neigh-
+bouring pair of databases D, D(cid:48) ∈ Dn, and ∆ ≥ 0
+
+(cid:107)f (D) − f (D(cid:48))(cid:107)B ≤ ∆
+=⇒ ∀R ⊂ R, Pr (M∆(f (D)) ∈ R)
+
+≤ exp((cid:15)) · Pr (M∆(f (D(cid:48))) ∈ R)
+
+with the qualiﬁcation on R being all measurable subsets
+of the response set R.
+In the same vein, the analogous
+deﬁnition for ((cid:15), δ)-differential privacy can also be made.
+
+Many generic mechanisms in use today preserve differen-
+tial privacy by virtue of satisfying this condition. The fol-
+lowing are immediate consequences of existing proofs of
+differential privacy. First, when a non-private target func-
+tion f aims to release Euclidean vectors responses.
+Corollary 10 (Laplace mechanism). Consider database
+D ∈ Dn, normed space B = (Rd, (cid:107) · (cid:107)1) for d ∈ N, non-
+private function f : Dn → B. The Laplace mechanism1
+(Dwork et al., 2006) M∆(f (D)) ∼ Lap (f (D), ∆/(cid:15)), is
+sensitivity-induced (cid:15)-differentially private.
+Example 11. Example 6 used Corollary 10 for RDP of the
+Laplace mechanism on unbounded bank loan defaults.
+Corollary 12 (Gaussian mechanism). Consider database
+D ∈ Dn, normed space B = (Rd, (cid:107) · (cid:107)2) for some
+d ∈ N, and non-private function f : Dn → B. The Gaus-
+sian mechanism (Dwork & Roth, 2014) M∆(f (D)) ∼
+N (f (D), diag (σ)) with σ2 > 2∆2 log(1.25/δ)/(cid:15)2, is
+sensitivity-induced ((cid:15), δ)-differentially private.
+
+13
+
+Second, f may aim to release elements of an arbitrary set
+R, where a score function s(D, ·) benchmarks quality of
+potential releases (placing a partial ordering on R).
+(Exponential mechanism). Consider
+Corollary
+database D ∈ Dn,
+response space R, normed
+space B = (cid:0)RR, (cid:107) · (cid:107)∞
+(cid:1), non-private score function
+s : Dn × R → R, and restriction f : Dn → B given by
+f (D) = s(D, ·). The exponential mechanism (McSherry
+& Talwar, 2007) M∆(f (D)) ∼ exp ((cid:15) (f (D)) (r)/2∆),
+which when normalised speciﬁes a PDF over responses
+r ∈ R, is sensitivity-induced (cid:15)-differentially private.
+
+Third, f could be function-valued as for learning settings,
+where given a training set we wish to release a model (e.g.,
+classiﬁer or predictive posterior) that can be subsequently
+evaluated on (non-sensitive) test points.
+Corollary 14 (Bernstein mechanism). Consider database
+D ∈ Dn, query space Y = [0, 1](cid:96) with constant dimen-
+sion (cid:96) ∈ N, lattice cover of Y of size k ∈ N given by
+
+1Lap (a, b) has unnormalised PDF exp(−(cid:107)x − a(cid:107)1/b).
+
+Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+Algorithm 1 SENSITIVITYSAMPLER
+
+Algorithm 2 SAMPLE-THEN-RESPOND
+
+Input: database size n, target mapping f : Dn → B,
+sample size m, order statistic index k, distribution P
+for i = 1 to m do
+
+Sample D ∼ P n+1
+Set Gi = (cid:107)f (D1...n) − f (D1...n−1,n+1)(cid:107)B
+
+end for
+Sort G1, . . . , Gm as G(1) ≤ . . . ≤ G(m)
+return ˆ∆ = G(k)
+
+L = ({0, 1/k, . . . , 1})(cid:96), normed space B = (cid:0)RY , (cid:107) · (cid:107)∞
+(cid:1),
+non-private function F : Dn × Y → R, and restriction
+f : Dn → B given by f (D) = F (D, ·). The Bern-
+stein mechanism (Ald`a & Rubinstein, 2017) M∆(f (D)) ∼
+(cid:8)Lap (cid:0)(f (D))(p), ∆(k + 1)(cid:96)/(cid:15)(cid:1) | p ∈ L(cid:9), is sensitivity-
+induced (cid:15)-differentially private.
+
+Our framework does not apply directly to the objective per-
+turbation mechanism of Chaudhuri et al. (2011), as that
+mechanism does not rely directly on a notion of sensitiv-
+ity of objective function, classiﬁer, or otherwise. However
+it can apply to the posterior sampler used for differentially-
+private Bayesian inference (Mir, 2012; Dimitrakakis et al.,
+2014; 2017; Zhang et al., 2016): there the target function
+f : Dn → B returns the likelihood function p(D|·), itself
+mapping parameters Θ to R; using the result of f (D) and
+public prior ξ(θ), the mechanism samples from the poste-
+rior ξ(B|D) = (cid:82)
+Θ p(D|θ)dξ(θ); differ-
+ential privacy follows from a Lipschitz condition on f that
+would require our sensitivity sampler to sample from all
+database pairs—a minor modiﬁcation left for future work.
+
+B p(D|θ)dξ(θ)/ (cid:82)
+
+5. The Sensitivity Sampler
+
+Algorithm 1 presents the SENSITIVITYSAMPLER in de-
+tail.
+Consider privacy-insensitive independent sample
+D1, . . . , Dm ∼ P n+1 of databases on n + 1 records, where
+P is chosen to match the desired distribution in deﬁnition
+of random differential privacy. A number of natural choices
+are available for P (cf. Remark 7). The main idea of
+SENSITIVITYSAMPLER is that for each extended-database
+observation of D ∼ P n+1, we induce i.i.d. observations
+G1, . . . , Gm ∈ R of the random variable
+
+G = (cid:107)f (D1...n) − f (D1...n−1;n+1)(cid:107)B .
+
+From these observations of the sensitivity of target map-
+ping f : Dn → B, we estimate w.h.p. sensitivity that
+can achieve random differential privacy, for the full suite of
+sensitivity-induced private mechanisms discussed above.
+
+If we knew the full CDF of G, we would simply invert
+this CDF to determine the level of sensitivity for achieving
+any desired γ level of random differential privacy: higher
+
+Input: database D; randomised mechanism M∆ : B →
+R; target mapping f : Dn → B, sample size m, order
+statistic index k, distribution P
+Set ˆ∆ to SENSITIVITYSAMPLER (|D|, f, m, k, P )
+respond M ˆ∆(D)
+
+conﬁdence would invoke higher sensitivity and therefore
+lower utility. However as we cannot in general possess
+the true CDF, we resort to uniformly approximating it
+w.h.p. using the empirical CDF induced by the sample
+G1, . . . , Gm. The guarantee of uniform approximation de-
+rives from empirical process theory. Figure 1 provides
+further intuition behind SENSITIVITYSAMPLER. Algo-
+rithm 2 presents SAMPLE-THEN-RESPOND which com-
+poses SENSITIVITYSAMPLER with any sensitivity-induced
+differentially-private mechanism.
+
+Our main result Theorem 15 presents explicit expressions
+for parameters m, k that are sufﬁcient to guarantee that
+SAMPLE-THEN-RESPOND achieves ((cid:15), δ, γ)-random dif-
+ferential privacy. Under that result the parameter ρ, which
+controls the uniform approximation of the empirical CDF
+from G1, . . . , Gm sample to the true CDF, is introduced as
+a free parameter. We demonstrate through a series of opti-
+misations in Table 1 how ρ can be tuned to optimise either
+sampling effort m, utility via order statistic index k, or pri-
+vacy conﬁdence γ. These alternative explicit choices for ρ
+serve as optimal operating points for the mechanism.
+
+5.1. Practicalities
+
+SENSITIVITYSAMPLER simpliﬁes the application of dif-
+ferential privacy by obviating the challenge of bounding
+sensitivity. As such, it is important to explore any practical
+issues arising in its implementation. The algorithm itself
+involves few main stages: sampling databases, measuring
+sensitivity, sorting, order statistic lookup (inversion), fol-
+lowed by the sensitivity-induced private mechanism.
+
+Figure 1. Inside SENSITIVITYSAMPLER:
+the true sensitivity
+CDF (blue); empirical sensitivity CDF (piecewise constant red);
+inversion of the empirical CDF (black dotted); where ρ, ρ(cid:48) are the
+DKW conﬁdence and errors deﬁned in Theorem 15.
+
+Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+Sampling. As discussed in Remark 7, a number of nat-
+ural choices for sampling distribution P could be made.
+Where a simulation process exists, capable of generating
+synthetic data approximating D, then this could be run. For
+example in the Bayesian setting (Dimitrakakis et al., 2014),
+one could use a public conditional likelihood p(·|θ), para-
+metric family Θ, prior ξ(θ) and sample from the marginal
+(cid:82)
+Θ p(x|θ)dξ(θ). Alternatively, it may sufﬁce to sample
+from the uniform distribution on D, or Gaussian restricted
+to Euclidean D. In any of these cases, sampling is relatively
+straightforward and the choice should consider meaningful
+random differential privacy guarantees relative to P .
+
+Sensitivity Measurement. A trivial stage, given neigh-
+bouring databases, measurement could involve expanding
+a mathematical expression representing a target function,
+or a computer program such as running a deep learning or
+computer vision open-source package. For some targets,
+it may be that running ﬁrst on one database, covers much
+of the computation required for the neighbouring database
+in which case amortisation may improve runtime. The cost
+of sensitivity measurement will be primarily determined by
+sample size m. Note that sampling and measurement can
+be trivially parallelised over map-reduce-like platforms.
+
+Sorting, Inversion. Strictly speaking the entire sensitivity
+sample need not be sorted, as only one order statistic is re-
+quired. That said, sorting even millions of scalar measure-
+ments can be accomplished in under a second on a stock
+machine. An alternative strategy to inversion as presented,
+is to take the maximum sensitivity measured so as to max-
+imise privacy without consideration to utility.
+
+Mechanism. It is noteworthy that in settings where mech-
+anism M∆ is to be run multiple times, the estimation of ˆ∆
+need not be redone. As such SENSITIVITYSAMPLER could
+be performed entirely in an ofﬂine amortisation stage.
+
+6. Analysis
+
+sample of sensitivities G1, . . . , Gm drawn
+For the i.i.d.
+within Algorithm 1, denote the corresponding ﬁxed un-
+known CDF, and corresponding random empirical CDF, by
+
+Φ (g) = Pr (G ≤ g) ,
+
+Φm (g) =
+
+1 [Gi ≤ g]
+
+.
+
+1
+m
+
+m
+(cid:88)
+
+i=1
+
+In this section we use Φm (∆) to bound the likelihood of a
+(non-private, possibly deterministic) mapping f : Dn → R
+achieving sensitivity ∆. This permits bounding RDP.
+Theorem 15. Consider any non-private mapping f :
+Dn → B, any sensitivity-induced ((cid:15), δ)-differentially pri-
+vate mechanism M∆ mapping B to (randomised) responses
+in R, any database D of n records, privacy parameters
+
+(cid:15) > 0, δ ∈ [0, 1], γ ∈ (0, 1), and sampling parameters size
+m ∈ N, order statistic index m ≥ k ∈ N, approximation
+conﬁdence 0 < ρ < min{γ, 1/2}, distribution P on D. If
+
+m ≥
+
+1
+2(γ − ρ)2 log
+
+(cid:19)
+
+(cid:18) 1
+ρ
+
+,
+
+(1)
+
+k ≥ m
+
+(cid:16)
+
+1 − γ + ρ + (cid:112)log(1/ρ)/(2m)
+
+(cid:17)
+
+,
+
+(2)
+
+then Algorithm 2 run with D, M∆, f, m, k, P , preserves
+((cid:15), δ, γ)-random differential privacy.
+
+Proof. Consider any ρ(cid:48) ∈ (0, 1) to be determined later,
+and consider sampling G1, . . . , Gm and sorting to G(1) ≤
+. . . ≤ G(m). Provided that
+
+1 − γ + ρ + ρ(cid:48) ≤ 1 ⇔ ρ(cid:48) ≤ γ − ρ ,
+
+(3)
+
+then the random sensitivity ˆ∆ = G(k), where k = (cid:100)m(1 −
+γ + ρ + ρ(cid:48))(cid:101), is the smallest ∆ ≥ 0 such that Φm(∆) ≥
+1 − γ + ρ + ρ(cid:48). That is,
+
+Φm( ˆ∆) ≥ 1 − γ + ρ + ρ(cid:48) .
+
+(4)
+
+Note that if 1 − γ + ρ + ρ(cid:48) < 0 then ˆ∆ can be taken as any
+∆, namely zero. Deﬁne the events
+
+A∆ = {∀R ⊂ R, Pr (M∆(f (D)) ∈ R) ≤ exp((cid:15))·
+Pr (M∆(f (D(cid:48))) ∈ R) + δ}
+(cid:27)
+
+(cid:26)
+
+Bρ(cid:48) =
+
+(Φm(∆) − Φ(∆)) ≤ ρ(cid:48)
+
+.
+
+sup
+∆
+
+The ﬁrst is the event that DP holds for a speciﬁc DB pair,
+when the mechanism is run with (possibly random) sensi-
+tivity parameter ∆; the second records the empirical CDF
+uniformly one-sided approximating the CDF to level ρ(cid:48). By
+the sensitivity-induced (cid:15)-differential privacy of M∆,
+
+∀∆ > 0 ,
+
+PrD,D(cid:48)∼P n+1 (A∆) ≥ Φ(∆) .
+
+(5)
+
+The random D, D(cid:48) on the left-hand side induce the distri-
+bution on G on the right-hand side under which Φ(∆) =
+PrG (G ≤ ∆). The probability on the left is the level of
+random differential privacy of M∆ when run on ﬁxed ∆.
+By the Dvoretzky-Kiefer-Wolfowitz inequality (Massart,
+1990) we have that for all ρ(cid:48) ≥ (cid:112)(log 2)/(2m),
+
+PrG1,...,Gm (Bρ(cid:48)) ≥ 1 − e−2mρ(cid:48)2
+
+.
+
+(6)
+
+Putting inequalities (4), (5), and (6) together, provided that
+ρ(cid:48) ≥ (cid:112)(log 2)/(2m), yields that
+
+Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+Table 1. Optimal ρ operating points for budgeted resources—γ or m—minimising m, γ or k; proved in (Rubinstein & Ald`a, 2017).
+
+Budgeted Optimise
+
+γ ∈ (0, 1)
+
+m ∈ N, γ
+
+m ∈ N
+
+m
+
+k
+
+γ
+
+ρ
+(cid:16)
+
+(cid:16)
+
+exp
+
+W−1
+
+(cid:17)
+
+− γ
+√
+2
+
+e
+
++ 1
+2
+
+(cid:17)
+
+exp (cid:0) 1
+
+2 W−1
+
+(cid:0)− 1
+
+4m
+
+(cid:1)(cid:1)
+
+≥ ρ +
+
+exp (cid:0) 1
+
+2 W−1
+
+(cid:0)− 1
+
+4m
+
+(cid:1)(cid:1)
+
+(cid:113) log( 1
+ρ )
+
+2m
+
+ρ +
+
+•
+
+•
+
+m
+(cid:24) log( 1
+ρ )
+2(γ−ρ)2
+
+(cid:25)
+
+γ
+
+•
+(cid:113) log( 1
+ρ )
+
+2m
+
+(cid:24)
+
+(cid:24)
+
+(cid:18)
+
+(cid:18)
+
+m
+
+1 − γ + ρ +
+
+m
+
+1 − γ + ρ +
+
+(cid:113) log( 1
+ρ )
+
+(cid:19)(cid:25)
+
+(cid:113) log( 1
+ρ )
+
+(cid:19)(cid:25)
+
+2m
+
+2m
+
+k
+
+m
+
+Figure 2. The minimum sample size m (sampler effort) required
+to achieve various target RDP conﬁdence levels γ.
+
+Figure 3. For sample sizes m ∈ {102, 103, 104}, trade-offs be-
+tween privacy conﬁdence level γ and order-statistic index k (rel-
+ative to m) which controls sensitivity estimates and so utility.
+
+(cid:3)(cid:12)
+(cid:12) Bρ(cid:48)
+
+(cid:3) Pr (cid:0)Bρ(cid:48)
+
+(cid:1)
+
+(cid:1)
+
+(cid:0)A ˆ∆
+(cid:3) Pr (Bρ(cid:48)) + E (cid:2) 1 (cid:2)A ˆ∆
+(cid:105)
+Pr (Bρ(cid:48))
+
+PrD,D(cid:48),G1,...,Gm
+(cid:3)(cid:12)
+=E (cid:2) 1 (cid:2)A ˆ∆
+(cid:12) Bρ(cid:48)
+(cid:17)(cid:12)
+(cid:16) ˆ∆
+(cid:104)
+≥E
+(cid:12)
+(cid:12) Bρ(cid:48)
+Φ
+(cid:17)
+(cid:16) ˆ∆
+
+(cid:104)
+
+Φm
+
+− ρ(cid:48)(cid:12)
+(cid:105) (cid:0)1 − exp (cid:0)−2mρ(cid:48)2(cid:1)(cid:1)
+≥E
+(cid:12)
+(cid:12) Bρ(cid:48)
+≥ (1 − γ + ρ + ρ(cid:48) − ρ(cid:48)) (cid:0)1 − exp (cid:0)−2mρ(cid:48)2(cid:1)(cid:1)
+≥(1 − γ + ρ)(1 − ρ)
+
+≥1 − γ + ρ − ρ
+
+=1 − γ .
+
+The last inequality follows from ρ < γ; the penultimate
+inequality follows from setting
+
+ρ(cid:48) ≥
+
+(cid:115)
+
+1
+2m
+
+log
+
+(cid:19)
+
+(cid:18) 1
+ρ
+
+,
+
+(7)
+
+and so the DKW condition (Massart, 1990), that ρ(cid:48) ≥
+(cid:112)(log 2)/(2m), is met provided that ρ ≤ 1/2. Now (1)
+follows from substituting (7) into (3).
+
+Note that for sensitivity-induced (cid:15)-differentially private
+mechanisms, the theorem applies with δ = 0.
+
+Optimising Free Parameter ρ. Table 1 recommends alter-
+native choices of free parameter ρ, derived by optimising
+the sampler’s performance along one axis—privacy con-
+ﬁdence γ, sampler effort m, or order statistic index k—
+given a ﬁxed budget of another. The table summarises
+
+results with proofs found in report (Rubinstein & Ald`a,
+2017). The speciﬁc expressions derived involve branches
+of the Lambert-W function, which is the inverse relation
+of the function f (z) = z exp(z), and is implemented as a
+special function in scientiﬁc libraries as standard. While
+Lambert-W is in general a multi-valued relation on the
+analytic complex domain, all instances in our results are
+single-real-valued functions on the reals. The next result
+presents the ﬁrst operating point’s corresponding rate on ef-
+fort in terms of privacy, and follows from recent bounds on
+the secondary branch W−1 due to Chatzigeorgiou (2013).2
+Corollary 16. Minimising m for given γ (cf. Table 1, row
+(cid:16) 1
+γ2 log 1
+1), yields rate for m as o
+with increasing pri-
+vacy conﬁdence 1
+γ → ∞.
+Remark 17. Theorem 15 and Table 1 elucidate that effort,
+privacy and utility are in tension. Effort is naturally de-
+creased by reducing the conﬁdence level of RDP (ρ chosen
+to minimise m, or γ). By minimising order statistic index
+k, we select smaller Gk and therefore sensitivity estimate
+ˆ∆. This in turn leads to lower generic mechanism noise
+and higher utility. All this is achieved by sacriﬁcing effort
+or privacy conﬁdence. As usual, sacriﬁcing (cid:15) or δ privacy
+levels also leads to utility improvement. Figures 2 and 3
+visualise these operating points.
+
+(cid:17)
+
+γ
+
+√
+
+2That for all u > 0, −1 −
+3 u.
+
+2u − 2
+
+−1 −
+
+√
+
+2u − u < W−1(−e−u−1) <
+
+0.050.100.200.505201005005000Privacy confidence g (log scale)Sampling effort m (log scale)0.00.10.20.30.40.50.00.20.40.60.81.0Privacy confidence gSensitivty quantile level   kmm = 100m = 1000m = 10000Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+Figure 4. Analytical vs estimated sensitivity for Example 6.
+
+Figure 5. Global vs sampled sensitivity for linear SVM.
+
+Less conservative estimates on sensitivity can lead to supe-
+rior utility while also enjoying easier implementation. This
+hypothesis is borne out in experiments in Section 7.
+
+Proposition 18. For any f : Dn → B with global sen-
+sitivity ∆ = supD∼D(cid:48) (cid:107)f (D) − f (D(cid:48))(cid:107)B, SENSITIVI-
+TYSAMPLER’s random sensitivity ˆ∆ ≤ ∆. As a result,
+Algorithm 2 run with any of the sensitivity-induced private
+mechanisms of Corollaries 10–14 achieves utility dominat-
+ing that of the respective mechanisms run with ∆.
+
+7. Experiments
+
+We now demonstrate the practical value of SENSITIVI-
+TYSAMPLER. First in Section 7.1 we illustrate how SEN-
+SITIVITYSAMPLER sensitivity quickly approaches analyt-
+ical high-probability sensitivity, and how it can be sig-
+niﬁcantly lower than worst-case global sensitivity in Sec-
+tion 7.2. Running privatising mechanisms with lower sen-
+sitivity parameters can mitigate utility loss, while maintain-
+ing (a weaker form of) differential privacy. We present ex-
+perimental evidence of this utility savings in Section 7.3.
+While application domains may ﬁnd the alternate balance
+towards utility appealing by itself, it should be stressed
+that a signiﬁcant advantage of SENSITIVITYSAMPLER is
+its ease of implementation.
+
+7.1. Analytical RDP vs. Sampled Sensitivity
+
+Consider running Example 6: private release of sample
+mean f (D) = n−1 (cid:80)n
+i=1 Di of a database D drawn i.i.d.
+from Exp(1). Figure 4 presents, for varying probability
+γ: the analytical bound on sensitivity versus SENSITIVI-
+TYSAMPLER estimates for different sampling budgets av-
+eraged over 50 repeats. For ﬁxed sampling budget, ˆ∆ is
+estimated at lower limits on γ, quickly converging to exact.
+
+7.2. Global Sensitivity vs. Sampled Sensitivity
+
+Consider now the challenging goal of privately releasing an
+SVM classiﬁer ﬁt to sensitive training data. In applying the
+Laplace mechanism to releasing the primal normal vector,
+Rubinstein et al. (2012) bound the vector’s sensitivity using
+algorithmic stability of the SVM. In particular, a lengthy
+derivation establishes that (cid:107)wD − wD(cid:48)(cid:107)1 ≤ 4LCκ
+d/n
+for a statistically consistent formulation of the SVM with
+convex L-Lipschitz loss, d-dimensional feature mapping
+with supx k(x, x) ≤ κ2, and regularisation parameter C.
+While the original work (and others since) did not consider
+the practical problem of releasing unregularised bias term
+b, we can effectively bound this sensitivity via a short argu-
+ment in full report (Rubinstein & Ald`a, 2017).
+
+√
+
+Proposition 19. For the SVM run with hinge loss, linear
+kernel, D = [0, 1]d, the release (w, b) has L1 global sensi-
+tivity bounded by 2 + 2C
+
+d + 4Cd/n.
+
+√
+
+We train private SVM using the Laplace mechanism (Ru-
+binstein et al., 2012), with global sensitivity bound of
+Proposition 19 or SENSITIVITYSAMPLER. We synthe-
+sise a dataset of n = 1000 points, selected with equal
+probability of being drawn from the positive class N (0.2 ·
+1, diag(0.01)) or negative class N (0.8 · 1, diag(0.01)).
+The feature space’s dimension varies from d = 8 through
+d = 64. The SVMs are run with C = 3, SENSITIVI-
+TYSAMPLER with m = 1500 & varying γ. Figure 5 shows
+very different sensitivities obtained. While estimated ˆ∆
+hovers around 0.01 largely independent of γ, global sen-
+sitivity ∆ exceeds 20—two orders of magnitude greater.
+These patterns are repeated as dimension increases; sensi-
+tivity increasing is to be expected since as dimensions are
+added, the few points in the training set become more likely
+to be support vectors and thus affecting sensitivity. Such
+conservative estimates could clearly lead to inferior utility.
+
+0.000.040.08Privacy confidence gComputed sensitivity  D0.020.07750.1350.19250.25Analyticalm = 8000m = 2000m = 500010203040506070Data dimension dSensitivity  D  (log scale)10-310-1101llllllg=0.05g=0.1g=0.15GlobalPain-Free Random Differential Privacy with Sensitivity Sampling
+
+Figure 6. Linear SVM predictive error under sensitivity estimates
+vs with global sensitivity bound.
+
+Figure 7. KDE error (relative to non-private) under sensitivity es-
+timates vs global sensitivity bound.
+
+7.3. Effect on Utility
+
+Support Vector Classiﬁcation. We return to the same
+SVM setup as in the previous section, with d = 2, now
+plotting utility as misclassiﬁcation error (averaged over 500
+repeats) vs. privacy budget (cid:15). Here we set γ = 0.05
+and include also the non-private SVM’s performance as a
+bound on utility possible. See Figure 6. At very high pri-
+vacy levels both private SVMs suffer the same poor error.
+But quickly with lower privacy, the misclassiﬁcation error
+of SENSITIVITYSAMPLER drops until it reaches the non-
+private rate. Simultaneously the global sensitivity approach
+has a signiﬁcantly higher value and suffers a much slower
+decline. These results suggest that SENSITIVITYSAMPLER
+can achieve much better utility in addition to sensitivity.
+
+Kernel Density Estimation. We ﬁnally consider a one di-
+mensional (d = 1) KDE setting. In Figure 7 we show the
+error (averaged over 1000 repeats) of the Bernstein mecha-
+nism (with lattice size k = 10 and Bernstein order h = 3)
+on 5000 points drawn from a mixture of two normal dis-
+tributions N (0.5, 0.02) and N (0.75, 0.005) with weights
+0.4, 0.6, respectively. For this experimental result, we set
+m = 50000 and two different values for γ, as displayed
+in Figure 7. Once again we observe that for high privacy
+levels the global sensitivity approach incurs a higher error
+relative to non-private, while SENSITIVITYSAMPLER pro-
+vides stronger utility. At lower privacy, both approaches
+converge to the approximation error of the Bernstein poly-
+nomial used.
+
+cal bounds on global sensitivity (a Lipschitz condition)
+on the non-private target. While this sensitivity is triv-
+ially derived for simple statistics, for state-of-the-art learn-
+ers sensitivity derivations are arduous e.g., in collabora-
+tive ﬁltering (McSherry & Mironov, 2009), SVMs (Ru-
+binstein et al., 2012; Chaudhuri et al., 2011), model se-
+lection (Thakurta & Smith, 2013), feature selection (Kifer
+et al., 2012), Bayesian inference (Dimitrakakis et al., 2014;
+Wang et al., 2015), and deep learning (Abadi et al., 2016).
+
+While derivations may prevent domain experts from lever-
+aging differential privacy, our SENSITIVITYSAMPLER
+promises to make privatisation simple when using existing
+mechanisms including Laplace (Dwork et al., 2006), Gaus-
+sian (Dwork & Roth, 2014), exponential (McSherry & Tal-
+war, 2007) and Bernstein (Ald`a & Rubinstein, 2017). All
+such mechanisms guarantee differential privacy on pairs of
+databases for which a level ∆ of non-private function sen-
+sitivity holds, when the mechanism is run with that ∆ pa-
+rameter. For all such mechanisms we leverage results from
+empirical process theory to establish guarantees of random
+differential privacy (Hall et al., 2012) when using sampled
+sensitivities only.
+
+Experiments demonstrate that real-world learners can eas-
+ily be run privately without any new derivation whatso-
+ever. And by using a naturally-weaker form of privacy,
+while replacing worst-case global sensitivity bounds with
+estimated (actual) sensitivities, we can achieve far superior
+utility than existing approaches.
+
+8. Conclusion
+
+Acknowledgements
+
+In this paper we propose SENSITIVITYSAMPLER, an al-
+gorithm for empirical estimation of sensitivity for privati-
+sation of black-box functions. Our work addresses an
+important usability gap in differential privacy, whereby
+several generic privatisation mechanisms exist complete
+with privacy and utility guarantees, but require analyti-
+
+F. Ald`a and B. Rubinstein acknowledge the support of the
+DFG Research Training Group GRK 1817/1 and the Aus-
+tralian Research Council (DE160100584) respectively.
+
+0.050.200.50Privacy budget e (log scale)Misclassification rate (log scale)10-210-1100101llllllllllGlobalg=0.05 (opt. m)g=0.05, m=2000 (opt. k)Non−private0.050.100.150.20Privacy budget e (log scale)Total variation distance10-210-1100llllllGlobalg=0.01, m = 50000 (opt. k)g=0.1, m = 50000 (opt. k)Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+References
+
+Abadi, Mart´ın, Chu, Andy, Goodfellow, Ian, McMahan,
+H Brendan, Mironov, Ilya, Talwar, Kunal, and Zhang, Li.
+Deep learning with differential privacy. In Proceedings
+of the 2016 ACM SIGSAC Conference on Computer and
+Communications Security, pp. 308–318. ACM, 2016.
+
+Ald`a, Francesco and Rubinstein, Benjamin I. P. The Bern-
+stein mechanism: Function release under differential pri-
+vacy. In Proceedings of the 31st AAAI Conference on Ar-
+tiﬁcial Intelligence (AAAI’2017), pp. 1705–1711, 2017.
+
+Barthe, Gilles, Gaboardi, Marco, Hsu, Justin, and Pierce,
+Benjamin. Programming language techniques for differ-
+ential privacy. ACM SIGLOG News, 3(1):34–53, 2016.
+
+Chatzigeorgiou, Ioannis. Bounds on the Lambert function
+and their application to the outage analysis of user coop-
+eration. IEEE Communications Letters, 17(8), 2013.
+
+Chaudhuri, Kamalika, Monteleoni, Claire, and Sarwate,
+Anand D. Differentially private empirical risk minimiza-
+tion. Journal of Machine Learning Research, 12(Mar):
+1069–1109, 2011.
+
+Dimitrakakis, Christos, Nelson, Blaine, Mitrokotsa, Aika-
+terini, and Rubinstein, Benjamin I. P. Robust and pri-
+In International Conference
+vate Bayesian inference.
+on Algorithmic Learning Theory, pp. 291–305. Springer,
+2014.
+
+Dimitrakakis, Christos, Nelson, Blaine, Zhang, Zuhe,
+Mitrokotsa, Aikaterini, and Rubinstein, Benjamin I. P.
+Differential privacy for Bayesian inference through pos-
+terior sampling. Journal of Machine Learning Research,
+18(11):1–39, 2017.
+
+Dwork, Cynthia and Roth, Aaron. The algorithmic founda-
+tions of differential privacy. Foundations and Trends in
+Theoretical Computer Science, 9(3–4):211–407, 2014.
+
+Dwork, Cynthia, McSherry, Frank, Nissim, Kobbi, and
+Smith, Adam. Calibrating noise to sensitivity in private
+In Theory of Cryptography Conference,
+data analysis.
+pp. 265–284. Springer, 2006.
+
+Gaboardi, Marco, Haeberlen, Andreas, Hsu,
+
+Justin,
+Narayan, Arjun, and Pierce, Benjamin C. Linear de-
+pendent types for differential privacy. ACM SIGPLAN
+Notices, 48(1):357–370, 2013.
+
+Haeberlen, Andreas, Pierce, Benjamin C, and Narayan, Ar-
+jun. Differential privacy under ﬁre. In USENIX Security
+Symposium, 2011.
+
+Hall, Rob, Rinaldo, Alessandro, and Wasserman, Larry.
+Journal of Privacy and
+
+Random differential privacy.
+Conﬁdentiality, 4(2):43–59, 2012.
+
+Kifer, Daniel, Smith, Adam, and Thakurta, Abhradeep.
+Private convex empirical risk minimization and high-
+dimensional regression. Journal of Machine Learning
+Research, 1(41):3–1, 2012.
+
+Massart, Pascal. The tight constant in the Dvoretzky-
+Kiefer-Wolfowitz inequality. The Annals of Probability,
+18(3):1269–1283, 1990.
+
+McSherry, Frank and Mahajan, Ratul. Differentially-
+private network trace analysis. ACM SIGCOMM Com-
+puter Communication Review, 40(4):123–134, 2010.
+
+McSherry, Frank and Mironov, Ilya. Differentially private
+recommender systems: building privacy into the net. In
+Proceedings of the 15th ACM SIGKDD International
+Conference on Knowledge Discovery and Data Mining,
+pp. 627–636. ACM, 2009.
+
+McSherry, Frank and Talwar, Kunal. Mechanism design via
+differential privacy. In 48th Annual IEEE Symposium on
+Foundations of Computer Science, 2007 (FOCS’07), pp.
+94–103. IEEE, 2007.
+
+McSherry, Frank D. Privacy integrated queries: an exten-
+sible platform for privacy-preserving data analysis.
+In
+Proceedings of the 2009 ACM SIGMOD International
+Conference on Management of Data, pp. 19–30. ACM,
+2009.
+
+Minami, Kentaro, Arai, HItomi, Sato, Issei, and Nakagawa,
+Hiroshi. Differential privacy without sensitivity. In Ad-
+vances in Neural Information Processing Systems 29, pp.
+956–964, 2016.
+
+Mir, Darakhshan. Differentially-private learning and in-
+In Proceedings of the 2012 Joint
+
+formation theory.
+EDBT/ICDT Workshops, pp. 206–210. ACM, 2012.
+
+Mohan, Prashanth, Thakurta, Abhradeep, Shi, Elaine,
+Song, Dawn, and Culler, David. GUPT: privacy pre-
+serving data analysis made easy. In Proceedings of the
+2012 ACM SIGMOD International Conference on Man-
+agement of Data, pp. 349–360. ACM, 2012.
+
+Nissim, Kobbi, Raskhodnikova, Sofya, and Smith, Adam.
+Smooth sensitivity and sampling in private data analysis.
+In Proceedings of the Thirty-Ninth Annual ACM Sympo-
+sium on Theory of Computing, pp. 75–84. ACM, 2007.
+
+Palamidessi, Catuscia and Stronati, Marco. Differential
+privacy for relational algebra:
+improving the sensitiv-
+ity bounds via constraint systems. In Wiklicky, Herbert
+and Massink, Mieke (eds.), QAPL - Tenth Workshop on
+Quantitative Aspects of Programming Languages, vol-
+ume 85, pp. 92–105, 2012.
+
+Pain-Free Random Differential Privacy with Sensitivity Sampling
+
+Reed, Jason and Pierce, Benjamin C. Distance makes the
+types grow stronger: a calculus for differential privacy.
+ACM Sigplan Notices, 45(9):157–168, 2010.
+
+Riondato, Matteo and Upfal, Eli. Mining frequent item-
+sets through progressive sampling with Rademacher av-
+erages. In Proceedings of the 21th ACM SIGKDD Inter-
+national Conference on Knowledge Discovery and Data
+Mining, pp. 1005–1014. ACM, 2015.
+
+Roy, Indrajit, Setty, Srinath TV, Kilzer, Ann, Shmatikov,
+Vitaly, and Witchel, Emmett. Airavat: Security and pri-
+vacy for MapReduce. In NSDI, volume 10, pp. 297–312,
+2010.
+
+Rubinstein, Benjamin I. P.
+
+and Ald`a, Francesco.
+Pain-free random differential privacy with sensi-
+tivity sampling.
+report, ArXiv, 2017.
+https://arxiv.org/abs/1706.02562 [cs.LG].
+
+Technical
+
+Rubinstein, Benjamin I. P., Bartlett, Peter L., Huang, Ling,
+and Taft, Nina. Learning in a large function space:
+Privacy-preserving mechanisms for SVM learning. Jour-
+nal of Privacy and Conﬁdentiality, 4(1):65–100, 2012.
+
+Thakurta, Abhradeep Guha and Smith, Adam. Differen-
+tially private feature selection via stability arguments,
+and the robustness of the Lasso. In Conference on Learn-
+ing Theory, pp. 819–850, 2013.
+
+Wang, Yu-Xiang, Fienberg, Stephen E, and Smola, Alexan-
+der J. Privacy for free: Posterior sampling and stochastic
+gradient Monte Carlo. In ICML, pp. 2493–2502, 2015.
+
+Zhang, Zuhe, Rubinstein, Benjamin I. P., and Dimitrakakis,
+Christos. On the differential privacy of Bayesian infer-
+ence. In Proceedings of the Thirtieth AAAI Conference
+on Artiﬁcial Intelligence, pp. 2365–2371. AAAI Press,
+2016.
+
+

@@ -1,0 +1,1234 @@
+Automated Curriculum Learning for Neural Networks
+
+Alex Graves 1 Marc G. Bellemare 1 Jacob Menick 1 R´emi Munos 1 Koray Kavukcuoglu 1
+
+Abstract
+
+We introduce a method for automatically select-
+ing the path, or syllabus, that a neural network
+follows through a curriculum so as to maximise
+learning efﬁciency. A measure of the amount that
+the network learns from each data sample is pro-
+vided as a reward signal to a nonstationary multi-
+armed bandit algorithm, which then determines a
+stochastic syllabus. We consider a range of sig-
+nals derived from two distinct indicators of learn-
+ing progress: rate of increase in prediction accu-
+racy, and rate of increase in network complex-
+ity. Experimental results for LSTM networks on
+three curricula demonstrate that our approach can
+signiﬁcantly accelerate learning, in some cases
+halving the time required to attain a satisfactory
+performance level.
+
+1. Introduction
+
+Over two decades ago, in The importance of starting small,
+Elman put forward the idea that a curriculum of progres-
+sively harder tasks could signiﬁcantly accelerate a neural
+network’s training (Elman, 1993). However curriculum
+learning has only recently become prevalent in the ﬁeld
+(e.g., Bengio et al., 2009), due in part to the greater com-
+plexity of problems now being considered. In particular,
+recent work on learning programs with neural networks
+has relied on curricula to scale up to longer or more com-
+plicated tasks (Sutskever and Zaremba, 2014; Reed and
+de Freitas, 2015; Graves et al., 2016). We expect this trend
+to continue as the scope of neural networks widens, with
+deep reinforcement learning providing fertile ground for
+structured learning.
+
+One reason for the slow adoption of curriculum learning
+is that it’s effectiveness is highly sensitive to the mode of
+progression through the tasks. One popular approach is to
+deﬁne a hand-chosen performance threshold for advance-
+
+1DeepMind, London, UK. Correspondence to: Alex Graves
+
+<gravesa@google.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+ment to the next task, along with a ﬁxed probability of re-
+turning to earlier tasks, to prevent forgetting (Sutskever and
+Zaremba, 2014). However, as well as introducing hard-to-
+tune parameters, this poses problems for curricula where
+appropriate thresholds may be unknown or variable across
+tasks. More fundamentally, it presupposes that the tasks
+can be ordered by difﬁculty, when in reality they may vary
+along multiple axes of difﬁculty, or have no predeﬁned or-
+der at all.
+
+We propose to instead treat the decision about which task
+to study next as a stochastic policy, continuously adapted to
+optimise some notion of what Oudeyer et al. (2007) termed
+learning progress. Doing so brings us into contact with
+the intrinsic motivation literature (Barto, 2013), where var-
+ious indicators of learning progress have been used as re-
+ward signals to encourage exploration, including compres-
+sion progress (Schmidhuber, 1991), information acquisi-
+tion (Storck et al., 1995), Bayesian surprise (Itti and Baldi,
+2009), prediction gain (Bellemare et al., 2016) and varia-
+tional information maximisation (Houthooft et al., 2016).
+We focus on variants of prediction gain, and also introduce
+a novel class of progress signals which we refer to as com-
+plexity gain. Derived from minimum description length
+principles, complexity gain equates acquisition of knowl-
+edge with an increase in effective information encoded in
+the network weights.
+
+Given a progress signal that can be evaluated for each
+training example, we use a multi-armed bandit algorithm
+to ﬁnd a stochastic policy over the tasks that maximises
+overall progress. The bandit is nonstationary because the
+behaviour of the network, and hence the optimal policy,
+evolves during training. We take inspiration from a previ-
+ous work that modelled an adaptive student with a multi-
+armed bandit in the context of developmental learning
+(Lopes and Oudeyer, 2012; Clement et al., 2015). Another
+related area is the ﬁeld of active learning, where similar
+gain signals have been used to guide decisions about which
+data point to label next (Settles, 2010). Lastly, there are
+parallels with recent work on using Bayesian optimisation
+to ﬁnd the best order in which to train a word embedding
+network on a language corpus (Tsvetkov, 2016); however
+this differs from our work in that the ordering was entirely
+determined before each training run, rather than adaptively
+altered in response to the model’s progress.
+
+Automated Curriculum Learning
+
+2. Background
+
+We consider supervised learning problems where target
+sequences (b1, b2, . . . ) are conditionally modelled given
+their respective input sequences (a1, a2, . . . ). For conve-
+nience we suppose that the targets are drawn from a ﬁ-
+nite set B, noting, however, that our framework extends
+straightforwardly to continuous targets, with probability
+densities taking the place of probabilities. As is typical
+for neural networks, sequences may be grouped together
+in batches (b1:B, a1:B) to accelerate training. The condi-
+tional probability output by the model is
+
+p(b1:B | a1:B) =
+
+p(bi
+
+j | bi
+
+1:j−1, ai
+
+1:j−1).
+
+(cid:89)
+
+i,j
+
+From here onwards, we consider each batch as a single
+example x from X := (A × B)N , and write p(x) :=
+p(b1:B | a1:B) for its probability. Under this notation, a
+task is a distribution D over sequences from X . A cur-
+riculum is an ensemble of tasks D1, . . . , DN , a sample is
+an example drawn from one of the tasks of the curriculum,
+and a syllabus is a time-varying sequence of distributions
+over tasks. We consider a neural network to be a proba-
+bilistic model pθ over X , whose parameters are denoted θ.
+The expected loss of the network on the kth task is
+
+Lk(θ) := E
+
+L(x, θ),
+
+x∼Dk
+
+where L(x, θ) := − log pθ(x) is the sample loss on x.
+Whenever unambiguous, we will simply denote the ex-
+pected and sample losses by Lk and L(x) respectively.
+
+2.1. Curriculum Learning
+
+LMT :=
+
+1
+N
+
+N
+(cid:88)
+
+k=1
+
+Lk.
+
+In the target task setting, we are only interested in mini-
+mizing the loss on the ﬁnal task DN . The other tasks then
+act as a series of stepping stones to the real problem. The
+objective function in this setting is simply LTT := LN .
+
+2.2. Adversarial Multi-Armed Bandits
+
+We view a curriculum containing N tasks as an N -armed
+bandit (Bubeck and Cesa-Bianchi, 2012), and a syllabus as
+an adaptive policy which seeks to maximize payoffs from
+this bandit.
+In the bandit setting, an agent selects a se-
+quence of arms (actions) a1 . . . aT over T rounds of play
+(at ∈ {1, . . . , N }). After each round, the selected arm
+
+yields a payoff rt; the payoffs for the other arms are not
+observed.
+
+The classic algorithm for adversarial bandits is Exp3 (Auer
+et al., 2002), which uses multiplicative weight updates to
+guarantee low regret with respect to the best arm. On round
+t, the agent selects an arm stochastically according to a pol-
+icy πt. This policy is deﬁned by a set of weights wt,i:
+
+πEXP3
+t
+
+(i) :=
+
+ewt,i
+j=1 ewt,j
+
+.
+
+(cid:80)N
+
+The weights are the sum of importance-sampled rewards:
+
+wt,i := η
+
+˜rs,i
+
+˜rs,i :=
+
+(cid:88)
+
+s<t
+
+rsI[as=i]
+πs(i)
+
+.
+
+Exp3 acts so as to minimize regret with respect to the single
+best arm evaluated over the whole history. However, a com-
+mon occurrence is for an arm to be optimal for a portion of
+the history, then another arm, and so on; the best strategy
+is then piecewise stationary. This is generally the case in
+our setting, as the expected reward for each task changes as
+the model learns. The Fixed Share method (Herbster and
+Warmuth, 1998) addresses this issue by using an (cid:15)-greedy
+strategy and mixing in the weights additively. In the ban-
+dit setting, this is known as the Exp3.S algorithm (also by
+Auer et al. (2002)):
+
+πEXP3.P
+t
+
+(cid:15)
+N
+(cid:110)
+wS
+
+(i) +
+
+(i) := (1 − (cid:15))πEXP3
+(cid:104)
+
+t
+
+wS
+
+t,i := log
+αt
+N − 1
+
++
+
+(1 − αt) exp
+(cid:110)
+
+(cid:88)
+
+exp
+
+j(cid:54)=i
+
+t−1,i + η˜rβ
+
+(cid:111)
+
+t−1,i
+(cid:111) (cid:105)
+
+wS
+
+t−1,j + η˜rβ
+
+t−1,j
+
+(1)
+
+wS
+
+1,i := 0
+
+αt := t−1
+
+˜rβ
+s,i :=
+
+rsI[as=i] + β
+πs(i)
+
+.
+
+The appropriate step size η depends on the magnitudes of
+the rewards, which may not be known a priori. The prob-
+lem is particularly acute in our setting, where the magni-
+tude depends strongly on the gain signal used to measure
+learning progress, as well as varying over time as the model
+learns. To address this issue, we adaptively rescale all re-
+wards to lie in the interval [−1, 1] using the following pro-
+cedure: Let Rt be the history of unscaled rewards up to
+time t, i.e. Rt = {ˆri}t−1
+i=1. Let qlo
+t be quantiles
+of Rt, which we choose here to be the 20th and 80th per-
+centiles respectively. The scaled reward rt is obtained by
+clipping ˆrt to the interval [qlo
+t , qhit] and then linearly map-
+ping the result to lie in [−1, 1]:
+
+t and qhi
+
+rt =
+
+
+−1
+
+1
+
+2(ˆrt−qlo
+t )
+t −qlo
+qhi
+t
+
+− 1
+
+if ˆrt < qlo
+t
+if ˆrt > qhi
+t
+otherwise.
+
+(2)
+
+We consider two related settings. In the multiple tasks set-
+ting, The goal is to perform as well as possible on all tasks
+in {Dk}; this is captured by the objective function
+
+2.3. Reward Scaling
+
+Automated Curriculum Learning
+
+Rather than keeping the entire history of rewards, we use
+reservoir sampling to maintain a representative sample, and
+compute approximate quantiles from this sample. These
+quantiles can be obtained in Θ(log|Rt|) time.
+
+3. Learning Progress Signals
+
+Our goal is to use the policy output by Exp3.S as a syllabus
+for training our models. Ideally we would like the policy
+to maximize the rate at which we minimize the loss, and
+the reward should reﬂect this rate – what Oudeyer et al.
+(2007) calls learning progress. However, it usually is com-
+putationally undesirable or even impossible to measure the
+effect of a training sample on the target objective, and we
+therefore turn to surrogate measures of progress. Broadly,
+these measures are either 1) loss-driven, in the sense that
+they equate progress with a decrease in some loss; or 2)
+complexity-driven, when they equate progress with an in-
+crease in model complexity.
+
+Training proceeds as follows: at each time t, we ﬁrst sam-
+ple a task index k ∼ πt. We then generate a sample from
+this task x ∼ Dk. Note that each x is in general a batch of
+training sequences, and that in order to reduce noise in the
+gain signal we draw the whole batch from a single task.
+We compute the chosen measure of learning progress ν
+then divide by the time τ (x) required to process the sam-
+ple (since it is the rate of progress we are concerned with,
+and processing time may vary from task to task) to get the
+raw reward ˆr = ν/τ (x) For the purposes of this work,
+τ (x) was simply the length of the longest input sequence
+in x; for other tasks or architectures a more complex cal-
+culation may be required. We then rescale ˆr into a reward
+rt ∈ [−1, 1], and provide it to Exp3.S. The procedure is
+summarized as Algorithm 1.
+
+Algorithm 1 Automated Curriculum Learning
+
+Initially: wi = 0 for i ∈ [N ]
+
+for t = 1 . . . T do
+
+N
+
+(cid:80)
+
+π(k) := (1 − (cid:15)) ewk
+i ewi + (cid:15)
+Draw task index k from π
+Draw training batch x from Dk
+Train network pθ on x
+Compute learning progress ν (Sections 3.1 & 3.2)
+Map ˆr = ν/τ (x) to r ∈ [−1, 1] (Section 2.3)
+Update wi with reward r using Exp3.S (1)
+
+end for
+
+3.1. Loss-driven Progress
+
+We consider ﬁve loss-driven progress signals, all which
+compare the predictions made by the model before and af-
+ter training on some sample x. The ﬁrst two signals we
+
+present are instantaneous in the sense that they only depend
+on x. Such signals are appealing because they are typically
+cheaper to evaluate, and are agnostic about the overall goal
+of the curriculum. The remaining three signals more di-
+rectly measure the effect of training on the desired objec-
+tive, but require an additional sample x(cid:48). In what follows
+we denote the model parameters before and after training
+on x by θ and θ(cid:48) respectively.
+
+Prediction gain (PG). Prediction gain is deﬁned as the
+instantaneous change in loss for a sample x, before and
+after training on x:
+
+νP G := L(x, θ) − L(x, θ(cid:48)).
+
+For Bayesian mixture models, prediction gain upper
+bounds the model’s information gain (Bellemare et al.,
+2016), and is therefore closely related to the Bayesian pre-
+cept that learning is a change in posterior.
+
+Gradient prediction gain (GPG). Computing predic-
+tion gain requires an additional forward pass. When pθ is
+differentiable, an alternative is to consider the ﬁrst-order
+Taylor series approximation to prediction gain:
+
+L(x, θ(cid:48)) ≈ L(x, θ) + [∇L(x, θ)](cid:62) ∆θ,
+
+where ∆θ is the descent step. Taking this step to be the
+negative gradient −∇θL(x, θ) we obtain the gradient pre-
+diction gain
+
+νGP G := (cid:107)∇L(x, θ)(cid:107)2
+2.
+
+This measures the magnitude of the gradient vector, which
+has been used an indicator of salience in the active learning
+literature (Settles et al., 2008). We show in Section 3.3
+that gradient prediction gain is a biased estimate of true
+expected learning progress, and in particular favours tasks
+whose loss has higher variance.
+
+Self prediction gain (SPG). Prediction gain is a biased
+estimate of the change in Lk(θ), the expected loss on task
+k. Having trained on x, we naturally expect the sample loss
+L(x, θ) to decrease, even though the loss at other points
+may increase. Self prediction gain addresses this issue by
+sampling a second time from the same task and estimating
+progress on the new sample:
+
+νSP G := L(x(cid:48), θ) − L(x(cid:48), θ(cid:48))
+
+x(cid:48) ∼ Dk.
+
+Target prediction gain (TPG). We can take the self-
+prediction gain idea further and evaluate directly on the
+loss of interest, which has has also been considered in ac-
+tive learning (Roy and Mccallum, 2001). In the target task
+setting, this becomes
+
+νT P G := L(x(cid:48), θ) − L(x(cid:48), θ(cid:48))
+
+x(cid:48) ∼ DN .
+
+Automated Curriculum Learning
+
+Although this might seem like the most accurate measure
+so far, it tends to suffer from high variance, and also runs
+counter to the premise that, early in training, the model can-
+not improve on the difﬁcult target task and should instead
+train on a task that it can master.
+
+Mean prediction gain (MPG). Mean prediction gain is
+the analogue of target prediction gain in the multiple tasks
+setting, where it is natural to evaluate our progress across
+all tasks. We write
+
+νM P G := L(x(cid:48), θ) − L(x(cid:48), θ(cid:48))
+
+x(cid:48) ∼ Dk, k ∼ UN ,
+
+where UN denotes
+{1, . . . , N }.
+variance from sampling an evaluation task k ∼ UN .
+
+the uniform distribution over
+Mean prediction gain has additional
+
+3.2. Complexity-driven Progress
+
+So far we have considered gains that gauge the network’s
+learning progress directly, by observing the change in its
+predictive ability. We now turn to a novel set of gains that
+instead measure the rate at which the network’s complex-
+ity increases. These gains are underpinned by the Mini-
+mum Description Length principle (MDL; Rissanen, 1986;
+Gr¨unwald, 2007): namely that in order to best generalise
+from a particular dataset, one should minimise the num-
+ber of bits required to describe the model parameters plus
+the number of bits required for the model to describe the
+data. The MDL principle makes it explicit that increasing
+the complexity of the model by a certain amount is only
+worthwhile if it reduces the data cost by a greater amount.
+We would therefore expect the training examples that in-
+duce it to do so to correspond to salient data from which it
+is able to generalise. These examples are exactly what we
+seek when attempting to maximise learning progress.
+
+MDL training for neural networks (Hinton and Van Camp,
+1993) can be practically realised with stochastic variational
+inference (Graves, 2011; Kingma et al., 2015; Blundell
+In this framework a variational posterior
+et al., 2015).
+Pφ(θ) over the network weights is maintained during train-
+ing, with a single weight sample drawn for each training
+example. The parameters φ of the posterior are optimised,
+rather than θ itself. The total loss is the expected log-loss
+of the training dataset1 (which in our case is the complete
+curriculum), plus the KL-divergence between the posterior
+and some ﬁxed (Blundell et al., 2015) or adaptive (Graves,
+2011) prior Qψ(θ):
+
+LV I (φ, ψ) = KL(Pφ (cid:107) Qψ)
+(cid:123)(cid:122)
+(cid:125)
+(cid:124)
+model complexity
+
++
+
+(cid:88)
+
+(cid:88)
+
+k
+
+x∈Dk
+
+(cid:124)
+
+E
+θ∼Pφ
+
+L(x, θ)
+
+.
+
+(cid:123)(cid:122)
+data cost
+
+(cid:125)
+
+1MDL deals with sets rather than distributions; in this context
+we consider each Dk in the curriculum to be a dataset sampled
+from the task distribution, rather than the distribution itself
+
+Following (Graves, 2011) we used an adaptive prior with
+two free parameters: a mean and variance that are reused
+for every network weight. Since we are using stochastic
+gradient descent we need to determine the per-sample loss
+for both the model complexity and the data. Deﬁning S :=
+(cid:80)
+k |Dk| as the total number of samples in the curriculum
+
+we obtain
+
+LV I (x, φ, ψ) :=
+
+KL(Pφ (cid:107) Qψ) + E
+θ∼Pφ
+
+L(x, θ),
+
+(3)
+
+1
+S
+
+k
+
+(cid:80)
+
+with LV I (φ, ψ) = (cid:80)
+LV I (x, φ, ψ). Some of the
+x∼Dk
+curricula we consider are algorithmically generated, mean-
+ing that the total number of samples is undeﬁned. The treat-
+ment suggested by the MDL principle is to divide the com-
+plexity cost by the total number of samples generated so
+far. However we simpliﬁed matters by setting S to a large
+constant that roughly matches the number of samples we
+expect to see during training. We used a diagonal Gaussian
+for both P and Q, allowing us to determine the complexity
+cost analytically:
+
+KL(Pφ (cid:107) Qψ) =
+
+(µφ − µψ)2 + σ2
+
+φ − σ2
+ψ
+
+2σ2
+ψ
+
++ ln
+
+(cid:19)
+
+,
+
+(cid:18) σψ
+σφ
+
+φ and µψ, σ2
+
+where µφ, σ2
+ψ are the mean and variance
+vectors for Pφ and Qψ respectively. We adapted ψ
+with gradient descent along with φ, and the gradient
+of Eθ∼Pφ L(x, θ) with respect to φ was estimated using
+the reparameterisation trick2 (Kingma and Welling, 2013)
+with a single Monte-Carlo sample. The SoftPlus function
+y = ln(1 + ex) was used to ensure that the variances were
+positive (Blundell et al., 2015).
+
+Variational complexity gain (VCG). The increase of
+model complexity induced by a training example can be es-
+timated from the change in complexity following a single
+parameter update from φ to φ(cid:48) and ψ to ψ(cid:48), yielding
+
+νV CG := KL(Pφ(cid:48) (cid:107) Qψ(cid:48)) − KL(Pφ (cid:107) Qψ)
+
+Gradient variational complexity gain (GVCG). As
+with prediction gain, we can derive a ﬁrst order Taylor ap-
+proximation using the direction of gradient descent:
+
+KL(Pφ(cid:48) (cid:107) Qψ(cid:48) ) ≈ KL(Pφ (cid:107) Qψ)
+
+− [∇φ,ψKL(Pφ (cid:107) Qψ)](cid:62) ∇ψ,φLM DL(x, φ, ψ)
+=⇒ νV CG ≈ C − [∇φ,ψKL(Pφ (cid:107) Qψ)](cid:62) ∇φ E
+
+L(x, θ),
+
+θ∼Pφ
+
+2The reparameterisation trick yields a better gradient estimator
+for the posterior variance than that used in (Graves, 2011), which
+requires either calculation of the diagonal of the Hessian, or a
+biased approximation using the empirical Fisher. The gradient
+estimator for the posterior mean is the same in both cases.
+
+Automated Curriculum Learning
+
+where C is a term that does not depend on x and is there-
+fore irrelevant to the gain signal. We deﬁne gradient varia-
+tional complexity gain as
+
+bias and variance. We now present a formal analysis of the
+biases present in each, noting that a similar treatment can
+be applied to our complexity gains.
+
+νGV CG := [∇φ,ψKL(Pφ (cid:107) Qψ)](cid:62) ∇φ E
+θ∼Pφ
+
+L(x, θ),
+
+We ﬁrst assume that the loss L is locally well-approximated
+by its ﬁrst-order Taylor expansion:
+
+which is the directional derivative of the KL along the gra-
+dient descent direction. We believe that the linear approxi-
+mation is more reliable here than for prediction gain, as the
+model complexity has less curvature than the loss surface.
+
+Relationship to VIME. Variational Information Maxi-
+mizing Exploration (VIME) (Houthooft et al., 2016), uses
+a reward signal that is closely related to variational com-
+plexity gain. The difference is that while VIME measures
+the KL between the posterior before and after a step in pa-
+rameter space, VCG considers the change in KL between
+the posterior and prior induced by the step. Therefore,
+while VIME looks for any change to the posterior, VCG
+focuses only on changes that alter the divergence from the
+prior. Further research will be needed to assess the relative
+merits of the two signals.
+
+L2 gain (L2G). Variational inference tends to slow down
+learning, making it appealing to deﬁne a complexity-based
+progress signal applicable to more conventionally trained
+networks. Many of the standard neural network regularisa-
+tion terms, such as Lp-norms, can be viewed as deﬁning an
+upper bound on model description length (Graves, 2011).
+We therefore hypothesize that the increase in regularisation
+cost will be indicative of the increase in model complexity.
+To test this hypothesis we consider training with a standard
+L2 regularisation term added to the loss:
+
+LL2(x, θ) = L(x, θ) +
+
+α
+2
+
+(cid:107)θ(cid:107)2
+2
+
+where α is an empirically chosen constant. In this case the
+complexity gain can be deﬁned as
+
+L(x, θ(cid:48)) ≈ L(x, θ) + ∇L(x, θ)(cid:62)∆θ
+
+(7)
+
+where ∆θ := θ(cid:48) − θ. For ease of exposition, we also sup-
+pose the network is trained with stochastic gradient descent
+(the same argument leads to similar conclusions for higher-
+order optimization methods):
+
+∆θ := −α∇L(x, θ).
+
+(8)
+
+We deﬁne the true expected learning progress as
+
+ν := E
+
+x(cid:48)∼D
+
+[L(θ) − L(θ(cid:48))] = α(cid:13)
+
+(cid:13) E
+x(cid:48)∼D
+
+∇L(x, θ)(cid:13)
+2
+(cid:13)
+
+,
+
+with the identity following from (8) (recall that L(θ) =
+Ex L(θ)). The expected prediction gain is then
+
+[L(x, θ) − L(x, θ(cid:48))] = α E
+
+(cid:13)∇L(x, θ)(cid:13)
+(cid:13)
+2
+(cid:13)
+
+.
+
+x(cid:48)∼D
+
+νPG = E
+
+x(cid:48)∼D
+
+Deﬁning
+
+V(cid:0)∇L(x, θ)(cid:1) := E (cid:13)
+
+(cid:13)∇L(x, θ) − E ∇L(x(cid:48), θ)(cid:107)2,
+
+we ﬁnd that prediction gain is the sum of two terms: true
+expected learning progress, plus the gradient variance:
+
+νPG = ν + V(cid:0)∇L(x, θ)(cid:1).
+
+We conclude that for equal learning progress, a prediction
+gain-based curriculum maximizes variance. The problem
+is made worse when using gradient prediction gain, which
+actually relies on the Taylor approximation (7). On the
+other hand, self prediction gain is an unbiased estimate of
+expected learning progress:
+
+νL2G := (cid:107)θ(cid:48)(cid:107)2
+
+2 − (cid:107)θ(cid:107)2
+2
+
+E
+x
+
+νSPG = E
+
+x,x(cid:48)∼D
+
+[L(x(cid:48), θ) − L(x(cid:48), θ(cid:48))] = ν.
+
+where we have dropped the α/2 term as the gain will any-
+way be rescaled to [−1, 1] before use. The corresponding
+ﬁrst-order approximation is
+
+νGL2G := [θ](cid:62) ∇θL(x, θ)
+
+It is possible to calculate L2 gain for unregularized net-
+works; however we found this an unreliable signal, pre-
+sumably because the network has no incentive to decrease
+complexity when faced with uninformative data.
+
+3.3. Prediction Gain Bias
+
+Naturally, its use of two samples results in higher variance
+than prediction gain, suggesting a bias-variance trade off
+between the two estimates.
+
+4. Experiments
+
+To test our approach, we applied all the gains deﬁned in
+the previous section to three task suites: synthetic lan-
+guage modelling on text generated by n-gram models, re-
+peat copy (Graves et al., 2014) and the bAbI tasks (Weston
+et al., 2015)
+
+Prediction gain, self prediction gain and gradient prediction
+gain are all closely related, but incur varying degrees of
+
+The network architecture was stacked unidirectional
+LSTM (Graves, 2013) for all experiments, and the training
+
+(4)
+
+(5)
+
+(6)
+
+Automated Curriculum Learning
+
+loss was cross-entropy with either categorical targets and
+softmax output, or Bernoulli targets and sigmoid outputs,
+optimised by RMSProp with momentum (Tieleman, 2012;
+Graves, 2013), using a momentum of 0.9 and a learning rate
+of 10−5 unless speciﬁed otherwise. The parameters for the
+Exp3.S algorithm were η = 10−3, β = 0, (cid:15) = 0.05. For
+all experiments, one set of networks was trained with varia-
+tional inference (VI) to test the variational complexity gain
+signals, and another set was trained with normal maximum
+likelihood (ML) for the other signals. All experiments were
+repeated 10 times with different random initialisations of
+the network weights. The α regularisation parameter from
+Eq. (4) for the networks trained with L2 gain signals was
+10−4 for all experiments. For all plots with a time axis,
+time is deﬁned as the total number of input steps processed
+so far. In the absence of hand-designed curricula for these
+tasks, our performance benchmarks are 1) a ﬁxed uniform
+policy over all the tasks and 2) directly training on the tar-
+get task (where applicable). All losses and error rates are
+measured on independent samples not used for training or
+reward calculation.
+
+4.1. N-Gram Language Modelling
+
+For our ﬁrst experiment, we trained character-level Kneser-
+Ney n-gram models (Kneser and Ney, 1995) on the King
+James Bible data from the Canterbury corpus (Arnold and
+Bell, 1997), with the maximum depth parameter n ranging
+between 0 to 10. We then used each model to generate
+a separate dataset of 1M characters, which we divided into
+disjoint sequences of 150 characters. The ﬁrst 50 characters
+of each sequence were used as burn-in context for the next
+100, which the network was trained to predict. The LSTM
+network had two layers of 512 cells, and the batch size was
+32.
+
+is that
+
+An important characteristic of this dataset
+the
+amount of linguistic structure increases monotonically with
+n. Simultaneously, the entropy – and hence, minimum
+achievable loss – decreases almost monotonically in n. If
+we believe that learning progress should be higher for in-
+teresting data than for data that is difﬁcult to predict, we
+would expect the gain signals to be drawn to higher n: they
+should favour structure over noise. Note that in this case
+the curriculum is superﬂuous: the most efﬁcient strategy
+for learning the 10-gram source is to directly train on it.
+
+Fig. 1 shows that most of the complexity-based gain signals
+from Section 3.2 (L2G, GL2G, GVCG) progress rapidly
+through the curriculum before focusing strongly on the 10-
+gram task (though interestingly, GVCG appears to revisit 0-
+gram later on in training). The clarity of the result is strik-
+ing, given that sequences generated from models beyond
+about 6-gram are difﬁcult to distinguish by eye. VCG fol-
+lows a similar path, but with much less conﬁdence, presum-
+
+Figure 1. N-gram policies for different gain signals, truncated at
+2 × 108 steps. All curves are averages over 10 runs
+
+ably due to the increased noise. The loss-based measures
+(PG, GPG, SPG, TG) also tend to move towards higher n,
+although more slowly and with less certainty. Unlike the
+complexity gains, they tend to initially favour the lower-n
+tasks, which may be desirable as we would expect early
+learning to be more efﬁcient with simpler data.
+
+4.2. Repeat Copy
+
+In the repeat copy task (Graves et al., 2014) the network
+receives an input sequence of random bit vectors, and is
+then asked to output that sequence a given number of times.
+The task has two main dimensions of difﬁculty: the length
+of the input sequence and the required number of repeats,
+both of which increase the demand on the models memory.
+Neural Turing machines are able to learn a ‘for-loop’ like
+algorithm on simple examples that can directly generalise
+to much harder examples (Graves et al., 2014). For LSTM
+networks without access to external memory, however, sig-
+niﬁcant retraining is required to adapt to harder tasks.
+
+We devised a curriculum with both the sequence length and
+the number of repeats varying from 1 to 13, giving 169
+tasks in all, with length 13, repeats 13 deﬁned as the target
+task. The LSTM network had a single layer of 512 cells,
+
+Automated Curriculum Learning
+
+at all, underlining the necessity of curriculum learning for
+this problem.
+
+Fig. 3 reveals a consistent strategy for the GVCG syl-
+labuses, ﬁrst focusing on short sequences with high repeats,
+then long sequences with low repeats, thereby decoupling
+the two dimensions of difﬁculty. At each stage the loss is
+substantially reduced across many tasks that the policy does
+not focus on. Crucially, this means that the network does
+not have to visit each of the 169 tasks to solve them all, and
+the syllabus is able to exploit this fact to more efﬁciently
+complete the curriculum.
+
+4.3. Babi
+
+The bAbI dataset (Weston et al., 2015) consists of 20 syn-
+thetic question-answering problems designed to probe the
+basic reasoning capabilities of machine learning models.
+Although bAbI was not speciﬁcally designed for curricu-
+lum learning, some of the tasks follow a natural ordering
+of complexity (e.g. ‘Two Arg Relations’, ‘Three Arg Rela-
+tions’) and all are based on a consistent probabilistic gram-
+mar, leading us to hope that an efﬁcient syllabus could be
+found for learning the whole set. The usual performance
+measure for bAbI is the number of tasks ‘completed’ by
+the model, where completion is deﬁned as getting less than
+5% of the test set questions wrong.
+
+The data representation followed (Graves et al., 2016), with
+each word in the observation and target sequences repre-
+sented as a 1-hot vector, along with an extra binary channel
+to mark answer prompts. The original datasets were small,
+with either 1K or 10K questions per task, so as to test gener-
+alisation from limited samples. However LSTM is known
+to perform poorly in this setting (Sukhbaatar et al., 2015;
+Graves et al., 2016), and we wished to avoid the confound-
+ing effect of overﬁtting on curriculum learning. We there-
+fore used the bAbI code (Weston et al., 2015) to gener-
+ate 1M stories (each containing one or more questions) for
+each of the 20 tasks. With so many examples, we found
+that training and evaluation set performance were indistin-
+guishable, and therefore report training performance only.
+The LSTM network had two layer of 512 cells, the batch
+size was 16, and the RMSProp learning rate was 3 × 10−5.
+
+Fig. 4 shows that prediction gain (PG) clearly improved on
+uniform sampling in terms of both learning speed and num-
+ber of tasks completed; for self-prediction gain (SPG) the
+same beneﬁts were visible, though less pronounced. The
+other gains were either roughly equal to or worse than uni-
+form. For variational inference training, GVCG was faster
+than uniform at ﬁrst, then slightly worse later on, while
+VCG performed poorly for reasons that are unclear to us.
+In general, training with variational inference appeared to
+hamper progress on the bAbI tasks.
+
+Figure 2. Target task loss (per output), policy entropy and network
+complexity for the repeat copy task, truncated at 1.1 × 109 steps.
+Curves are averages over 10 runs, shaded areas show the standard
+deviation. Network complexity was computed by multiplying the
+per-sample complexity cost by the total size of the training set.
+
+and the batch size was 32. As the data was generated on-
+line, the number of samples S in Eq. (3) (the per-sample VI
+loss) was undeﬁned; we arbitrarily set it to 169M (1M per
+task in the curriculum).
+
+Fig. 2 shows that GVCG solves the target task about twice
+as fast as uniform sampling for VI training, and that the
+PG, SPG and TPG gains are somewhat faster than uni-
+form for ML training, especially in the early stages. From
+the entropy plots it is clear that these signals all lead to
+strongly non-uniform policies. The VI complexity curves
+also demonstrate that GVCG yields signiﬁcantly higher
+network complexity than uniform sampling, supporting our
+hypothesis that increased complexity correlates with learn-
+ing progress. Unlike GVCG, the VCG signal did not devi-
+ate far from a uniform policy. L2G and particularly GPG
+and GL2G were much worse than uniform, suggesting that
+(1) the bias induced by the gradient approximation has a
+pernicious effect on learning and (2) that the increase in L2
+norm is not a reliable measure of increased network com-
+plexity. Training directly on the target task failed to learn
+
+Automated Curriculum Learning
+
+Figure 3. Average policy and loss per output over time for GVCG networks on the repeat copy task. Plots were made by dividing the
+ﬁrst 4 × 108 steps into ﬁve equal bins, then averaging over the policies of all 10 networks over all times within each bin.
+
+Figure 4. Completion and entropy curves for the bAbI curriculum,
+truncated at 3.5 × 108 steps. Curves are means over ten runs,
+shaded areas show standard deviation.
+
+Figure 5. Per-task policy and error curves for bAbI, truncated at
+2 × 108 steps. All plots are averaged over 10 runs. Black dashed
+lines show the 5% error threshold for task completion.
+
+Fig. 5 shows how the PG bandit accelerates the network’s
+progress by selectively focusing on speciﬁc tasks until
+completion. For example, the bandit solves ‘Time Rea-
+soning’ much faster than uniform sampling by concentrat-
+ing on it early in training, and later focuses strongly on
+‘Path Finding’ (one of the harder bAbI tasks) until com-
+pletion. Also noteworthy is the way the bandit progresses
+from ‘Single Supporting Fact’ to ‘three Supporting Facts’
+in order (albeit while completing other tasks), showing that
+it can discover implicit orderings, and hence opportunities
+for efﬁcient transfer, in an unsorted curriculum.
+
+5. Conclusion
+
+Our experiments suggest that using a stochastic syllabus
+to maximise learning progress can lead to signiﬁcant gains
+
+in curriculum learning efﬁciency, so long as a suitable
+progress signal is used. We note however that uniformly
+sampling from all tasks is a surprisingly strong benchmark.
+We speculate that this is because learning is dominated by
+gradients from the tasks on which the network is making
+fastest progress, inducing a kind of implicit curriculum, al-
+beit with the inefﬁciency of unnecessary samples. For max-
+imium likelihood training, we found prediction gain to be
+the most consistent signal, while for variational inference
+training, gradient variational complexity gain performed
+best. Importantly, both are instantaneous, in the sense that
+they can be evaluated using only the samples used for train-
+ing. As well as being more efﬁcient, this has broader appli-
+cability to tasks where external evaluation is difﬁcult, and
+suggest that learning progress is best assessed on a local,
+rather than global basis.
+
+Automated Curriculum Learning
+
+Acknowledgements
+
+The authors thank their colleagues at DeepMind for their
+excellent feedback,
+in particular Oriol Vinyals, Simon
+Osindero, and Guy Lever. Last but not least, many thanks
+to Pierre-Yves Oudeyer for fruitful discussions that helped
+shape this work.
+
+References
+
+Arnold, R. and Bell, T. (1997). A corpus for the evaluation
+of lossless compression algorithms. In Data Compres-
+sion Conference, 1997. DCC’97. Proceedings, pages
+201–210. IEEE.
+
+Auer, P., Cesa-Bianchi, N., Freund, Y., and Schapire, R. E.
+(2002). The nonstochastic multiarmed bandit problem.
+SIAM Journal on Computing, 32(1):48–77.
+
+Barto, A. G. (2013). Intrinsic motivation and reinforcement
+learning. In Intrinsically Motivated Learning in Natural
+and Artiﬁcial Systems, pages 17–47. Springer.
+
+Bellemare, M. G., Srinivasan, S., Ostrovski, G., Schaul,
+T., Saxton, D., and Munos, R. (2016). Unifying count-
+based exploration and intrinsic motivation. In Advances
+in Neural Information Processing Systems.
+
+Bengio, Y., Louradour, J., Collobert, R., and Weston, J.
+(2009). Curriculum learning. In Proceedings of the 26th
+Annual International Conference on Machine Learning,
+ICML ’09, pages 41–48, New York, NY, USA. ACM.
+
+Blundell, C., Cornebise, J., Kavukcuoglu, K., and Wier-
+stra, D. (2015). Weight uncertainty in neural networks.
+In Proceedings of The 32nd International Conference on
+Machine Learning, pages 1613–1622.
+
+Bubeck, S. and Cesa-Bianchi, N. (2012). Regret analysis
+of stochastic and nonstochastic multi-armed bandit prob-
+lems. Machine Learning, 5(1):1–122.
+
+Clement, B., Roy, D., Oudeyer, P.-Y., and Lopes, M.
+(2015). Multi-armed bandits for intelligent tutoring
+systems. JEDM-Journal of Educational Data Mining,
+7(2):20–48.
+
+Elman, J. L. (1993). Learning and development in neural
+networks: The importance of starting small. Cognition,
+48(1):71–99.
+
+Graves, A. (2011). Practical variational inference for neu-
+ral networks. In Shawe-Taylor, J., Zemel, R. S., Bartlett,
+P. L., Pereira, F., and Weinberger, K. Q., editors, Ad-
+vances in Neural Information Processing Systems 24,
+pages 2348–2356. Curran Associates, Inc.
+
+Graves, A., Wayne, G., and Danihelka, I. (2014). Neural
+
+turing machines. arXiv preprint arXiv:1410.5401.
+
+Graves, A., Wayne, G., Reynolds, M., Harley, T., Dani-
+helka, I., Grabska-Barwi´nska, A., Colmenarejo, S. G.,
+Grefenstette, E., Ramalho, T., Agapiou, J., et al. (2016).
+Hybrid computing using a neural network with dynamic
+external memory. Nature, 538(7626):471–476.
+
+Gr¨unwald, P. D. (2007). The minimum description length
+
+principle. The MIT Press.
+
+Herbster, M. and Warmuth, M. K. (1998). Tracking the best
+
+expert. Machine Learning, 32(2):151–178.
+
+Hinton, G. E. and Van Camp, D. (1993). Keeping the neu-
+ral networks simple by minimizing the description length
+of the weights. In Proceedings of the sixth annual con-
+ference on Computational learning theory, pages 5–13.
+ACM.
+
+Houthooft, R., Chen, X., Duan, Y., Schulman, J., De Turck,
+F., and Abbeel, P. (2016). Vime: Variational information
+maximizing exploration. In Advances In Neural Infor-
+mation Processing Systems, pages 1109–1117.
+
+Itti, L. and Baldi, P. (2009). Bayesian surprise attracts hu-
+
+man attention. Vision research, 49(10):1295–1306.
+
+Kingma, D. P., Salimans, T., and Welling, M. (2015). Vari-
+ational dropout and the local reparameterization trick.
+In Advances in Neural Information Processing Systems,
+pages 2575–2583.
+
+Kingma, D. P. and Welling, M. (2013). Auto-encoding vari-
+
+ational bayes. arXiv preprint arXiv:1312.6114.
+
+Kneser, R. and Ney, H. (1995). Improved backing-off for
+m-gram language modeling. In IEEE International Con-
+ference on Acoustics, Speech, and Signal Processing,
+pages 181–184, Detroit, Michigan, USA.
+
+Lopes, M. and Oudeyer, P.-Y. (2012). The strategic student
+approach for life-long exploration and learning. In IEEE
+International Conference on Development and Learning
+and Epigenetic Robotics (ICDL).
+
+Oudeyer, P., Kaplan, F., and Hafner, V. (2007).
+
+Intrin-
+sic motivation systems for autonomous mental develop-
+ment. IEEE Transactions on Evolutionary Computation,
+11(2):265–286.
+
+Reed, S. and de Freitas, N. (2015). Neural programmer-
+
+interpreters. arXiv preprint arXiv:1511.06279.
+
+Graves, A. (2013). Generating sequences with recurrent
+
+Rissanen, J. (1986). Stochastic complexity and modeling.
+
+neural networks. arXiv preprint arXiv:1308.0850.
+
+Ann. Statist., 14(3):1080–1100.
+
+Automated Curriculum Learning
+
+Roy, N. and Mccallum, A. (2001). Toward optimal active
+learning through sampling estimation of error reduction.
+In In Proc. 18th International Conf. on Machine Learn-
+ing.
+
+Schmidhuber, J. (1991). A possibility for implementing
+curiosity and boredom in model-building neural con-
+trollers. In From animals to animats: proceedings of the
+ﬁrst international conference on simulation of adaptive
+behavior.
+
+Settles, B. (2010). Active learning literature survey. Uni-
+
+versity of Wisconsin, Madison, 52(55-66):11.
+
+Settles, B., Craven, M., and Ray, S. (2008). Multiple-
+In Advances in neural infor-
+
+instance active learning.
+mation processing systems, pages 1289–1296.
+
+Storck, J., Hochreiter, J., and Schmidhuber, J. (1995).
+Reinforcement driven information acquisition in non-
+deterministic environments. In Proceedings of the Inter-
+national Conference on Artiﬁcial Neural Networks, vol.
+2.
+
+Sukhbaatar, S., Weston, J., Fergus, R., et al. (2015). End-
+to-end memory networks. In Advances in neural infor-
+mation processing systems, pages 2440–2448.
+
+Sutskever, I. and Zaremba, W. (2014). Learning to execute.
+
+arXiv preprint arXiv:1410.4615.
+
+Tieleman, T., H. G. (2012). Lecture 6.5-rmsprop: Divide
+the gradient by a running average of its recent magni-
+tude. COURSERA: Neural Networks for Machine Learn-
+ing.
+
+Tsvetkov, Yulia, F. M. L. W. M. B. D. C. (2016). Learn-
+ing the curriculum with bayesian optimization for task-
+speciﬁc word representation learning. arXiv preprint
+arXiv:1605.03852.
+
+Weston, J., Bordes, A., Chopra, S., and Mikolov, T. (2015).
+Towards ai-complete question answering: A set of pre-
+requisite toy tasks. CoRR, abs/1502.05698.
+
+

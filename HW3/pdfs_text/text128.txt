@@ -1,0 +1,1451 @@
+Combining Model-Based and Model-Free Updates for Trajectory-Centric
+Reinforcement Learning
+
+Yevgen Chebotar* 1 2 Karol Hausman* 1 Marvin Zhang* 3 Gaurav Sukhatme 1 Stefan Schaal 1 2 Sergey Levine 3
+
+Abstract
+
+learning algorithms for
+
+Reinforcement
+real-
+world robotic applications must be able to han-
+dle complex, unknown dynamical systems while
+maintaining data-efﬁcient learning. These re-
+quirements are handled well by model-free and
+model-based RL approaches, respectively. In this
+work, we aim to combine the advantages of these
+approaches. By focusing on time-varying linear-
+Gaussian policies, we enable a model-based al-
+gorithm based on the linear-quadratic regulator
+that can be integrated into the model-free frame-
+work of path integral policy improvement. We
+can further combine our method with guided pol-
+icy search to train arbitrary parameterized poli-
+cies such as deep neural networks. Our simula-
+tion and real-world experiments demonstrate that
+this method can solve challenging manipulation
+tasks with comparable or better performance than
+model-free methods while maintaining the sam-
+ple efﬁciency of model-based methods.
+
+1. Introduction
+
+Reinforcement learning (RL) aims to enable automatic ac-
+quisition of behavioral skills, which can be crucial for
+robots and other autonomous systems to behave intelli-
+gently in unstructured real-world environments. However,
+real-world applications of RL have to contend with two
+often opposing requirements: data-efﬁcient learning and
+the ability to handle complex, unknown dynamical systems
+that might be difﬁcult to model. Real-world physical sys-
+tems, such as robots, are typically costly and time consum-
+ing to run, making it highly desirable to learn using the
+lowest possible number of real-world trials. Model-based
+
+*Equal contribution 1University of Southern California, Los
+Angeles, CA, USA 2Max Planck Institute for Intelligent Systems,
+T¨ubingen, Germany 3University of California Berkeley, Berke-
+ley, CA, USA. Correspondence to: Yevgen Chebotar <ycheb-
+ota@usc.edu>.
+
+Figure 1. Real robot tasks used to evaluate our method. Left: The
+hockey task which involves discontinuous dynamics. Right: The
+power plug task which requires high level of precision. Both of
+these tasks are learned from scratch without demonstrations.
+
+methods tend to excel at this (Deisenroth et al., 2013), but
+suffer from signiﬁcant bias, since complex unknown dy-
+namics cannot always be modeled accurately enough to
+produce effective policies. Model-free methods have the
+advantage of handling arbitrary dynamical systems with
+minimal bias, but tend to be substantially less sample-
+efﬁcient (Kober et al., 2013; Schulman et al., 2015). Can
+we combine the efﬁciency of model-based algorithms with
+the ﬁnal performance of model-free algorithms in a method
+that we can practically use on real-world physical systems?
+
+As we will discuss in Section 2, many prior methods that
+combine model-free and model-based techniques achieve
+only modest gains in efﬁciency or performance (Heess
+et al., 2015; Gu et al., 2016).
+In this work, we aim to
+develop a method in the context of a speciﬁc policy rep-
+resentation: time-varying linear-Gaussian controllers. The
+structure of these policies provides us with an effective op-
+tion for model-based updates via iterative linear-Gaussian
+dynamics ﬁtting (Levine & Abbeel, 2014), as well as a sim-
+ple option for model-free updates via the path integral pol-
+icy improvement (PI2) algorithm (Theodorou et al., 2010).
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+Although time-varying linear-Gaussian (TVLG) policies
+are not as powerful as representations such as deep neural
+networks (Mnih et al., 2013; Lillicrap et al., 2016) or RBF
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+networks (Deisenroth et al., 2011), they can represent arbi-
+trary trajectories in continuous state-action spaces. Further-
+more, prior work on guided policy search (GPS) has shown
+that TVLG policies can be used to train general-purpose pa-
+rameterized policies, including deep neural network poli-
+cies, for tasks involving complex sensory inputs such as
+vision (Levine & Abbeel, 2014; Levine et al., 2016). This
+yields a general-purpose RL procedure with favorable sta-
+bility and sample complexity compared to fully model-free
+deep RL methods (Montgomery et al., 2017).
+
+The main contribution of this paper is a procedure for op-
+timizing TVLG policies that integrates both fast model-
+based updates via iterative linear-Gaussian model ﬁtting
+and corrective model-free updates via the PI2 framework.
+The resulting algorithm, which we call PILQR, combines
+the efﬁciency of model-based learning with the generality
+of model-free updates and can solve complex continuous
+control tasks that are infeasible for either linear-Gaussian
+models or PI2 by itself, while remaining orders of magni-
+tude more efﬁcient than standard model-free RL. We inte-
+grate this approach into GPS to train deep neural network
+policies and present results both in simulation and on a real
+robotic platform. Our real-world results demonstrate that
+our method can learn complex tasks, such as hockey and
+power plug plugging (see Figure 1), each with less than an
+hour of experience and no user-provided demonstrations.
+
+2. Related Work
+
+The choice of policy representation has often been a cru-
+cial component in the success of a RL procedure (Deisen-
+roth et al., 2013; Kober et al., 2013). Trajectory-centric
+representations, such as splines (Peters & Schaal, 2008),
+dynamic movement primitives (Schaal et al., 2003), and
+TVLG controllers (Lioutikov et al., 2014; Levine &
+Abbeel, 2014) have proven particularly popular in robotics,
+where they can be used to represent cyclical and episodic
+motions and are amenable to a range of efﬁcient optimiza-
+tion algorithms. In this work, we build on prior work in
+trajectory-centric RL to devise an algorithm that is both
+sample-efﬁcient and able to handle a wide class of tasks,
+all while not requiring human demonstration initialization.
+
+More general representations for policies, such as deep
+neural networks, have grown in popularity recently due to
+their ability to process complex sensory input (Mnih et al.,
+2013; Lillicrap et al., 2016; Levine et al., 2016) and repre-
+sent more complex strategies that can succeed from a va-
+riety of initial conditions (Schulman et al., 2015; 2016).
+While trajectory-centric representations are more limited
+in their representational power, they can be used as an in-
+termediate step toward efﬁcient training of general param-
+eterized policies using the GPS framework (Levine et al.,
+2016). Our proposed trajectory-centric RL method can also
+
+be combined with GPS to supervise the training of complex
+neural network policies. Our experiments demonstrate that
+this approach is several orders of magnitude more sample-
+efﬁcient than direct model-free deep RL algorithms.
+
+Prior algorithms for optimizing trajectory-centric policies
+can be categorized as model-free methods (Theodorou
+et al., 2010; Peters et al., 2010), methods that use global
+models (Deisenroth et al., 2014; Pan & Theodorou, 2014),
+and methods that use local models (Levine & Abbeel,
+2014; Lioutikov et al., 2014; Akrour et al., 2016). Model-
+based methods typically have the advantage of being fast
+and sample-efﬁcient, at the cost of making simplifying as-
+sumptions about the problem structure such as smooth, lo-
+cally linearizable dynamics or continuous cost functions.
+Model-free algorithms avoid these issues by not modeling
+the environment explicitly and instead improving the policy
+directly based on the returns, but this often comes at a cost
+in sample efﬁciency. Furthermore, many of the most pop-
+ular model-free algorithms for trajectory-centric policies
+use example demonstrations to initialize the policies, since
+model-free methods require a large number of samples to
+make large, global changes to the behavior (Theodorou
+et al., 2010; Peters et al., 2010; Pastor et al., 2009).
+
+Prior work has sought to combine model-based and model-
+free learning in several ways. Farshidian et al. (2014) also
+use LQR and PI2, but do not combine these methods di-
+rectly into one algorithm, instead using LQR to produce a
+good initialization for PI2. Their work assumes the exis-
+tence of a known model, while our method uses estimated
+local models. A number of prior methods have also looked
+at incorporating models to generate additional synthetic
+samples for model-free learning (Sutton, 1990; Gu et al.,
+2016), as well as using models for improving the accuracy
+of model-free value function backups (Heess et al., 2015).
+Our work directly combines model-based and model-free
+updates into a single trajectory-centric RL method without
+using synthetic samples that degrade with modeling errors.
+
+3. Preliminaries
+
+The goal of policy search methods is to optimize the pa-
+xt), which deﬁnes a proba-
+rameters ✓ of a policy p(ut|
+bility distribution over actions ut conditioned on the sys-
+tem state xt at each time step t of a task execution. Let
+⌧ = (x1, u1, . . . , xT , uT ) be a trajectory of states and ac-
+tions. Given a cost function c(xt, ut), we deﬁne the tra-
+T
+jectory cost as c(⌧ ) =
+t=1 c(xt, ut). The policy is opti-
+mized with respect to the expected cost of the policy
+
+J(✓) = Ep [c(⌧ )] =
+
+c(⌧ )p(⌧ )d⌧ ,
+
+P
+
+Z
+
+where p(⌧ ) is the policy trajectory distribution given the
+xt, ut)
+system dynamics p (xt+1|
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+T
+
+t=1
+Y
+
+xt) .
+
+p(⌧ ) = p(x1)
+
+xt, ut) p(ut|
+
+p (xt+1|
+One policy class that allows us to employ an efﬁcient
+xt) =
+model-based update is the TVLG controller p(ut|
+(Ktxt + kt, ⌃t). In this section, we present the model-
+N
+based and model-free algorithms that form the constituent
+parts of our hybrid method. The model-based method is
+an extension of a KL-constrained LQR algorithm (Levine
+& Abbeel, 2014), which we shall refer to as LQR with ﬁt-
+ted linear models (LQR-FLM). The model-free method is a
+PI2 algorithm with per-time step KL-divergence constraints
+that is derived in previous work (Chebotar et al., 2017).
+
+3.1. Model-Based Optimization of TVLG Policies
+
+The model-based method we use is based on the itera-
+tive linear-quadratic regulator (iLQR) and builds on prior
+work (Levine & Abbeel, 2014; Tassa et al., 2012). We pro-
+vide a full description and derivation in Appendix 8.1.
+
+N
+
+to ﬁt a TVLG dynamics model
+We use samples
+(fx,txt + fu,tut, Ft) and assume
+xt, ut) =
+p(xt+1|
+a twice-differentiable cost function. Tassa et al. (2012)
+showed that we can compute a second-order Taylor approx-
+imation of our Q-function and optimize this with respect to
+ut to ﬁnd the optimal action at each time step t. To deal
+with unknown dynamics, Levine & Abbeel (2014) impose
+a KL-divergence constraint between the updated policy p(i)
+and previous policy p(i
+1) to stay within the space of tra-
+jectories where the dynamics model is approximately cor-
+rect. We similarly set up our optimization as
+
+ 
+
+min
+p(i)
+
+Ep(i) [Q(xt, ut)] s.t. Ep(i)
+
+DKL(p(i)
+
+p(i
+
+ 
+
+1))
+
+✏t . (1)
+
+h
+
+k
+
+
+
+i
+
+The main difference from Levine & Abbeel (2014) is
+that we enforce separate KL constraints for each linear-
+Gaussian policy rather than a single constraint on the in-
+duced trajectory distribution (i.e., compare Eq. (1) to the
+ﬁrst equation in Section 3.1 of Levine & Abbeel (2014)).
+
+LQR-FLM has substantial efﬁciency beneﬁts over model-
+free algorithms. However, as our experimental results in
+Section 6 show, the performance of LQR-FLM is highly
+dependent on being able to model the system dynamics ac-
+curately, causing it to fail for more challenging tasks.
+
+3.2. Policy Improvement with Path Integrals
+
+PI2 is a model-free RL algorithm based on stochastic op-
+timal control. A detailed derivation of this method can be
+found in Theodorou et al. (2010).
+
+Each iteration of PI2 involves generating N trajecto-
+ries by running the current policy. Let S(xi,t, ui,t) =
+T
+j=t+1 c(xi,j, ui,j) be the cost-to-go of tra-
+c(xi,t, ui,t)+
+starting in state xi,t by performing
+jectory i
+
+1, . . . , N
+P
+
+}
+
+2{
+
+xt) afterwards.
+action ui,t and following the policy p(ut|
+Then, we can compute probabilities P (xi,j, ui,j) for each
+trajectory starting at time step t
+
+1
+⌘t
+
+ 
+1
+⌘t
+
+exp
+
+S(xi,t, ui,t)
+
+.
+
+(2)
+
+P (xi,t, ui,t) =
+
+R
+
+⇣
+
+⌘
+
+exp
+
+⌘
+dui,t
+
+S(xi,t, ui,t)
+
+⇣
+ 
+The probabilities follow from the Feynman-Kac theorem
+applied to stochastic optimal control (Theodorou et al.,
+2010). The intuition is that the trajectories with lower
+costs receive higher probabilities, and the policy distribu-
+tion shifts towards a lower cost trajectory region. The costs
+are scaled by ⌘t, which can be interpreted as the tempera-
+ture of a soft-max distribution. This is similar to the dual
+variables ⌘t in LQR-FLM in that they control the KL step
+size, however they are derived and computed differently.
+After computing the new probabilities P , we update the
+policy distribution by reweighting each sampled control
+ui,t by P (xi,t, ui,t) and updating the policy parameters by
+a maximum likelihood estimate (Chebotar et al., 2017).
+
+To relate PI2 updates to LQR-FLM optimization of a con-
+strained objective, which is necessary for combining these
+methods, we can formulate the following theorem.
+Theorem 1. The PI2 update corresponds to a KL-
+constrained minimization of
+the expected cost-to-go
+T
+j=t c(xj, uj) at each time step t
+S(xt, ut) =
+
+P
+p(i) Ep(i) [S(xt, ut)] s.t. Ep(i
+min
+
+DKL
+
+1)
+
+ 
+
+p(i)
+
+p(i
+
+ 
+
+1)
+
+k
+
+✏,
+
+
+
+h
+
+⇣
+
+⌘i
+
+where ✏ is the maximum KL-divergence between the new
+policy p(i) (ut|
+Proof. The Lagrangian of this problem is given by
+
+xt) and the old policy p(i
+
+1) (ut|
+
+xt).
+
+ 
+
+L
+
+(p(i),⌘ t) = Ep(i)[S(xt, ut)]+⌘tEp(i
+
+1)
+
+ 
+
+DKL
+
+p(i)
+
+p(i
+
+ 
+
+1)
+
+✏
+
+.
+
+i
+By minimizing the Lagrangian with respect to p(i) we can
+1) (see Appendix 8.2), given by
+ﬁnd its relationship to p(i
+
+⇣
+
+h
+
+ 
+
+k
+
+ 
+⌘
+
+p(i)(ut
+
+xt)
+
+p(i
+
+ 
+
+1)(ut
+
+|
+
+/
+
+xt) Ep(i
+
+|
+
+exp
+
+ 
+
+1)
+
+
+ 
+
+✓
+
+1
+⌘t
+
+S(xt, ut)
+
+. (3)
+
+◆ 
+
+This gives us an update rule for p(i) that corresponds ex-
+actly to reweighting the controls from the previous policy
+p(i
+1) based on their probabilities P (xt, ut) described ear-
+lier. The temperature ⌘t now corresponds to the dual vari-
+able of the KL-divergence constraint.
+
+ 
+
+The temperature ⌘t can be estimated at each time step sep-
+arately by optimizing the dual function
+
+g(⌘t) = ⌘t✏+⌘t log Ep(i
+
+1)
+
+ 
+
+exp
+
+S(xt, ut)
+
+, (4)
+
+1
+⌘t
+
+ 
+
+✓
+
+
+
+◆ 
+
+with derivation following from Peters et al. (2010).
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+PI2 was used by Chebotar et al. (2017) to solve several
+challenging robotic tasks such as door opening and pick-
+and-place, where they achieved better ﬁnal performance
+than LQR-FLM. However, due to its greater sample com-
+plexity, PI2 required initialization from demonstrations.
+
+4. Integrating Model-Based Updates into PI2
+Both PI2 and LQR-FLM can be used to learn TVLG poli-
+cies and both have their strengths and weaknesses. In this
+section, we ﬁrst show how the PI2 update can be broken up
+into two parts, with one part using a model-based cost ap-
+proximation and another part using the residual cost error
+after this approximation. Next, we describe our method for
+integrating model-based updates into PI2 by using our ex-
+tension of LQR-FLM to optimize the linear-quadratic cost
+approximation and performing a subsequent update with
+PI2 on the residual cost. We demonstrate in Section 6 that
+our method combines the strengths of PI2 and LQR-FLM
+while compensating for their weaknesses.
+
+4.1. Two-Stage PI2 update
+
+ 
+
+To integrate a model-based optimization into PI2, we can
+divide it into two steps. Given an approximation ˆc(xt, ut)
+of the real cost c(xt, ut) and the residual cost ˜c(xt, ut) =
+ˆc(xt, ut), let ˆSt = ˆS(xt, ut) be the approxi-
+c(xt, ut)
+mated cost-to-go of a trajectory starting with state xt and
+action ut, and ˜St = ˜S(xt, ut) be the residual of the real
+cost-to-go S(xt, ut) after approximation. We can rewrite
+the PI2 policy update rule from Eq. (3) as
+p(i) (ut|
+p(i
+
+ˆSt + ˜St
+
+exp
+
+xt)
+
+xt) Ep(i
+
+ 
+
+1)
+
+ 
+
+/
+
+1) (ut|
+
+
+
+1
+⌘t
+
+⇣
+,
+
+ 
+
+✓
+1
+˜St
+⌘t
+
+⌘◆ 
+(5)
+
+ 
+
+1)
+
+ 
+
+✓
+
+/
+
+ 
+
+◆ 
+
+p(i
+
+exp
+
+xt) Ep(i
+
+xt) Ep(i
+
+1) (ut|
+
+
+xt) is given by
+
+ˆp (ut|
+/
+where ˆp (ut|
+xt)
+ˆp (ut|
+Hence, by decomposing the cost into its approximation and
+the residual approximation error, the PI2 update can be split
+into two steps: (1) update using the approximated costs
+ˆc(xt, ut) and samples from the old policy p(i
+xt)
+ 
+xt); (2) update p(i) (ut|
+to get ˆp (ut|
+xt) using the residual
+costs ˜c(xt, ut) and samples from ˆp (ut|
+
+1) (ut|
+
+. (6)
+
+1
+⌘t
+
+xt).
+
+exp
+
+◆ 
+
+ˆSt
+
+ 
+
+✓
+
+
+
+1)
+
+ 
+
+4.2. Model-Based Substitution with LQR-FLM
+
+We can use Theorem (1) to rewrite Eq. (6) as a constrained
+optimization problem
+
+min
+ˆp
+
+E ˆp
+
+ˆS(xt, ut)
+
+s.t. Ep(i
+
+1)
+
+ 
+
+DKL
+
+p(i
+
+ 
+
+1)
+
+h
+
+i
+
+h
+
+ˆp
+k
+
+⇣
+
+✏.
+
+
+
+⌘i
+
+xt) can be updated using any algo-
+Thus, the policy ˆp (ut|
+rithm that can solve this optimization problem. By choos-
+ing a model-based approach for this, we can speed up the
+learning process signiﬁcantly. Model-based methods are
+typically constrained to some particular cost approxima-
+tion, however, PI2 can accommodate any form of ˜c (xt, ut)
+and thus will handle arbitrary cost residuals.
+
+LQR-FLM solves the type of constrained optimization
+problem in Eq. (1), which matches the optimization prob-
+lem needed to obtain ˆp, where the cost-to-go ˆS is approxi-
+mated with a quadratic cost and a linear-Gaussian dynam-
+ics model.1 We can thus use LQR-FLM to perform our ﬁrst
+update, which enables greater efﬁciency but is susceptible
+to modeling errors when the ﬁtted local dynamics are not
+accurate, such as in discontinuous systems. We can use a
+PI2 optimization on the residuals to correct for this bias.
+
+4.3. Optimizing Cost Residuals with PI2
+
+In order to perform a PI2 update on the residual costs-to-go
+˜S, we need to know what ˆS is for each sampled trajec-
+tory. That is, what is the cost-to-go that is actually used by
+LQR-FLM to make its update? The structure of the algo-
+rithm implies a speciﬁc cost-to-go formulation for a given
+trajectory – namely, the sum of quadratic costs obtained by
+running the same policy under the TVLG dynamics used by
+LQR-FLM. A given trajectory can be viewed as being gen-
+erated by a deterministic policy conditioned on a particular
+noise realization ⇠i,1, . . . ,⇠ i,T , with actions given by
+
+ui,t = Ktxi,t + kt +
+
+⌃t⇠i,t ,
+
+(7)
+
+p
+
+ 
+
+where Kt, kt, and ⌃t are the parameters of p(i
+1). We can
+therefore evaluate ˆS(xt, ut) by simulating this determinis-
+tic controller from (xt, ut) under the ﬁtted TVLG dynam-
+ics and evaluating its time-varying quadratic cost, and then
+plugging these values into the residual cost.
+In addition to the residual costs ˜S for each trajectory, the
+PI2 update also requires control samples from the updated
+LQR-FLM policy ˆp (ut|
+xt). Although we have the updated
+LQR-FLM policy, we only have samples from the old pol-
+icy p(i
+1) (ut|
+xt). However, we can apply a form of the re-
+parametrization trick (Kingma & Welling, 2013) and again
+use the stored noise realization of each trajectory ⇠t,i to
+evaluate what the control would have been for that sample
+under the LQR-FLM policy ˆp. The expectation of the resid-
+ual cost-to-go in Eq. (5) is taken with respect to the old pol-
+icy distribution p(i
+1). Hence, we can reuse the states xi,t
+and their corresponding noise ⇠i,t that was sampled while
+
+ 
+
+ 
+
+1In practice, we make a small modiﬁcation to the problem in
+Eq. (1) so that the expectation in the constraint is evaluated with
+respect to the new distribution ˆp(xt) rather than the previous one
+p(i
+1)(xt). This modiﬁcation is heuristic and no longer aligns
+with Theorem (1), but works better in practice.
+
+ 
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+Figure 2. We evaluate on a set of simulated robotic manipulation
+tasks with varying difﬁculty. Left to right, the tasks involve push-
+ing a block, reaching for a target, and opening a door in 3D.
+
+ 
+
+1) and evaluate the new
+rolling out the previous policy p(i
+controls according to ˆui,t = ˆKtxi,t + ˆkt +
+ˆ⌃t⇠i,t. This
+linear transformation on the sampled control provides un-
+xt). After transforming the con-
+biased samples from ˆp(ut|
+trol samples, they are reweighted according to their residual
+costs and plugged into the PI2 update in Eq. (2).
+
+p
+
+4.4. Summary of PILQR algorithm
+
+Algorithm 1 summarizes our method for combining LQR-
+FLM and PI2 to create a hybrid model-based and model-
+free algorithm. After generating a set of trajectories by run-
+ning the current policy (line 2), we ﬁt TVLG dynamics and
+compute the quadratic cost approximation ˆc(xt, ut) and ap-
+proximation error residuals ˜c(xt, ut) (lines 3, 4).
+In or-
+der to improve the convergence behavior of our algorithm,
+we adjust the KL-step ✏t of the LQR-FLM optimization in
+Eq. (1) based inversely on the proportion of the residual
+costs-to-go to the sampled costs-to-go (line 5). In particu-
+lar, if ratio between the residual cost and the overall cost is
+sufﬁciently small or large, we increase or decrease, respec-
+tively, the KL-step ✏t. We then continue with optimizing
+for the temperature ⌘t using the dual function from Eq. (4)
+(line 6). Finally, we perform an LQR-FLM update on the
+cost approximation (line 7) and a subsequent PI2 update us-
+ing the cost residuals (line 8). As PILQR combines LQR-
+FLM and PI2 updates in sequence in each iteration, its com-
+putational complexity can be determined as the sum of both
+methods. Due to the properties of PI2, the covariance of the
+optimized TVLG controllers decreases each iteration and
+the method eventually converges to a single solution.
+
+5. Training Parametric Policies with GPS
+
+PILQR offers an approach to perform trajectory optimiza-
+tion of TVLG policies.
+In this work, we employ mirror
+descent guided policy search (MDGPS) (Montgomery &
+Levine, 2016) in order to use PILQR to train paramet-
+ric policies, such as neural networks. Instead of directly
+learning the parameters of a high-dimensional parametric
+or “global policy” with RL, we ﬁrst learn simple TVLG
+xt) for
+policies, which we refer to as “local policies” p(ut|
+various initial conditions of the task. After optimizing the
+local policies, the optimized controls from these policies
+are used to create a training set for learning the global pol-
+
+Algorithm 1 PILQR algorithm
+1: for iteration k
+1, . . . , K
+2:
+
+2{
+
+3:
+4:
+
+5:
+
+6:
+7:
+
+8:
+
+D
+
+}
+=
+
+xt)
+
+ˆc(xt, ut)
+
+by running the cur-
+1) (ut|
+
+do
+⌧i}
+Generate trajectories
+{
+rent linear-Gaussian policy p(k
+ 
+xt, ut)
+Fit TVLG dynamics ˆp (xt+1|
+Estimate cost approximation ˆc(xt, ut) using ﬁtted
+dynamics and compute cost residuals:
+˜c(xt, ut) = c(xt, ut)
+ 
+Adjust LQR-FLM KL step ✏t based on ratio of resid-
+ual costs-to-go ˜S and sampled costs-to-go S
+Compute ⌘t using dual function from Eq. (4)
+Perform LQR-FLM update to compute ˆp (ut|
+minp(i) Ep(i) [Q(xt, ut)]
+DKL(p(i)
+
+p(i
+k
+Perform PI2 update using cost residuals and LQR-
+FLM actions to compute the new policy:
+p(k) (ut|
+ˆp (ut|
+
+s.t. Ep(i)
+
+xt) Ep(i
+
+˜St)
+
+xt):
+
+exp
+
+xt)
+
+1))
+
+1
+⌘t
+
+/
+
+ 
+
+
+
+✏t
+
+ 
+
+⇤
+
+⇥
+
+1)
+
+ 
+
+h
+
+⇣
+
+⌘i
+
+9: end for
+
+icy ⇡✓ in a supervised manner. Hence, the ﬁnal global pol-
+icy generalizes across multiple local policies.
+
+Using the TVLG representation of the local policies makes
+it straightforward to incorporate PILQR into the MDGPS
+framework.
+Instead of constraining against the old local
+TVLG policy as in Theorem (1), each instance of the local
+policy is now constrained against the old global policy
+
+min
+p(i)
+
+Ep(i) [S(xt, ut)]s.t. Ep(i
+
+1)
+
+ 
+
+DKL
+
+p(i)
+
+1)
+
+⇡(i
+✓
+
+ 
+
+k
+
+✏.
+
+
+
+h
+
+⇣
+
+⌘i
+
+The two-stage update proceeds as described in Section 4.1,
+with the change that the LQR-FLM policy is now con-
+strained against the old global policy ⇡(i
+✓
+
+1)
+
+ 
+
+.
+
+6. Experimental Evaluation
+
+Our experiments aim to answer the following questions:
+(1) How does our method compare to other trajectory-
+centric and deep RL algorithms in terms of ﬁnal perfor-
+mance and sample efﬁciency? (2) Can we utilize linear-
+Gaussian policies trained using PILQR to obtain robust
+neural network policies using MDGPS? (3) Is our pro-
+posed algorithm capable of learning complex manipulation
+skills on a real robotic platform? We study these questions
+through a set of simulated comparisons against prior meth-
+ods, as well as real-world tasks using a PR2 robot. The per-
+formance of each method can be seen in our supplementary
+video.2 Our focus in this work is speciﬁcally on robotics
+tasks that involve manipulation of objects, since such tasks
+often exhibit elements of continuous and discontinuous dy-
+namics and require sample-efﬁcient methods, making them
+challenging for both model-based and model-free methods.
+
+2https://sites.google.com/site/icml17pilqr
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+Figure 3. Average ﬁnal distance from the block to the goal on one
+condition of the gripper pusher task. This condition is difﬁcult
+due to the block being initialized far away from the gripper and
+the goal area, and only PILQR is able to succeed in reaching the
+block and pushing it toward the goal. Results for additional condi-
+tions are available in Appendix 8.4, and the supplementary video
+demonstrates the ﬁnal behavior of each learned policy.
+
+6.1. Simulation Experiments
+
+We evaluate our method on three simulated robotic manip-
+ulation tasks, depicted in Figure 2 and discussed below:
+
+Gripper pusher. This task involves controlling a 4 DoF
+arm with a gripper to push a white block to a red goal area.
+The cost function is a weighted combination of the distance
+from the gripper to the block and from the block to the goal.
+
+Reacher. The reacher task from OpenAI gym (Brockman
+et al., 2016) requires moving the end of a 2 DoF arm to a
+target position. This task is included to provide compar-
+isons against prior methods. The cost function is the dis-
+tance from the end effector to the target. We modify the
+cost function slightly: the original task uses an `2 norm,
+while we use a differentiable Huber-style loss, which is
+more typical for LQR-based methods (Tassa et al., 2012).
+
+Door opening. This task requires opening a door with a 6
+DoF 3D arm. The arm must grasp the handle and pull the
+door to a target angle, which can be particularly challeng-
+ing for model-based methods due to the complex contacts
+between the hand and the handle, and the fact that a con-
+tact must be established before the door can be opened. The
+cost function is a weighted combination of the distance of
+the end effector to the door handle and the angle of the door.
+
+Additional experimental setup details, including the exact
+cost functions, are provided in Appendix 8.3.1.
+
+We ﬁrst compare PILQR to LQR-FLM and PI2 on the grip-
+per pusher and door opening tasks. Figure 3 details perfor-
+mance of each method on the most difﬁcult condition for
+the gripper pusher task. Both LQR-FLM and PI2 perform
+
+Figure 4. Final distance from the reacher end effector to the tar-
+get averaged across 300 random test conditions per iteration.
+MDGPS with LQR-FLM, MDGPS with PILQR, TRPO, and
+DDPG all perform competitively. However, as the log scale for
+the x axis shows, TRPO and DDPG require orders of magnitude
+more samples. MDGPS with PI2 performs noticeably worse.
+
+signiﬁcantly worse on the two more difﬁcult conditions of
+this task. While PI2 improves in performance as we pro-
+vide more samples, LQR-FLM is bounded by its ability to
+model the dynamics, and thus predict the costs, at the mo-
+ment when the gripper makes contact with the block. Our
+method solves all four conditions with 400 total episodes
+per condition and, as shown in the supplementary video, is
+able to learn a diverse set of successful behaviors includ-
+ing ﬂicking, guiding, and hitting the block. On the door
+opening task, PILQR trains TVLG policies that succeed at
+opening the door from each of the four initial robot posi-
+tions. While the policies trained with LQR-FLM are able
+to reach the handle, they fail to open the door.
+
+Next we evaluate neural network policies on the reacher
+task. Figure 4 shows results for MDGPS with each lo-
+cal policy method, as well as two prior deep RL meth-
+ods that directly learn neural network policies:
+trust re-
+gion policy optimization (TRPO) (Schulman et al., 2015)
+and deep deterministic policy gradient (DDPG) (Lillicrap
+et al., 2016). MDGPS with LQR-FLM and MDGPS with
+PILQR perform competitively in terms of the ﬁnal dis-
+tance from the end effector to the target, which is unsur-
+prising given the simplicity of the task, whereas MDGPS
+with PI2 is again not able to make much progress. On
+the reacher task, DDPG and TRPO use 25 and 150 times
+more samples, respectively, to achieve approximately the
+same performance as MDGPS with LQR-FLM and PILQR.
+For comparison, amongst previous deep RL algorithms
+that combined model-based and model-free methods, SVG
+and NAF with imagination rollouts reported using approx-
+imately up to ﬁve times fewer samples than DDPG on a
+similar reacher task (Heess et al., 2015; Gu et al., 2016).
+Thus we can expect that MDGPS with our method is about
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+Figure 5. Minimum angle in radians of the door hinge (lower is
+better) averaged across 100 random test conditions per iteration.
+MDGPS with PILQR outperforms all other methods we compare
+against, with orders of magnitude fewer samples than DDPG and
+TRPO, which is the only other successful algorithm.
+
+one order of magnitude more sample-efﬁcient than SVG
+and NAF. While this is a rough approximation, it demon-
+strates a signiﬁcant improvement in efﬁciency.
+
+Finally, we compare the same methods for training neural
+network policies on the door opening task, shown in Fig-
+ure 5. TRPO requires 20 times more samples than MDGPS
+with PILQR to learn a successful neural network policy.
+The other three methods were unable to learn a policy that
+opens the door despite extensive hyperparameter tuning.
+We provide additional simulation results in Appendix 8.4.
+
+6.2. Real Robot Experiments
+
+To evaluate our method on a real robotic platform, we use
+a PR2 robot (see Figure 1) to learn the following tasks:
+
+Hockey. The hockey task requires using a stick to hit a
+puck into a goal 1.4 m away. The cost function consists of
+two parts: the distance between the current position of the
+stick and a target pose that is close to the puck, and the dis-
+tance between the position of the puck and the goal. The
+puck is tracked using a motion capture system. Although
+the cost provides some shaping, this task presents a signif-
+icant challenge due to the difference in outcomes based on
+whether or not the robot actually strikes the puck, making
+it challenging for prior methods, as we show below.
+
+In this task, the robot must plug
+Power plug plugging.
+a power plug into an outlet. The cost function is the dis-
+tance between the plug and a target location inside the out-
+let. This task requires ﬁne manipulation to fully insert the
+plug. Our TVLG policies consist of 100 time steps and we
+control our robot at a frequency of 20 Hz. For further de-
+tails of the experimental setup, including the cost functions,
+we refer the reader to Appendix 8.3.2.
+
+Figure 6. Single condition comparison of the hockey task per-
+formed on the real robot. Costs lower than the dotted line cor-
+respond to the puck entering the goal.
+
+Both of these tasks have difﬁcult, discontinuous dynam-
+ics at the contacts between the objects, and both require a
+high degree of precision to succeed.
+In contrast to prior
+works (Daniel et al., 2013) that use kinesthetic teaching
+to initialize a policy that is then ﬁnetuned with model-free
+methods, our method does not require any human demon-
+strations. The policies are randomly initialized using a
+Gaussian distribution with zero mean. Such initialization
+does not provide any information about the task to be per-
+formed. In all of the real robot experiments, policies are
+updated every 10 rollouts and the ﬁnal policy is obtained
+after 20-25 iterations, which corresponds to mastering the
+skill with less than one hour of experience.
+
+In the ﬁrst set of experiments, we aim to learn a policy
+that is able to hit the puck into the goal for a single po-
+sition of the goal and the puck. The results of this exper-
+iment are shown in Figure 6. In the case of the prior PI2
+method (Theodorou et al., 2010), the robot was not able to
+hit the puck. Since the puck position has the largest inﬂu-
+ence on the cost, the resulting learning curve shows little
+change in the cost over the course of training. The policy
+to move the arm towards the recorded arm position that en-
+ables hitting the puck turned out to be too challenging for
+PI2 in the limited number of trials used for this experiment.
+In the case of LQR-FLM, the robot was able to occasion-
+ally hit the puck in different directions. However, the re-
+sulting policy could not capture the complex dynamics of
+the sliding puck or the discrete transition, and was unable
+to hit the puck toward the goal. The PILQR method was
+able to learn a robust policy that consistently hits the puck
+into the goal. Using the step adjustment rule described in
+Section 4.4, the algorithm would shift towards model-free
+updates from the PI2 method as the TVLG approximation
+of the dynamics became less accurate. Using our method,
+the robot was able to get to the ﬁnal position of the arm
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+Figure 7. Experimental setup of the hockey task and the success
+rate of the ﬁnal PILQR-MDGPS policy. Red and Blue: goal posi-
+tions used for training, Green: new goal position.
+
+using fast model-based updates from LQR-FLM and learn
+the puck-hitting policy, which is difﬁcult to model, by au-
+tomatically shifting towards model-free PI2 updates.
+
+In our second set of hockey experiments, we evaluate
+whether we can learn a neural network policy using the
+MDGPS-PILQR algorithm that can hit the puck into differ-
+ent goal locations. The goals were spaced 0.5 m apart (see
+Figure 7). The strategies for hitting the puck into differ-
+ent goal positions differ substantially, since the robot must
+adjust the arm pose to approach the puck from the right
+direction and aim toward the target. This makes it quite
+challenging to learn a single policy for this task. We per-
+formed 30 rollouts for three different positions of the goal
+(10 rollouts each), two of which were used during training.
+The neural network policy was able to hit the puck into the
+goal in 90% of the cases (see Figure 7). This shows that our
+method can learn high-dimensional neural network policies
+that generalize across various conditions.
+
+The results of the plug experiment are shown in Figure 8.
+PI2 alone was unable to reach the socket. The LQR-FLM
+algorithm succeeded only 60% of the time at convergence.
+In contrast to the peg insertion-style tasks evaluated in prior
+work that used LQR-FLM (Levine et al., 2015), this task
+requires very ﬁne manipulation due to the small size of the
+plug. Our method was able to converge to a policy that
+plugged in the power plug on every rollout at convergence.
+The supplementary video illustrates the ﬁnal behaviors of
+each method for both the hockey and power plug tasks.3
+
+7. Discussion and Future Work
+
+We presented an algorithm that combines elements of
+model-free and model-based RL, with the aim of combin-
+ing the sample efﬁciency of model-based methods with the
+ability of model-free methods to improve the policy even
+in situations where the model’s structural assumptions are
+violated. We show that a particular choice of policy rep-
+resentation – TVLG controllers – is amenable to fast opti-
+mization with model-based LQR-FLM and model-free PI2
+
+3https://sites.google.com/site/icml17pilqr
+
+Figure 8. Single condition comparison of the power plug task per-
+formed on the real robot. Note that costs above the dotted line
+correspond to executions that did not actually insert the plug into
+the socket. Only our method (PILQR) was able to consistently
+insert the plug all the way into the socket by the ﬁnal iteration.
+
+algorithms using sample-based updates. We propose a hy-
+brid algorithm based on these two components, where the
+PI2 update is performed on the residuals between the true
+sample-based cost and the cost estimated under the local
+linear models. This algorithm has a number of appealing
+properties: it naturally trades off between model-based and
+model-free updates based on the amount of model error,
+can easily be extended with a KL-divergence constraint for
+stable learning, and can be effectively used for real-world
+robotic learning. We further demonstrate that, although this
+algorithm is speciﬁc to TVLG policies, it can be integrated
+into the GPS framework in order to train arbitrary parame-
+terized policies, including deep neural networks.
+
+We evaluated our approach on a range of challenging sim-
+ulated and real-world tasks. The results show that our
+method combines the efﬁciency of model-based learning
+with the ability of model-free methods to succeed on tasks
+with discontinuous dynamics and costs. We further illus-
+trate in direct comparisons against state-of-the-art model-
+free deep RL methods that, when combined with the GPS
+framework, our method achieves substantially better sam-
+ple efﬁciency. It is worth noting, however, that the appli-
+cation of trajectory-centric RL methods such as ours, even
+when combined with GPS, requires the ability to reset the
+environment into consistent initial states (Levine & Abbeel,
+2014; Levine et al., 2016). Recent work proposes a cluster-
+ing method for lifting this restriction by sampling trajec-
+tories from random initial states and assembling them into
+task instances after the fact (Montgomery et al., 2017). In-
+tegrating this technique into our method would further im-
+prove its generality. An additional limitation of our method
+is that the form of both the model-based and model-free
+update requires a continuous action space. Extensions to
+discrete or hybrid action spaces would require some kind
+of continuous relaxation, and this is left for future work.
+
+Combining Model-Based and Model-Free Updates for Trajectory-Centric Reinforcement Learning
+
+Acknowledgements
+
+The authors would like to thank Sean Mason for his help
+with preparing the real robot experiments. This work was
+supported in part by National Science Foundation grants
+IIS-1614653, IIS-1205249, IIS-1017134, EECS-0926052,
+the Ofﬁce of Naval Research, the Okawa Foundation, and
+the Max-Planck-Society. Marvin Zhang was supported by
+a BAIR fellowship. Any opinions, ﬁndings, and conclu-
+sions or recommendations expressed in this material are
+those of the authors and do not necessarily reﬂect the views
+of the funding organizations.
+
+References
+
+Akrour, R., Abdolmaleki, A., Abdulsamad, H., and Neu-
+mann, G. Model-free trajectory optimization for rein-
+forcement learning. In ICML, 2016.
+
+Brockman, G., Cheung, V., Pettersson, L., Schneider, J.,
+Schulman, J., Tang, J., and Zaremba, W. OpenAI gym.
+arXiv preprint arXiv:1606.01540, 2016.
+
+Chebotar, Y., Kalakrishnan, M., Yahya, A., Li, A., Schaal,
+S., and Levine, S. Path integral guided policy search. In
+ICRA, 2017.
+
+Daniel, Christian, Neumann, Gerhard, Kroemer, Oliver,
+In
+and Peters, Jan. Learning sequential motor tasks.
+ICRA, 2013.
+
+Deisenroth, M., Rasmussen, C., and Fox, D. Learning to
+control a low-cost manipulator using data-efﬁcient rein-
+forcement learning. In RSS, 2011.
+
+Deisenroth, M., Neumann, G., and Peters, J. A survey on
+policy search for robotics. Foundations and Trends in
+Robotics, 2(1-2):1–142, 2013.
+
+Deisenroth, M., Fox, D., and Rasmussen, C. Gaussian pro-
+cesses for data-efﬁcient learning in robotics and control.
+PAMI, 2014.
+
+Farshidian, F., Neunert, M., and Buchli, J. Learning of
+
+closed-loop motion control. In IROS, 2014.
+
+Gu, S., Lillicrap, T., Sutskever, I., and Levine, S. Con-
+tinuous deep Q-learning with model-based acceleration.
+CoRR, abs/1603.00748, 2016.
+
+Heess, N., Wayne, G., Silver, D., Lillicrap, T., Tassa, Y.,
+and Erez, T. Learning continuous control policies by
+stochastic value gradients. In NIPS, 2015.
+
+Kingma, D. and Welling, M. Auto-encoding variational
+
+Bayes. CoRR, abs/1312.6114, 2013.
+
+Kober, J., Bagnell, J., and Peters, J. Reinforcement learning
+in robotics: a survey. International Journal of Robotic
+Research, 32(11):1238–1274, 2013.
+
+Levine, S. and Abbeel, P. Learning neural network policies
+with guided policy search under unknown dynamics. In
+NIPS, 2014.
+
+Levine, S., Wagener, N., and Abbeel, P. Learning contact-
+In
+rich manipulation skills with guided policy search.
+ICRA, 2015.
+
+Levine, S., Finn, C., Darrell, T., and Abbeel, P. End-to-
+end training of deep visuomotor policies. JMLR, 17(1),
+2016.
+
+Lillicrap, T., Hunt, J., Pritzel, A., Heess, N., Erez, T., Tassa,
+Y., Silver, D., and Wierstra, D. Continuous control with
+deep reinforcement learning. In ICLR, 2016.
+
+Lioutikov, R., Paraschos, A., Neumann, G., and Peters,
+J. Sample-based information-theoretic stochastic opti-
+mal control. In ICRA, 2014.
+
+Mnih, V., Kavukcuoglu, K., Silver, D., Graves, A.,
+Antonoglou, I., Wierstra, D., and Riedmiller, M. Playing
+Atari with deep reinforcement learning. In NIPS Work-
+shop on Deep Learning, 2013.
+
+Montgomery, W. and Levine, S. Guided policy search via
+
+approximate mirror descent. In NIPS, 2016.
+
+Montgomery, W., Ajay, A., Finn, C., Abbeel, P., and
+Levine, S. Reset-free guided policy search: efﬁcient
+deep reinforcement learning with stochastic initial states.
+In ICRA, 2017.
+
+Pan, Y. and Theodorou, E. Probabilistic differential dy-
+
+namic programming. In NIPS, 2014.
+
+Pastor, P., Hoffmann, H., Asfour, T., and Schaal, S. Learn-
+ing and generalization of motor skills by learning from
+demonstration. In ICRA, 2009.
+
+Peters, J. and Schaal, S. Reinforcement learning of mo-
+tor skills with policy gradients. Neural Networks, 21(4),
+2008.
+
+Peters, J., M¨ulling, K., and Altun, Y. Relative entropy pol-
+
+icy search. In AAAI, 2010.
+
+Schaal, S., Peters, J., Nakanishi, J., and Ijspeert, A. Con-
+learning, and imitation with dynamic
+In IROS Workshop on Bilateral
+
+trol, planning,
+movement primitives.
+Paradigms on Humans and Humanoids, 2003.
+
+Schulman, J., Levine, S., Moritz, P., Jordan, M., and
+Abbeel, P. Trust region policy optimization. In ICML,
+2015.
+
+Schulman, J., Moritz, P., Levine, S., Jordan, M., and
+Abbeel, P. High-dimensional continuous control using
+generalized advantage estimation. In ICLR, 2016.
+
+Sutton, R. Integrated architectures for learning, planning,
+and reacting based on approximating dynamic program-
+ming. In ICML, 1990.
+
+Tassa, Y., Erez, T., and Todorov, E. Synthesis and stabiliza-
+
+tion of complex behaviors. In IROS, 2012.
+
+Theodorou, E., Buchli, J., and Schaal, S. A generalized
+path integral control approach to reinforcement learning.
+JMLR, 11, 2010.
+
+

@@ -1,0 +1,1718 @@
+Exact Inference for Integer Latent-Variable Models
+
+Kevin Winner 1 Debora Sujono 1 Dan Sheldon 1 2
+
+Abstract
+Graphical models with latent count variables
+arise in a number of areas. However, standard
+inference algorithms do not apply to these mod-
+els due to the inﬁnite support of the latent vari-
+ables. Winner & Sheldon (2016) recently devel-
+oped a new technique using probability generat-
+ing functions (PGFs) to perform efﬁcient, exact
+inference for certain Poisson latent variable mod-
+els. However, the method relies on symbolic ma-
+nipulation of PGFs, and it is unclear whether this
+can be extended to more general models. In this
+paper we introduce a new approach for inference
+with PGFs: instead of manipulating PGFs sym-
+bolically, we adapt techniques from the autodiff
+literature to compute the higher-order derivatives
+necessary for inference. This substantially gen-
+eralizes the class of models for which efﬁcient,
+exact inference algorithms are available. Specif-
+ically, our results apply to a class of models that
+includes branching processes, which are widely
+used in applied mathematics and population ecol-
+ogy, and autoregressive models for integer data.
+Experiments show that our techniques are more
+scalable than existing approximate methods and
+enable new applications.
+
+1. Introduction
+
+A key to the success of probabilistic modeling is the pair-
+ing of rich probability models with fast and accurate in-
+ference algorithms. Probabilistic graphical models enable
+this by providing a ﬂexible class of probability distribu-
+tions together with algorithms that exploit the graph struc-
+ture for efﬁcient inference. However, exact inference al-
+gorithms are only available when both the distributions in-
+volved and the graph structure are simple enough. How-
+
+1College of Information and Computer Sciences, University
+of Massachusetts Amherst 2Department of Computer Science,
+Mount Holyoke College. Correspondence to: Kevin Winner
+<kwinner@cs.umass.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+ever, this situation is rare and consequently, much research
+today is devoted to general-purpose approximate inference
+techniques (e.g. Ranganath et al., 2014; Kingma & Welling,
+2014; Carpenter et al., 2016).
+
+Despite many advances in probabilistic inference, there re-
+main relatively simple (and useful) models for which exact
+inference algorithms are not available. This paper consid-
+ers the case of graphical models with a simple structure but
+with (unbounded) latent count random variables. These are
+a natural modeling choice for many real world problems in
+ecology (Zonneveld, 1991; Royle, 2004; Dail & Madsen,
+2011) and epidemiology (Farrington et al., 2003; Panare-
+tos, 2007; Kvitkovicova & Panaretos, 2011). However,
+they pose a unique challenge for inference: even though
+algorithms like belief propagation (Pearl, 1986) or variable
+elimination (Zhang & Poole, 1994) are well deﬁned math-
+ematically, they cannot be implemented in an obvious way
+because factors have a countably inﬁnite number of entries.
+As a result, approximations like truncating the support of
+the random variables or MCMC are applied (Royle, 2004;
+Gross et al., 2007; Chandler et al., 2011; Dail & Madsen,
+2011; Zipkin et al., 2014; Winner et al., 2015).
+
+Recently, Winner & Sheldon (2016) introduced a new tech-
+nique for exact inference in models with latent count vari-
+ables. Their approach executes the same operations as
+variable elimination, but with factors, which are inﬁnite
+sequences of values, represented in a compact way using
+probability generating functions (PGFs). They developed
+an efﬁcient exact inference algorithm for a speciﬁc class
+of Poisson hidden Markov models (HMMs) that represent
+a population undergoing mortality and immigration, and
+noisy observations of the population over time.
+
+A key open question is the extent to which PGF-based in-
+ference generalizes to a broader class of models. There are
+two primary considerations. First, for what types of fac-
+tors can the required operations (multiplication, marginal-
+ization, and conditioning) be “lifted” to PGF-based repre-
+sentations? Here, there is signiﬁcant room for generaliza-
+tion: the mathematical PGF operations developed in (Win-
+ner & Sheldon, 2016) already apply to a broad class of non-
+Poisson immigration models, and we will generalize the
+models further to allow richer models of population sur-
+vival and growth. Second, and more signiﬁcantly, for what
+
+Exact Inference for Integer Latent-Variable Models
+
+types of PGFs can the requisite mathematical operations be
+implemented efﬁciently? Winner & Sheldon (2016) manip-
+ulated PGFs symbolically. Their compact symbolic repre-
+sentation seems to rely crucially on properties of the Pois-
+son distribution; it remains unclear whether symbolic PGF
+inference can be generalized beyond Poisson models.
+
+This paper introduces a new algorithmic technique based
+on higher-order automatic differentiation (Griewank &
+Walther, 2008) for inference with PGFs. A key insight
+is that most inference tasks do not require a full sym-
+bolic representation of the PGF. For example, the likeli-
+hood is computed by evaluating a PGF F (s) at s = 1.
+Other probability queries can be posed in terms of deriva-
+tives F (k)(s) evaluated at either s = 0 or s = 1.
+In
+all cases, it sufﬁces to evaluate F and its higher-order
+derivatives at particular values of s, as opposed to com-
+puting a compact symbolic representation of F .
+It may
+seem that this problem is then solved by standard tech-
+niques, such as higher-order forward-mode automatic dif-
+ferentiation (Griewank & Walther, 2008). However, the
+requisite PGF F is complex—it is deﬁned recursively in
+terms of higher-order derivatives of other PGFs—and off-
+the-shelf automatic differentiation methods do not apply.
+We therefore develop a novel recursive procedure using
+building blocks of forward-mode automatic differentiation
+(generalized dual numbers and univariate Taylor polyno-
+mials; Griewank & Walther, 2008) to evaluate F and its
+derivatives.
+
+Our algorithmic contribution leads to the ﬁrst efﬁcient ex-
+act algorithms for a class of HMMs that includes many
+well-known models as special cases, and has many ap-
+plications. The hidden variables represent a population
+that undergoes three different processes: mortality (or em-
+igration), immigration, and growth. A variety of different
+distributional assumptions may be made about each pro-
+cess. The models may also be viewed without this inter-
+pretation as a ﬂexible class of models for integer-valued
+time series. Special cases include models from popula-
+tion ecology (Royle, 2004; Gross et al., 2007; Dail & Mad-
+sen, 2011), branching processes (Watson & Galton, 1875;
+Heathcote, 1965), queueing theory (Eick et al., 1993), and
+integer-valued autoregressive models (McKenzie, 2003).
+Additional details about the relation to these models are
+given in Section 2. Our algorithms permit exact calculation
+of the likelihood for all of these models even when they are
+partially observed.
+
+We demonstrate experimentally that our new exact infer-
+ence algorithms are more scalable than competing approxi-
+mate approaches, and support learning via exact likelihood
+calculations in a broad class of models for which this was
+not previously possible.
+
+2. Model and Problem Statement
+
+We consider a hidden Markov model with integer la-
+tent variables N1, . . . , NK and integer observed variables
+Y1, . . . , YK. All variables are assumed to be non-negative.
+The model is most easily understood in the context of its
+application to population ecology or branching processes
+in these cases, the variable Nk rep-
+(which are similar):
+resents the size of a hidden population at time tk, and
+Yk represents the number of individuals that are observed
+at time tk. However, the model is equally valid without
+this interpretation as a ﬂexible class of autoregressive pro-
+cesses (McKenzie, 2003).
+
+N
+
+ 
+
+⇠
+
+We introduce some notation to describe the model. For
+an integer random variable N , write Y = ⇢
+N to mean
+that Y
+Binomial(N, ⇢). This operation is known as
+“binomial thinning”: the count Y is the number of “sur-
+vivors” from the original count N . We can equivalently
+write Y =
+Bernoulli(⇢) to highlight
+the fact that this is a compound distribution. Indeed, com-
+pound distributions will play a key role: for independent
+X de-
+integer random variables N and X, let Z = N
+ 
+N
+note the compound random variable Z =
+i=1 Xi, where
+are independent copies of X. Now, we can describe
+Xi}
+{
+our model as:
+
+i=1 Xi for iid Xi ⇠
+
+P
+
+P
+
+Nk = (Nk
+Yk = ⇢k  
+
+1  
+ 
+Nk.
+
+Xk) + Mk,
+
+(1)
+
+(2)
+
+1
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+P
+
+Xk
+
+1 =
+
+Nk
+i=1 Xk
+
+The variable Nk represents the population size at time tk.
+The random variable Nk
+1,i
+1  
+is the number of offspring of individuals from the previous
+time step, where Xk
+1,i is the total number of individu-
+als “caused by” the ith individual alive at time tk
+1. This
+deﬁnition of offspring is ﬂexible enough to model imme-
+diate offspring, surviving individuals, and descendants of
+more than one generation. The random variable Mk is the
+number of immigrants at time tk, and Yk is the number of
+individuals observed at time tk, with the assumption that
+each individual is observed independently with probability
+⇢k. We have left unspeciﬁed the distributions of Mk and
+Xk, which we term the immigration and offspring distri-
+butions, respectively. These may be arbitrary distributions
+over non-negative integers. We will assume the initial con-
+dition N0 = 0, though the model can easily be extended to
+accommodate arbitrary initial distributions.
+
+Problem Statement We use lower case variables to de-
+note speciﬁc settings of random variables. Let yi:j =
+(yi, . . . , yj) and ni:j = (ni, . . . , nj).
+The model
+above deﬁnes a joint probability mass function (pmf)
+p(n1:K, y1:K; ✓) where we introduce the vector ✓ con-
+taining parameters of all component distributions when
+necessary.
+the density factors ac-
+that
+cording to a hidden Markov model: p(n1:K, y1:K) =
+
+is clear
+
+It
+
+Exact Inference for Integer Latent-Variable Models
+
+K
+
+ 
+
+nk
+
+1)p(yk |
+
+k=1 p(nk |
+
+nk). We will consider several in-
+ference problems that are standard for HMMs, but pose
+Q
+unique challenges when the hidden variables have count-
+ably inﬁnite support. Speciﬁcally, suppose y1:K are ob-
+served, then we seek to:
+
+Compute the likelihood
+
+(✓) = p(y1:K; ✓) for any ✓,
+
+•
+
+L
+
+•
+
+Compute moments and values of the pmf of the ﬁltered
+y1:k; ✓), for any k, ✓,
+marginals p(nk |
+Estimate parameters ✓ by maximizing the likelihood.
+
+•
+We focus technically on the ﬁrst two problems, which
+will enable numerical optimization to maximize the like-
+lihood. Another standard problem is to compute smoothed
+y1:K; ✓) given both past and future obser-
+marginals p(nk |
+vations relative to time step k. Although this is interesting,
+it is technically more difﬁcult, and we defer it for future
+work.
+
+Connections to Other Models This model specializes
+to capture many different models in the literature. The
+latent process of Eq. (1) is a Galton-Watson branch-
+ing process with immigration (Watson & Galton, 1875;
+Heathcote, 1965).
+It also captures a number of differ-
+ent AR(1) (ﬁrst-order autoregressive) processes for inte-
+ger variables (McKenzie, 2003); these typically assume
+Bernoulli( k), i.e., that the offspring process is
+Xk ⇠
+binomial thinning of the current individuals. For clarity
+when describing this as an offspring distribution, we will
+refer to it as Bernoulli offspring. With Bernoulli offspring
+and time-homogenous Poisson immigration, the model is
+an M/M/
+queue (McKenzie, 2003); with time-varying
+Poisson immigration it is an Mt/M/
+queue (Eick et al.,
+1993). For each of these models, we contribute the ﬁrst
+known algorithms for exact inference and likelihood calcu-
+lations when the process is partially observed. This allows
+estimation from data that is noisy and has variability that
+should not be modeled by the latent process.
+
+1
+
+1
+
+Special cases of our model with noisy observations oc-
+cur in statistical estimation problems in population ecol-
+ogy. When immigration is zero after the ﬁrst time step and
+Xk = 1, the population size is a ﬁxed random variable,
+and we recover the N -mixture model of Royle (2004) for
+estimating the size of an animal population from repeated
+counts. With Poisson immigration and Bernoulli offspring,
+we recover the basic model of Dail & Madsen (2011) for
+open metapopulations; extended versions with overdisper-
+sion and population growth also fall within our framework
+by using negative-binomial immigration and Poisson off-
+spring. Related models for insect populations also fall
+within our framework (Zonneveld, 1991; Gross et al., 2007;
+Winner et al., 2015). The main goal in most of this litera-
+ture is parameter estimation. Until very recently, no exact
+algorithms were known to compute the likelihood, so ap-
+
+proximations such as truncating the support of the latent
+variables (Royle, 2004; Fiske & Chandler, 2011; Chandler
+et al., 2011; Dail & Madsen, 2011) or MCMC (Gross et al.,
+2007; Winner et al., 2015) were used. Winner & Sheldon
+(2016) introduced PGF-based exact algorithms for the re-
+stricted version of the model with Bernoulli offspring and
+Poisson immigration. We will build on that work to pro-
+vide exact inference and likelihood algorithms for all of the
+aforementioned models.
+
+3. Methods
+
+The standard approach for inference in HMMs is the
+forward-backward algorithm (Rabiner, 1989), which is
+a special case of more general propagation or message-
+passing algorithms (Pearl, 1986; Lauritzen & Spiegelhalter,
+1988; Jensen et al., 1990; Shenoy & Shafer, 1990). Winner
+& Sheldon (2016) showed how to implement the forward
+algorithm using PGFs for models with Bernoulli offspring
+and Poisson immigration.
+
+Forward Algorithm The forward algorithm recursively
+computes “messages”, which are unnormalized distribu-
+Speciﬁcally, deﬁne
+tions of subsets of the variables.
+↵k(nk) := p(nk, y1:k) and  k(nk) := p(nk, y1:k
+1).
+These satisfy the recurrence:
+
+ 
+
+ k(nk) =
+
+↵k
+
+1(nk
+
+ 
+
+1)p(nk |
+
+ 
+
+nk
+
+1),
+
+ 
+
+1
+
+nk
+X
+ 
+↵k(nk) =  k(nk)p(yk |
+
+nk).
+
+(3)
+
+(4)
+
+We will refer to Equation (3) as the prediction step (the
+value of nk is predicted based on the observations y1:k
+1),
+and Equation (4) as the evidence step (the new evidence yk
+is incorporated). In ﬁnite models, the forward algorithm
+can compute the ↵k messages for k = 1, . . . , K directly
+using Equations (3) and (4). However, if nk is unbounded,
+this cannot be done directly; for example, ↵k(nk) is an in-
+ﬁnite sequence, and Equation (3) contains an inﬁnite sum.
+
+ 
+
+3.1. Forward Algorithm with PGFs
+
+Winner & Sheldon (2016) observed that, for some condi-
+nk), the oper-
+tional distributions p(nk |
+ 
+ations of the forward algorithm can be carried out using
+PGFs. Speciﬁcally, deﬁne the PGFs  k(uk) and Ak(sk) of
+ k(nk) and ↵k(nk), respectively, as:
+
+1) and p(yk |
+
+nk
+
+ k(uk) :=
+
+ k(nk)unk
+k ,
+
+1
+
+nk=0
+X
+1
+
+(5)
+
+(6)
+
+Ak(sk) :=
+
+↵k(nk)snk
+k .
+
+nk=0
+X
+The PGFs  k and Ak are power series in the variables
+uk and sk with coefﬁcients equal to the message entries.
+
+Exact Inference for Integer Latent-Variable Models
+
+nk
+
+These functions capture all relevant information about the
+associated distributions. Technically,  k and Ak are un-
+normalized PGFs because the coefﬁcients do not sum to
+one. However, the normalization constants are easily re-
+covered by evaluating the PGF on input value 1: for exam-
+↵k(nk) = p(y1:k). This also shows that
+ple, Ak(1) =
+we can recover the likelihood as AK(1) = p(y1:K). After
+normalizing, the PGFs can be interpreted as expectations,
+for example Ak(sk)/Ak(1) = E[sNk
+k
+In general, it is well known that the PGF F (s) of a non-
+negative integer-valued random variable X uniquely de-
+ﬁnes the entries of the probability mass function and the
+moments of X, which are recovered from (higher-order)
+derivatives of F evaluated at zero and one, respectively:
+
+y1:k].
+
+P
+
+|
+
+Pr(X = r) = F (r)(0)/r!,
+E[X] = F (1)(1),
+
+Var(X) = F (2)(1)
+
+F (1)(1)
+
++ F (1)(1).
+
+2
+
+ 
+
+i
+
+h
+More generally, the ﬁrst q moments are determined by the
+derivatives F (r)(1) for r
+q. Therefore, if we can eval-
+0, 1
+uate the PGF Ak and its derivatives for sk 2{
+, we
+}
+can answer arbitrary queries about the ﬁltering distributions
+p(nk, y1:k), and, in particular, solve our three stated infer-
+ence problems.
+
+
+
+But how can we compute values of Ak,  k, and their
+derivatives? What form do these PGFs have? One key
+result of Winner & Sheldon (2016), which we general-
+ize here, is the fact that there is also a recurrence relation
+among the PGFs.
+
+Proposition 1. Consider the probability model deﬁned in
+Equations (1) and (2). Let Fk be the PGF of the offspring
+random variable Xk, and let Gk be the PGF of the immi-
+gration random variable Mk. Then  k and Ak satisfy the
+following recurrence:
+
+ k(uk) = Ak
+
+Fk(uk)
+
+Gk(uk)
+
+Ak(sk) =
+
+1
+ 
+(sk⇢k)yk
+ 
+yk!
+
+·
+
+·
+ (yk)
+ 
+k
+
+sk(1
+
+⇢k)
+
+ 
+
+ 
+
+ 
+
+(10)
+
+(11)
+
+Proof. A slightly less general version of Equation (10) ap-
+peared in Winner & Sheldon (2016); the general version
+appears in the literature on branching processes with immi-
+gration (Heathcote, 1965). Equation (11) follows directly
+from general PGF operations outlined in (Winner & Shel-
+don, 2016).
+
+The PGF recurrence has the same two elements as the
+pmf recurrence in equations (3) and (4). Equation (10)
+is the prediction step: it describes the PGF of  k(nk) =
+p(nk, y1:k
+1) in terms of previous PGFs. Equation (11)
+is the evidence step: it describes the PGF for ↵k(nk) =
+
+ 
+
+0"./
+
+5"
+
+'(
+45"
+'(
+4#"
+
+1"./
+
++"(#")
+
+Γ"
+
+'(
+
+!"&"
+)"!
+
+1"
+
+!"./
+
+3"(#")
+
+#" !" 1 − &"
+
+0"
+
+!"
+
+Figure 1. Circuit diagram of Ak(sk)
+
+(7)
+
+(8)
+
+(9)
+
+p(nk, y1:k) in terms of the previous PGF and the new ob-
+servation yk. Note that the evidence step involves the ykth
+derivative of the PGF  k from the prediction step, where yk
+is the observed count. These high-order derivatives compli-
+cate the calculation of the PGFs.
+
+3.2. Evaluating Ak via Automatic Differentiation
+
+The recurrence reveals structure about Ak and  k but does
+not immediately imply an algorithm. Winner & Shel-
+don (2016) showed how to use the recurrence to compute
+symbolic representations of all PGFs in the special case
+of Bernoulli offspring and Poisson immigration:
+in this
+case, they proved that all PGFs have the form F (s) =
+f (s) exp(as + b), where f is a polynomial of bounded
+degree. Hence, they can be represented compactly and
+computed efﬁciently using the recurrence. The result is
+a symbolic representation, so, for example, one obtains
+a closed form representation of the ﬁnal PGF AK, from
+which the likelihood, entries of the pmf, and moments
+can be calculated. However, the compact functional form
+f (s) exp(as + b) seems to rely crucially on properties of
+the Poisson distribution. When other distributions are used,
+the size of the symbolic PGF representation grows quickly
+with K. It is an open question whether the symbolic meth-
+ods can be extended to other classes of PGFs.
+
+This motivates an alternate approach. Instead of comput-
+ing Ak symbolically, we will evaluate Ak and its deriva-
+tives at particular values of sk corresponding to the queries
+we wish to make (cf. Equations (7)–(9)). To develop the
+approach, it is helpful to consider the feed-forward com-
+putation for evaluating Ak at a particular value sk. The
+circuit diagram in Figure 1 is a directed acyclic graph that
+describes this calculation; the nodes are intermediate quan-
+tities in the calculation, and the shaded rectangles illustrate
+the recursively nested PGFs.
+
+Now, we can consider techniques from automatic differen-
+tiation (autodiff) to compute Ak and its derivatives. How-
+
+Exact Inference for Integer Latent-Variable Models
+
+ever, these will not apply directly. Note that Ak is de-
+ﬁned in terms of higher-order derivatives of the function
+ k, which depends on higher-order derivatives of  k
+1,
+and so forth. Standard autodiff techniques cannot handle
+these recursively nested derivatives. Therefore, we will de-
+velop a novel algorithm.
+
+ 
+
+3.2.1. COMPUTATION MODEL AND DUAL NUMBERS
+
+We now develop basic notation and building blocks that
+we will assemble to construct our algorithm. It is helpful
+to abstract from our particular setting and describe a gen-
+eral model for derivatives within a feed-forward computa-
+tion, following Griewank & Walther (2008). We consider
+a procedure that assigns values to a sequence of variables
+v0, v1, . . . , vn, where v0 is the input variable, vn is the out-
+put variable, and each intermediate variable vj is computed
+via a function 'j(vi)i
+j of the vari-
+j simply
+ables v0:j
+ 
+means that 'j depends directly on vi, and (vi)i
+j is the
+vector of variables for which that is true. Note that the de-
+pendence relation deﬁnes a directed acyclic graph G (e.g.,
+the circuit in Figure 1), and v0, . . . , vn is a topological or-
+dering of G.
+
+j of some subset (vi)i
+ 
+1. Here the dependence relation i
+
+ 
+
+ 
+
+ 
+
+We will be concerned with the values of a variable v` and
+its derivatives with respect to some earlier variable vi. To
+represent this cleanly, we ﬁrst introduce a notation to cap-
+ture the partial computation between the assignment of vi
+and v`. For i
+`, deﬁne fi`(v0:i) to be the value that is as-
+signed to v` if the values of the ﬁrst i variables are given by
+v0:i (now treated as ﬁxed input values). This can be deﬁned
+formally in an inductive fashion:
+
+
+
+fi`(v0:i) = '`(uij)j
+
+`,
+
+uij =
+
+ 
+
+vj
+fij(v0:i)
+
+(
+
+if j
+i
+
+if j > i
+
+
+
+This can be interpreted as recursion with memoization for
+v0:i. When '` “requests” the value of uij of vj: if j
+i,
+this value was given as an input argument of fi`, so we
+just “look it up”; but if j > i, we recursively compute the
+correct value via the partial computation from i to j. Now,
+we deﬁne a notation to capture derivatives of a variable v`
+with respect to an earlier variable vi.
+Deﬁnition 1 (Dual numbers). The generalized dual num-
+` and q > 0 is the sequence
+ber
+consisting of v` and its ﬁrst q derivatives with respect to vi:
+
+v`, dviiq for 0
+
+
+
+
+
+h
+
+i
+
+v`, dviiq =
+
+h
+
+fi`(v0:i)
+
+@p
+@v p
+i
+
+✓
+
+q
+
+p=0
+
+◆
+
+v`, dviiq is a dual number of order q with
+We say that
+respect to vi. Let DRq be the set of dual numbers of order
+q. We will commonly write dual numbers as:
+
+h
+
+s, du
+
+iq =
+
+h
+
+⇣
+
+s,
+
+, . . . ,
+
+ds
+du
+
+dqs
+duq
+
+⌘
+
+in which case it is understood that s = v` and u = vi for
+) will be clear from
+some 0
+context.
+
+`, and the function fi`(
+
+
+
+
+
+i
+
+·
+
+Our treatment of dual numbers and partial computations
+In particular, we
+is more explicit than what is standard.
+are explicit both about the variable v` we are differentiat-
+ing and the variable vi with respect to which we are dif-
+ferentiating. This is important for our algorithm, and also
+helps distinguish our approach from traditional automatic
+differentiation approaches. Forward-mode autodiff com-
+putes derivatives of all variables with respect to v0, i.e., it
+vj, dv0iq for j = 1, . . . , n. Reverse-mode au-
+computes
+todiff computes derivatives of vn with respect to all vari-
+1, . . . , 0. In
+vn, dviiq for i = n
+ables, i.e., it computes
+each case, one of the two variables is ﬁxed, so the notation
+can be simpliﬁed.
+
+ 
+
+h
+
+h
+
+3.2.2. OPERATIONS ON DUAL NUMBERS
+
+h
+
+v1, dvi1 iq1 , . . . ,
+
+The general idea of our algorithm will resemble forward-
+mode autodiff.
+Instead of sequentially calculating the
+values v1, . . . , vn in our feed-forward computation, we
+vn, dvin iqn ,
+will calculate dual numbers
+h
+where we leave unspeciﬁed (for now) the variables with re-
+spect to which we differentiate, and the order of the dual
+numbers. We will require three high-level operations on
+dual numbers. The ﬁrst one is “lifting” a scalar function.
+Deﬁnition 2 (Lifted Function). Let f : Rm
+R be a func-
+tion of variables x1, . . . , xm. The qth-order lifted func-
+DRq is the function that accepts
+tion
+iq of order q
+xm, du
+as input dual numbers
+with respect to the same variable u, and returns the value
+f (x1, . . . , xm), du
+
+qf : (DRq)m
+
+iq, . . . ,
+
+x1, du
+
+!
+h
+
+!
+
+L
+
+h
+
+q.
+
+↵
+
+L
+
+⌦
+Lifting is the basic operation of higher-order forward mode
+autodiff. For functions f consisting only of “primitive op-
+qf can be computed at a
+erations”, the lifted function
+modest overhead relative to computing f .
+Proposition 2 (Griewank & Walther, 2008). Let f : Rm
+!
+R be a function that consists only of the following primitive
+operations, where x and y are arbitrary input variables and
+y, x/y, xr,
+all other numbers are constants: x + cy, x
+qf can be computed
+ln(x), exp(x), sin(x), cos(x). Then
+in time O(q2) times the running time of f .
+
+L
+
+⇤
+
+y, du
+
+x, du
+
+iq ⇥ h
+
+Based on this proposition, we will write algebraic opera-
+tions on dual numbers, e.g.,
+iq, and under-
+h
+stand these to be lifted versions of the corresponding scalar
+operations. The standard lifting approach is to represent
+dual numbers as univariate Taylor polynomials (UTPs), in
+which case many operations (e.g., multiplication, addition)
+translate directly to the corresponding operations on poly-
+nomials. We will use UTPs in the proof of Theorem 1.
+
+Exact Inference for Integer Latent-Variable Models
+
+The second operation we will require is composition. Say
+that variable vj separates vi from v` if all paths from vi to
+v` in G go through vj.
+Theorem 1 (Composition). Suppose vj separates vi from
+v`. In this case, the dual number
+v`, dviiq depends only on
+h
+vj, dviiq, and we deﬁne
+v`, dvjiq and
+the dual numbers
+h
+the composition operation:
+
+h
+
+h
+
+v`, dvjiq   h
+
+vj, dviiq :=
+If vj does not separate vi from v`, the written composition
+operation is undeﬁned. The composition operation can be
+performed in O(q2 log q) time by composing two UTPs.
+
+v`, dviiq
+
+h
+
+Proof. If all paths from vi to v` go through vj, then vj is
+a “bottleneck” in the partial computation fil. Speciﬁcally,
+there exist functions F and H such that vj = F (vi) and
+v` = H(vj). Here, the notation suppresses dependence on
+variables that either are not reachable from vi, or do not
+have a path to v`, and hence may be treated as constants
+v`, viiq.
+because they they do not impact the dual number
+A detailed justiﬁcation of this is given in the supplemen-
+tary material. Now, our goal is to compute the higher-order
+derivatives of v` = H(F (vi)). Let ˆF and ˆH be inﬁnite
+Taylor expansions about vi and vj, respectively, omitting
+the constant terms F (vi) and H(vj):
+
+h
+
+ˆF (") :=
+
+"p,
+
+ˆH(") :=
+
+F (p)(vi)
+p!
+
+1
+
+p=1
+X
+
+H (p)(vj)
+p!
+
+"p.
+
+1
+
+p=1
+X
+
+1 is exactly dpv`/dvp
+
+These are polynomials in ", and the ﬁrst q coefﬁcients are
+given in the input dual numbers. The coefﬁcient of "p in
+ˆU (") := ˆH( ˆF (")) for p
+i (see
+ 
+Wheeler, 1987, where the composition of Taylor polynomi-
+als is related directly to the higher-order chain rule known
+as Fa`a d´ı Bruno’s Formula). So it sufﬁces to compute the
+ﬁrst q coefﬁcients of ˆH( ˆF (✏)). This can be done by exe-
+cuting Horner’s method (Horner, 1819) in truncated Taylor
+polynomial arithmetic (Griewank & Walther, 2008), which
+keeps only the ﬁrst q coefﬁcients of all polynomials (i.e.,
+it assumes ✏p = 0 for p > q). After truncation, Horner’s
+method involves q additions and q multiplications of poly-
+nomials of degree at most q. Polynomial multiplication
+takes time O(q log q) using the FFT, so the overall running
+time is O(q2 log q).
+
+The ﬁnal operation we will require is differentiation. This
+will support local functions '` that differentiate a previous
+value, e.g., v` = '`(vj) = dpvj/dvp
+i .
+Deﬁnition 3 (Differential Operator). Let
+number. For p
+s, du
+
+iq be a dual
+q, the differential operator Dp applied to
+p given by:
+
+h
+iq returns the dual number of order q
+dqs
+duq
+
+dps
+dup , . . . ,
+
+iq :=
+
+s, du
+
+s, du
+
+Dp
+
+ 
+
+
+
+h
+
+h
+
+⇣
+
+⌘
+
+The differential operator can be applied in O(q) time.
+
+This operation was deﬁned in (Kalaba & Tesfatsion, 1986).
+
+3.2.3. THE GDUAL-FORWARD ALGORITHM
+
+h
+
+h
+
+h
+
+L
+
+↵k, skiq =
+
+We will now use these operations to lift the function Ak
+sk, dskiq), i.e., the output
+A
+to compute
+of Ak and its derivatives with respect to its input. Algo-
+ 
+rithm 1 gives a sequence of mathematical operations to
+compute Ak(sk). Algorithm 2 shows the corresponding
+operations on dual numbers; we call this algorithm the
+generalized dual-number forward algorithm or GDUAL-
+FORWARD. Note that a dual number of a variable with re-
+iq = (x, 1, 0, . . . , 0); such
+x, dx
+spect to itself is simply
+expressions are used without explicit initialization in Al-
+gorithm 2. Also, if the dual number
+iq has been as-
+signed, we will assume the scalar value x is also available,
+x, dx
+iq (cf.
+for example, to initialize a new dual variable
+the dual number on the RHS of Line 3). Note that Algo-
+rithm 1 contains a non-primitive operation on Line 5: the
+derivative dyk  k/duyk
+k . To evaluate this in Algorithm 2, we
+must manipulate the dual number of  k to be taken with
+respect to uk, and not the original input value sk, as in
+forward-mode autodiff. Our approach can be viewed as
+following a different recursive principle from either for-
+in the circuit diagram of
+ward or reverse-mode autodiff:
+Figure 1, we calculate derivatives of each nested circuit
+with respect to its own input, starting with the innermost
+circuit and working out.
+
+x, dy
+
+h
+
+h
+
+h
+
+L
+
+where Y =
+
+AK computes
+
+↵k, dskiq in time O
+
+K(q +
+Theorem 2.
+K
+Y )2 log(q + Y )
+k=1 yk is the sum of
+the observed counts and q is the requested number of
+derivatives. Therefore, the likelihood can be computed in
+O(KY 2 log Y ) time, and the ﬁrst q moments or the ﬁrst q
+entries of the ﬁltered marginals can be computed in time
+O
+
+K(q + Y )2 log(q + Y )
+
+P
+
+ 
+
+ 
+
+.
+
+ 
+
+ 
+
+Proof. To see that GDUAL-FORWARD is correct, note that
+it corresponds to Algorithm 1, but applies the three opera-
+tions from the previous section to operate on dual numbers
+instead of scalars. We will verify that the conditions for
+applying each operation are met. Lines 2–5 each use lifting
+of algebraic operations or the functions Fk and Gk, which
+are assumed to consist only of primitive operations. Lines
+4 and 5 apply the composition operation; here, we can ver-
+ify from Figure 1 that sk
+1 (Line 4)
+and that uk separates sk and  k (Line 5). The conditions for
+applying the differential operator on Line 5 are also met.
+
+1 separates uk and ↵k
+
+ 
+
+ 
+
+For the running time, note that the total number of opera-
+AK, including recursive calls,
+tions on dual numbers in
+is O(K). The order of the dual numbers is initially q, but
+increases by yk in each recursive call (Line 4). Therefore,
+the maximum value is q + Y . Each of the operations on
+
+L
+
+Exact Inference for Integer Latent-Variable Models
+
+Algorithm 1 Ak(sk)
+if k = 0 then
+
+1:
+
+return ↵k = 1
+
+⇢k)
+
+ 
+
+end if
+2: uk = sk(1
+3: sk
+ 
+4:  k = Ak
+ 
+5: ↵k = dyk
+yk
+du
+k
+6: return ↵k
+
+1 = Fk(uk)
+1(sk
+ k
+
+1)
+Gk(uk)
+ 
+(sk⇢k)yk /yk!
+·
+
+·
+
+Algorithm 2
+
+Ak(
+
+L
+if k = 0 then
+return
+
+↵k, dsk
+
+h
+
+sk, dskiq) — GDUAL-FORWARD
+q = (1, 0, . . . , 0)
+
+1:
+
+i
+sk, dsk
+
+h
+
+q =
+
+i
+
+end if
+uk, dsk
+sk
+ 
+ k, duk
+↵k, dsk
+
+2:
+h
+3:
+h
+4:
+h
+5:
+h
+6: return
+
+i
+1, duk
+
+h
+q+yk =
+
+q+yk =
+i
+q =
+i
+↵k, dsk
+⇥
+i
+
+q
+
+L
+Dyk
+⇥
+h
+
+h
+
+q
+i
+Fk
+
+·
+
+⇢k)
+(1
+ 
+uk, duk
+i
+sk
+1, dsk
+q+yk   h
+
+ 
+
+i
+
+h
+L
+Ak
+1
+ 
+h
+ 
+ k, duk
+ 
+
+q+yk
+
+dual numbers is O(p2 log p) for dual numbers of order p,
+so the total is O(K(q + Y )2 log(q + Y )).
+
+4. Experiments
+
+In this section we describe simulation experiments to eval-
+uate the running time of GDUAL-FORWARD against other
+algorithms, and to assess the ability to learn a wide variety
+of models for which exact likelihood calculations were not
+previously possible, by using GDUAL-FORWARD within a
+parameter estimation routine.
+
+Running time vs Y . We compared the running time
+of GDUAL-FORWARD with the PGF-FORWARD algorithm
+from (Winner & Sheldon, 2016) as well as TRUNC, the
+standard truncated forward algorithm (Dail & Madsen,
+2011). PGF-FORWARD is only applicable to the Poisson
+HMM from (Winner & Sheldon, 2016), which, in our ter-
+minology, is a model with a Poisson immigration distri-
+bution and a Bernoulli offspring distribution. TRUNC ap-
+plies to any choice of distributions, but is approximate. For
+these experiments, we restrict to Poisson HMMs for the
+sake of comparison with the less general PGF-FORWARD
+algorithm.
+
+⇥
+
+P
+
+A primary factor affecting running time is the magnitude
+of the counts. We measured the running time for all algo-
+rithms to compute the likelihood p(y; ✓) for vectors y :=
+(1, 1, 1, 1, 1) with increasing c. In this case,
+y1:K = c
+Y =
+k yk = 5c. PGF-FORWARD and GDUAL-FORWARD
+have running times O(KY 2) and O(KY 2 log Y ), respec-
+tively, which depend only on Y and not ✓. The run-
+ning time of an FFT-based implementation of TRUNC is
+O(KN 2
+max log Nmax), where Nmax is the value used to
+truncate the support of each latent variable. A heuristic
+is required to choose Nmax so that it captures most of the
+probability mass of p(y; ✓) but is not too big. The ap-
+propriate value depends strongly on ✓, which in practice
+may be unknown.
+In preliminary experiments with real-
+istic immigration and offspring models (see below) and
+known parameters, we found that an excellent heuristic is
+Nmax = 0.4Y /⇢, which we use here. With this heuristic,
+TRUNC’s running time is O( K
+
+⇢2 Y 2 log Y ).
+
+1
+
+q+yk
+ 
+i
+ 
+uk, dsk
+
+sk
+
+1, duk
+
+  h
+⇥
+
+q
+ 
+i
+
+ 
+⇢k
+
+h
+
+sk, dsk
+
+q+yk
+
+i
+
+q
+
+i
+
+⇤
+
+ 
+
+Gk
+
+uk, duk
+
+q+yk
+
+i
+
+ 
+
+⇥L
+yk /yk!
+⇤
+ 
+
+h
+
+ 
+
+2{
+
+0.15, 0.85
+}
+
+Figure 3 shows the results for ⇢
+, aver-
+aged over 20 trials with error bars showing 95% conﬁdence
+intervals of the mean. GDUAL-FORWARD and TRUNC
+have the same asymptotic dependence on Y but GDUAL-
+FORWARD scales better empirically, and is exact. It is about
+8x faster than TRUNC for the largest Y when ⇢ = 0.15, and
+2x faster for ⇢ = 0.85. PGF-FORWARD is faster by a factor
+of log Y in theory and scales better in practice, but applies
+to fewer models.
+
+Running time for different ✓. We also conducted ex-
+periments where we varied parameters and used an oracle
+method to select Nmax for TRUNC. This was done by run-
+ning the algorithm for increasing values of Nmax and se-
+lecting the smallest one such that the likelihood was within
+6 of the true value (see Winner & Sheldon, 2016).
+10 
+
+We simulated data from Poisson HMMs and measured the
+time to compute the likelihood p(y; ✓) for the true param-
+eters ✓ = ( ,  , ⇢), where   is a vector whose kth entry is
+the mean of the Poisson immigration distribution at time k,
+and   and ⇢ are scalars representing the Bernoulli survival
+probability and detection probability, respectively, which
+are shared across time steps. We set   and   to mimic three
+different biological models; for each, we varied ⇢ from 0.05
+to 0.95. The biological models were as follows: ‘PHMM’
+follows a temporal model for insect populations (Zonn-
+eveld, 1991) with   = (5.13, 23.26, 42.08, 30.09, 8.56)
+and   = 0.26; ‘PHMM-peaked’ is similar, but sets   =
+(0.04, 10.26, 74.93, 25.13, 4.14) so the immigration is tem-
+porally “peaked” at the middle time step; ‘NMix’ sets
+  = (80, 0, 0, 0, 0) and   = 0.4, which is similar to the
+N-mixture model (Royle, 2004), with no immigration fol-
+lowing the ﬁrst time step.
+
+Figure 2 shows the running time of all three methods versus
+⇢. In these models, E[Y ] is proportional to ⇢, and the run-
+ning times of GDUAL-FORWARD and PGF-FORWARD in-
+crease with ⇢ due to the corresponding increase in Y . PGF-
+FORWARD is faster by a factor of log Y , but is applicable
+to fewer models. GDUAL-FORWARD perfoms best relative
+to PGF-FORWARD for the NMix model, because it is fastest
+when counts occur in early time steps.
+
+Exact Inference for Integer Latent-Variable Models
+
+Figure 2. Runtime of GDUAL-FORWARD vs baselines. Left: PHMM. Center: PHMM-peaked. Right: NMix. See text for descriptions.
+
+Figure 3. Running time vs. Y . Top: ⇢ =
+0.15, bottom: ⇢ = 0.85.
+
+Figure 4. Estimates of R in different models. Titles indicate immigration and offspring
+distribution. 50 trials summarized as box plot for each model, parameter combination.
+
+time
+
+running
+
+that
+the
+max log Nmax).
+
+of
+For these models,
+
+Recall
+TRUNC
+is
+O(N 2
+the distribu-
+tion of the hidden population depends only on   and
+ , and these are the primary factors determining Nmax.
+Running time decreases slightly as ⇢ increases, because
+n; ⇢) exerts more inﬂuence
+the observation model p(y
+|
+restricting implausible settings of n when the detection
+probability is higher.
+
+Parameter Estimation. To demonstrate the ﬂexibility
+of the method, we used GDUAL-FORWARD within an op-
+timization routine to compute maximum likelihood esti-
+mates (MLEs) for models with different immigration and
+growth distributions.
+In each experiment, we generated
+10 independent observation vectors for K = 7 time steps
+from the same model p(y; ✓), and then used the L-BFGS-B
+algorithm to numerically ﬁnd ✓ to maximize the log-
+likelihood of the 10 replicates. We varied the distributional
+forms of the immigration and offspring distributions as well
+as the mean R := E[Xk] of the offspring distribution. We
+ﬁxed the mean immigration   := E[Mk] = 6 and the de-
+
+tection probability to ⇢ = 0.6 across all time steps. The
+quantity R is the “basic reproduction number”, or the aver-
+age number of offspring produced by a single individual,
+and is of paramount importance for disease and popula-
+tion models. We varied R, which was also shared across
+time steps, between 0.2 and 1.2. The parameters   and R
+were learned, and ⇢ was ﬁxed to resolve ambiguity between
+population size and detection probability. Each experiment
+was repeated 50 times; a very small number of optimizer
+runs failed to converge after 10 random restarts and were
+excluded.
+
+Figure 4 shows the distribution of 50 MLE estimates for
+R vs. the true values for each model. Results for two ad-
+ditional models appear in the supplementary material. In
+all cases the distribution of the estimate is centered around
+the true parameter. It is evident that GDUAL-FORWARD can
+be used effectively to produce parameter estimates across a
+variety of models for which exact likelihood computations
+were not previously possible.
+
+Exact Inference for Integer Latent-Variable Models
+
+Acknowledgments
+
+This material is based upon work supported by the National
+Science Foundation under Grant No. 1617533.
+
+References
+
+Carpenter, B., Gelman, A., Hoffman, M., Lee, D.,
+Goodrich, B., Betancourt, M., Brubaker, M. A., Guo,
+J., Li, P., and Riddell, A. Stan: A probabilistic program-
+ming language. Journal of Statistical Software, 20, 2016.
+
+Chandler, R. B., Royle, J. A., and King, D. I.
+
+Inference
+about density and temporary emigration in unmarked
+populations. Ecology, 92(7):1429–1435, 2011.
+
+Dail, D. and Madsen, L. Models for estimating abundance
+from repeated counts of an open metapopulation. Bio-
+metrics, 67(2):577–587, 2011.
+
+Eick, S. G., Massey, W. A., and Whitt, W. The physics of
+queue. Operations Research, 41(4):731–
+
+the Mt/G/
+742, 1993.
+
+1
+
+Farrington, C. P., Kanaan, M. N., and Gay, N. J. Branching
+process models for surveillance of infectious diseases
+controlled by mass vaccination. Biostatistics, 4(2):279–
+295, 2003.
+
+Fiske, I. J. and Chandler, R. B. unmarked: An R pack-
+age for ﬁtting hierarchical models of wildlife occurrence
+and abundance. Journal of Statistical Software, 43:1–23,
+2011.
+
+Griewank, A. and Walther, A. Evaluating derivatives:
+principles and techniques of algorithmic differentiation.
+SIAM, 2008.
+
+Gross, K., J., Kalendra E., Hudgens, B. R., and Haddad,
+N. M. Robustness and uncertainty in estimates of butter-
+ﬂy abundance from transect counts. Population Ecology,
+49(3):191–200, 2007.
+
+Heathcote, C. R. A branching process allowing immigra-
+tion. Journal of the Royal Statistical Society. Series B
+(Methodological), 27(1):138–143, 1965.
+
+Horner, W. G. A new method of solving numerical equa-
+tions of all orders, by continuous approximation. Philo-
+sophical Transactions of the Royal Society of London,
+109:308–335, 1819.
+
+Jensen, F. V., Lauritzen, S. L., and Olesen, K. G. Bayesian
+updating in causal probabilistic networks by local com-
+putations. Computational statistics quarterly, 1990.
+
+Kalaba, R. and Tesfatsion, L. Automatic differentiation of
+functions of derivatives. Computers & Mathematics with
+Applications, 12(11):1091–1103, 1986.
+
+Kingma, D. P. and Welling, M. Auto-encoding variational
+
+Bayes. 2014.
+
+Kvitkovicova, A. and Panaretos, V. M. Asymptotic infer-
+ence for partially observed branching processes. Ad-
+vances in Applied Probability, 43(4):1166–1190, 2011.
+ISSN 00018678.
+
+Lauritzen, S. L. and Spiegelhalter, D. J. Local computa-
+tions with probabilities on graphical structures and their
+application to expert systems. Journal of the Royal Sta-
+tistical Society. Series B (Methodological), pp. 157–224,
+1988.
+
+McKenzie, E. Ch. 16. Discrete variate time series.
+
+In
+Stochastic Processes: Modelling and Simulation, vol-
+ume 21 of Handbook of Statistics, pp. 573 – 606. El-
+sevier, 2003.
+
+Panaretos, V. M. Partially observed branching processes for
+stochastic epidemics. J. Math. Biol, 54:645–668, 2007.
+doi: 10.1007/s00285-006-0062-6.
+
+Pearl, J. Fusion, propagation, and structuring in belief net-
+works. Artiﬁcial intelligence, 29(3):241–288, 1986.
+
+Rabiner, L. A tutorial on hidden Markov models and se-
+lected applications in speech recognition. Proceedings
+of the IEEE, 77(2):257–286, feb 1989.
+
+Ranganath, R., Gerrish, S., and Blei, D. M. Black box vari-
+ational inference. In International Conference on Artiﬁ-
+cial Intelligence and Statistics (AISTATS), pp. 814–822,
+2014.
+
+Royle, J. A. N-Mixture models for estimating population
+size from spatially replicated counts. Biometrics, 60(1):
+108–115, 2004.
+
+Shenoy, P. P. and Shafer, G. Axioms for probability and
+belief-function propagation. In Uncertainty in Artiﬁcial
+Intelligence, 1990.
+
+Watson, H. W. and Galton, F. On the probability of the ex-
+tinction of families. The Journal of the Anthropological
+Institute of Great Britain and Ireland, 4:138–144, 1875.
+
+Wheeler, F. S. Bell polynomials. ACM SIGSAM Bulletin,
+
+21(3):44–53, 1987.
+
+Winner, K. and Sheldon, D. Probabilistic inference with
+generating functions for Poisson latent variable models.
+In Advances in Neural Information Processing Systems
+29, 2016.
+
+Winner, K., Bernstein, G., and Sheldon, D. Inference in a
+partially observed queueing model with applications in
+ecology. In Proceedings of the 32nd International Con-
+ference on Machine Learning (ICML), pp. 2512–2520,
+2015.
+
+Exact Inference for Integer Latent-Variable Models
+
+Zhang, N. L. and Poole, D. A simple approach to Bayesian
+network computations. In Proc. of the Tenth Canadian
+Conference on Artiﬁcial Intelligence, 1994.
+
+Zipkin, E. F., Thorson, J. T., See, K., Lynch, H. J., Grant,
+E. H. C., Kanno, Y., Chandler, R. B., Letcher, B. H., and
+Royle, J. A. Modeling structured population dynamics
+using data from unmarked individuals. Ecology, 95(1):
+22–29, 2014.
+
+Zonneveld, C. Estimating death rates from transect counts.
+
+Ecological Entomology, 16(1):115–121, 1991.
+
+

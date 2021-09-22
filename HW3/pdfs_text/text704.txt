@@ -1,0 +1,1717 @@
+Learning Sleep Stages from Radio Signals:
+A Conditional Adversarial Architecture
+
+Mingmin Zhao 1 Shichao Yue 1 Dina Katabi 1 Tommi S. Jaakkola 1 Matt T. Bianchi 2
+
+Abstract
+We focus on predicting sleep stages from radio
+measurements without any attached sensors on
+subjects. We introduce a new predictive model
+that combines convolutional and recurrent neu-
+ral networks to extract sleep-speciﬁc subject-
+invariant features from RF signals and capture
+the temporal progression of sleep. A key inno-
+vation underlying our approach is a modiﬁed ad-
+versarial training regime that discards extrane-
+ous information speciﬁc to individuals or mea-
+surement conditions, while retaining all infor-
+mation relevant to the predictive task. We an-
+alyze our game theoretic setup and empirically
+demonstrate that our model achieves signiﬁcant
+improvements over state-of-the-art solutions.
+
+1. Introduction
+
+Sleep plays a vital role in an individual’s health and well-
+being.
+Sleep progresses in cycles that involve multi-
+ple sleep stages: Awake, Light sleep, Deep sleep and
+REM (Rapid Eye Movement). Different stages are asso-
+ciated with different physiological functions. For exam-
+ple, deep sleep is essential for tissue growth, muscle repair,
+and memory consolidation, while REM helps procedural
+memory and emotional health. At least, 40 million Amer-
+icans each year suffer from chronic sleep disorders (Na-
+tional Institute of Health). Most sleep disorders can be
+managed once they are correctly diagnosed (National In-
+stitute of Health). Monitoring sleep stages is beneﬁcial
+for diagnosing sleep disorders, and tracking the response
+to treatment (Carskadon & Rechtschaffen, 2000).
+
+Prevailing approaches for monitoring sleep stages are in-
+convenient and intrusive. The medical gold standard re-
+lies on Polysomnography (PSG), which is typically con-
+
+1MIT CSAIL, Cambridge, MA, USA 2Massachusetts General
+Hospital, Boston, MA, USA. Correspondence to: Mingmin Zhao
+<mingmin@mit.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+ducted in a hospital or sleep lab, and requires the subject to
+wear a plethora of sensors, such as EEG-scalp electrodes,
+an ECG monitor, multiple chest bands, and nasal probes.
+As a result, patients can experience sleeping difﬁculties,
+which renders the measurements unrepresentative (Herbst,
+2010). Furthermore, the cost and discomfort of PSG limit
+the potential for long term sleep studies.
+
+Recent advances in wireless systems have demonstrated
+that radio technologies can capture physiological signals
+without body contact (Kaltiokallio et al., 2014; Adib et al.,
+2015; Zhao et al., 2016). These technologies transmit a
+low power radio signal (i.e., 1000 times lower power than
+a cell phone transmission) and analyze its reﬂections. They
+extract a person’s breathing and heart beats from the ra-
+dio frequency (RF) signal reﬂected off her body. Since the
+cardio-respiratory signals are correlated with sleep stages,
+in principle, one could hope to learn a subject’s sleep stages
+by analyzing the RF signal reﬂected off her body. Such a
+system would signiﬁcantly reduce the cost and discomfort
+of today’s sleep staging, and allow for long term sleep stage
+monitoring.
+
+There are multiple challenges in realizing the potential
+of RF measurements for sleep staging.
+In particular, we
+must learn RF signal features that capture the sleep stages
+and their temporal progression, and the features should be
+transferable to new subjects and different environments.
+The problem is that RF signals carry much information that
+is irrelevant to sleep staging, and are highly dependent on
+the individuals and the measurement conditions. Speciﬁ-
+cally, they reﬂect off all objects in the environment includ-
+ing walls and furniture, and are affected by the subject’s po-
+sition and distance from the radio device. These challenges
+were not addressed in past work which used hand-crafted
+signal features to train a classiﬁer (Zaffaroni et al., 2014;
+Tataraidze et al., 2016b). The accuracy was relatively low
+64%) and the model did not generalize beyond the envi-
+(
+∼
+ronment where the measurements were collected.
+
+This paper presents a new model that delivers a signif-
+icantly higher accuracy and generalizes well to new en-
+vironments and subjects. The model adapts a convolu-
+tional neural network (CNN) to extract stage-speciﬁc fea-
+tures from RF spectrograms, and couples it with a recurrent
+
+Learning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+neural network (RNN) to capture the temporal dynamics of
+sleep stages.
+
+However, a CNN-RNN combination alone would remain li-
+able to distracting features pertaining to speciﬁc individuals
+or measurement conditions (i.e., the source domains), and
+hence would not generalize well. To address this issue, we
+introduce a new adversarial training regime that discards
+extraneous information speciﬁc to individuals or measure-
+ment conditions, while retaining all information relevant to
+the predictive task –i.e., the adversary ensures conditional
+independence between the learned representation and the
+source domains.
+
+Our training regime involves 3 players: the feature encoder
+(CNN-RNN), the sleep stage predictor, and the source dis-
+criminator. The encoder plays a cooperative game with
+the predictor to predict sleep stages, and a minimax game
+against the source discriminator. Our source discriminator
+deviates from the standard domain-adversarial discrimina-
+tor in that it takes as input also the predicted distribution
+of sleep stages in addition to the encoded features. This
+dependence facilitates accounting for inherent correlations
+between stages and individuals, which cannot be removed
+without degrading the performance of the predictive task.
+
+We analyze this game and demonstrate that at equilibrium,
+the encoded features discard all extraneous information that
+is speciﬁc to the individuals or measurement conditions,
+while preserving all information relevant to predicting the
+sleep stages. We also evaluate our model on a dataset of
+RF measurements and corresponding sleep stages1. Exper-
+imental results show that our model signiﬁcantly improves
+the prediction accuracy of sleep stages. In particular, our
+model has a prediction accuracy of 79.8% and a Cohen’s
+Kappa of 0.70, whereas the best prior result for predicting
+sleep stages from RF signals (Tataraidze et al., 2016b) has
+an accuracy of 64% and a Cohen’s Kappa of 0.49.
+
+2. Related Work
+
+(a) Sleep Staging: The gold standard in sleep staging is
+based on Polysomnography (PSG) conducted overnight in
+a hospital or sleep lab. The subject has to sleep while wear-
+ing multiple sensors including an EEG monitor, an EMG
+monitor, an EOG monitor, nasal probes, etc. A sleep tech-
+nologist visually inspects the output of the sensors and as-
+signs to each 30-second window a stage label (Rechtschaf-
+fen & Kales, 1968).
+
+A few past proposals have tried to automate the process
+and reduce the number of sensors. These solutions can
+be classiﬁed into four categories according to their source
+
+1Dataset is available at:
+
+http://sleep.csail.mit.edu/
+
+Table 1. Automated Sleep Staging Systems
+
+Signal Source
+EEG
+Cardiorespiratory
+Actigraphy
+State-of-the-art
+Ours
+
+RF
+
+Accuracy (acc/κ)1
+High (83%/0.76)2
+Medium (71%/0.56) Medium
+
+Comfort
+Low
+
+Low (65%/-)3
+Low (64%/0.49)
+High (79.8%/0.70)
+
+High
+High
+High
+
+1 Four-class subject-independent classiﬁcation accuracy on
+every 30-second segment.
+2 Some studies achieve accuracy over 90% (da Silveira et al.,
+2016) but they discard artifacts and use segments from the
+same night to train and test.
+3 Three-class classiﬁcation based on 5-minute segment.
+
+signal: EEG-based, Cardiorespiratory-based, Actigraphy-
+based, or RF-based. Table 1 summarizes the state of the
+art performance in each category. The table shows both
+the classiﬁcation accuracy and the Cohen’s Kappa coef-
+ﬁcient, κ. The most accurate methods rely on EEG sig-
+nals (Ebrahimi et al., 2008; Fraiwan et al., 2012; Popovic
+et al., 2014; Shambroom et al., 2012). However, EEG mon-
+itors are also the most intrusive because they require the
+subject to sleep with a skullcap or a head-band equipped
+with multiple electrodes, which is uncomfortable and can
+cause headaches and skin irritation.The second category re-
+quires the subject to wear a chest-band and analyzes the re-
+sulting cardiorespiratory signals.
+It is more comfortable
+than the prior method but also less accurate (Tataraidze
+et al., 2016a; Long et al., 2014). The third approach is
+based on actigraphy; it leverages accelerometers in FitBit
+or smart phones (Hao et al., 2013; Gu et al., 2014) to moni-
+tor body movements and infer sleep quality. Yet, motion is
+known to be a poor metric for measuring sleep stages and
+quality (Pollak et al., 2001). The last approach relies on
+RF signals reﬂected off the subject body during her sleep.
+It allows the subject to sleep comfortably without any on-
+body sensors. Yet past approaches in this category have the
+worst performance in comparison to other solutions.
+
+This paper builds on the above literature but delivers sig-
+niﬁcant new contributions. In comparison to methods that
+use sources other than RF signals, the paper enables accu-
+rate monitoring of sleep stages while allowing the subject
+to sleep comfortably in her own bed without sensors on her
+body. Furthermore, due to differences between RF signals
+and other signal sources, our model has to eliminate extra-
+neous information that are speciﬁc to the environment and
+irrelevant to sleep stage classiﬁcation.
+In comparison to
+past work on learning sleep stages from RF signals (Rah-
+man et al., 2015; Tataraidze et al., 2016b; Liu et al., 2014),
+our approach signiﬁcantly improves the prediction accu-
+racy as shown in Table 1. This improvement is due to in-
+trinsic differences between past models and the model in
+this paper, which avoids hand-crafted features, and learns
+
+Learning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+features that capture the temporal dependencies and trans-
+fer well to new subjects and different environments.
+
+(b) Representation Learning: We build on a rich body of
+literature on CNNs and RNNs which have been success-
+fully used to model spatial patterns (Szegedy et al., 2015;
+He et al., 2016) and temporal dynamics (Sutskever et al.,
+2014), including combinations of the two (Pigou et al.,
+2015). Our CNN differs slightly in terms of convolutions
+that are adapted to our domain while, architecturally, our
+RNN is a standard variety LSTM.
+
+Our work also contributes to learning invariant represen-
+tations in deep adversarial networks. Adversarial net-
+works were introduced to effectively train complex gener-
+ative models of images (Goodfellow et al., 2014; Radford
+et al., 2015; Chen et al., 2016) where the adversary (dis-
+criminator) was introduced so as to match generated sam-
+ples with observed ones. The broader approach has since
+been adopted as the training paradigm across a number of
+other tasks as well, from learning representations for semi-
+supervised learning (Makhzani et al., 2015), and model-
+ing dynamic evolution (Vondrick et al., 2016; Purushotham
+et al., 2017) to inverse maps for inference (Donahue et al.,
+2017; Dumoulin et al., 2017), and many others. Substan-
+tial work has also gone into improving the stability of ad-
+versarial training (Metz et al., 2016; Arjovsky et al., 2017;
+Arjovsky & Bottou, 2017).
+
+On a technical level, our work is most related to adversar-
+ial architectures for domain adaptation (Ganin & Lempit-
+sky, 2015; Ganin et al., 2016; Tzeng et al., 2015; 2016).
+Yet, there are key differences between our approach and
+the above references, beyond the main application of sleep
+staging that we introduce. First, our goal is to remove
+conditional dependencies rather than making the represen-
+tation domain independent. Thus, unlike the above ref-
+erences which do not involve conditioning in the adver-
+sary, our adversary takes the representation but is also con-
+ditioned on the predicted label distribution. Second, our
+game theoretic setup controls the information ﬂow differ-
+ently, ensuring that only the representation encoder is mod-
+iﬁed based on the adversary performance. Speciﬁcally, the
+predicted distribution over stages is strategically decoupled
+from the adversary (conditioning is uni-directional). Third,
+we show that this new conditioning guarantees an equi-
+librium solution that fully preserves the ability to predict
+sleep staging while removing, conditionally, extraneous in-
+formation speciﬁc to the individuals or measurement con-
+ditions. Guarantees of this kind are particularly important
+for healthcare data where the measurements are noisy with
+a variety of dependencies that need to be controlled.
+
+Finally, our work is naturally also related to other
+non-adversarial literature on multi-source domain adapta-
+tion (Crammer et al., 2008; Long et al., 2015), and work on
+
+(a) Model (Ideal Game)
+
+(b) Extended Game
+
+Figure 1. Model and Extended Game. Dotted arrow indicates that
+the information does not propagate back on this link.
+
+metrics for measuring distance between distributions (Ben-
+David et al., 2010; Fernando et al., 2013).
+
+3. Model
+
+∈
+
+Ωx be an input sample, and y
+
+Let x
+1, 2, ..., ny}
+an output label. Let s
+denote an auxiliary
+label that refers to the source of a speciﬁc input sample. We
+deﬁne x = [x1, x2..., xt]
+Ωx as the sequence of input
+samples from the beginning of time until the current time t.
+
+1, 2, ..., ns}
+
+∈ {
+
+∈ {
+
+∈
+
+In the context of our application, the above notation trans-
+lates into the following: The input sample x is a 30-second
+RF spectrogram, and the output label y is a sleep stage
+that takes one of four values: Awake, Light Sleep, Deep
+Sleep, or REM. The vector x refers to the sequence of RF
+spectrograms from the beginning of the night until the cur-
+rent time. Since RF signals carry information about the
+subject and the measurement environment, we assign each
+input x an auxiliary label s which identiﬁes the subject-
+environment pair, hereafter referred to as the source.
+
+Our goal is to learn a latent representation (i.e., an encoder)
+that can be used to predict label y; yet, we want this repre-
+sentation to generalize well to predict sleep stages for new
+subjects without having labeled data from them. Simply
+making the representation invariant to the source domains
+could hamper the accuracy of the predictive task. Instead
+we would like to remove conditional dependencies between
+the representation and the source domains.
+
+that
+We introduce a multi-domain adversarial model
+achieves the above goal. Our model is shown in Fig. 1(a).
+It has three components: An encoder E, a label predictor
+F , and a source discriminator D. Our model is set up as a
+game, where the representation encoder plays a cooperative
+game with the label predictor to allow it to predict the cor-
+rect labels using the encoded representation. The encoder
+also plays a minimax game against the source discrimina-
+
+xEE(x)FDQF(y)QD(s)Py(·|x)xEE(x)FDQF(y)QD(s)Learning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+tor to prevent it from decoding the source label from the
+encoded representation.
+
+A key characteristic of our model is the conditioning of
+the source discriminator on the label distribution, Py(
+x)
+(see Fig. 1(a)). This conditioning of the adversary allows
+the learned representation to correlate with the domains,
+but only via the label distribution –i.e., removes conditional
+dependencies between the representation and the sources.
+
+·|
+
+loss of the source discriminator D as the cross-entropy be-
+tween Ps(
+E(x), Py(
+
+x)):
+
+·|
+
+x) and QD(
+Ld(D; E) = Ex,s[
+
+−
+
+·|
+
+·|
+E(x), Py(
+log QD(s
+|
+
+·|
+
+x))]
+
+(2)
+
+During training, encoder E and discriminator D play a
+minimax game: while D is trained to minimize the source
+prediction loss, encoder E is trained to maximize it in order
+to achieve the above invariance.
+
+The rest of this section is organized as follows. We ﬁrst
+formally deﬁne three players E, F , and D and the repre-
+sentation invariance they are trained to achieve. In Sec. 3.1,
+we analyze the game and prove that at equilibrium the en-
+coder discards all extraneous information about the source
+that is not beneﬁcial for label prediction (i.e., predicting y).
+Training the ideal model in Fig. 1(a) is challenging because
+it requires access to the label distribution Py(
+x). To drive
+an efﬁcient training algorithm, we deﬁne in Sec. 3.2 an ex-
+tended game where the source discriminator uses the output
+of the label predictor as an approximation of the posterior
+probabilities, as shown in Fig. 1(b). We prove that the equi-
+libriums of the original game are also equilibriums in the
+extended one.
+
+·|
+
+Encoder E: An encoder E(
+Ωz is a func-
+tion that takes a sequence of input samples x, and returns a
+vector summary of x as z = E(x).
+
+) : Ωx
+·
+
+→
+
+Label Predictor F : A label predictor F (
+→
+·
+[0, 1]ny takes a latent representation E(x) as input and pre-
+dicts the probability of each label y associated with input
+E(x)). The goal of an ideal predictor F is to
+x as QF (y
+E(x)).
+approximate Py(
+
+x) with QF (
+
+) : Ωz
+
+|
+
+·|
+
+·|
+
+·|
+
+x) and QF (
+
+The loss of the label predictor, F , given the encoder E, is
+deﬁned as the cross-entropy between the label distribution
+Py(
+
+·|
+Lf (F ; E) = Ex,y[
+−
+During training, the encoder E and predictor F play a co-
+operative game to minimize the label prediction loss.
+
+E(x))]
+|
+
+log QF (y
+
+E(x)):
+
+(1)
+
+) : Ωz
+
+Source Discriminator D: We deﬁne a source dis-
+criminator as D(
+It
+,
+·
+takes the latent representation E(x) and the label distri-
+bution Py(
+x) as inputs, and predicts which source do-
+main (i.e., subject and environment) they are sampled from
+as QD(
+
+E(x), Py(
+
+[0, 1]ns .
+
+[0, 1]ny
+
+x)).
+
+→
+
+×
+
+·|
+
+·
+
+·|
+
+·|
+
+Next, we deﬁne the desired representation invariance.
+Deﬁnition 1 (Representation invariance). We say that rep-
+resentation E is invariant if E(x) contains no information
+about s beyond what is already contained in Py(
+x); that
+·|
+x)) for the optimal
+is, QD(
+D.
+
+x)) = QD(
+
+E(x), Py(
+
+Py(
+
+·|
+
+·|
+
+·|
+
+·|
+
+To measure the invariance of an encoder E, we deﬁne the
+
+3.1. Ideal Game
+
+During training, encoder E plays a co-operative game with
+predictor F , and a minimax game with discriminator D.
+We deﬁne a value function of E, F and D with λ > 0:
+
+V
+
+(E, F, D) =
+
+Lf (F ; E)
+The training procedure can be viewed as a three-player
+minimax game of E, F and D:
+
+· Ld(D; E)
+
+−
+
+λ
+
+(3)
+
+min
+E
+
+min
+F
+
+max
+
+D V
+
+(E, F, D) = min
+E,F
+
+max
+
+D V
+
+(E, F, D)
+
+(4)
+
+Proposition 2 (Optimal predictor). Given encoder E,
+
+Lf (E) (cid:44) min
+) is entropy.
+·
+
+where H(
+
+F Lf (F ; E)
+
+≥
+
+H(y
+
+E(x)),
+|
+
+(5)
+
+The optimal predictor F ∗ that achieves equality is:
+
+QF ∗ (y
+
+E(x)) = p(y
+
+E(x))
+
+|
+
+|
+
+(6)
+
+Proof.
+
+E(x))]
+
+|
+
+log QF (y
+
+E(x))]
+
+|
+
+−
+
+log QF (y
+
+Lf (F ; E)
+= Ex,y[
+−
+= E
+E(x),y[
+= Ez∼P (E(x)) E
+= Ez∼P (E(x))[H(y
+Ez∼P (E(x))[H(y
+E(x))
+|
+
+≥
+=H(y
+
+y∼P (y|z)[
+
+log QF (y
+|
+z)
+|
+
+−
+z) + DKL(P (y
+|
+z)]
+|
+
+z)]
+
+(cid:107)
+
+QF (y
+
+z))]
+
+|
+
+The
+DKL(P (y
+ery x
+for almost every y and x
+
+equality
+QF (y
+E(x))
+|
+Supp(Px). That is QF ∗ (y
+
+when
+E(x))) = 0 for almost ev-
+E(x))
+
+E(x)) = p(y
+
+Supp(Px).
+
+holds
+
+∈
+
+(cid:107)
+
+|
+
+|
+
+|
+
+∈
+
+Similarly we can prove the following Proposition.
+
+Proposition 3 (Optimal discriminator). Given encoder E,
+
+Ld(E) (cid:44) min
+
+D Ld(D; E)
+
+≥
+The optimal discriminator D∗ that achieves this value is:
+
+·|
+
+E(x), Py(
+H(s
+|
+
+x))
+
+(7)
+
+E(x), Py(
+QD∗ (s
+|
+
+·|
+
+E(x), Py(
+x)) = P (s
+|
+
+·|
+
+x))
+
+(8)
+
+Learning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+Corollary 3.1. H(s) is an upper bound of the loss of the
+optimal discriminator D∗ for any encoder E.
+
+Next, we state the virtual training criterion of the encoder.
+
+Proposition 4. If predictor F and discriminator D have
+enough capacity and are trained to achieve their optimal
+losses, the minimax game (4) can be rewritten as the fol-
+lowing training procedure of encoder E:
+
+[H(y
+
+E(x))
+
+min
+E
+
+|
+
+λ
+
+H(s
+|
+
+·
+
+−
+
+E(x), Py(
+
+x))]
+
+(9)
+
+·|
+
+Proof. Based on the losses of the optimal predictor F ∗ and
+the optimal discriminator D∗ in Proposition 2 and Proposi-
+tion 3, the minimax game (4) can be rewritten as (9). Thus,
+encoder E is trained to minimize a virtual training criterion
+E(x), Py(
+H(s
+C(E) = H(y
+|
+
+E(x))
+
+x)).
+
+−
+
+λ
+
+·|
+
+·
+
+|
+
+Next, we describe the optimal encoder.
+
+Theorem 5 (Optimal encoder). If encoder E, predictor F
+and discriminator D have enough capacity and are trained
+to reach optimum, any global optimal encoder E∗ has the
+following properties:
+
+E∗(x), Py(
+H(s
+·|
+|
+
+H(y
+
+E∗(x)) = H(y
+
+|
+x)) = H(s
+|
+
+Py(
+
+·|
+
+x)
+|
+x))
+
+(10a)
+(10b)
+
+Proof. Since E(x) is a function of x:
+
+·|
+
+≤
+
+x)
+
+(11a)
+
+|
+x))
+
+H(y
+E(x))
+Lf (E) = H(y
+≥
+|
+Py(
+H(s
+x))
+E(x), Py(
+Ld(E) = H(s
+|
+·|
+|
+Hence, C(E) = H(y
+E(x), Py(
+H(s
+E(x))
+≥
+|
+|
+x)). The equality holds if and only
+H(y
+Py(
+λ
+if both (10a) and (10b) are satisﬁed. Therefore, we only
+need to prove that the optimal value of C(E) is equal to
+x)) in order to prove that any global
+H(y
+Py(
+·|
+encoder E∗ satisﬁes both (10a) and (10b).
+
+H(s
+|
+
+H(s
+|
+
+(11b)
+
+x))
+
+x)
+
+x)
+
+−
+
+−
+
+−
+
+λ
+
+λ
+
+·|
+
+·|
+
+·
+
+|
+
+·
+
+·
+
+|
+
+We show that C(E) can achieve H(y
+x))
+by considering the following encoder E0: E0(x) =
+Py(
+x)
+|
+·|
+and H(s
+|
+
+x). It can be examined that H(y
+Py(
+x)) = H(s
+|
+
+E0(x)) = H(y
+|
+x)).
+·|
+
+E0(x), Py(
+
+H(s
+|
+
+x)
+|
+
+Py(
+
+−
+
+λ
+
+·|
+
+·|
+
+·
+
+Adversarial training of D can be viewed as a regularizer,
+which leads to a common representation space for multi-
+ple source domains. From Theorem 5, the optimal encoder
+E∗(x)) =
+E∗ using adversarial training satisﬁes H(y
+|
+x), which is the maximal discriminative capability
+H(y
+|
+that any encoder E can achieve. Thus, we have the fol-
+lowing corollary.
+
+Corollary 5.1. Adversarial training of the discriminator
+does not reduce the discriminative capability of the repre-
+sentation.
+
+Remark 5.1. During the proof of Theorem 5, we construct
+an encoder E0(x) = Py(
+x) that can achieve the opti-
+·|
+mal value of C(E). However, we argue that training will
+not converge to this trivial encoder in practice. This is be-
+cause Py(
+x) is a mapping from the full signal history to
+·|
+the distribution over stages at the current step, therefore it-
+self highly complex. Since we use the RNN state as the en-
+coding E(x), and it feeds into the LSTM gates, distribution
+over stages at previous step does not represent a sufﬁcient
+summary of the history until the current one. Therefore,
+E(x) must be able to anticipate the temporal evolution
+of the signal and contain a more effective summary than
+Py(
+Corollary 5.2. If encoder E and predictor F have enough
+capacity and are trained to reach optimum, the output of F
+is equal to Py(
+·|
+
+x) would be.
+
+x).
+
+·|
+
+Proof. When predictor F is optimal (Proposition 2),
+E(x)). When E is optimal (The-
+QF (y
+E(x)) = p(y
+|
+|
+orem 5), H(y
+x), that is p(y
+E(x)) =
+|
+|
+E(x)) = p(y
+p(y
+|
+
+E(x)) = H(y
+|
+x). Therefore, QF (y
+|
+
+x).
+|
+
+3.2. Extended Game
+
+·|
+
+In practice, estimating the posterior label distribution
+x) from labeled data is a non-trivial task. Fortunately
+Py(
+however our predictor F and encoder E are playing a coop-
+erative game to approximate this posterior label distribution
+E(x)),
+Py(
+·|
+the output of predictor F , as a proxy of Py(
+x) and feed it
+as input to discriminator D (Fig. 1(b)).
+
+E(x)). Therefore, we use QF (
+
+x) with QF (
+
+·|
+
+·|
+
+·|
+
+An extended three-player game arises: while encoder E
+still plays a cooperative game with predictor F and a mini-
+max game with discriminator D, discriminator D depends
+strategically on predictor F but not vice versa. The dotted
+line in Fig. 1(b) illustrates this dependency.
+
+relationship
+
+The
+between
+game (Sec. 3.1) and the extended one is stated below.
+
+ideal minimax
+
+the
+
+Proposition 6. If encoder E, predictor F and discrimina-
+tor D have enough capacity, the solution that encompasses
+the optimal encoder, E∗, predictor, F ∗ and discriminator,
+D∗, in the ideal minimax game is also an equilibrium solu-
+tion of the extended game.
+
+Proof. By Corollary 5.2, when encoder E and predictor F
+x). Thus, the
+are optimal, QF (
+extended game becomes equivalent to the ideal game, and
+E∗, F ∗ and D∗ is an equilibrium solution of both games.
+
+E(x)) is equal to Py(
+
+·|
+
+·|
+
+Learning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+Algorithm 1 Encoder, predictor and discriminator training
+(xi, yi, si)
+
+M
+i=1, learning rate η.
+}
+
+Input: Labeled data
+{
+Compute stop criterion for inner loop: δd ←
+for number of training iterations do
+Sample a mini-batch of training data
+
+H(s)
+
+m
+(xi, yi, si)
+i=1
+}
+{
+i
+log QF (yi|
+E(xi))
+f ← −
+L
+E(xi)) (cid:73) stop gradient along this link
+QF (
+·|
+Li
+d ← − log QD(si|E(xi), wi)
+
+wi ←
+
+V i = Li
+
+f − λ · Li
+d
+
+1
+m
+
+1
+m
+
+ηe∇θe
+ηf ∇θf
+
+θe −
+θf −
+
+Update predictor F :
+
+Update encoder E:
+θe ←
+θf ←
+Update discriminator D:
+θd ←
+i
+i=1 L
+d ≤
+
+until 1
+m
+
+repeat
+
+(cid:80)m
+
+θd + ηd∇θd
+δd
+
+(cid:80)m
+
+i=1 V
+
+(cid:80)m
+
+i
+
+i
+
+i=1 V
+
+1
+m
+
+(cid:80)m
+
+i
+
+i=1 V
+
+end for
+
+3.3. Training Algorithm
+
+We implement the extended three-player game with itera-
+tive updates of the players (Algorithm 1). Note that, since
+the output of the label predictor is a proxy of the underly-
+ing posterior, and since the source discriminator depends
+strategically on the predictor but not vice versa, the gradi-
+ent does not back-propagate from the discriminator to the
+predictor (i.e., the dotted link in Fig. 1(b)).
+
+The number of training steps in the inner loop usually needs
+to be carefully chosen (Goodfellow et al., 2014). A large
+number of steps is computationally inefﬁcient but a small
+one will cause the model to collapse. This is because the
+outer players, E and F , can be over-trained against a non-
+optimal inner player D, and they will try to maximize
+Ld
+at the cost of increasing
+Lf . To prevent the model col-
+lapse phenomenon, we use an adaptive number of training
+steps in the inner loop and adjust it dynamically based on
+Ld (Algorithm 1). The idea is to use the upper bound in
+Corollary 3.1 as the stopping criterion for the inner loop.
+
+3.4. Discussion of the Model Beneﬁts
+
+While we described our model in the context of sleep stag-
+ing, we believe the model can be applied more broadly. Our
+model is characterized by the 3-way game and the adver-
+sarial conditioning on the label distribution. This combina-
+tion yields the following beneﬁts: 1) It guarantees an equi-
+librium solution that fully preserves the ability to perform
+the predictive task while removing any distracting informa-
+tion speciﬁc to the source domains. Guarantees of this kind
+are particularly important in healthcare where the measure-
+ments are noisy and have a variety of dependencies that
+need to be controlled. 2) It allows to properly leverage the
+
+adversarial feedback even when the target labels are un-
+certain. For example, in the sleep staging problem, each
+30-second window is given one label. Yet, many such win-
+dows include transitions between sleep stages, e.g., a tran-
+sition from light to deep sleep. These transitions are grad-
+ual and hence the transition windows can be intrinsically
+different from both light and deep sleep. It would be desir-
+able to have the learned representation capture the concept
+of transition and make it invariant to the source (see the
+results in Sec. 4.5). 3) It allows the conditioning to remain
+available for additional guiding of representations based on
+unlabeled data. The model can incorporate unlabeled data
+for either semi-supervised learning or transductive learning
+within a uniﬁed framework.
+
+In this section, we empirically evaluate our model.
+
+4. Experiments
+
+4.1. RF-Sleep Dataset
+
+RF-Sleep is a dataset of RF measurements during sleep
+with corresponding sleep stage labels. All studies that in-
+volve human subjects were approved by our IRB.
+
+Study setup: The sleep studies are done in the bedroom
+of each subject. We install a radio device in the bedroom.
+It transmits RF signals and measure their reﬂections while
+the subject is sleeping alone in the bed.
+
+Ground truth: During the study, each subject sleeps
+with an FDA-approved EEG-based sleep monitor (Popovic
+et al., 2014), which collects 3-channel frontal EEG. The
+monitor labels every 30-second of sleep with the subject’s
+sleep stage. This system has human-level comparable ac-
+curacy (Popovic et al., 2014), and has already been used in
+several sleep studies(Lucey et al., 2016; Shah et al., 2016).
+
+Size of dataset: The dataset collects 100 nights of sleep
+from 25 young healthy subjects (40% females). It contains
+over 90k 30-second epochs of RF measurements and their
+corresponding sleep stages provided by the EEG-based
+sleep monitor. Each epochs has one of four labels Awake,
+REM, Light Sleep (N1 or N2) and Deep Sleep (N3).
+
+4.2. Parameterization
+
+We parameterize encoder E, predictor F and discrimina-
+tor D as neural networks. Encoder E is parameterized by
+a hybrid CNN-RNN model. We adapt a residual networks
+architecture (He et al., 2016) with 24 convolutional layers
+to extract features from each 30-second RF spectrogram,
+and an RNN with LSTM cell (Hochreiter & Schmidhuber,
+1997) that takes sequences of CNN features as input. Both
+predictor F and discriminator D are parameterized by net-
+works with two fully-connected layers.
+
+Learning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+Table 2. Sleep Stage Classiﬁcation Accuracy and Kappa
+
+Approach
+Tataraidze et al. (2016b)
+Zaffaroni et al. (2014)
+Ours
+
+Accuracy
+0.635
+0.641
+0.798
+
+κ
+0.49
+0.45
+0.70
+
+(a) Average Accuracy (80.4%)
+
+(b) Best Accuracy (91.2%)
+
+(a) Confusion Matrix
+
+(b) Accuracy on each subject
+
+Figure 2. 2(a) shows that our model can distinguish deep and light
+sleep with high accuracy. And 2(b) illustrates that our model
+works well for different subjects and environments.
+
+4.3. Classiﬁcation Results
+
+We evaluate the model on every subject while training on
+the data collected from the other subjects (i.e., the model
+is never trained on data from the test subject). The train-
+ing data is randomly split into a training set and validation
+set (75%/25%).
+
+We use two metrics commonly used in automated sleep
+staging, namely Accuracy and Cohen’s Kappa. While ac-
+curacy measures the percent agreement with ground truth,
+Cohen’s Kappa coefﬁcient κ (Cohen, 1960) takes into ac-
+count the possibility of the agreement occurring by chance
+and is usually a more robust metric. κ > 0.4, κ > 0.6,
+κ > 0.8 are considered to be moderate, substantial and al-
+most perfect agreement (Landis & Koch, 1977).
+
+Table 2 shows the accuracy and Cohen’s Kappa of our
+model compared to the state-of-the-art in classifying sleep
+stages using RF reﬂections. Since neither the dataset nor
+the code used in past papers is publicly available, we com-
+pare with their published results. We note however that
+the Cohen’s Kappa provides some normalization since it
+accounts for the underlying uncertainty in the data. The ta-
+ble shows that our model has an accuracy of 79.8% and a
+κ = 0.70, which signiﬁcantly outperforms past solutions.
+
+Fig. 2(a) shows the confusion matrix of our model.
+Fig. 2(b) also shows the accuracy on each subject. It has
+a standard deviation of 2.9%, suggesting that our model is
+capable of adapting to different subjects and environments.
+
+Finally, we show in Fig. 3 the full-night predictions along
+with the ground truth for the average, best, and worst clas-
+siﬁcation accuracy.
+
+(c) Worst Accuracy (71.2%)
+
+Figure 3. Three examples of full night predictions corresponding
+to the average, best and worst classiﬁcation accuracy.
+
+Figure 4. Visualizations of the CNN and RNN responses. CNN
+can separate Wake REM and from the other stages, yet Deep and
+Light Sleep can only be distinguished by RNN.
+
+4.4. Understanding the Role of CNN & RNN
+
+We analyze the role of CNN and RNN in predicting sleep
+stages. To do so, we use t-SNE embedding (Maaten & Hin-
+ton, 2008) to visualize the response of our network after
+CNN and RNN, respectively. Fig. 4 shows the visualiza-
+tion results from one of the subjects. Data points are ran-
+domly sub-sampled for better viewing. The result shows
+that the CNN succeeds at separating the Wake, REM from
+Light and Deep Sleep. However it fails at separate Light
+Sleep and Deep Sleep from each other. In contrast, Light
+Sleep and Deep Sleep form different clusters in the RNN
+response. These results demonstrate the role of CNN and
+RNN in our model: CNN learns stage-speciﬁc features
+that can distinguish Wake, REM and from Deep and Light
+Sleep. RNN captures the dynamics of those features to fur-
+
+.63.12.24.01.03.82.150.04.07.83.06.010.24.75DeepLightREMAwakeAwakeREMLightDeepPredicted stageActual stage0.00.20.40.60.81.015913172125SubjectAccuracyPredictionGround Truth01234567WakeREMLightDeepWakeREMLightDeepTime since light off(h)PredictionGround Truth01234567WakeREMLightDeepWakeREMLightDeepTime since light off(h)PredictionGround Truth0123456WakeREMLightDeepWakeREMLightDeepTime since light off(h)llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllCNN ResponseRNN ResponselAwake  REM  Light  DeepLearning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+Figure 5. Baseline model and ours are evaluated on same dataset.
+A higher source loss indicates the removal of source speciﬁc in-
+formation, and a lower test loss shows that the proposed setup can
+better avoid overﬁtting.
+
+Figure 7. Visualization of ﬁne-grained alignment on test data. Our
+model, which conditions the adversary on the posterior distribu-
+tion, not only aligns deep and light stages, but also aligns the tran-
+sition periods, which are not directly speciﬁed by the labels.
+
+Figure 6. Visualization of learned latent representations from two
+sources. Data-points are separated when no adversary, yet they
+are well aligned by proposed setup.
+
+ther determine whether the sleep is light or deep. Note that
+Light and Deep Sleep are more similar to each other and
+are typically referred to as NREM, i.e., non-REM.
+
+We have trained a similar model without the RNN layer on
+top of CNN. In this case, the overall accuracy decreases
+by 12.8%, speciﬁcally the precision light and deep sleep
+decreases by 23.5%. This suggests that there are stage-
+speciﬁc information embedded in the temporal dynamics
+of the RF measurements, and therefore can only be cap-
+tured and exploited with RNN. Moreover, these temporal
+dynamics are particularly crucial for distinguishing light
+and deep sleep.
+Indeed, there are known temporal pat-
+terns that govern the progression of light and deep sleep
+through the night (Carskadon et al., 2005). For example,
+the probability of being in deep sleep decreases as sleep
+progresses. Also, people usually need to go through light
+sleep before they can get into deep sleep. These tempo-
+ral dynamics of sleep stages can be captured by RNN and
+might be exploited to distinguish light and deep sleep.
+
+we train a (non-adversarial) discriminator to determine the
+source of features. Fig. 5 shows that the loss of the source
+discriminator in the baseline model decreases very quickly
+while ours stays high (upper bounded by H(s) = 2.81 in
+this case), suggesting that our learned representation is in-
+variant across sources. The ﬁgure also shows that adding
+an adversarial discriminator increases the performance on
+the test set and can be helpful in reducing over-ﬁtting.
+
+To check that our adversarial model has learned transfer-
+able features, we visualize the learned features E(x) on the
+test data for both models. Color-coding the sources, Fig. 6
+shows that our learned features have almost the same distri-
+bution on different sources, while the baseline model learns
+features that are separable.
+
+Next, we illustrate the beneﬁts of conditioning on the pos-
+terior distribution, and that it can recover underlying con-
+cepts not speciﬁed in the labels. We consider the learned
+features for transition periods between light and deep sleep,
+which might be a class that is different from both light and
+deep sleep. We deﬁne transition periods as epochs that have
+both light and deep sleep as neighbors. We visualize it with
+a different color. Color-coding stages and shape-coding
+sources, Fig. 7 shows the learned features from transition
+periods are segregated, as those from light sleep and deep
+sleep. This indicates that our learned features have recov-
+ered the concept of a transition period, which is helpful in
+understanding and predicting sleep stages.
+
+5. Conclusion
+
+4.5. Role of Our Adversarial Discriminator
+
+We evaluate the role of our adversarial discriminator in
+learning transferable features for predicting sleep stages.
+We ﬁrst look at the losses on the validation set as train-
+ing progresses to check whether the extraneous informa-
+tion speciﬁc to the individuals and environments can be re-
+moved. As a baseline, we compare with a version of our
+model without the source discriminator. For this baseline,
+
+This paper introduce a new predictive model that learns
+sleep stages from RF signals and achieves a signiﬁcant
+improvement over the state-of-the-art. We believe this
+work marks an important step in sleep monitoring. We
+also believe that the proposed adversarial setup, which ex-
+tracts task-speciﬁc domain-invariant features, is applica-
+ble to other predictive tasks, particularly in health sensing
+where variations across subjects and measurement condi-
+tions could be a major challenge.
+
+Source LossTest Loss020004000600002000400060000.81.01.21.412w/o Adversary      w/ Adversarylllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllw/o Adversaryw/ AdversarylSource1      Source2 llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllw/o Adversaryw/ AdversarylSource1  Source2 lllDeepLightTransitionLearning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+Acknowledgments
+
+The authors thank the anonymous reviewers for their help-
+ful comments in revising the paper. We are grateful to the
+members of the CSAIL for their insightful discussions and
+to all the human subjects for their participation in our ex-
+periments.
+
+References
+
+Adib, Fadel, Mao, Hongzi, Kabelac, Zachary, Katabi,
+Dina, and Miller, Robert C. Smart homes that monitor
+breathing and heart rate. ACM CHI, 2015.
+
+Arjovsky, Martin and Bottou, L´eon. Towards principled
+methods for training generative adversarial networks.
+ICLR, 2017.
+
+Arjovsky, Martin, Chintala, Soumith, and Bottou, L´eon.
+ICML,
+
+Wasserstein generative adversarial networks.
+2017.
+
+Ben-David, Shai, Blitzer, John, Crammer, Koby, Kulesza,
+Alex, Pereira, Fernando, and Vaughan, Jennifer Wort-
+man. A theory of learning from different domains. Ma-
+chine learning, 2010.
+
+Carskadon, Mary A and Rechtschaffen, Allan. Monitor-
+ing and staging human sleep. Principles and practice of
+sleep medicine, 2000.
+
+Carskadon, Mary A, Dement, William C, et al. Normal
+human sleep: an overview. Principles and practice of
+sleep medicine, 2005.
+
+Chen, Xi, Duan, Yan, Houthooft, Rein, Schulman, John,
+Sutskever, Ilya, and Abbeel, Pieter.
+Inter-
+pretable representation learning by information maxi-
+mizing generative adversarial nets. NIPS, 2016.
+
+Infogan:
+
+Cohen, Jacob. A coefﬁcient of agreement for nominal
+scales. Educational and psychological measurement,
+1960.
+
+Crammer, Koby, Kearns, Michael, and Wortman, Jennifer.
+
+Learning from multiple sources. JMLR, 2008.
+
+da Silveira, Thiago LT, Kozakevicius, Alice J, and Ro-
+drigues, Cesar R. Single-channel eeg sleep stage classi-
+ﬁcation based on a streamlined set of statistical features
+in wavelet domain. Medical & biological engineering &
+computing, 2016.
+
+Donahue, Jeff, Kr¨ahenb¨uhl, Philipp, and Darrell, Trevor.
+
+Adversarial feature learning. ICLR, 2017.
+
+Dumoulin, Vincent, Belghazi, Ishmael, Poole, Ben, Lamb,
+Alex, Arjovsky, Martin, Mastropietro, Olivier, and
+Courville, Aaron.
+Adversarially learned inference.
+ICLR, 2017.
+
+Ebrahimi, Farideh, Mikaeili, Mohammad, Estrada, Edson,
+and Nazeran, Homer. Automatic sleep stage classiﬁca-
+tion based on eeg signals by using neural networks and
+wavelet packet coefﬁcients. IEEE EMBC, 2008.
+
+Fernando, Basura, Habrard, Amaury, Sebban, Marc, and
+Tuytelaars, Tinne. Unsupervised visual domain adapta-
+tion using subspace alignment. ICCV, 2013.
+
+Fraiwan, Luay, Lweesy, Khaldon, Khasawneh, Natheer,
+Wenz, Heinrich, and Dickhaus, Hartmut.
+Auto-
+mated sleep stage identiﬁcation system based on time–
+frequency analysis of a single eeg channel and random
+forest classiﬁer. Computer methods and programs in
+biomedicine, 2012.
+
+Ganin, Yaroslav and Lempitsky, Victor. Unsupervised do-
+
+main adaptation by backpropagation. ICML, 2015.
+
+Ganin, Yaroslav, Ustinova, Evgeniya, Ajakan, Hana, Ger-
+main, Pascal, Larochelle, Hugo, Laviolette, Franc¸ois,
+Marchand, Mario, and Lempitsky, Victor. Domain-
+adversarial training of neural networks. Journal of Ma-
+chine Learning Research, 2016.
+
+Goodfellow, Ian, Pouget-Abadie, Jean, Mirza, Mehdi, Xu,
+Bing, Warde-Farley, David, Ozair, Sherjil, Courville,
+Aaron, and Bengio, Yoshua. Generative adversarial nets.
+NIPS, 2014.
+
+Gu, Weixi, Yang, Zheng, Shangguan, Longfei, Sun, Wei,
+Jin, Kun, and Liu, Yunhao. Intelligent sleep stage mining
+service with smartphones. ACM UbiComp, 2014.
+
+Hao, Tian, Xing, Guoliang, and Zhou, Gang.
+
+isleep: un-
+obtrusive sleep quality monitoring using smartphones.
+ACM SenSys, 2013.
+
+He, Kaiming, Zhang, Xiangyu, Ren, Shaoqing, and Sun,
+Jian. Deep residual learning for image recognition.
+CVPR, 2016.
+
+Herbst, Ellen et al. Adaptation effects to sleep studies
+in participants with and without chronic posttraumatic
+stress disorder. Psychophysiology, 2010.
+
+Hochreiter, Sepp and Schmidhuber, J¨urgen. Long short-
+
+term memory. Neural computation, 1997.
+
+Kaltiokallio, Ossi, Yigitler, Huseyin, Jantti, Riku, and Pat-
+wari, Neal. Non-invasive respiration rate monitoring us-
+ing a single cots tx-rx pair. IPSN, 2014.
+
+Landis, J Richard and Koch, Gary G. The measurement
+of observer agreement for categorical data. Biometrics,
+1977.
+
+Learning Sleep Stages from Radio Signals: A Conditional Adversarial Architecture
+
+Liu, Xuefeng, Cao, Jiannong, Tang, Shaojie, and Wen, Ji-
+aqi. Wi-sleep: Contactless sleep monitoring via wiﬁ sig-
+nals. RTSS, 2014.
+
+Long, Mingsheng, Cao, Yue, Wang, Jianmin, and Jordan,
+Michael I. Learning transferable features with deep
+adaptation networks. ICML, 2015.
+
+Long, Xi, Yang, Jie, Weysen, Tim, Haakma, Reinder,
+Foussier, J´erˆome, Fonseca, Pedro, and Aarts, Ronald M.
+Measuring dissimilarity between respiratory effort sig-
+nals based on uniform scaling for sleep staging. Physio-
+logical measurement, 2014.
+
+Lucey, Brendan P, Mcleland, Jennifer S, Toedebusch,
+Cristina D, Boyd, Jill, Morris, John C, Landsness,
+Eric C, Yamada, Kelvin, and Holtzman, David M.
+Comparison of a single-channel eeg sleep study to
+polysomnography. Journal of sleep research, 2016.
+
+Maaten, Laurens van der and Hinton, Geoffrey. Visualizing
+
+data using t-sne. JMLR, 2008.
+
+Makhzani, Alireza, Shlens, Jonathon, Jaitly, Navdeep,
+Goodfellow, Ian, and Frey, Brendan. Adversarial autoen-
+coders. arXiv preprint arXiv:1511.05644, 2015.
+
+Metz, Luke, Poole, Ben, Pfau, David, and Sohl-Dickstein,
+Jascha. Unrolled generative adversarial networks. arXiv
+preprint arXiv:1611.02163, 2016.
+
+Rahman, Tauhidur, Adams, Alexander T, Ravichandran,
+Ruth Vinisha, Zhang, Mi, Patel, Shwetak N, Kientz,
+Julie A, and Choudhury, Tanzeem. Dopplesleep: A con-
+tactless unobtrusive sleep sensing system using short-
+range doppler radar. ACM UbiComp, 2015.
+
+Rechtschaffen, Allan and Kales, Anthony. A manual of
+standardized terminology, techniques and scoring sys-
+tem for sleep stages of human subjects. US Government
+Printing Ofﬁce, US Public Health Service, 1968.
+
+Shah, Purav C, Yudelevich, Eric, Genese, Frank, Martillo,
+Miguel, Ventura, Iazsmin B, Fuhrmann, Katherine, Mor-
+tel, Marie, Levendowski, Daniel, Gibson, Charlisa D,
+Ochieng, Pius, et al. Can disrupted sleep affect mortality
+in the mechanically ventilated critically ill? A state of
+unrest: Sleep/SDB in the ICU and hospital, 2016.
+
+Shambroom, John R, F´abregas, Stephan E, and Johnstone,
+Jack. Validation of an automated wireless system to
+Journal of sleep re-
+monitor sleep in healthy adults.
+search, 2012.
+
+Sutskever, Ilya, Vinyals, Oriol, and Le, Quoc V. Sequence
+to sequence learning with neural networks. NIPS, 2014.
+
+Szegedy, Christian, Liu, Wei, Jia, Yangqing, Sermanet,
+Pierre, Reed, Scott, Anguelov, Dragomir, Erhan, Du-
+mitru, Vanhoucke, Vincent, and Rabinovich, Andrew.
+Going deeper with convolutions. CVPR, 2015.
+
+National
+
+Institute
+
+of Health.
+http://www.ninds.nih.gov/disorders/
+brain_basics/understanding_sleep.htm#
+sleep_disorders.
+
+disorders.
+
+Sleep
+
+Tataraidze, Alexander, Korostovtseva, Lyudmila, An-
+ishchenko, Lesya, Bochkarev, Mikhail, and Sviryaev,
+Yurii. Sleep architecture measurement based on car-
+diorespiratory parameters. IEEE EMBC, 2016a.
+
+Pigou, Lionel, Van Den Oord, A¨aron, Dieleman, Sander,
+Van Herreweghe, Mieke, and Dambre, Joni. Beyond
+temporal pooling: Recurrence and temporal convolu-
+tions for gesture recognition in video. IJCV, 2015.
+
+Pollak, Charles P, Tryon, Warren W, Nagaraja, Haikady,
+and Dzwonczyk, Roger. How accurately does wrist
+actigraphy identify the states of sleep and wakefulness?
+SLEEP-NEW YORK, 2001.
+
+Popovic, Djordje, Khoo, Michael, and Westbrook, Philip.
+Automatic scoring of sleep stages and cortical arousals
+using two electrodes on the forehead: validation in
+healthy adults. Journal of sleep research, 2014.
+
+Purushotham, Sanjay, Carvalho, Wilka, Nilanon, Tanachat,
+and Liu, Yan. Variational recurrent adversarial deep do-
+main adaptation. ICLR, 2017.
+
+Radford, Alec, Metz, Luke, and Chintala, Soumith. Un-
+supervised representation learning with deep convolu-
+tional generative adversarial networks. arXiv preprint
+arXiv:1511.06434, 2015.
+
+Tataraidze, Alexander, Korostovtseva, Lyudmila, An-
+ishchenko, Lesya, Bochkarev, Mikhail, Sviryaev, Yurii,
+and Ivashov, Sergey. Bioradiolocation-based sleep stage
+classiﬁcation. IEEE EMBC, 2016b.
+
+Tzeng, Eric, Hoffman, Judy, Darrell, Trevor, and Saenko,
+Kate. Simultaneous deep transfer across domains and
+tasks. ICCV, 2015.
+
+Tzeng, Eric, Hoffman, Judy, Saenko, Kate, and Darrell,
+Trevor. Adversarial discriminative domain adaptation.
+NIPS Workshop on Adversarial Training, 2016.
+
+Vondrick, Carl, Pirsiavash, Hamed, and Torralba, Antonio.
+Generating videos with scene dynamics. NIPS, 2016.
+
+Zaffaroni, A, Gahan, L, Collins, L, O’hare, E, Heneghan,
+C, Garcia, C, Fietze, I, and Penzel, T. Automated sleep
+staging classiﬁcation using a non-contact biomotion sen-
+sor. Journal of Sleep Research, 2014.
+
+Zhao, Mingmin, Adib, Fadel, and Katabi, Dina. Emo-
+tion recognition using wireless signals. ACM MobiCom,
+2016.
+
+

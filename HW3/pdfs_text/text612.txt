@@ -1,0 +1,1013 @@
+FeUdal Networks for Hierarchical Reinforcement Learning
+
+Alexander Sasha Vezhnevets 1 Simon Osindero 1 Tom Schaul 1 Nicolas Heess 1 Max Jaderberg 1 David Silver 1
+Koray Kavukcuoglu 1
+
+Abstract
+
+We introduce FeUdal Networks (FuNs): a novel
+architecture for hierarchical reinforcement learn-
+ing. Our approach is inspired by the feudal rein-
+forcement learning proposal of Dayan and Hin-
+ton, and gains power and efﬁcacy by decou-
+pling end-to-end learning across multiple levels
+– allowing it to utilise different resolutions of
+time. Our framework employs a Manager mod-
+ule and a Worker module. The Manager operates
+at a lower temporal resolution and sets abstract
+goals which are conveyed to and enacted by the
+Worker. The Worker generates primitive actions
+at every tick of the environment. The decoupled
+structure of FuN conveys several beneﬁts – in ad-
+dition to facilitating very long timescale credit
+assignment it also encourages the emergence of
+sub-policies associated with different goals set
+by the Manager. These properties allow FuN to
+dramatically outperform a strong baseline agent
+on tasks that involve long-term credit assignment
+or memorisation.
+
+1. Introduction
+Deep reinforcement learning has recently enjoyed suc-
+cesses in many domains (Mnih et al., 2015; Schulman
+et al., 2015; Levine et al., 2015; Mnih et al., 2016; Lillicrap
+et al., 2015). Nevertheless, long-term credit assignment re-
+mains a major challenge for these methods, especially in
+environments with sparse reward signals, such as the in-
+famous Montezuma’s Revenge ATARI game. It is symp-
+tomatic that the standard approach on the ATARI bench-
+mark suite (Bellemare et al., 2012) is to use an action-
+repeat heuristic, where each action translates into several
+(usually 4) consecutive actions in the environment. Yet an-
+other dimension of complexity is seen in non-Markovian
+environments that require memory – these are particularly
+
+1DeepMind, London, United Kingdom. Correspondence to:
+
+Alexander Sasha Vezhnevets <vezhnick@google.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+challenging, since the agent has to learn which parts of ex-
+perience to store for later, using only a sparse reward signal.
+
+The framework we propose takes inspiration from feudal
+reinforcement learning (FRL) introduced by Dayan & Hin-
+ton (1993), where levels of hierarchy within an agent com-
+municate via explicit goals. Some key insights from FRL
+are that goals can be generated in a top-down fashion, and
+that goal setting can be decoupled from goal achievement;
+a level in the hierarchy communicates to the level below
+it what must be achieved, but does not specify how to do
+so. Making higher levels reason at a lower temporal reso-
+lution naturally structures the agents behaviour into tempo-
+rally extended sub-policies.
+
+The architecture explored in this work is a fully-
+differentiable neural network with two levels of hierarchy
+(though there are obvious generalisations to deeper hierar-
+chies). The top level, the Manager, sets goals at a lower
+temporal resolution in a latent state-space that is itself
+learnt by the Manager. The lower level, the Worker, oper-
+ates at a higher temporal resolution and produces primitive
+actions, conditioned on the goals it receives from the Man-
+ager. The Worker is motivated to follow the goals by an
+intrinsic reward. However, signiﬁcantly, no gradients are
+propagated between Worker and Manager; the Manager re-
+ceives its learning signal from the environment alone. In
+other words, the Manager learns to select latent goals that
+maximise extrinsic reward.
+
+The key contributions of our proposal are: (1) A consistent,
+end-to-end differentiable model that embodies and general-
+izes the principles of FRL. (2) A novel, approximate transi-
+tion policy gradient update for training the Manager, which
+exploits the semantic meaning of the goals it produces. (3)
+The use of goals that are directional rather than absolute in
+nature. (4) A novel RNN design for the Manager – a di-
+lated LSTM – which extends the longevity of the recurrent
+state memories and allows gradients to ﬂow through large
+hops in time, enabling effective back-propagation through
+hundreds of steps.
+
+Our ablative analysis (Section 5.4) conﬁrms that transi-
+tional policy gradient and directional goals are crucial
+for best performance. Our experiments on a selection of
+ATARI games (including the infamous Montezuma’s re-
+
+FeUdal Networks for Hierarchical Reinforcement Learning
+
+venge) and on several memory tasks in the 3D DeepMind
+Lab environment (Beattie et al., 2016) show that FuN sig-
+niﬁcantly improves long-term credit assignment and mem-
+orisation.
+
+2. Related Work
+Building hierarchical agents is a long standing topic in re-
+inforcement learning (Sutton et al., 1999; Precup, 2000;
+Dayan & Hinton, 1993; Dietterich, 2000; Boutilier et al.,
+1997; Dayan, 1993; Kaelbling, 2014; Parr & Russell, 1998;
+Precup et al., 1997; 1998; Schmidhuber, 1991; Sutton,
+1995; Wiering & Schmidhuber, 1997; Vezhnevets et al.,
+2016; Bacon et al., 2017). The options framework (Sut-
+ton et al., 1999; Precup, 2000) is a popular formulation for
+considering the problem with a two level hierarchy. The
+bottom level – an option – is a sub-policy with a termi-
+nation condition, which takes in environment observations
+and outputs actions until the termination condition is met.
+An agent picks an option using its policy-over-options (the
+top level) and subsequently follows it until termination, at
+which point the policy-over-options is queried again and
+the process continues. Options are typically learned using
+sub-goals and ‘pseudo-rewards’ that are provided explic-
+itly (Sutton et al., 1999; Dietterich, 2000; Dayan & Hinton,
+1993). For a simple, tabular case (Wiering & Schmidhu-
+ber, 1997; Schaul et al., 2015), each state can be used as a
+sub-goal. Given the options, a policy-over-options can be
+learned using standard techniques by treating options as ac-
+tions. Recently (Tessler et al., 2016; Kulkarni et al., 2016)
+have demonstrated that combining deep learning with pre-
+deﬁned sub-goals delivers promising results in challenging
+environments like Minecraft and Atari, however sub-goal
+discovery was not addressed.
+
+A recent work of (Bacon et al., 2017) shows the possibil-
+ity of learning options jointly with a policy-over-options
+in an end-to-end fashion by extending the policy gradi-
+ent theorem to options. When options are learnt end-to-
+end, they tend to degenerate to one of two trivial solutions:
+(i) only one active option that solves the whole task; (ii)
+a policy-over-options that changes options at every step,
+micro-managing the behaviour. Consequently, regularis-
+ers (Bacon et al., 2017; Vezhnevets et al., 2016) are usually
+introduced to steer the solution towards multiple options of
+extended length. This is believed to provide an inductive
+bias towards re-usable temporal abstractions and to help
+generalisation.
+
+A key difference between our approach and the options
+framework is that in our proposal the top level produces
+a meaningful and explicit goal for the bottom level to
+achieve. Sub-goals emerge as directions in the latent state-
+space and are naturally diverse. We also achieve signif-
+icantly better scores on ATARI than Option-Critic (sec-
+tion 5).
+
+Figure 1. The schematic illustration of FuN (section 3)
+
+There has also been a signiﬁcant progress in non-
+hierarchical deep RL methods by using auxiliary losses and
+rewards. (Bellemare et al., 2016a) have signiﬁcantly ad-
+vanced the state-of-the-art on Montezuma’s Revenge by us-
+ing pseudo-count based auxiliary rewards for exploration,
+which stimulate agents to explore new parts of the state
+space. The recently proposed UNREAL agent (Jaderberg
+et al., 2016) also demonstrates a strong improvement by us-
+ing unsupervised auxiliary tasks to help reﬁne its internal
+representations. We note that these beneﬁts are orthogonal
+to those provided by FuN, and that both approaches could
+be combined with FuN for even greater effect.
+
+3. The model
+
+What is FuN? FuN is a modular neural-network consist-
+ing of two modules – the Worker and the Manager. The
+Manager internally computes a latent state representation
+st and outputs a goal vector gt. The Worker produces ac-
+tions conditioned on external observation, its own state, and
+the Managers goal. The Manager and the Worker share
+a perceptual module which takes an observation from the
+environment xt and computes a shared intermediate repre-
+sentation zt. The Manager’s goals gt are trained using an
+approximate transition policy gradient. This is a particu-
+larly efﬁcient form of policy gradient training that exploits
+the knowledge that the Worker’s behaviour will ultimately
+align with the goal directions it has been set. The Worker
+is then trained via intrinsic reward to produce actions that
+cause these goal directions to be achieved. Figure 1a il-
+lustrates the overall design and the following equations de-
+scribe the forward dynamics of our network:
+
+zt = f percept(xt); st = f Mspace(zt)
+t , ˆgt = f Mrnn(st, hM
+hM
+
+t−1); gt = ˆgt/||ˆgt||;
+t
+(cid:88)
+
+wt = φ(
+
+gi)
+
+i=t−c
+
+(1)
+
+(2)
+
+(3)
+
+hW , Ut = f Wrnn(zt, hW
+
+t−1); πt = SoftMax(Utwt)
+
+(4)
+
+where both the Manager and the Worker are recurrent. Here
+hM and hW correspond to the internal states of the Man-
+
+f  Mrnnf  perceptf  Wrnn(cid:7592)wt∈Rkx1Ut∈R|a|xkXzt∈RdatNo gradient(cid:7570)(cid:7636)ℒ(rt+(cid:7571)cos(St+c-St,gt))Policy gradientk=16 << d=256st∈Rdf  MspacextWorkerManageractiongoal(Rt-VMt) (cid:7570)(cid:7636)cos(st+c-st,gt)Transition policy gradientgt∈RdPolicy gradientTransition policy gradientFeUdal Networks for Hierarchical Reinforcement Learning
+
+ager and the Worker respectively. A linear transform φ
+maps a goal gt into an embedding vector wt ∈ Rk, which is
+then combined via product with matrix Ut (Workers output)
+to produce policy π – vector of probabilities over primitive
+actions. The next section provides the details on goal em-
+bedding and the following sections 3.2,3.3 describes how
+FuN is trained.
+
+3.1. Goal embedding
+The goal g modulates the policy via a multiplicative
+interaction in a low dimensional goal-embedding space
+Rk, k << d. The Worker ﬁrst produces an embedding
+vector for every action, represented by rows of matrix
+U ∈ R|a|×k (eq. 4). To incorporate goals from the Man-
+ager, the last c goals are ﬁrst pooled by summation and then
+embedded into a vector w ∈ Rk using a linear projection
+φ (eq. 3). The projection φ is linear, with no biases, and
+is learnt with gradients coming from the Worker’s actions.
+The embedding matrix U is then combined with the goal
+embedding w via a matrix-vector product (eq. 4). Since
+φ has no biases it can never produce a constant non-zero
+vector – which is the only way the setup could ignore the
+Manager’s input. This makes sure that the goal output by
+the Manager always inﬂuences the ﬁnal policy. Notice how,
+due to pooling of goals over several time-steps, the condi-
+tioning from the Manager varies smoothly.
+
+3.2. Learning
+We consider a standard reinforcement learning setup. At
+each step t, the agent receives an observation xt from the
+environment and selects an action at from a ﬁnite set of
+possible actions. The environment responds with a new ob-
+servation xt+1 and a scalar reward rt. The process contin-
+ues until the terminal state is reached, after which it restarts.
+The goal of the agent is to maximise the discounted return
+Rt = (cid:80)∞
+k=0 γkrt+k+1 with γ ∈ [0, 1]. The agent’s be-
+haviour is deﬁned by its action-selection policy π. FuN
+produces a distribution over possible actions (a stochastic
+policy) as deﬁned in eq. 4.
+
+The conventional wisdom would be to train the whole ar-
+chitecture monolithically through gradient descent on ei-
+ther the policy directly or via TD-learning. Notice, that
+since FuN is fully differentiable we could train it end-to-
+end using a policy gradient algorithm operating on the ac-
+tions taken by the Worker. The outputs g of the Manager
+would be trained by gradients coming from the Worker.
+This, however would deprive Manager’s goals g of any se-
+mantic meaning, making them just internal latent variables
+of the model. We propose instead to independently train
+Manager to predict advantageous directions (transitions) in
+state space and to intrinsically reward the Worker to follow
+these directions. If the Worker can fulﬁl the goal of mov-
+ing in these directions (as it is rewarded for doing), then we
+ought to end up taking advantageous trajectories through
+
+state-space. We formalise this in the following update rule
+for the Manager:
+
+∇gt = AM
+
+t ∇θdcos(st+c − st, gt(θ)),
+
+(5)
+
+t
+
+t
+
+t = Rt − V M
+
+where AM
+(xt, θ) is the Manager’s ad-
+vantage function, computed using a value function esti-
+mate V M
+(xt, θ) from the internal critic; dcos(α, β) =
+αT β/(|α||β|) is the cosine similarity between two vectors.
+Note: the dependence of s on θ is ignored when computing
+∇θdcos – this avoids trivial solutions. Notice that now gt
+acquires a semantic meaning as an advantageous direction
+in the latent state space at a horizon c, which deﬁnes the
+temporal resolution of the Manager.
+
+The intrinsic reward that encourages the Worker to follow
+the goals is deﬁned as:
+
+rI
+t = 1/c
+
+dcos(st − st−i, gt−i)
+
+(6)
+
+c
+(cid:88)
+
+i=1
+
+We use directions because it is more feasible for the Worker
+to be able to reliably cause directional shifts in the latent
+state than it is to assume that the Worker can take us to
+(potentially) arbitrary new absolute locations. It also gives
+a degree of invariance to the goals and allows for structural
+generalisation – the same directional sub-goal g can invoke
+a sub-policy that is valid and useful in a large part of the
+latent state space; e.g. evade an enemy, swim up for air, etc.
+We compare absolute against directional goals empirically
+in section 5.4.
+
+The original feudal reinforcement learning formulation
+of Dayan & Hinton (1993) advocated completely conceal-
+ing the reward from the environment from lower levels of
+hierarchy. In practice we take a softer approach by adding
+an intrinsic reward for following the goals, but retaining the
+environment reward as well. The Worker is then trained to
+maximise a weighted sum Rt + αRI
+t , where α is a hyper-
+parameter that regulates the inﬂuence of the intrinsic re-
+ward. The Workers policy π can be trained to maximise
+intrinsic reward by using any off-the shelf deep reinforce-
+ment learning algorithm. Here we use an advantage actor
+critic (Mnih et al., 2016):
+
+∇πt = AD
+
+t ∇θ log π(at|xt; θ)
+
+(7)
+
+The advantage function estimator AD
+t −
+V D
+t (xt; θ)) is calculated using an internal critic, which es-
+timates the value functions for both rewards.
+
+t = (Rt + αRI
+
+Note that the Worker and Manager can potentially have dif-
+ferent discount factors γ for computing the return. This al-
+lows, for instance, the Worker to be more greedy and focus
+on immediate rewards while the Manager can consider a
+long-term perspective.
+
+FeUdal Networks for Hierarchical Reinforcement Learning
+
+3.3. Transition Policy Gradients
+We now motivate our proposed update rule for the Manager
+as a novel form of policy gradient with respect to a model
+of the Worker’s behaviour. Consider a high-level policy
+ot = µ(st, θ) that selects among sub-policies (possibly
+from a continuous set), where we assume for now that these
+sub-policies are ﬁxed duration behaviours (lasting for c
+steps). Corresponding to each sub-policy is a transition dis-
+tribution, p(st+c|st, ot), that describes the distribution of
+states that we end up at the end of the sub-policy, given the
+start state and the sub-policy enacted. The high-level policy
+can be composed with the transition distribution to give a
+‘transition policy’ πT P (st+c|st) = p(st+c|st, µ(st, θ)) de-
+scribing the distribution over end states given start states.
+It is valid to refer to this as a policy because the original
+MDP is isomorphic to a new MDP with policy πT P and
+transition function st+c = πT P (st) (i.e. the state always
+transitions to the end state picked by the transition policy).
+As a result, we can apply the policy gradient theorem to the
+transition policy πT P , so as to ﬁnd the performance gradi-
+ent with respect to the policy parameters,
+
+∇θπT P
+
+t = E [(Rt − V (st))∇θ log p(st+c|st, µ(st, θ))]
+
+(8)
+
+In general, the Worker may follow a complex trajectory. A
+naive application of policy gradients requires the agent to
+learn from samples of these trajectories. But if we know
+where these trajectories are likely to end up, by modelling
+the transitions, then we can skip directly over the Worker’s
+behaviour and instead follow the policy gradient of the pre-
+dicted transition. FuN assumes a particular form for the
+transition model: that the direction in state-space, st+c−st,
+follows a von Mises-Fisher distribution. Speciﬁcally, if the
+mean direction of the von Mises-Fisher distribution is given
+by g(ot) (which for compactness we write as gt) we would
+have p(st+c|st, ot) ∝ edcos(st+c−st,gt). If this functional
+form were indeed correct, then we see that our proposed
+update heuristic for the Manager, eqn.5, is in fact the proper
+form for the transition policy gradient arrived at in eqn.8.
+
+Note that the Worker’s intrinsic reward (eqn. 6) is based
+on the log-likelihood of state trajectory. Through that the
+FuN architecture actively encourages the functional form
+of the transition model to hold true. Because the Worker is
+learning to achieve the Manager’s direction, its transitions
+should, over time, closely follow a distribution around this
+direction, and hence our approximation for transition pol-
+icy gradients should hold reasonably well.
+
+4. Architecture details
+
+This section provides the particular details of the model as
+described in section 3. The perceptual module f percept is
+a convolutional network (CNN) followed by a fully con-
+nected layer. The CNN has a ﬁrst layer with 16 8x8 ﬁl-
+
+ters of stride 4, followed by a layer with with 32 4x4 ﬁl-
+ters of stride 2. The fully connected layer has 256 hidden
+units. Each convolutional and fully-connected layer is fol-
+lowed by a rectiﬁer non-linearity1. The state space which
+the Manager implicitly models in formulating its goals is
+computed via f Mspace, which is another fully connected
+layer followed by a rectiﬁer non-linearity. The dimension-
+ality of the embedding vectors, w, is set as k = 16. To en-
+courage exploration in transition policy, at every step with
+a small probability (cid:15) we emit a random goal sampled from
+a uni-variate Gaussian.
+The Worker’s recurrent network f Wrnn is a standard
+LSTM (Hochreiter & Schmidhuber, 1997). For the Man-
+ager’s recurrent network, f Mrnn, we propose a novel de-
+sign – the dilated LSTM, which is introduced in the next
+section. Both f Mrnn and f Wrnn have 256 hidden units.
+
+4.1. Dilated LSTM
+We propose a novel RNN architecture for the Manager,
+which operates at lower temporal resolution than the data
+stream. The main contribution here is the inductive bias to-
+wards slowly varying outputs, which have very long-term
+temporal dependencies. We deﬁne a dilated LSTM anal-
+ogously to dilated convolutional networks (Yu & Koltun,
+2016). For a dilation radius r let the full state of the net-
+work be h = {ˆhi}r
+it is composed of r sepa-
+rate groups of sub-states or ‘cores’. At time t the net-
+work is governed by the following equations: ˆht%r
+, gt =
+t−1; θLSTM), where % denotes the modulo op-
+LSTM(st, ˆht%r
+eration and allows us to indicate which group of cores is
+currently being updated. We make the parameters of the
+LSTM network θLSTM explicit to stress that the same set
+of parameters governs the update for each of the r groups
+within the dLSTM.
+
+i=1, i.e.
+
+t
+
+At each time step only the corresponding part of the state is
+updated and the output is pooled across the previous c out-
+puts. This allows the r groups of cores inside the dLSTM
+to preserve the memories for long periods, yet the dLSTM
+as a whole is still able to process and learn from every in-
+put experience, and is also able to update its output at ev-
+ery step. This idea is similar to clockwork RNNs (Koutn´ık
+et al., 2014), however there the top level “ticks” at a ﬁxed,
+slow pace, whereas the dLSTM observes all the available
+training data instead. In the experiments we set r = 10,
+and this was also used as the predictions horizon, c.
+
+5. Experiments
+The goal of our experiments is to demonstrate that FuN
+learns non-trivial, helpful, and interpretable sub-policies
+
+1This is substantially the same CNN as in (Mnih et al., 2016;
+2015), the only difference is that in the pre-processing stage we
+retain all colour channels.
+
+FeUdal Networks for Hierarchical Reinforcement Learning
+
+(a)
+
+(b)
+
+Figure 2. a) Learning curve on Montezuma’s Revenge b) This is a visualisation of sub-goals learnt by FuN in the ﬁrst room. For each time
+step we compute the latent state st and the corresponding goal gt. We then ﬁnd a future state for which cos(st − st, gt) is maximized.
+The plot corresponds to the number of past states for which a frame maximizes the goal - i.e. the taller the bar, the more frequently that
+state was a maximizer of the goal for some previous state. Notice that FuN has learnt a semantically meaningful sub-goals – the tall bars
+in the plot (i.e. consistent goals) correspond to interpretably useful waypoints in Montezuma.
+
+and sub-goals, and also to validate components of the archi-
+tecture. We start by describing technical details of the ex-
+perimental setup and then present results on Montezuma’s
+revenge – an infamously hard ATARI game – in section 5.1.
+Section 5.2 presents results on more ATARI games and
+extensively compares FuN to LSTM baseline with differ-
+ent discount factors and BPTT lengths. In section 5.3 we
+present results on a set of visual memorisation tasks in
+3D environment. Section 5.4 presents an ablation study of
+FuN, validating our design choices.
+
+Baseline. Our main baseline is a recurrent LSTM net-
+work on top of a representation learned by a CNN. The
+LSTM (Hochreiter & Schmidhuber, 1997) architecture is
+a widely used recurrent network and it was demonstrated
+to perform very well on a suite of reinforcement learn-
+ing problems (Mnih et al., 2016). LSTM uses 316 hid-
+den units2 and its inputs are the feature representation of
+an observation and the previous action of the agent. Action
+probabilities and the value function estimate are regressed
+from its hidden state. All the methods the same CNN ar-
+chitecture, input pre-processing, and an action repeat of 4.
+
+learning experiments.
+
+Optimisation. We use the A3C method (Mnih et al.,
+It
+2016) for all reinforcement
+was shown to achieve state-of-the-art results on sev-
+eral challenging benchmarks (Mnih et al., 2016). We
+cut the trajectory and run backpropagation through time
+(BPTT) (Mozer, 1989) after K forward passes of a net-
+work or if a terminal signal is received. For FuN K =
+400, for LSTM, unless otherwise stated, K = 40. We
+discuss different choice of K for LSTM in section 5.2.
+The optimization process runs 32 asynchronous threads us-
+ing shared RMSProp. There are 3 hyper-parameters in
+
+2This choice means that FuN and the LSTM baseline to have
+
+roughly the same number of total parameters.
+
+FuN and 2 in the LSTM baselines. For each method,
+we ran 100 experiments, each using randomly sampled
+hyper-parameters.
+Learning rate and entropy penalty
+were sampled from a LogUniform(10−4, 10−3) interval
+for LSTM. For FuN the learning rate was sampled from
+LogUniform(10−4.5, 10−3.5), to account for higher gradi-
+ents due to longer BPTT unrolls. The learning rate was
+linearly annealed from a sampled value to half the initial
+rate for all agents. To explore intrinsic motivation in FuN,
+we sample its weight α ∼ Uniform(0, 1). We deﬁne a
+training epoch as one million observations. When report-
+ing learning curves, we plot the average episode score of
+the top 5 agents (according to the ﬁnal score) against the
+training epochs. For all ATARI experiments we clip the
+reward to [−1, +1] interval
+
+5.1. Montezuma’s revenge
+Montezuma’s revenge is one of the hardest games avail-
+able through the ALE (Bellemare et al., 2012). The game
+is infamous for challenging agents with lethal traps and
+sparse rewards. We had to broaden and intensify our
+hyper-parameter search for the LSTM baseline to see any
+progress at all for that model. We have experimented with
+many different hyper-parameter conﬁgurations for LSTM
+baseline, for instance expanding learning rate search to
+LogUniform(10−3, 10−2), and we report on the conﬁgu-
+ration that worked best. We use a small discount 0.99 for
+LSTM; for FuN we use 0.99 in Worker and 0.999 in Man-
+ager. Figure 2b analyses the sub-goals learnt by FuN in
+the ﬁrst room. They turn out to be meaningful milestones,
+which bridge the agents progress to its ﬁrst extrinsic re-
+ward – picking up the key. Interestingly, two of the learnt
+sub-goals correspond to roughly the same locations as the
+ones hand-crafted in (Kulkarni et al., 2016) (ladder and
+key), but here they are learnt by the agent itself. Figure 2a
+
+0200400600800Training epochs050010001500200025003000Scoremontezuma_revengeFuN, 0.99LSTM, 0.9915105Time stepGoal countstart0180FeUdal Networks for Hierarchical Reinforcement Learning
+
+Figure 3. ATARI training curves. Epochs corresponds to a million training steps of an agent. The value is the average per episode score
+of top 5 agents, according to the ﬁnal score. We used two different discount factors 0.95 and 0.99.
+
+Figure 4. FuN in water maze, top down view. The left plot visu-
+alises FuN trajectories during one episode. The ﬁrst trajectory
+(green) performs a search for the target in different locations,
+while subsequent ones (other colours) perform searches along a
+circle of a ﬁxed radius matched to that of the target, always ﬁnding
+the target. The right plot visualises different learnt sub-policies,
+produced by sampling a random g and ﬁxing it for 200 steps. Each
+colour corresponds to a different g, the black circle represents the
+starting location.
+
+plots the learning curves. Notice how FuN starts learning
+much earlier and achieves much higher scores.
+It takes
+> 300 epochs for LSTM to reach the score 400, which
+corresponds to solving the ﬁrst room (take the key, open
+a door); it stagnates at that score until about 900 epochs,
+when it starts exploring further. FuN solves the ﬁrst room
+in less than 200 epochs and immediately moves on to ex-
+plore further, eventually visiting several other rooms and
+scoring up to 2600 points.
+
+5.2. ATARI
+Experiments in this section validate that the capabilities of
+FuN go beyond what standard tools for long-term credit
+assignment – discount factors and BPTT unroll length –
+can provide for a baseline LSTM agent. We use two dis-
+counts 0.99 and 0.95 for both FuN and LSTM agents.
+(For the experiments on FuN only the discount for the
+Manager changes, while the Worker’s discount is ﬁxed at
+
+Figure 5. Training curves for memory tasks on Labyrinth.
+
+0.95.) For the LSTM we explore BPTT of 40 and 100,
+while for FuN we use a BPTT unroll of 400. For LSTM
+with BPTT 100 we search for learning rate in the inter-
+val LogUniform(10−4.5, 10−3.5), as for FuN. We use a di-
+verse set of ATARI games, some of which involve long-
+term credit assignment and some which are more reactive.
+
+Figure 3 plots the learning curves. A few categories
+emerge. On Ms. Pacman, Amidar, and Gravitar FuN with
+a low Manager discount of 0.99 strongly outperforms all
+other methods. All of these games are known to require
+long-term reasoning to play well. Enduro stands out as all
+the LSTM agents completely fail at it.
+In this game the
+agent controls a racing car and scores points for overtak-
+ing other racers; this requires accelerating and steering for
+signiﬁcant amount of time before the ﬁrst reward is expe-
+rienced. Frostbite is a hard game (Vezhnevets et al., 2016;
+Lake et al., 2016) that requires both long-term credit as-
+signment and good exploration. The best-performing frost-
+
+050100150200010002000300040005000Scorems_pacman050100150200050010001500200025003000350040004500amidar0501001502000500100015002000250030003500gravitarFuN, 0.95FuN, 0.99LSTM, 0.95LSTM, 0.99LSTM, 0.99, BPTT=100050100150200020040060080010001200140016001800enduro050100150200010002000300040005000600070008000frostbite050100150200Training epochs0200040006000800010000120001400016000Scorespace_invaders050100150200Training epochs0500010000150002000025000300003500040000hero050100150200Training epochs010000200003000040000500006000070000seaquest050100150200Training epochs0500100015002000250030003500alien050100150200Training epochs0100200300400500600700breakoutGoal0204060801001201400102030405060Scorenon-matchFuNLSTM02040608010012014020246810T-mazeFuNLSTM020406080100120140Training epochs505101520T-maze+FuNLSTM020406080100120140Training epochs5101520253035404550Water mazeFuNLSTMScoreFeUdal Networks for Hierarchical Reinforcement Learning
+
+bite agent is FuN with 0.95 Manager discount, which out-
+performs the rest by a factor of 7. On Hero and Space
+Invaders all agents perform equally well. On Seaquest
+and Breakout, the baseline LSTM with a more aggressive
+discount of 0.95 is the best. This suggests that in these
+games long-term credit assignment is not important and
+the agent is better off optimising more immediate rewards
+in a greedy fashion. Alien is the only game where us-
+ing different discounts doesn’t meaningfully inﬂuence the
+agents performance; here we see the baseline LSTM out-
+performs our FuN model, although both still achieve a sat-
+isfactory scores. We provide qualitative analysis of sub-
+policies learnt on Seaquest in supplementary material.
+
+Note how using an unroll for BPTT=100 in the baseline
+LSTM signiﬁcantly hurts its performance (hence we do not
+explore longer unrolls), while FuN performs very well with
+BPTT of 400 thanks to its ability to leverage the dLSTM.
+Being able to train a recurrent network over very long se-
+quences could be an enabling tool for many memory related
+task, as we demonstrate in section 5.3.
+
+Option-critic architecture
+(Bacon et al., 2017) is, to
+the best of our knowledge, the only other end-to-end train-
+able system with sub-policies. The experimental results for
+Option-Critic on 4 ATARI (Bacon et al., 2017) games show
+scores similar those from a ﬂat DQN (Mnih et al., 2015)
+baseline agent. Notice that our baseline (Mnih et al., 2016)
+is much stronger than DQN. We also ran FuN on the same
+games as Option-Critic (Asterix, Ms. Pacman, Seaquest
+and Zaxxon) and after 200 epochs it achieves a similar
+score on Seaquest, doubles it on Ms. Pacman, more than
+triples it on Zaxxon and gets more than 20x improvement
+on Asterix (see supplementary material for plots).
+
+5.3. Memory in Labyrinth
+DeepMind Lab (Beattie et al., 2016) is a ﬁrst-person 3D
+game platform extended from OpenArena. It’s a visually
+complex 3D environment with agent actions corresponding
+to movement and orientation. We use 4 different levels that
+test long-term credit assignment and visual memory:
+
+Water maze
+is a reproduction of the Morris water maze
+experiment (Morris, 1981) from the behavioural science lit-
+erature. An agent is dropped into a circular pool of wa-
+ter with a concealed platform at unknown random location.
+The agent can move around and upon stepping on the plat-
+form it receives a reward and the trial restarts. The platform
+remains in the same location for the rest of the episode,
+while agent starts each trial at a random location. The walls
+of the pool are decorated with visual cues to assist localisa-
+tion.
+
+T-maze
+is another classic animal cognition test. The
+agent spawns in a small T-shaped maze. Two objects with
+randomly chosen shape and colour are spawned at the left
+and right ”baiting” locations. One of them is assigned a re-
+ward of +1 and the other a reward of -1. When the agent
+collects one of the objects, it receives the reward and is re-
+spawned at the beginning of the T-maze. The objects are
+also re-instantiated in the same locations and with the same
+rewards on the re-spawn event. The agent should remem-
+ber which object gives the positive reward across re-spawns
+and collect it as many times as possible within the ﬁxed
+time given for the episode. T-maze+ is a modiﬁcation of
+T-maze, where at each trial the length of corridors can vary,
+adding additional dimension of complexity.
+
+Non-match is a visual memorisation task. Each trial be-
+gins in small room with an out of reach object being dis-
+played in one of two display pods. There is a pad in the
+middle, which upon touching, the agent is rewarded with 1
+point, and is teleported to a second room which has two ob-
+jects in it, one of which matches the object in the previous
+room. Collecting the matching object gives a reward of -10
+points, collecting the non matching object gives a reward of
+10 points. Once either is collected, the agent is teleported
+back to the ﬁrst room, with the same object being shown.
+
+For all agents we include reward as a part of the observa-
+tion. Figure 5 plots the learning curves. FuN consitently
+outperforms the LSTM baseline – it learns faster and also
+reaches a higher ﬁnal reward. We analyse the FuN agent’s
+behaviour in more detail in Figure 4b. It demonstrates that
+FuN learns meaningful sub-policies, which are then efﬁ-
+ciently integrated with memory to produce rewarding be-
+haviour. Interestingly, the LSTM agent doesn’t appear to
+use its memory for water maze task at all, always circling
+the maze at the roughly the same radius.
+
+Figure 6. Ablative analysis
+
+050100150200Training epochs0500100015002000250030003500gravitar050100150200Training epochs02004006008001000120014001600enduro050100150200010002000300040005000Scorems_pacman050100150200050010001500200025003000350040004500amidarFuNNon feudal FuNPure feudal FuNManager via PGAbsolute goalsScoreFeUdal Networks for Hierarchical Reinforcement Learning
+
+Figure 7. Action repeat transfer
+
+5.4. Ablative analysis
+This section empirically validates the main innovations of
+this paper: transition policy gradient for training the Man-
+ager; relative rather than absolute goals; intrinsic motiva-
+tion for the Worker. First we consider a ‘non-Feudal’ FuN –
+it has exactly the same network architecture as FuN, but the
+Managers output g is trained with gradients coming directly
+from the Worker and no intrinsic reward is used, much like
+in Option-Critic architecture (Bacon et al., 2017). Second,
+g is learnt using a standard policy gradient approach with
+the Manager emitting the mean of a Gaussian distribution
+from which goals are sampled (as if the Manager were solv-
+ing a continuous control problem (Schulman et al., 2016;
+Mnih et al., 2016; Lillicrap et al., 2015)). Third, we ex-
+plore a variant of FuN in which g speciﬁes absolute, rather
+than relative/directional, goals (and the Worker’s intrinsic
+reward is adjusted accordingly) but otherwise everything is
+the same. The experiments (Figure 6) reveal that, although
+alternatives do work to some degree their performance is
+signiﬁcantly inferior. We also evaluate a purely feudal ver-
+sion of FuN – in which the Worker is trained from the in-
+trinsic reward alone. This ablation performs better than
+other, but still inferior to the full FuN approach. It shows
+that allowing the Worker to experience the external reward
+is beneﬁcial.
+
+5.5. ATARI action repeat transfer
+One of the advantages of FuN is the clear separation of du-
+ties between Manager and Worker. The Manager learns a
+transition policy, while the Worker learns to operate primi-
+tive actions to enact these transitions. This transition policy
+is invariant to the underlying embodiment of the agent – the
+way its primitive actions translate into state space transi-
+tions. Potentially, the transition policy can be transferred
+between agents with different embodiment – e.g.
+robot
+models with different bodies or different operational fre-
+quency. We provide evidence towards that possibility by
+transferring policies across agents with different action re-
+peat on ATARI. Action repeat is a heuristic used in all suc-
+cessful agents (Mnih et al., 2015; 2016; Bellemare et al.,
+2016b; Vezhnevets et al., 2016). It enables better explo-
+ration, eases credit assignment, and saves computation by
+repeating an action chosen by the agent several (= 4) times.
+
+To perform transfer, we initialise the FuN system with pa-
+rameters extracted from an agent trained with action re-
+peat of 4 and then make the following adjustments: (i)
+we accordingly adjust the discounts for all rewards; (ii)
+we increase the dilation of the dLSTM by a factor of 4;
+(iii) we increase the Manager’s goal horizon c by a fac-
+tor of 4. (These modiﬁcations adapt all the “hard-wired”
+but explicitly temporally sensitive aspects of the agent.)
+We then train this agent without action repeat. As a base-
+line we use an LSTM agent transferred in a similar way
+(with adjusted discounts) as well as FuN and LSTM agents
+trained without action repeat from scratch. Figure 7 shows
+the corresponding learning curves. The transferred FuN
+agent (green curve) signiﬁcantly outperforms every other
+method. Furthermore it shows positive transfer on each en-
+vironment, whereas LSTM only shows positive transfer on
+Ms. Pacman.
+6. Discussion and future work
+How to create agents that can learn to decompose their be-
+haviour into meaningful primitives and then reuse them to
+more efﬁciently acquire new behaviours is a long standing
+research question. The solution to this question may be an
+important stepping stone towards agents with general in-
+telligence and competence. This paper introduced FeUdal
+Networks, a novel architecture that formulates sub-goals as
+directions in latent state space, which, if followed, translate
+into a meaningful behavioural primitives. FuN clearly sep-
+arates the module that discovers and sets sub-goals from
+the module that generates the behaviour through primitive
+actions. This creates a natural hierarchy that is stable and
+allows both modules to learn in complementary ways. Our
+experiments clearly demonstrate that this makes long-term
+credit assignment and memorisation more tractable. This
+also opens many avenues for further research, for instance:
+deeper hierarchies can be constructed by setting goals at
+multiple time scales, scaling agents to truly large environ-
+ments with sparse rewards and partial observability. The
+modular structure of FuN is also lends itself to transfer and
+multitask learning – learnt behavioural primitives can be
+re-used to acquire new complex skills, or alternatively the
+transitional policies of the Manager can be transferred to
+agents with different embodiment.
+
+0501001500500100015002000250030003500ScorefrostbiteFuNFuN transferLSTM transferLSTM05010015005001000150020002500300035004000ms_pacman0501001500500100015002000amidar050100150050010001500200025003000350040004500space_invadersFeUdal Networks for Hierarchical Reinforcement Learning
+
+Acknowledgements
+
+We thank Daan Wierstra, Olivier Pietquin, Tejas Kulka-
+rni, Alex Graves, Oriol Vinyals, Joseph Modayil and Vlad
+Mnih for many helpful discussions, suggestions and com-
+ments on the paper.
+
+References
+
+Jaderberg, Max, Mnih, Volodymyr, Czarnecki, Woj-
+ciech Marian, Schaul, Tom, Leibo, Joel Z, Silver,
+David, and Kavukcuoglu, Koray. Reinforcement learn-
+ing with unsupervised auxiliary tasks. arXiv preprint
+arXiv:1611.05397, 2016.
+
+Kaelbling, Leslie Pack. Hierarchical learning in stochastic
+
+domains: Preliminary results. In ICML, 2014.
+
+Bacon, Pierre-Luc, Precup, Doina, and Harb, Jean. The
+
+Koutn´ık, Jan, Greff, Klaus, Gomez, Faustino, and Schmid-
+
+option-critic architecture. In AAAI, 2017.
+
+huber, J¨urgen. A clockwork rnn. In ICML, 2014.
+
+Beattie, Charles, Leibo, Joel Z., Teplyashin, Denis, Ward,
+Tom, Wainwright, Marcus, K¨uttler, Heinrich, Lefrancq,
+Andrew, Green, Simon, Vald´es, V´ıctor, Sadik, Amir,
+Schrittwieser, Julian, Anderson, Keith, York, Sarah,
+Cant, Max, Cain, Adam, Bolton, Adrian, Gaffney,
+Stephen, King, Helen, Hassabis, Demis, Legg, Shane,
+arXiv preprint
+and Petersen, Stig. Deepmind lab.
+arXiv:1612.03801, 2016.
+
+Bellemare, Marc, Srinivasan, Sriram, Ostrovski, Georg,
+Schaul, Tom, Saxton, David, and Munos, Remi. Uni-
+fying count-based exploration and intrinsic motivation.
+In NIPS, 2016a.
+
+Bellemare, Marc G, Naddaf, Yavar, Veness, Joel, and
+Bowling, Michael. The arcade learning environment:
+An evaluation platform for general agents. Journal of
+Artiﬁcial Intelligence Research, 2012.
+
+Bellemare, Marc G., Ostrovski, Georg, Guez, Arthur,
+Thomas, Philip S., and Munos, R´emi. Increasing the ac-
+tion gap: New operators for reinforcement learning. In
+Proceedings of the AAAI Conference on Artiﬁcial Intel-
+ligence, 2016b.
+
+Boutilier, Craig, Brafman, Ronen I, and Geib, Christopher.
+Prioritized goal decomposition of markov decision pro-
+cesses: Toward a synthesis of classical and decision the-
+oretic planning. In IJCAI, 1997.
+
+Dayan, Peter. Improving generalization for temporal dif-
+ference learning: The successor representation. Neural
+Computation, 1993.
+
+Kulkarni, Tejas D., Narasimhan, Karthik R., Saeedi, Arda-
+van, and Tenenbaum, Joshua B. Hierarchical deep rein-
+forcement learning: Integrating temporal abstraction and
+intrinsic motivation. arXiv preprint arXiv:1604.06057,
+2016.
+
+Lake, Brenden M, Ullman, Tomer D, Tenenbaum,
+Joshua B, and Gershman, Samuel J. Building ma-
+chines that learn and think like people. arXiv preprint
+arXiv:1604.00289, 2016.
+
+Levine, Sergey, Finn, Chelsea, Darrell, Trevor, and Abbeel,
+Pieter. End-to-end training of deep visuomotor policies.
+arXiv preprint arXiv:1504.00702, 2015.
+
+Lillicrap, Timothy P, Hunt, Jonathan J, Pritzel, Alexander,
+Heess, Nicolas, Erez, Tom, Tassa, Yuval, Silver, David,
+and Wierstra, Daan. Continuous control with deep re-
+inforcement learning. arXiv preprint arXiv:1509.02971,
+2015.
+
+Mnih, Volodymyr, Kavukcuoglu, Koray, Silver, David,
+Rusu, Andrei A., Veness, Joel, Bellemare, Marc G.,
+Graves, Alex, Riedmiller, Martin, Fidjeland, Andreas K.,
+Ostrovski, Georg, Petersen, Stig, Beattie, Charles, Sadik,
+Amir, Antonoglou, Ioannis, King, Helen, Kumaran,
+Dharshan, Wierstra, Daan, Legg, Shane, and Hassabis,
+Demis. Human-level control through deep reinforcement
+learning. Nature, 518(7540):529–533, 02 2015.
+
+Mnih, Volodymyr, Badia, Adria Puigdomenech, Mirza,
+Mehdi, Graves, Alex, Lillicrap, Timothy P, Harley, Tim,
+Silver, David, and Kavukcuoglu, Koray. Asynchronous
+methods for deep reinforcement learning. ICML, 2016.
+
+Dayan, Peter and Hinton, Geoffrey E. Feudal reinforce-
+ment learning. In NIPS. Morgan Kaufmann Publishers,
+1993.
+
+Morris, Richard GM. Spatial localization does not require
+the presence of local cues. Learning and motivation, 12
+(2):239–260, 1981.
+
+Dietterich, Thomas G. Hierarchical reinforcement learning
+with the maxq value function decomposition. J. Artif.
+Intell. Res.(JAIR), 2000.
+
+Mozer, Michael C. A focused back-propagation algo-
+rithm for temporal pattern recognition. Complex sys-
+tems, 1989.
+
+Hochreiter, Sepp and Schmidhuber, J¨urgen. Long short-
+
+Parr, Ronald and Russell, Stuart. Reinforcement learning
+
+term memory. Neural computation, 1997.
+
+with hierarchies of machines. NIPS, 1998.
+
+FeUdal Networks for Hierarchical Reinforcement Learning
+
+Precup, Doina.
+
+Temporal abstraction in reinforcement
+learning. PhD thesis, University of Massachusetts, 2000.
+
+Precup, Doina, Sutton, Richard S, and Singh, Satinder P.
+Planning with closed-loop macro actions. Technical re-
+port, 1997.
+
+Precup, Doina, Sutton, Richard S, and Singh, Satinder.
+Theoretical results on reinforcement learning with tem-
+porally abstract options. In European Conference on Ma-
+chine Learning (ECML). Springer, 1998.
+
+Schaul, Tom, Horgan, Dan, Gregor, Karol, and Silver,
+David. Universal value function approximators. ICML,
+2015.
+
+Schmidhuber, J¨urgen. Neural sequence chunkers. Techni-
+
+cal report, 1991.
+
+Schulman, John, Levine, Sergey, Moritz, Philipp, Jordan,
+Michael I, and Abbeel, Pieter. Trust region policy opti-
+mization. In ICML, 2015.
+
+Schulman, John, Moritz, Philipp, Levine, Sergey, Jordan,
+Michael, and Abbeel, Pieter. High-dimensional con-
+tinuous control using generalized advantage estimation.
+ICLR, 2016.
+
+Sutton, Richard S. Td models: Modeling the world at a
+
+mixture of time scales. In ICML, 1995.
+
+Sutton, Richard S, Precup, Doina, and Singh, Satinder. Be-
+tween mdps and semi-mdps: A framework for temporal
+abstraction in reinforcement learning. Artiﬁcial intelli-
+gence, 1999.
+
+Tessler, Chen, Givony, Shahar, Zahavy, Tom, Mankowitz,
+Daniel J, and Mannor, Shie. A deep hierarchical ap-
+proach to lifelong learning in minecraft. arXiv preprint
+arXiv:1604.07255, 2016.
+
+Vezhnevets, Alexander, Mnih, Volodymyr, Osindero, Si-
+mon, Graves, Alex, Vinyals, Oriol, Agapiou, John, and
+kavukcuoglu, koray. Strategic attentive writer for learn-
+ing macro-actions. In NIPS, 2016.
+
+Wiering, Marco and Schmidhuber, J¨urgen. Hq-learning.
+
+Adaptive Behavior, 1997.
+
+Yu, Fisher and Koltun, Vladlen. Multi-scale context aggre-
+
+gation by dilated convolutions. ICLR, 2016.
+
+

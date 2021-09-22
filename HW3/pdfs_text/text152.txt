@@ -1,0 +1,3695 @@
+On Kernelized Multi-armed Bandits
+
+SRCHOWDHURY@ECE.IISC.ERNET.IN
+
+ADITYA@ECE.IISC.ERNET.IN
+
+Sayak Ray Chowdhury
+Electrical Communication Engineering,
+Indian Institute of Science,
+Bangalore 560012, India
+
+Aditya Gopalan
+Electrical Communication Engineering,
+Indian Institute of Science,
+Bangalore 560012, India
+
+Abstract
+We consider the stochastic bandit problem with a continuous set of arms, with the expected reward function
+over the arms assumed to be ﬁxed but unknown. We provide two new Gaussian process-based algorithms for
+continuous bandit optimization – Improved GP-UCB (IGP-UCB) and GP-Thomson sampling (GP-TS), and
+derive corresponding regret bounds. Speciﬁcally, the bounds hold when the expected reward function belongs
+to the reproducing kernel Hilbert space (RKHS) that naturally corresponds to a Gaussian process kernel used as
+input by the algorithms. Along the way, we derive a new self-normalized concentration inequality for vector-
+valued martingales of arbitrary, possibly inﬁnite, dimension. Finally, experimental evaluation and comparisons
+to existing algorithms on synthetic and real-world environments are carried out that highlight the favorable
+gains of the proposed strategies in many cases.
+
+1. Introduction
+
+Optimization over large domains under uncertainty is an important subproblem arising in a variety of sequen-
+tial decision making problems, such as dynamic pricing in economics (Besbes and Zeevi, 2009), reinforce-
+ment learning with continuous state/action spaces (Kaelbling et al., 1996; Smart and Kaelbling, 2000), and
+power control in wireless communication (Chiang et al., 2008). A typical feature of such problems is a large,
+or potentially inﬁnite, domain of decision points or covariates (prices, actions, transmit powers), together
+with only partial and noisy observability of the associated outcomes (demand, state/reward, communication
+rate); reward/loss information is revealed only for decisions that are chosen. This often makes it hard to
+balance exploration and exploitation, as available knowledge must be transferred efﬁciently from a ﬁnite set
+of observations so far to estimates of the values of inﬁnitely many decisions. A classic case in point is that
+of the canonical stochastic MAB with ﬁnitely many arms, where the effort to optimize scales with the total
+number of arms or decisions; the effect of this is catastrophic for large or inﬁnite arm sets.
+
+With suitable structure in the values or rewards of arms, however, the challenge of sequential optimization
+can be efﬁciently addressed. Parametric bandits, especially linearly parameterized bandits (Rusmevichien-
+tong and Tsitsiklis, 2010), represent a well-studied class of structured decision making settings. Here, every
+arm corresponds to a known, ﬁnite dimensional vector (its feature vector), and its expected reward is assumed
+to be an unknown linear function of its feature vector. This allows for a large, or even inﬁnite, set of arms
+all lying in space of ﬁnite dimension, say d, and a rich line of work gives algorithms that attain sublinear
+regret with a polynomial dependence on the dimension, e.g., Conﬁdence Ball (Dani et al., 2008), OFUL
+(Abbasi-Yadkori et al., 2011) (a strengthening of Conﬁdence Ball) and Thompson sampling for linear bandits
+
+1
+
+(Agrawal and Goyal, 2013)1 The insight here is that even though the number of arms can be large, the number
+of unknown parameters (or degrees of freedom) in the problem is really only d, which makes it possible to
+learn about the values of many other arms by playing a single arm.
+
+A different approach to modelling bandit problems with a continuum of arms is via the framework of
+Gaussian processes (GPs) (Rasmussen and Williams, 2006). GPs are a ﬂexible class of nonparametric mod-
+els for expressing uncertainty over functions on rather general domain sets, which generalize multivariate
+Gaussian random vectors. GPs allow tractable regression for estimating an unknown function given a set of
+(noisy) measurements of its values at chosen domain points. The fact that GPs, being distributions on func-
+tions, can also help quantify function uncertainty makes it attractive for basing decision making strategies on
+them. This has been exploited to great advantage to build nonparametric bandit algorithms, such as GP-UCB
+(Srinivas et al., 2009), GP-EI and GP-PI (Hoffman et al., 2011). In fact, GP models for bandit optimization,
+in terms of their kernel maps, can be viewed as the parametric linear bandit paradigm pushed to the extreme,
+where each feature vector associated to an arm can have inﬁnite dimension 2.
+
+Against this backdrop, our work revisits the problem of bandit optimization with stochastic rewards.
+Speciﬁcally, we consider stochastic multiarmed bandit (MAB) problems with a continuous arm set, and
+whose (unknown) expected reward function is assumed to lie in a reproducing kernel Hilbert space (RKHS),
+with bounded RKHS norm – this effectively enforces smoothness on the function3. We make the following
+contributions-
+
+• We design a new algorithm – Improved Gaussian Process-Upper Conﬁdence Bound (IGP-UCB) – for
+stochastic bandit optimization. The algorithm can be viewed as a variant of GP-UCB (Srinivas et al.,
+2009), but uses a signiﬁcantly reduced conﬁdence interval width resulting in an order-wise improve-
+ment in regret compared to GP-UCB. IGP-UCB also shows a markedly improved numerical perfor-
+mance over GP-UCB.
+
+• We develop a nonparametric version of Thompson sampling, called Gaussian Process Thompson sam-
+pling (GP-TS), and show that enjoys a regret bound of ˜O
+. Here, T is the total time horizon
+and γT is a quantity depending on the RKHS containing the reward function. This is, to our knowl-
+edge, the ﬁrst known regret bound for Thompson sampling in the agnostic setup with nonparametric
+structure.
+
+dT
+
+γT
+
+√
+
+(cid:16)
+
+(cid:17)
+
+• We prove a new self-normalized concentration inequality for inﬁnite-dimensional vector-valued mar-
+tingales, which is not only key to the design and analysis of the IGP-UCB and GP-TS algorithms, but
+also potentially of independent interest. The inequality generalizes a corresponding self-normalized
+bound for martingales in ﬁnite dimension proven by Abbasi-Yadkori et al. (2011).
+
+• Empirical comparisons of the algorithms developed above, with other GP-based algorithms, are pre-
+sented, over both synthetic and real-world setups, demonstrating performance improvements of the
+proposed algorithms, as well as their performance under misspeciﬁcation.
+
+2. Problem Statement
+
+We consider the problem of sequentially maximizing a ﬁxed but unknown reward function f : D → R over
+a (potentially inﬁnite) set of decisions D ⊂ Rd, also called actions or arms. An algorithm for this problem
+chooses, at each round t, an action xt ∈ D, and subsequently observes a reward yt = f (xt) + εt, which is a
+noisy version of the function value at xt. The action xt is chosen causally depending upon the arms played
+and rewards obtained upto round t − 1, denoted by the history Ht−1 = {(xs, ys) : s = 1, . . . , t − 1}. We
+
+1. Roughly, for rewards bounded in [−1, 1], these algorithms achieve optimal regret ˜O
+, where ˜O (·) hides polylog(T ) factors.
+2. The completion of the linear span of all feature vectors (images of the kernel map) is precisely the reproducing kernel Hilbert space
+
+T
+
+d
+
+(cid:16)
+
+√
+
+(cid:17)
+
+(RKHS) that characterizes the GP.
+3. Kernels, and their associated RKHSs,
+
+2
+
+assume that the noise sequence {εt}∞
+
+t=1 is conditionally R-sub-Gaussian for a ﬁxed constant R ≥ 0, i.e.,
+
+∀t ≥ 0, ∀λ ∈ R, E (cid:2)eλεt (cid:12)
+
+(cid:12) Ft−1
+
+(cid:3) ≤ exp
+
+(cid:18) λ2R2
+2
+
+(cid:19)
+
+,
+
+(1)
+
+where Ft−1 is the σ-algebra generated by the random variables {xs, εs}t−1
+s=1 and xt.This is a mild assump-
+tion on the noise (it holds, for instance, for distributions bounded in [−R, R]) and is standard in the bandit
+literature (Abbasi-Yadkori et al., 2011; Agrawal and Goyal, 2013).
+
+Regret. The goal of an algorithm is to maximize its cumulative reward or alternatively minimize its cumu-
+lative regret – the loss incurred due to not knowing f ’s maximum point beforehand. Let x(cid:63) ∈ argmaxx∈D f (x)
+be a maximum point of f (assuming the maximum is attained). The instantaneous regret incurred at time t is
+rt = f (x(cid:63)) − f (xt), and the cumulative regret in a time horizon T (not necessarily known a priori) is deﬁned
+to be RT = (cid:80)T
+t=1 rt. A sub-linear growth of RT in T signiﬁes that RT /T → 0 as T → ∞, or vanishing
+per-round regret.
+
+Regularity Assumptions. Attaining sub-linear regret is impossible in general for arbitrary reward func-
+tions f and domains D, and thus some regularity assumptions are in order. In what follows, we assume
+that D is compact. The smoothness assumption we make on the reward function f is motivated by Gaus-
+sian processes4 and their associated reproducing kernel Hilbert spaces (RKHSs, see Sch¨olkopf and Smola
+(2002)). Speciﬁcally, we assume that f has small norm in the RKHS of functions D → R, with positive
+semi-deﬁnite kernel function k : D × D → R. This RKHS, denoted by Hk(D), is completely speciﬁed
+by its kernel function k(·, ·) and vice-versa, with an inner product (cid:104)·, ·(cid:105)k obeying the reproducing property:
+f (x) = (cid:104)f, k(x, ·)(cid:105)k for all f ∈ Hk(D). In other words, the kernel plays the role of delta functions to repre-
+sent the evaluation map at each point x ∈ D via the RKHS inner product. The RKHS norm (cid:107)f (cid:107)k = (cid:112)(cid:104)f, f (cid:105)k
+is a measure of the smoothness5 of f , with respect to the kernel function k, and satisﬁes: f ∈ Hk(D) if and
+only if (cid:107)f (cid:107)k < ∞.
+
+We assume a known bound on the RKHS norm of the unknown target function6: (cid:107)f (cid:107)k ≤ B. Moreover,
+we assume bounded variance by restricting k(x, x) ≤ 1, for all x ∈ D. Two common kernels that satisfy
+bounded variance property are Squared Exponential and Mat´ern, deﬁned as
+
+kSE(x, x(cid:48)) = exp
+
+kM at´ern(x, x(cid:48)) =
+
+(cid:16)
+
+− s2/2l2(cid:17)
+√
+
+,
+
+(cid:16) s
+
+21−ν
+Γ(ν)
+
+2ν
+l
+
+(cid:17)ν
+
+(cid:16) s
+
+Bν
+
+√
+
+(cid:17)
+
+,
+
+2ν
+l
+
+where l > 0 and ν > 0 are hyperparameters, s = (cid:107)x − x(cid:48)(cid:107)2 encodes the similarity between two points
+x, x(cid:48) ∈ D, and Bν(·) is the modiﬁed Bessel function. Generally the bounded variance property holds for
+any stationary kernel, i.e. kernels for which k(x, x(cid:48)) = k(x − x(cid:48)) for all x, x(cid:48) ∈ Rd. These assumptions are
+required to make the regret bounds scale-free and are standard in the literature (Agrawal and Goyal, 2013).
+Instead if k(x, x) ≤ c or (cid:107)f (cid:107)k ≤ cB, then our regret bounds would increase by a factor of c.
+
+3. Algorithms
+
+Design philosophy. Both the algorithms we propose use Gaussian likelihood models for observations, and
+Gaussian process (GP) priors for uncertainty over reward functions. A Gaussian process over D, denoted
+by GPD(µ(·), k(·, ·)), is a collection of random variables (f (x))x∈D, one for each x ∈ D, such that every
+i=1 is jointly Gaussian with mean E [f (xi)] = µ(xi) and
+ﬁnite sub-collection of random variables (f (xi))m
+covariance E [(f (xi) − µ(xi))(f (xj) − µ(xj))] = k(xi, xj), 1 ≤ i, j ≤ m, m ∈ N. The algorithms use
+
+4. Other work has also studied continuum-armed bandits with weaker smoothness assumptions such as Lipschitz continuity – see
+
+5. One way to see this is that for every element g in the RKHS, |g(x) − g(y)| = |(cid:104)g, k(x, ·) − k(y, ·)(cid:105)| ≤ (cid:107)g(cid:107)k (cid:107)k(x, ·) − k(y, ·)(cid:107)k
+
+Related work for details and comparison.
+
+by Cauchy-Schwarz.
+
+6. This is analogous to the bound on the weight θ typically assumed in regret analyses of linear parametric bandits.
+
+3
+
+GPD(0, v2k(·, ·)), v > 0, as an initial prior distribution for the unknown reward function f over D, where
+k(·, ·) is the kernel function associated with the RKHS Hk(D) in which f is assumed to have ‘small’ norm at
+most B. The algorithms also assume that the noise variables εt = yt − f (xt) are drawn independently, across
+t, from N (0, λv2), with λ ≥ 0. Thus, the prior distribution for each f (x), is assumed to be N (0, v2k(x, x)),
+x ∈ D. Moreover, given a set of sampling points At = (x1, . . . , xt) within D, it follows under the assump-
+tion that the corresponding vector of observed rewards y1:t = [y1, . . . , yt]T has the multivariate Gaussian
+distribution N (0, v2(Kt + λI)), where Kt = [k(x, x(cid:48))]x,x(cid:48)∈At is the kernel matrix at time t. Then, by the
+properties of GPs, we have that y1:t and f (x) are jointly Gaussian given At:
+
+(cid:20)f (x)
+(cid:21)
+y1:t
+
+(cid:18)
+
+∼ N
+
+0,
+
+(cid:20)v2k(x, x)
+v2kt(x)
+
+v2kt(x)T
+v2(Kt + λI)
+
+(cid:21)(cid:19)
+
+,
+
+where kt(x) = [k(x1, x), . . . , k(xt, x)]T . Therefore conditioned on the history Ht, the posterior distribution
+over f is GPD(µt(·), v2kt(·, ·)), where
+
+µt(x) = kt(x)T (Kt + λI)−1y1:t,
+
+kt(x, x(cid:48)) = k(x, x(cid:48)) − kt(x)T (Kt + λI)−1kt(x(cid:48)),
+
+σ2
+t (x) = kt(x, x).
+
+(2)
+
+(3)
+
+(4)
+
+Thus for every x ∈ D, the posterior distribution of f (x), given Ht, is N (µt(x), v2σ2
+
+t (x)).
+
+Remark. Note that the GP prior and Gaussian likelihood model described above is only an aid to al-
+gorithm design, and has nothing to do with the actual reward distribution or noise model as in the problem
+statement (Section 2). The reward function f is a ﬁxed, unknown, member of the RKHS Hk(D), and the
+true sequence of noise variables εt is allowed to be a conditionally R-sub-Gaussian martingale difference
+sequence (Equation 1). In general, thus, this represents a misspeciﬁed prior and noise model, also termed the
+agnostic setting by Srinivas et al. (2009).
+
+The proposed algorithms, to follow, assume the knowledge of only the sub-Gaussianity parameter R,
+kernel function k and upper bound B on the RKHS norm of f . Note that v, λ are free parameters (possibly
+time-dependent) that can be set speciﬁc to the algorithm.
+
+3.1 Improved GP-UCB (IGP-UCB) Algorithm
+
+We introduce the IGP-UCB algorithm (Algorithm 1), that uses a combination of the current posterior mean
+µt−1(x) and standard deviation vσt−1(x) to (a) construct an upper conﬁdence bound (UCB) envelope for the
+actual function f over D, and (b) choose an action to maximize it. Speciﬁcally it chooses, at each round t,
+the action
+
+xt = argmax
+
+µt−1(x) + βtσt−1(x),
+
+x∈D
+
+(5)
+
+with the scale parameter v set to be 1. Such a rule trades off exploration (picking points with high uncertainty
+σt−1(x)) with exploitation (picking points with high reward µt−1(x)), with βt = B+R(cid:112)2(γt−1 + 1 + ln(1/δ))
+being the parameter governing the tradeoff, which we later show is related to the width of the conﬁdence in-
+terval for f at round t. δ ∈ (0, 1) is a free conﬁdence parameter used by the algorithm, and γt is the maximum
+information gain at time t, deﬁned as:
+
+γt := max
+
+I(yA; fA).
+
+A⊂D:|A|=t
+
+Here, I(yA; fA) denotes the mutual information between fA = [f (x)]x∈A and yA = fA + εA, where
+εA ∼ N (0, λv2I) and quantiﬁes the reduction in uncertainty about f after observing yA at points A ⊂ D.
+γt is a problem dependent quantity and can be found given the knowledge of domain D and kernel function
+k. For a compact subset D of Rd, γT is O((ln T )d+1) and O(T d(d+1)/(2ν+d(d+1)) ln T ), respectively, for the
+Squared Exponential and Mat´ern kernels (Srinivas et al., 2009), depending only polylogarithmically on the
+time T .
+
+4
+
+Algorithm 1 Improved-GP-UCB (IGP-UCB)
+
+Input: Prior GP (0, k), parameters B, R, λ, δ.
+for t = 1, 2, 3 . . . T do
+
+Set βt = B + R(cid:112)2(γt−1 + 1 + ln(1/δ)).
+Choose xt = argmax
+
+µt−1(x) + βtσt−1(x).
+
+x∈D
+Observe reward yt = f (xt) + εt.
+Perform update to get µt and σt using 2, 3 and 4.
+
+end for
+
+(cid:113)
+
+Discussion. Srinivas et al. (2009) have proposed the GP-UCB algorithm, and Valko et al. (2013) the
+KernelUCB algorithm, for sequentially optimizing reward functions lying in the RKHS Hk(D). Both al-
+gorithms play an arm at time t using the rule: xt = argmaxx∈D µt−1(x) + ˜βtσt−1(x). GP-UCB uses the
+exploration parameter ˜βt =
+2B2 + 300γt−1 ln3(t/δ), with λ set to σ2, where σ is additionally assumed to
+be a known, uniform (i.e., almost-sure) upper bound on all noise variables εt (Srinivas et al., 2009, Theorem
+3). Compared to GP-UCB, IGP-UCB (Algorithm 1) reduces the width of the conﬁdence interval by a factor
+roughly O(ln3/2 t) at every round t, and, as we will see, this small but critical adjustment leads to much better
+theoretical and empirical performance compared to GP-UCB. In KernelUCB, ˜βt is set as η/λ1/2, where η
+is the exploration parameter and λ is the regularization constant. Thus IGP-UCB can be viewed as a special
+case of KernelUCB where η = βt.
+
+3.2 Gaussian Process Thompson Sampling (GP-TS)
+
+Our second algorithm, GP-TS (Algorithm 2), inspired by the success of Thompson sampling for standard
+and parametric bandits (Agrawal and Goyal, 2012; Kaufmann et al., 2012; Gopalan et al., 2014; Agrawal
+and Goyal, 2013), uses the time-varying scale parameter vt = B + R(cid:112)2(γt−1 + 1 + ln(2/δ)) and operates
+as follows. At each round t, GP-TS samples a random function ft(·) from the GP with mean function
+µt−1(·) and covariance function v2
+t kt−1(·, ·). Next, it chooses a decision set Dt ⊂ D, and plays the arm
+7. We call it GP-Thompson-Sampling as it falls under the general framework of
+xt ∈ Dt that maximizes ft
+Thompson Sampling, i.e., (a) assume a prior on the underlying parameters of the reward distribution, (b) play
+the arm according to the prior probability that it is optimal, and (c) observe the outcome and update the prior.
+However, note that the prior is nonparametric in this case.
+
+Algorithm 2 GP-Thompson-Sampling (GP-TS)
+Input: Prior GP (0, k), parameters B, R, λ, δ.
+for t = 1, 2, 3 . . . , do
+
+Set vt = B + R(cid:112)2(γt−1 + 1 + ln(2/δ)).
+Sample ft(·) from GPD(µt−1(·), v2
+Choose the current decision set Dt ⊂ D.
+Choose xt = argmax
+
+ft(x).
+
+t kt−1(·, ·)).
+
+x∈Dt
+Observe reward yt = f (xt) + εt.
+Perform update to get µt and kt using 2 and 3.
+
+end for
+
+5
+
+7. If Dt = D for all t, then this is simply exact Thompson sampling. For technical reasons, however, our regret bound is valid when
+
+Dt is chosen as a suitable discretization of D, so we include Dt as an algorithmic parameter.
+
+4. Main Results
+
+We begin by presenting two key concentration inequalities which are essential in bounding the regret of the
+proposed algorithms.
+
+t=0, i.e., xt is Ft−1-measurable ∀t ≥ 1. Let {εt}∞
+
+t=1 be an Rd-valued discrete time stochastic process predictable with respect to the
+Theorem 1 Let {xt}∞
+ﬁltration {Ft}∞
+t=1 be a real-valued stochastic process such
+that for some R ≥ 0 and for all t ≥ 1, εt is (a) Ft-measurable, and (b) R-sub-Gaussian conditionally on
+Ft−1. Let k : Rd × Rd → R be a symmetric, positive-semideﬁnite kernel, and let 0 < δ ≤ 1. For a given
+η > 0, with probability at least 1 − δ, the following holds simultaneously over all t ≥ 0:
+
+(cid:107)ε1:t(cid:107)2
+
+((Kt+ηI)−1+I)−1 ≤ 2R2 ln
+
+(cid:112)det((1 + η)I + Kt)
+δ
+
+.
+
+(6)
+
+√
+
+(Here, Kt denotes the t × t matrix Kt(i, j) = k(xi, xj), 1 ≤ i, j ≤ t and for any x ∈ Rt and A ∈ Rt×t,
+xT Ax). Moreover, if Kt is positive deﬁnite ∀t ≥ 1 with probability 1, then the conclusion above
+(cid:107)x(cid:107)A :=
+holds with η = 0.
+
+Theorem 1 represents a self-normalized concentration inequality: the ‘size’ of the increasing-length se-
+quence {εt}t of martingale differences is normalized by the growing quantity ((Kt + ηI)−1 + I)−1 that
+explicitly depends on the sequence. The following lemma helps provide an alternative, abstract, view of the
+self-normalized process of Theorem 1, based on the feature space representation induced by a kernel.
+
+Lemma 1 Let k : Rd × Rd → R be a symmetric, positive-semideﬁnite kernel, with associated feature map
+ϕ : Rd → Hk and the reproducing kernel Hilbert space8 (RKHS) Hk. Letting St = (cid:80)t
+s=1 εsϕ(xs) and
+the (possibly inﬁnite dimensional) matrix9 Vt = I + (cid:80)t
+s=1 ϕ(xs)ϕ(xs)T , we have, whenever Kt is positive
+deﬁnite, that
+
+(cid:107)ε1:t(cid:107)(K−1
+
+t +I)−1 = (cid:107)St(cid:107)V −1
+
+t
+
+,
+
+where (cid:107)St(cid:107)V −1
+
+:=
+
+t
+
+(cid:13)
+(cid:13)V −1/2
+(cid:13)
+
+t
+
+St
+
+(cid:13)
+(cid:13)
+(cid:13)Hk
+
+denotes the norm of V −1/2
+
+t
+
+St in the RKHS Hk.
+
+Observe that St is Ft-measurable and also E (cid:2)St
+
+(cid:12)
+(cid:3) = St−1. The process {St}t≥0 is thus a mar-
+(cid:12) Ft−1
+tingale with values10 in the RKHS H, which can possibly be inﬁnite-dimensional, and moreover, whose
+deviation is measured by the norm weighted by V −1
+, which is itself derived from St. Theorem 1 represents
+the kernelized generalization of the ﬁnite-dimensional result of Abbasi-Yadkori et al. (2011), and we recover
+their result under the special case of a linear kernel: ϕ(x) = x for all x ∈ Rd.
+
+t
+
+We remark that when ϕ is a mapping to a ﬁnite-dimensional Hilbert space, the argument of Abbasi-
+Yadkori et al. (2011, Theorem 1) can be lifted to establish Theorem 1, but it breaks down in the generalized,
+inﬁnite-dimensional RKHS setting, as the self-normalized bound in their paper has an explicit, growing
+dependence on the feature dimension. Speciﬁcally, the method of mixtures (de la Pena et al., 2009) or Laplace
+method, as dubbed by Maillard (2016) (Lemma 5.2), fails to hold in inﬁnite dimension. The primary reason
+for this is that the mixture distribution for ﬁnite dimensional spaces can be chosen independently of time,
+t + I(cid:1)−1
+but in a nonparametric setup like ours, where the dimensionality of the self-normalizing factor (cid:0)K −1
+itself grows with time, the use of (random) stopping times, precludes using time-dependent mixtures. We get
+around this difﬁculty by applying a novel ‘double mixture’ construction, in which a pair of mixtures on (a)
+the space of real-valued functions on Rd, i.e., the support of a Gaussian process, and (b) on real sequences
+is simultaneously used to obtain a more general result, of potentially independent interest (see Section 5 and
+the appendix for details).
+
+Our next result shows that how the posterior mean is concentrated around the unknown reward function
+
+f .
+
+8. Such a pair (ϕ, Hk) always exists, see e.g., Rasmussen and Williams (2006).
+9. More formally, Vt : Hk → Hk is the linear operator deﬁned by Vt(z) = z + (cid:80)t
+10. We ignore issues of measurability here.
+
+s=1 ϕ(xs)(cid:104)ϕ(xs), z(cid:105) ∀z ∈ Hk.
+
+6
+
+Theorem 2 Under the same hypotheses as those of Theorem 1, let D ⊂ Rd, and f : D → R be a member
+of the RKHS of real-valued functions on D with kernel k, with RKHS norm bounded by B. Then, with
+probability at least 1 − δ, the following holds for all x ∈ D and t ≥ 1:
+
+|µt−1(x) − f (x)| ≤
+
+(cid:16)
+
+B + R(cid:112)2(γt−1 + 1 + ln(1/δ))
+
+σt−1(x),
+
+(cid:17)
+
+where γt−1 is the maximum information gain after t − 1 rounds and µt−1(x), σ2
+of posterior distribution deﬁned as in Equation 2, 3, 4, with λ set to 1 + η and η = 2/T .
+
+t−1(x) are mean and variance
+
+Theorem 3.5 of Maillard (2016) states a similar result on the estimation of the unknown reward function from
+the RKHS. We improve upon it in the sense that the conﬁdence bound in Theorem 2 is simultaneous over all
+x ∈ D, while the bound has been shown only for a single, ﬁxed x in the Kernel Least-squares setting. We are
+able to achieve this result by virtue of Theorem 1.
+
+4.1 Regret Bound of IGP-UCB
+
+Theorem 3 Let δ ∈ (0, 1), (cid:107)f (cid:107)k ≤ B and εt is conditionally R-sub-Gaussian. Running IGP-UCB for
+with high
+a function f lying in the RKHS Hk(D), we obtain a regret bound of O
+
+(cid:16)√
+
+√
+
+(cid:17)
+
+(cid:16)
+
+√
+
+T (B
+
+γT + γT )
+T γT + (cid:112)T γT (γT + ln(1/δ))
+
+(cid:17)
+.
+
+probability. More precisely, with probability at least 1 − δ, RT = O
+
+B
+
+(cid:17)
+
+Improvement over GP-UCB. Srinivas et al. (2009), in the course of analyzing the GP-UCB algorithm,
+γT +
+
+show that when the reward function lies in the RKHS Hk(D), GP-UCB obtains regret O
+γT ln3/2(T ))
+with high probability (see Theorem 3 therein for the exact bound). Furthermore, they assume
+that the noise εt is uniformly bounded by σ, while our sub-Gaussianity assumption (see Equation 1) is slightly
+more general, and we are able to obtain a O(ln3/2 T ) multiplicative factor improvement in the ﬁnal regret
+bound thanks to the new self-normalized inequality (Theorem 1). Additionally, in our numerical experiments,
+we observe a signiﬁcantly improved performance of IGP-UCB over GP-UCB, both on synthetically generated
+function, and on real-world sensor measurement data (see Section 6).
+
+T (B
+
+(cid:16)√
+
+√
+
+Comparison with KernelUCB. Valko et al. (2013) show that the cumulative regret of KernelUCB is
+(cid:112) ˜dT ), where ˜d, deﬁned as the effective dimension, measures, in a sense, the number of principal directions
+˜O(
+over which the projection of the data in the RKHS is spread. They show that ˜d is at least as good as γT ,
+precisely γT ≥ Ω( ˜d ln ln T ) and thus the regret bound of KernelUCB is roughly ˜O(
+γT
+factor better than IGP-UCB. However, KernelUCB requires the number of actions to be ﬁnite, so the regret
+bound is not applicable for inﬁnite or continuum action spaces.
+
+T γT ), which is
+
+√
+
+√
+
+4.2 Regret Bound of GP-TS
+
+For technical reasons, we will analyze the following version of GP-TS. At each round t, the decision set used
+by GP-TS is restricted to be a unique discretization Dt of D with the property that |f (x) − f ([x]t)| ≤ 1/t2
+for all x ∈ D, where [x]t is the closest point to x in Dt. This can always be achieved by choosing a
+compact and convex domain D ⊂ [0, r]d and discretization Dt with size |Dt| = (BLrdt2)d such that
+(cid:107)x − [x]t(cid:107)1 ≤ rd/BLrdt2 = 1/BLt2 for all x ∈ D, where L = sup
+x∈D
+
+(cid:16) ∂2k(p,q)
+∂pj ∂qj
+
+|p=q=x
+
+. This
+
+(cid:17)1/2
+
+sup
+j∈[d]
+
+implies, for every x ∈ D,
+
+|f (x) − f ([x]t)| ≤ (cid:107)f (cid:107)k L (cid:107)x − [x]t(cid:107)1 ≤ 1/t2,
+
+(7)
+
+as any f ∈ Hk(D) is Lipschitz continuous with constant (cid:107)f (cid:107)k L (De Freitas et al., 2012, Lemma 1).
+Theorem 4 (Regret bound for GP-TS) Let δ ∈ (0, 1), D ⊂ [0, r]d be compact and convex, (cid:107)f (cid:107)k ≤ B and
+{εt}t a conditionally R-sub-Gaussian sequence. Running GP-TS for a function f lying in the RKHS Hk(D)
+
+7
+
+and with decision sets Dt chosen as above, with probability at least 1 − δ, the regret of GP-TS satisﬁes
+T γT + B(cid:112)T ln(2/δ)
+RT = O
+
+(cid:16)(cid:112)(γT + ln(2/δ))d ln(BdT )
+
+(cid:16)√
+
+(cid:17)(cid:17)
+
+.
+
+√
+
+d factor away from the bound ˜O(γT
+
+Comparison with IGP-UCB. Observe that regret scaling of GP-TS is ˜O(γT
+√
+
+dT ) which is a multiplica-
+T ) obtained for IGP-UCB and similar behavior is reﬂected in
+tive
+our simulations on synthetic data. The additional multiplicative factor of (cid:112)d ln(BdT ) in the regret bound of
+GP-TS is essentially a consequence of discretization. How to remove this extra logarithmic dependency, and
+make the analysis discretization-independent, remains an open question.
+
+√
+
+Remark. The regret bound for GP-TS is inferior compared to IGP-UCB in terms of the dependency
+on dimension d, but to the best of our knowledge, Theorem 4 is the ﬁrst (frequentist) regret guarantee of
+Thompson Sampling in the agnostic, non-parametric setting of inﬁnite action spaces.
+
+√
+
+Linear Models and a Matching Lower Bound. If the mean rewards are perfectly linear, i.e. if there
+exists a θ ∈ Rd such that f (x) = θT x for all x ∈ D, then we are in the parametric setup, and one way
+of casting this in the kernelized framework is by using the linear kernel k(x, x(cid:48)) = xT x(cid:48). For this kernel,
+γT = O(d ln T ), and the regret scaling of IGP-UCB is ˜O(d
+T ), which
+recovers the regret bounds of their linear, parametric analogues OFUL (Abbasi-Yadkori et al., 2011) and
+Linear Thompson sampling (Agrawal and Goyal, 2013), respectively. Moreover, in this case ˜d = d, thus
+d factor away from that of KernelUCB. But the regret bound of KernelUCB also
+the regret of IGP-UCB is
+depends on the number of arms N , and if N is exponential in d, then it also suffers ˜O(d
+T ) regret. We
+remark that a similar O(ln3/2 T ) factor improvement, as obtained by IGP-UCB over GP-UCB, was achieved
+in the linear parametric setting by Abbasi-Yadkori et al. (2011) in the OFUL algorithm, over its predecessor
+ConﬁdenceBall (Dani et al., 2008). Finally we see that the for linear bandit problem with inﬁnitely many
+actions, IGP-UCB attains the information theoretic lower bound of Ω(d
+T ) (see Dani et al. (2008)), but
+GP-TS is a factor of
+
+T ) and that of GP-TS is ˜O(d3/2
+
+d away from it.
+
+√
+
+√
+
+√
+
+√
+
+√
+
+5. Overview of Techniques
+
+We brieﬂy outline here the key arguments for all the theorems in Section 4. Formal proofs and auxiliary
+lemmas required are given in the appendix.
+
+(cid:110)
+
+Proof Sketch for Theorem 1. It is convenient to assume that Kt, the induced kernel matrix at time t, is
+invertible, since this is where the crux of the argument lies. First we show that for any function g : D → R
+(cid:111)
+and for all t ≥ 0, thanks to the sub-Gaussian property (1), the process
+t
+is a non-negative super-martingale with respect to the ﬁltration Ft, where g1:t := [g(x1), . . . , g(xt)]T and in
+fact satisﬁes E [M g
+t ] ≤ 1. The chief difﬁculty is to handle the behavior of Mt at a (random) stopping time,
+since the sizes of quantities such as ε1:t at the stopping time will be random.
+
+t := exp(εT
+
+2 (cid:107)g1:t(cid:107)2)
+
+We next construct a mixture martingale Mt by mixing M g
+
+t over g drawn from an independent GPD(0, k)
+Gaussian process, which is a measure over a large space of functions, i.e., the space RD. Then, by a change
+of measure argument, we show that this induces a mixture distribution which is essentially N (0, Kt) over
+(cid:16) 1
+2 (cid:107)ε1:t(cid:107)2
+any desired ﬁnite dimension t, thus obtaining Mt =
+. Next from the
+fact that E [Mτ ] ≤ 1 and from Markov’s inequality, for any δ ∈ (0, 1), we obtain
+
+1:tg1:t − 1
+
+det(I+Kt)
+
+1√
+
+(I+K−1
+
+M g
+
+exp
+
+)−1
+
+(cid:17)
+
+t
+
+(cid:104)
+
+P
+
+(cid:107)ε1:τ (cid:107)2
+
+(K−1
+
+τ +I)−1 > 2 ln
+
+(cid:16)(cid:112)det(I + Kτ )/δ
+
+(cid:17)(cid:105)
+
+≤ δ.
+
+Finally, we lift this bound simultaneously for all t through a standard stopping time construction as in Abbasi-
+Yadkori et al. (2011).
+
+Proof Sketch for Theorem 2. Here we sketch the special case of η = 0, i.e. λ = 1. Observe
+(cid:12)
+(cid:12) and Q :=
+t Φt + I)−1ϕ(x) and use this
+(cid:12), which are
+
+that |µt(x) − f (x)| is upper bounded by sum of two terms, P := (cid:12)
+(cid:12)kt(x)T (Kt + I)−1f1:t − f (x)(cid:12)
+(cid:12)
+observation to show that P = (cid:12)
+
+(cid:12). Now we observe that σ2
+(cid:12)ϕ(x)T (ΦT
+t ε1:t
+
+t (x) = ϕ(x)T (ΦT
+(cid:12) and Q = (cid:12)
+(cid:12)
+
+(cid:12)kt(x)T (Kt + I)−1ε1:t
+
+t Φt + I)−1f (cid:12)
+
+t Φt + I)−1ΦT
+
+(cid:12)ϕ(x)T (ΦT
+
+8
+
+in turn upper bounded by the terms σt(x) (cid:107)St(cid:107)V −1
+Theorem 1, along with the assumption that (cid:107)f (cid:107)k ≤ B and the fact that 1
+(see Lemma 3) when Kt is invertible.
+
+and (cid:107)f (cid:107)k σt(x) respectively. Then the result follows using
+2 ln(det(I + Kt)) ≤ γt almost surely
+
+t
+
+Proof Sketch for Theorem 3. First from Theorem 2 and the choice of xt in Algorithm 1, we show that
+the instantaneous regret rt at round t is upper bounded by 2βtσt−1(xt) with probability at least 1 − δ. Then
+the result follows by essentially upper bounding the term (cid:80)T
+T γT ) (Lemma 4 in the
+appendix).
+
+t=1 σt−1(xt) by O(
+
+√
+
+Proof Sketch for Theorem 4. We follow a similar approach given in Agrawal and Goyal (2013) to prove
+the regret bound of GP-TS. First observe that from our choice of discretization sets Dt, the instantaneous
+regret at round t is given by rt = f (x(cid:63)) − f ([x(cid:63)]t) + f ([x(cid:63)]t) − f (xt) ≤ 1
+t2 + ∆t(xt), where ∆t(x) :=
+f ([x(cid:63)]t) − f (x) and [x(cid:63)]t is the closest point to x(cid:63) in Dt. Now at each round t, after an action is chosen, our
+algorithm improves the conﬁdence about true reward function f , via an update of µt(·) and kt(·, ·). However,
+if we play a suboptimal arm, the regret suffered can be much higher than the improvement of our knowledge.
+To overcome this difﬁculty, at any round t, we divide the arms (in the present discretization Dt) into two
+groups: saturated arms, St, deﬁned as those with ∆t(x) > ctσt−1(x) and unsaturated otherwise, where ct
+is an appropriate constant (see Deﬁnition 1, 3). The idea is to show that the probability of playing a saturated
+arm is small and then bound the regret of playing an unsaturated arm in terms of standard deviation. This
+√
+is useful because the inequality (cid:80)T
+T γT ) (Lemma 4) allows us to bound the total regret
+due to unsaturated arms.
+
+t=1 σt−1(xt) ≤ O(
+
+(cid:48)
+
+(cid:48)
+
+(cid:104)
+
+tion F
+
+t−1, P
+
+xt ∈ Dt \ St
+
+First we lower bound the probability of playing an unsaturated arm at round t. We deﬁne a ﬁltra-
+t−1 as the history Ht−1 up to round t − 1 and prove that for “most” (in a high probability sense)
+F
+π ( Lemma 9). This observation, along
+with concentration bounds for ft(x) and f (x) (Lemma 6) and “smoothness” of f (Equation 7), allow us
+to show that the expected regret at round t is upper bounded in terms of σt−1(xt), i.e.
+in terms of re-
+(cid:104)
+(cid:48)
+rt
+gret due to playing an unsaturated arm. More precisely, we show that for “most” F
+≤
+t−1
+
+≥ p − 1/t2, where p = 1/4e
+
+t−1, E
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+√
+
+(cid:105)
+
+(cid:105)
+
+(cid:104)
+
+11ct
+p
+
+E
+
+σt−1(xt) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
++ 2B+1
+t2
+
+(Lemma 10), and use it to prove that Xt (cid:39) rt − 11ct
+
+(cid:48)
+
+(cid:12)
+(cid:12) F
+p σt−1(xt)− 2B+1
+
+t2
+
+; t ≥ 1
+
+is a super-martingale difference sequence adapted to ﬁltration {F
+Hoeffding inequality (Lemma 13), along with the bound on (cid:80)T
+probability regret bound.
+
+(cid:48)
+
+t }t≥1 (Lemma 12). Now, using the Azuma-
+t=1 σt−1(xt), we obtain the desired high-
+
+6. Experiments
+
+In this section we provide numerical results on both synthetically generated test functions and functions from
+real-world data. We compare GP-UCB, IGP-UCB and GP-TS with GP-EI and GP-PI11.
+
+Synthetic Test Functions. We use the following procedure to generate test functions from the RKHS.
+First we sample 100 points uniformly from the interval [0, 1] and use that as our decision set. Then we
+compute a kernel matrix K on those points and draw reward vector y ∼ N (0, K). Finally, the mean of
+the resulting posterior distribution is used as the test function f . We set noise parameter R2 to be 1% of
+function range and use λ = R2. We used Squared Exponential kernel with lengthscale parameter l = 0.2 and
+Mat´ern kernel with parameters ν = 2.5, l = 0.2. Parameters βt, ˜βt, vt of IGP-UCB, GP-UCB and GP-TS are
+chosen as given in Section 3, with δ = 0.1, B2 = f T Kf and γt set according to theoretical upper bounds for
+corresponding kernels. We run each algorithm for T = 30000 iterations, over 25 independent trials (samples
+from the RKHS) and plot the average cumulative regret along with standard deviations (Figure 1). We see a
+signiﬁcant improvement in the performance of IGP-UCB over GP-UCB. In fact IGP-UCB performs the best
+in the pool of competitors, while GP-TS also fares reasonably well compared to GP-UCB and GP-EI/GP-PI.
+We next sample 25 random functions from the GP (0, K) and perform the same experiment (Figure 2)
+for both kernels with exactly same set of parameters. The relative performance of all methods is similar to
+
+11. GP-EI and PI perform similarly and thus are not separately distinguishable in the plots.
+
+9
+
+(a)
+
+(b)
+
+Figure 1: Cumulative regret for functions lying in the RKHS corresponding to (a) Squared Exponential ker-
+
+nel and (b) Mat´ern kernel.
+
+(a)
+
+(b)
+
+Figure 2: Cumulative regret for functions lying in the GP corresponding to (a) Squared Exponential kernel
+
+and (b) Mat´ern kernel.
+
+that in the previous experiment, which is the arguably harder “agnostic” setting of a ﬁxed, unknown target
+function.
+
+Standard Test Functions. We consider 2 well-known synthetic benchmark functions for Bayesian Op-
+timization: Rosenbrock and Hartman3 (see Azimi et al. (2012) for exact analytical expressions). We sample
+100 d points uniformly from the domain of each benchmark function, d being the dimension of respective
+domain, as the decision set. We consider the Squared Exponential kernel with l = 0.2 and set all parameters
+exactly as in previous experiment. The cumulative regret for 25 independent trials on Rosenbrock and Hart-
+man3 benchmarks is shown in Figure 3. We see GP-EI/PI perform better than the rest, while IGP-UCB and
+GP-TS show competitive performance. Here no algorithm is aware of the underlying kernel function, hence
+
+10
+
+00.511.522.533.5x 10400.511.522.533.54x 104RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCB00.511.522.533.5x 10400.511.522.5x 104RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCB00.511.522.533.5x 10400.511.522.53x 104RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCB00.511.522.533.5x 10400.511.522.533.5x 104RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCB(a)
+
+(b)
+
+Figure 3: Cumulative regret for (a) Rosenbrock and (b) Hartman3 benchmark function.
+
+we conjecture that the UCB- and TS- based algorithms are somewhat less robust on the choice of kernel than
+EI/PI.
+
+Temperature Sensor Data. We use temperature data12 collected from 54 sensors deployed in the Intel
+Berkeley Research lab between February 28th and April 5th, 2004 with samples collected at 30 second
+intervals. We tested all algorithms in the context of learning the maximum reading of the sensors collected
+between 8 am to 9 am. We take measurements of ﬁrst 5 consecutive days (starting Feb. 28th 2004) to
+learn algorithm parameters. Following Srinivas et al. (2009), we calculate the empirical covariance matrix
+of the sensor measurements and use it as the kernel matrix in the algorithms. Here R2 is set to be 5% of
+the average empirical variance of sensor readings and other algorithm parameters is set similarly as in the
+previous experiment with γt = 1 (found via cross-validation). The functions for testing consist of one set of
+measurements from all sensors in the two following days and the cumulative regret is plotted over all such test
+functions. From Figure 4, we see that IGP-UCB and GP-UCB performs the same, while GP-TS outperforms
+all its competitors.
+
+Light Sensor Data. We take light sensor data collected in the CMU Intelligent Workplace in Nov 2005,
+which is available online as Matlab structure13 and contains locations of 41 sensors, 601 train samples and 192
+test samples. We compute the kernel matrix, estimate the noise and set other algorithm parameters exactly
+as in the previous experiment. Here also GP-TS is found to perform better than the others, with IGP-UCB
+performing better than GP-EI/PI (Figure 4).
+
+Related work. An alternative line of work pertaining to X -armed bandits (Kleinberg et al., 2008; Bubeck
+et al., 2011; Carpentier and Valko, 2015; Azar et al., 2014) studies continuum-armed bandits with smoothness
+structure. For instance, (Bubeck et al., 2011) show that with a Lipschitzness assumption on the reward
+d+1
+function, algorithms based on discretizing the domain yield nontrivial regret guarantees, of order Ω(T
+d+2 )
+in Rd. Other Bayesian approaches to function optimization are GP-EI (Moˇckus, 1975), GP-PI (Kushner,
+1964), GP-EST (Wang et al., 2016) and GP-UCB, including the contextual (Krause and Ong, 2011), high-
+dimensional (Djolonga et al., 2013; Wang et al., 2013), time-varying (Bogunovic et al., 2016) safety-aware
+(Gotovos et al., 2015), budget-constraint (Hoffman et al., 2013) and noise-free (De Freitas et al., 2012)
+settings. Other relevant work focuses on best arm identiﬁcation problem in the Bayesian setup considering
+pure exploration (Gr¨unew¨alder et al., 2010). For Thompson sampling (TS), Russo and Van Roy (2014)
+
+12. http://db.csail.mit.edu/labdata/labdata.html
+13. http://www.cs.cmu.edu/˜guestrin/Class/10708-F08/projects/lightsensor.zip
+
+11
+
+00.511.522.533.5x 1040100020003000400050006000700080009000RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCB00.511.522.533.5x 104010002000300040005000600070008000RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCB(a)
+
+(b)
+
+Figure 4: Cumulative regret plots for (a) temperature data and (b) light sensor data.
+
+analyze the Bayesian regret of TS, which includes the case where the target function is sampled from a GP
+prior. Our work obtains the ﬁrst frequentist regret of TS for unknown, ﬁxed functions from an RKHS.
+
+7. Conclusion
+
+For bandit optimization, we have improved upon the existing GP-UCB algorithm, and introduced a new GP-
+TS algorithm. The proposed algorithms perform well in practice both on synthetic and real-world data. An
+interesting case is when the kernel function is also not known to the algorithms a priori and needs to be
+learnt adaptively. Moreover, one can consider classes of time varying functions from the RKHS, and general
+reinforcement learning with GP techniques. There are also important questions on computational aspects of
+optimizing functions drawn from GPs.
+
+References
+
+COLT, pages 39–1, 2012.
+
+pages 127–135, 2013.
+
+Yasin Abbasi-Yadkori, D´avid P´al, and Csaba Szepesv´ari. Improved algorithms for linear stochastic bandits.
+
+In Advances in Neural Information Processing Systems, pages 2312–2320, 2011.
+
+Shipra Agrawal and Navin Goyal. Analysis of thompson sampling for the multi-armed bandit problem. In
+
+Shipra Agrawal and Navin Goyal. Thompson sampling for contextual bandits with linear payoffs. In ICML,
+
+Mohammad Gheshlaghi Azar, Alessandro Lazaric, and Emma Brunskill. Online stochastic optimization
+
+under correlated bandit feedback. In ICML, pages 1557–1565, 2014.
+
+Javad Azimi, Ali Jalali, and Xiaoli Fern.
+
+Hybrid batch bayesian optimization.
+
+arXiv preprint
+
+arXiv:1202.5597, 2012.
+
+Omar Besbes and Assaf Zeevi. Dynamic pricing without knowing the demand function: Risk bounds and
+
+near-optimal algorithms. Operations Research, 57(6):1407–1420, 2009.
+
+Ilija Bogunovic, Jonathan Scarlett, and Volkan Cevher. Time-varying gaussian process bandit optimization.
+
+arXiv preprint arXiv:1601.06650, 2016.
+
+12
+
+00.511.522.533.5x 104010002000300040005000600070008000RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCB00.511.522.533.5x 104−0.500.511.522.5x 104RoundsCumulativeRegret  GP-PIGP-EIGP-TSGP-UCBIGP-UCBS´ebastien Bubeck, R´emi Munos, Gilles Stoltz, and Csaba Szepesv´ari. X-armed bandits. Journal of Machine
+
+Learning Research, 12(May):1655–1695, 2011.
+
+Alexandra Carpentier and Michal Valko. Simple regret for inﬁnitely many armed bandits. In ICML, pages
+
+1133–1141, 2015.
+
+Mung Chiang, Prashanth Hande, Tian Lan, and Chee Wei Tan. Power control in wireless cellular networks.
+Foundations and Trends in Networking, 2(4):381–533, 2008. ISSN 1554-057X. doi: 10.1561/1300000009.
+
+Varsha Dani, Thomas P Hayes, and Sham M Kakade. Stochastic linear optimization under bandit feedback.
+
+In COLT, pages 355–366, 2008.
+
+Nando De Freitas, Alex Smola, and Masrour Zoghi. Exponential regret bounds for gaussian process bandits
+
+with deterministic observations. arXiv preprint arXiv:1206.6457, 2012.
+
+Victor H de la Pena, Tze Leung Lai, and Qi-Man Shao. Self-normalized processes. probability and its
+
+applications, 2009.
+
+Josip Djolonga, Andreas Krause, and Volkan Cevher. High-dimensional gaussian process bandits. In Ad-
+
+vances in Neural Information Processing Systems, pages 1025–1033, 2013.
+
+Rick Durrett. Probability: Theory and Examples. Brooks/Cole - Thomson Learning, Belmont, CA, 2005.
+
+Aditya Gopalan, Shie Mannor, and Yishay Mansour. Thompson sampling for complex online problems. In
+
+ICML, volume 14, pages 100–108, 2014.
+
+Alkis Gotovos, ETHZ CH, and Joel W Burdick. Safe exploration for optimization with gaussian processes.
+
+2015.
+
+Steffen Gr¨unew¨alder, Jean-Yves Audibert, Manfred Opper, and John Shawe-Taylor. Regret bounds for gaus-
+
+sian process bandit problems. In AISTATS, pages 273–280, 2010.
+
+Matthew D Hoffman, Eric Brochu, and Nando de Freitas. Portfolio allocation for bayesian optimization. In
+
+UAI, pages 327–336, 2011.
+
+Matthew W Hoffman, Bobak Shahriari, and Nando de Freitas. Exploiting correlation and budget constraints
+
+in bayesian multi-armed bandit optimization. arXiv preprint arXiv:1303.6746, 2013.
+
+Leslie Pack Kaelbling, Michael L Littman, and Andrew W Moore. Reinforcement learning: A survey. Journal
+
+of artiﬁcial intelligence research, 4:237–285, 1996.
+
+Emilie Kaufmann, Nathaniel Korda, and R´emi Munos. Thompson sampling: An asymptotically opti-
+mal ﬁnite-time analysis. In International Conference on Algorithmic Learning Theory, pages 199–213.
+Springer, 2012.
+
+Robert Kleinberg, Aleksandrs Slivkins, and Eli Upfal. Multi-armed bandits in metric spaces. In Proceedings
+
+of the fortieth annual ACM symposium on Theory of computing, pages 681–690. ACM, 2008.
+
+Andreas Krause and Cheng S Ong. Contextual gaussian process bandit optimization. In Advances in Neural
+
+Information Processing Systems, pages 2447–2455, 2011.
+
+Harold J Kushner. A new method of locating the maximum point of an arbitrary multipeak curve in the
+
+presence of noise. Journal of Basic Engineering, 86(1):97–106, 1964.
+
+Odalric-Ambrym Maillard. Self-normalization techniques for streaming conﬁdent regression. 2016.
+
+J Moˇckus. On bayesian methods for seeking the extremum.
+
+In Optimization Techniques IFIP Technical
+
+Conference, pages 400–404. Springer, 1975.
+
+13
+
+Carl Edward Rasmussen and Christopher KI Williams. Gaussian processes for machine learning. 2006.
+
+Paat Rusmevichientong and John N. Tsitsiklis. Linearly parameterized bandits. Math. Oper. Res., 35(2):
+
+395–411, May 2010.
+
+Daniel Russo and Benjamin Van Roy. Learning to optimize via posterior sampling. Mathematics of Opera-
+
+tions Research, 39(4):1221–1243, 2014.
+
+Bernhard Sch¨olkopf and Alexander J Smola. Learning with kernels: support vector machines, regularization,
+
+optimization, and beyond. MIT press, 2002.
+
+William D Smart and Leslie Pack Kaelbling. Practical reinforcement learning in continuous spaces. In ICML,
+
+pages 903–910, 2000.
+
+Niranjan Srinivas, Andreas Krause, Sham M Kakade, and Matthias Seeger. Gaussian process optimization in
+
+the bandit setting: No regret and experimental design. arXiv preprint arXiv:0912.3995, 2009.
+
+Michal Valko, Nathaniel Korda, R´emi Munos, Ilias Flaounas, and Nelo Cristianini. Finite-time analysis of
+
+kernelised contextual bandits. arXiv preprint arXiv:1309.6869, 2013.
+
+Zi Wang, Bolei Zhou, and Stefanie Jegelka. Optimization as estimation with gaussian processes in bandit
+
+settings. In International Conf. on Artiﬁcial and Statistics (AISTATS), 2016.
+
+Ziyu Wang, Masrour Zoghi, Frank Hutter, David Matheson, N Freitas, et al. Bayesian optimization in high di-
+mensions via random embeddings. AAAI Press/International Joint Conferences on Artiﬁcial Intelligence,
+2013.
+
+Fuzhen Zhang. The Schur complement and its applications, volume 4. Springer Science & Business Media,
+
+2006.
+
+Appendix
+
+A. Proof of Theorem 1
+
+For a function g : D → R and a sequence of reals n ≡ (nt)∞
+
+M g,n
+
+t = exp
+
+εT
+1:tg1:t,n −
+
+(cid:16)
+
+t=1, deﬁne for any t ≥ 0
+R2
+2
+
+(cid:107)g1:t,n(cid:107)2 (cid:17)
+
+,
+
+where the vector g1:t,n := [g(x1) + n1, . . . , g(xt) + nt]T . We ﬁrst establish the following technical result,
+which resembles Abbasi-Yadkori et al. (2011, Lemma 8).
+Lemma 2 For ﬁxed g and n, {M g,n
+
+t=0 is a super-martingale with respect to the ﬁltration {Ft}∞
+}∞
+
+t=0.
+
+t
+
+Proof First, deﬁne
+
+∆g,n
+t
+Since xt is Ft−1-measurable and εt is Ft-measurable, M g,n
+conditional R-sub-Gaussianity of εt, we have
+
+εt(g(xt) + nt) −
+
+:= exp
+
+t
+
+(cid:16)
+
+(g(xt) + nt)2(cid:17)
+
+R2
+2
+as well as ∆g,n
+
+.
+
+t
+
+∀λ ∈ R, E (cid:2)eλεt (cid:12)
+
+(cid:12) Ft−1
+
+(cid:3) ≤ exp
+
+(cid:18) λ2R2
+2
+
+(cid:19)
+
+,
+
+which in turn implies E (cid:2)∆g,n
+
+t
+
+(cid:12)
+(cid:12) Ft−1
+E (cid:2)M g,n
+= E (cid:2)M g,n
+
+t
+
+(cid:3) ≤ 1. We also have
+(cid:12)
+(cid:12) Ft−1
+(cid:12)
+(cid:12) Ft−1
+
+(cid:3) = M g,n
+
+(cid:3)
+
+t−1
+
+t−1∆g,n
+
+t
+
+E (cid:2)∆g,n
+
+t
+
+(cid:12)
+(cid:12) Ft−1
+
+(cid:3) ≤ M g,n
+t−1,
+
+14
+
+are Ft measurable. Also, by the
+
+showing that {M g,n
+Also observe that E [M g,n
+
+t
+
+t
+
+] ≤ 1 for all t, as
+
+}∞
+t=0 is a non-negative super-martingale and proving the lemma.
+
+E [M g,n
+t
+
+] ≤ E (cid:2)M g,n
+
+(cid:3) ≤ · · · ≤ E [M g,n
+
+] = E [1] = 1.
+
+t−1
+
+0
+
+Now, let τ be a stopping time with respect to the ﬁltration {Ft}∞
+negative super-martingales (Durrett, 2005), M g,n
+t = M g,n
+deﬁned. Now let Qg,n
+2005),
+
+∞ = lim
+t→∞
+min{τ,t}, t ≥ 0, be a stopped version of {M g,n
+
+M g,n
+t
+
+t
+
+t=0. By the convergence theorem for non-
+exists almost surely, and thus M g,n
+is well-
+
+τ
+
+}t. By Fatou’s lemma (Durrett,
+
+E [M g,n
+τ
+
+] = E
+
+(cid:104)
+
+lim
+t→∞
+
+= E
+
+(cid:104)
+lim inf
+t→∞
+
+(cid:105)
+
+Qg,n
+t
+
+(cid:105)
+
+Qg,n
+t
+E [Qg,n
+t
+(cid:104)
+
+E
+
+M g,n
+
+]
+
+(cid:105)
+
+≤ 1,
+
+min{τ,t}
+
+≤ lim inf
+t→∞
+
+= lim inf
+t→∞
+
+(cid:16)
+
+M g,n
+
+min{τ,t}
+
+(cid:17)
+
+t
+
+(8)
+
+since the stopped super-martingale
+
+is also a super-martingale (Durrett, 2005).
+
+Now, let F∞ be the σ-algebra generated by {Ft}∞
+
+t=1 be a sequence of independent
+and identically distributed Gaussian random variables with mean 0 and variance η, independent of F∞. Let
+h : D → R be a random function distributed according to the Gaussian process measure GPD(0, k), and
+independent of both F∞ and (Nt)∞
+t=1.
+(cid:104)
+For each t ≥ 0, deﬁne Mt = E
+
+. In words, (Mt)t is a mixture of super-martingales of the
+, and it is not hard to see that (Mt)t is also a (non-negative) super-martingale w.r.t. the ﬁltration
+
+t=0, and let N ≡ (Nt)∞
+
+M h,N
+t
+
+(cid:12)
+(cid:12) F∞
+
+(cid:105)
+
+Mt is well-deﬁned almost surely. We can write
+
+form M g,n
+{Ft}t, hence M∞ = lim
+t→∞
+
+t
+
+E [Mt] = E
+
+(cid:104)
+
+M h,N
+t
+
+(cid:105)
+
+= E
+
+(cid:104)
+
+E
+
+(cid:104)
+M h,N
+t
+
+(cid:12)
+(cid:12) h, N
+
+(cid:105)(cid:105)
+
+≤ E [1] = 1 ∀t.
+
+An argument similar to (8) also shows that E [Mτ ] ≤ 1 for any stopping time τ . Now, without loss of
+generality, we assume R = 1 (this can always be achieved through appropriate scaling), and compute
+
+(cid:20)
+
+(cid:16)
+
+Mt = E
+
+exp
+
+εT
+1:th1:t,N −
+
+(cid:107)h1:t,N (cid:107)2 (cid:17) (cid:12)
+
+(cid:12) F∞
+
+(cid:21)
+
+1
+2
+
+exp
+
+1:t([h(x1) . . . h(xt)]T + z) −
+εT
+
+(cid:90)
+
+(cid:16)
+
+RD
+
+Rt
+
+=
+
+=
+
+(cid:90)
+
+(cid:90)
+
+Rt
+
+(cid:16)
+
+exp
+
+εT
+1:tλ −
+
+(cid:107)λ(cid:107)2 (cid:17)
+
+f (λ)dλ,
+
+1
+2
+
+(cid:13)[h(x1) . . . h(xt)]T + z(cid:13)
+(cid:13)
+(cid:13)
+
+2 (cid:17)
+
+dµ1(h)dµ2(z)
+
+1
+2
+
+where µ1 is the Gaussian process measure GPD(0, k) over the function space RD ≡ {g : D → R}, µ2 is
+the multivariate Gaussian distribution on Rt with mean 0 and covariance ηI where I is the identify, du is
+standard Lebesgue measure on Rt, and f is the density of the random vector [h(x1) . . . h(xt)]T + z, which
+is distributed as the multivariate Gaussian N (0, Kt + ηI) given the sampled points x1, . . . , xt up to round t,
+where Kt is the induced kernel matrix at time t given by Kt(i, j) = k(xi, xj), 1 ≤ i, j ≤ t. (Note: Kt is not
+positive deﬁnite and invertible when there are repetitions among (x1, . . . , xt), but Kt + ηI is).
+
+Thus, we have
+
+Mt =
+
+1
+(cid:112)(2π)t det(Kt + ηI)
+(cid:16) (cid:107)ε1:t(cid:107)2
+2
+
+exp
+
+(cid:17)
+
+(cid:90)
+
+=
+
+(cid:112)(2π)t det(Kt + ηI)
+
+Rt
+
+(cid:32)
+
+exp
+
+εT
+1:tλ −
+
+(cid:90)
+
+Rt
+
+(cid:107)λ(cid:107)2
+2
+
+−
+
+(cid:107)λ(cid:107)2
+
+(Kt+ηI)−1
+
+(cid:33)
+
+dλ
+
+(cid:32)
+
+exp
+
+−
+
+(cid:107)λ − ε1:t(cid:107)2
+2
+
+−
+
+(cid:107)λ(cid:107)2
+
+(Kt+ηI)−1
+
+(cid:33)
+
+dλ.
+
+2
+
+2
+
+15
+
+Now for positive-deﬁnite matrices P and Q
+
+(cid:107)x − a(cid:107)2
+
+P + (cid:107)x(cid:107)2
+
+Q = (cid:13)
+
+(cid:13)x − (P + Q)−1P a(cid:13)
+2
+P +Q + (cid:107)a(cid:107)2
+(cid:13)
+
+P − (cid:107)P a(cid:107)2
+
+(P +Q)−1 .
+
+Therefore,
+
+which yields
+
+(cid:107)λ − ε1:t(cid:107)2
+
+I + (cid:107)λ(cid:107)2
+(cid:13)λ − (I + (Kt + ηI)−1)−1Iε1:t
+
+(Kt+ηI)−1
+
+= (cid:13)
+
+(cid:13)
+2
+I+(Kt+ηI)−1 + (cid:107)ε1:t(cid:107)2
+(cid:13)
+
+I − (cid:107)Iε1:t(cid:107)2
+
+(I+(Kt+ηI)−1)−1 ,
+
+Mt =
+
+1
+(cid:112)(2π)t det(Kt + ηI)
+(cid:16)
+
+(cid:90)
+
+×
+
+exp
+
+−
+
+1
+2
+
+Rt
+
+exp
+
+(cid:16) 1
+2
+
+(cid:107)ε1:t(cid:107)2
+
+(I+(Kt+ηI)−1)−1
+
+(cid:17)
+
+(cid:13)
+(cid:13)λ − (I + (Kt + ηI)−1)−1ε1:t
+
+(cid:13)
+2
+(cid:13)
+I+(Kt+ηI)−1
+
+(cid:17)
+
+dλ
+
+=
+
+=
+
+1
+(cid:112)det(Kt + ηI) det((Kt + ηI)−1 + I)
+
+exp
+
+(cid:16) 1
+2
+
+(cid:107)ε1:t(cid:107)2
+
+1
+(cid:112)det(I + Kt + ηI)
+
+exp
+
+(cid:16) 1
+2
+
+(cid:107)ε1:t(cid:107)2
+
+(I+(Kt+ηI)−1)−1
+
+(cid:17)
+
+,
+
+(I+(Kt+ηI)−1)−1
+
+(cid:17)
+
+since for any positive deﬁnite matrix A ∈ Rt,
+
+(cid:90)
+
+Rt
+
+(cid:16)
+
+1
+2
+
+exp
+
+−
+
+(x − a)T A(x − a)
+
+dx =
+
+(cid:17)
+
+(cid:90)
+
+Rt
+
+(cid:16)
+
+exp
+
+−
+
+1
+2
+
+(cid:107)x − a(cid:107)2
+A
+
+(cid:17)
+
+dx = (cid:112)(2π)t/ det(A).
+
+Now as E [Mτ ] ≤ 1, using Markov’s inequality gives, for any δ ∈ (0, 1),
+
+(cid:104)
+
+P
+
+(cid:107)ε1:τ (cid:107)2
+
+((Kτ +ηI)−1+I)−1 > 2 ln
+
+(cid:16)(cid:112)det((1 + η)I + Kτ )/δ
+
+(cid:17)(cid:105)
+
+= P [Mτ > 1/δ] < δE [Mτ ] ≤ δ.
+
+(9)
+
+To complete the proof, we now employ a stopping time construction as in Abbasi-Yadkori et al. (2011). For
+each t ≥ 0, deﬁne the ‘bad’ event
+
+Bt(δ) =
+
+(cid:110)
+ω ∈ Ω : (cid:107)ε1:t(cid:107)2
+
+((Kt+ηI)−1+I)−1 > 2 ln
+
+(cid:16)(cid:112)det((1 + η)I + Kt)/δ
+
+(cid:17)(cid:111)
+,
+
+so that
+
+
+
+
+
+P
+
+(cid:91)
+
+t≥0
+
+
+
+Bt(δ)
+
+
+
+= P
+
+(cid:104)
+∃t ≥ 0 : (cid:107)ε1:t(cid:107)2
+
+((Kt+ηI)−1+I)−1 ≤ 2 ln
+
+(cid:16)(cid:112)det((1 + η)I + Kt)/δ
+
+(cid:17)(cid:105)
+
+,
+
+which is the probability required to be bounded by δ in the statement of the theorem.
+
+Let τ (cid:48) be the ﬁrst time when the bad event Bt(δ) happens, i.e., τ (cid:48)(ω) := min{t ≥ 0 : ω ∈ Bt(δ)}, with
+
+min{∅} := ∞ by convention. Clearly, τ (cid:48) is a stopping time, and
+
+Bt(δ) = {ω ∈ Ω : τ (cid:48)(ω) < ∞}.
+
+(cid:91)
+
+t≥0
+
+16
+
+Therefore, we can write
+
+
+
+
+
+P
+
+(cid:91)
+
+t≥0
+
+
+
+Bt(δ)
+
+
+
+= P [τ (cid:48) < ∞]
+(cid:104)
+(cid:107)ε1:τ (cid:48)(cid:107)2
+
+= P
+
+(cid:104)
+
+≤ P
+
+(cid:107)ε1:τ (cid:48)(cid:107)2
+
+((Kτ (cid:48) +ηI)−1+I)−1 > 2 ln
+
+((Kτ (cid:48) +ηI)−1+I)−1 > 2 ln
+
+(cid:16)(cid:112)det((1 + η)I + Kτ (cid:48))/δ
+(cid:16)(cid:112)det((1 + η)I + Kτ (cid:48))/δ
+
+(cid:17)
+
+(cid:17)(cid:105)
+
+≤ δ,
+
+(cid:105)
+
+, τ (cid:48) < ∞
+
+by the inequality (9).
+
+When Kt is positive deﬁnite (and hence invertible) for each t ≥ 1, one can use a similar construction
+as in Part 1, with η = 0 (i.e., N is the all-zeros sequence with probability 1), to recover the corresponding
+conclusion (6) with η = 0.
+
+Proof of Lemma 1
+
+Deﬁne, for each time t, the t × ∞ matrix Φt := [ϕ(x1) · · · ϕ(xt)]T , and observe that Vt = I + ΦT
+Kt = ΦtΦT
+
+t . With this, we can compute
+
+t Φt and
+
+(cid:107)St(cid:107)2
+
+V −1
+t
+
+= ST
+
+t V −1
+
+t St =
+
+εsϕ(xs)T (cid:0)I + ΦT
+
+t Φt
+
+(cid:1)−1
+
+εsϕ(xs)
+
+t
+(cid:88)
+
+s=1
+
+t
+(cid:88)
+
+s=1
+
+= εT
+
+= εT
+= εT
+
+(cid:1)−1
+
+(cid:0)I + ΦT
+ΦT
+t Φt
+1:tΦt
+t + I(cid:1)−1
+(cid:0)ΦtΦT
+1:tΦtΦT
+t
+1:tKt (Kt + I)−1 ε1:t
+t + I(cid:1)−1
+
+(cid:0)K −1
+
+= εT
+1:t
+
+t ε1:t
+
+ε1:t
+
+ε1:t = (cid:107)ε1:t(cid:107)2
+
+t +I)−1 ,
+
+(K−1
+
+completing the proof.
+
+B. Information Theoretic Results
+
+Lemma 3 For every t ≥ 0, the maximum information gain γt, for the points chosen by Algorithm 1 and 2
+satisfy, almost surely, the following :
+
+Proof At round t after observing the reward vector y1:t at points At = {x1, . . . , xt} ⊂ D, the information
+gain - by the algorithm - about the unknown reward function f is given by the mutual information between
+f1:t and y1:t sampled at points At:
+
+γt ≥
+
+ln(det(I + λ−1Kt)),
+
+γt ≥
+
+ln(1 + λ−1σ2
+
+s−1(xs)).
+
+1
+2
+
+1
+2
+
+t
+(cid:88)
+
+s=1
+
+I(y1:t; f1:t) = H(y1:t) − H(y1:t
+
+(cid:12)
+(cid:12) f1:t),
+
+17
+
+where y1:t = f1:t + ε1:t = [y1, . . . , yt]T , f1:t = [f (x1), . . . , f (xt)]T and ε1:t = [ε1, . . . , εt]T . Clearly, given
+f1:t the randomness - as perceived by the algorithm - in y1:t are only in the noise vector ε1:t and thus
+
+H(y1:t
+
+(cid:12)
+(cid:12) f1:t) =
+
+1
+2
+
+ln(det(2πeλv2I)) =
+
+log(2πeλv2),
+
+t
+2
+
+as ε1:t is assumed to follow the distribution N (0, λv2I) and H(N (µ, Σ)) = 1
+pled at points At is believed to be distributed as N (0, v2(Kt+λI)), which gives H(y1:t) = 1
+Kt))) = t
+2 ln(det(I + λ−1Kt)), and therefore
+
+2 log(2πeλv2) + 1
+
+2 ln(det(2πeΣ)). Now y1:t sam-
+
+2 ln(det(2πev2(λI+
+
+I(y1:t; f1:t) =
+
+ln(det(I + λ−1Kt)).
+
+1
+2
+
+Again, conditioned on reward vector y1:s−1 observed at points As−1, the reward ys at round s observed at
+(cid:12)
+xs is believed to follow the distribution N (µs−1(xs), v2(λ + σ2
+s−1(xs))), which gives H(ys
+(cid:12) y1:s−1) =
+1
+2 ln(1 + λ−1σ2
+2 ln(2πev2(λ + σ2
+s−1(xs)). Now by chain rule H(y1:t) =
+(cid:80)t
+
+2 ln(2πeλv2) + 1
+
+s−1(xs))) = 1
+
+(cid:80)t
+
+s=1 H(ys
+
+(cid:12)
+(cid:12) y1:s−1) = t
+
+2 ln(2πeλv2) + 1
+
+2
+
+s=1 ln(1 + λ−1σ2
+
+s−1(xs)), and therefore
+
+Now I(y1:t; f1:t) is a function of At ⊂ D, the random points chosen by the algorithm and thus
+
+I(y1:t; f1:t) =
+
+ln(1 + λ−1σ2
+
+s−1(xs)).
+
+1
+2
+
+t
+(cid:88)
+
+s=1
+
+I(y1:t; f1:t) ≤ max
+
+I(yA; fA) = γt, a.s.,
+
+A⊂D:|A|=t
+
+Now the proof follows from Equation 10 and 11.
+
+(10)
+
+(11)
+
+Lemma 4 Let x1, . . . xt be the points selected by the algorithms. The sum of predictive standard deviation
+at those points can be expressed in terms of the maximum information gain. More precisely,
+
+T
+(cid:88)
+
+t=1
+
+σt−1(xt) ≤ (cid:112)4(T + 2)γT .
+
+Proof First note that, by Cauchy-Schwartz inequality, (cid:80)T
+0 ≤ σ2
+2 ln(1+λ−1σ2
+Thus we get σ2
+
+t−1(xt). Now since
+t−1(xt) ≤
+t−1(xt)), where in the last inequality we used the fact that for any 0 ≤ α ≤ 1, ln(1+α) ≥ α/2.
+t−1(xt) ≤ 2λ ln(1 + λ−1σ2
+
+t−1(x) ≤ 1 for all x ∈ D and by our choice of λ = 1 + η, η ≥ 0, we have λ−1σ2
+
+t−1(xt)). This implies
+
+t=1 σt−1(xt) ≤
+
+t=1 σ2
+
+T (cid:80)t
+
+(cid:113)
+
+T
+(cid:88)
+
+t=1
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)2T
+
+T
+(cid:88)
+
+t=1
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)4T λ
+
+T
+(cid:88)
+
+t=1
+
+1
+2
+
+σt−1(xt) ≤
+
+λ ln(1 + λ−1σ2
+
+t−1(xt)) ≤
+
+ln(1 + σ2
+
+t−1(xt)) ≤ (cid:112)4T (1 + η)γT ,
+
+where the last inequality follows from Lemma 3. Now the result follows by choosing η = 2/T .
+
+C. Proof of Theorem 2
+
+First deﬁne ϕ(x) as k(x, ·), where ϕ : Rd → H maps any point x in the primal space Rd to the RKHS
+H associated with kernel function k. For any two functions g, h ∈ H, deﬁne the inner product (cid:104)g, h(cid:105)k as
+(cid:112)gT g. Now as the unknown reward function f lies in the RKHS Hk(D),
+gT h and the RKHS norm (cid:107)g(cid:107)k as
+
+18
+
+these deﬁnitions along with reproducing property of the RKHS imply f (x) = (cid:104)f, k(x, ·)(cid:105)k = (cid:104)f, ϕ(x)(cid:105)k =
+f T ϕ(x) and k(x, x(cid:48)) = (cid:104)k(x, ·), k(x(cid:48), ·)(cid:105)k = (cid:104)ϕ(x), ϕ(x(cid:48))(cid:105)k = ϕ(x)T ϕ(x(cid:48)) for all x, x(cid:48) ∈ D. Now deﬁning
+Φt := (cid:2)ϕ(x1)T , . . . , ϕ(xt)T (cid:3)T
+t , kt(x) = Φtϕ(x) for all x ∈ D and
+f1:t = Φtf . Since the matrices (ΦT
+t Φt +
+λI)ΦT
+t + λI), we have
+
+t + λI) are strictly positive deﬁnite and (ΦT
+
+, we get the kernel matrix Kt = ΦtΦT
+
+t Φt + I) and (ΦtΦT
+
+t (ΦtΦT
+
+t = ΦT
+
+ΦT
+
+t (ΦtΦT
+
+t + λI)−1 = (ΦT
+
+t Φt + λI)−1ΦT
+t .
+
+(12)
+
+Also from the deﬁnitions above (ΦT
+
+t Φt + λI)ϕ(x) = ΦT
+
+t kt(x) + λϕ(x), and thus from 12 we deduce that
+
+ϕ(x) = ΦT
+
+t (ΦtΦT
+
+t + λI)−1kt(x) + λ(ΦT
+
+t Φt + λI)−1ϕ(x),
+
+ϕ(x)T ϕ(x) = kt(x)T (ΦtΦT
+
+t + λI)−1kt(x) + λϕ(x)T (ΦT
+
+t Φt + λI)−1ϕ(x).
+
+λϕ(x)T (ΦT
+
+t Φt + λI)−1ϕ(x) = k(x, x) − kt(x)T (Kt + λI)−1kt(x) = σ2
+
+t (x)
+
+(13)
+
+which gives
+
+This implies
+
+Now observe that
+
+(cid:12)
+(cid:12)f (x) − kt(x)T (Kt + λI)−1f1:t
+
+t (ΦtΦT
+t Φt + λI)−1ΦT
+
+t + λI)−1Φtf (cid:12)
+(cid:12)
+t Φtf (cid:12)
+(cid:12)
+
+(cid:12) = (cid:12)
+(cid:12)
+= (cid:12)
+= (cid:12)
+≤ (cid:13)
+
+(cid:12)ϕ(x)T f − ϕ(x)T ΦT
+(cid:12)ϕ(x)T f − ϕ(x)T (ΦT
+t Φt + λI)−1f (cid:12)
+(cid:12)λϕ(x)T (ΦT
+(cid:12)
+t Φt + λI)−1ϕ(x)(cid:13)
+(cid:13)λ(ΦT
+(cid:13)k (cid:107)f (cid:107)k
+(cid:113)
+
+λϕ(x)T (ΦT
+
+t Φt + λI)−1λI(ΦT
+
+t Φt + λI)−1ϕ(x)
+
+λϕ(x)T (ΦT
+
+t Φt + λI)−1(ΦT
+
+t Φt + λI)(ΦT
+
+t Φt + λI)−1ϕ(x)
+
+= (cid:107)f (cid:107)k
+(cid:113)
+
+≤ B
+
+= B σt(x),
+
+where the second equality uses 12, the ﬁrst inequality is by Cauchy-Schwartz and the ﬁnal equality is from
+13. Again see that
+
+(cid:12)
+(cid:12)kt(x)T (Kt + λI)−1ε1:t
+
+(cid:12) = (cid:12)
+(cid:12)
+(cid:12)ϕ(x)T ΦT
+= (cid:12)
+(cid:12)ϕ(x)T (ΦT
+(cid:13)
+(cid:13)(ΦT
+(cid:13)
+(cid:113)
+
+(cid:12)
+t + λI)−1ε1:t
+t (ΦtΦT
+(cid:12)
+(cid:12)
+t Φt + λI)−1ΦT
+t ε1:t
+(cid:12)
+(cid:13)
+(cid:13)
+t Φt + λI)−1/2ΦT
+(cid:13)(ΦT
+t Φt + λI)−1/2ϕ(x)
+(cid:13)
+(cid:13)
+(cid:13)k
+(cid:113)
+
+≤
+
+=
+
+ϕ(x)T (ΦT
+t Φt + λI)−1ϕ(x)
+(cid:113)
+
+= λ−1/2σt(x)
+
+1:tΦtΦT
+εT
+
+t (ΦtΦT
+
+t + λI)−1ε1:t
+
+= λ−1/2σt(x)
+
+εT
+1:tKt(Kt + λI)−1ε1:t
+
+(cid:113)
+
+t ε1:t
+
+(cid:13)
+(cid:13)
+(cid:13)k
+
+(ΦT
+
+t ε1:t)T (ΦT
+
+t Φt + λI)−1ΦT
+
+t ε1:t
+
+where the second equality is from 12, the ﬁrst inequality is by Cauchy-Schwartz and the fourth inequality uses
+both 12 and 13. Now recall that, at round t, the posterior mean function µt(x) = kt(x)T (Kt + λI)−1y1:t =
+kt(x)T (Kt + λI)−1(f1:t + ε1:t), where f1:t = (cid:2)f (x1), . . . , f (xt)(cid:3)T
+. Thus we have
+
+and ε1:t = (cid:2)ε1, . . . , εt
+
+(cid:3)T
+
+|µt(x) − f (x)| ≤ (cid:12)
+
+(cid:12)kt(x)T (Kt + λI)−1ε1:t
+
+(cid:12)f (x) − kt(x)T (Kt + λI)−1f1:t
+
+(cid:16)
+
+≤ σt(x)
+
+B + (1 + η)−1/2
+
+εT
+1:tKt(Kt + (1 + η)I)−1ε1:t
+
+(cid:12)
+(cid:12)
+
+(cid:17)
+
+,
+
+(cid:12) + (cid:12)
+(cid:12)
+(cid:113)
+
+19
+
+where we have used λ = 1 + η, where η ≥ 0 as stated in Theorem 1. Now observe that when K is invertible,
+K(K + I)−1 = ((K + I)K −1)−1 = (I + K −1)−1. Using K = Kt + ηI, we get
+
+(Kt + ηI)(Kt + (1 + η)I)−1 = ((Kt + ηI)−1 + I)−1.
+
+Now see that
+
+1:tKt(Kt + (1 + η)I)−1ε1:t ≤ εT
+εT
+
+1:t(Kt + ηI)(Kt + (1 + η)I)−1ε1:t = εT
+
+1:t((Kt + ηI)−1 + I)−1ε1:t
+
+Now using Theorem 1, for any δ ∈ (0, 1), with probability at least 1 − δ, ∀t ≥ 0, ∀x ∈ D, we obtain
+
+|µt(x) − f (x)| ≤ σt(x)
+
+B + (cid:107)ε1:t(cid:107)(Kt+ηI)−1+I)−1
+
+≤ σt(x)
+
+B + R
+
+2 ln
+
+(cid:16)
+
+(cid:17)
+
+(cid:16)
+
+(cid:115)
+
+(cid:112)det((1 + η)I + Kt)
+δ
+
+(cid:17)
+
+.
+
+Now observe that det((1 + η)I + Kt) = det(I + (1 + η)−1Kt) det((1 + η)I). Thus we have
+
+ln(det((1 + η)I + Kt)) = ln(det(I + (1 + η)−1Kt)) + t ln(1 + η) ≤ 2γt + ηt,
+
+from lemma 3. Now choosing η = 2/T we have |µt(x) − f (x)| ≤ σt(x)
+and hence the result follows.
+
+(cid:16)
+
+B + R
+
+(cid:113)
+
+2(cid:0)γt + 1 + ln(1/δ)(cid:1)(cid:17)
+
+D. Analysis of IGP-UCB (Theorem 3)
+
+Observe that at each round t ≥ 1, by the choice of xt in Algorithm 1, we have µt−1(xt) + βtσt−1(xt) ≥
+µt−1(x(cid:63)) + βtσt−1(x(cid:63)) and from Lemma 2, we have f (x(cid:63)) ≤ µt−1(x(cid:63)) + βtσt−1(x(cid:63)) and µt−1(xt) −
+f (xt) ≤ βtσt−1(xt). Therefore for all t ≥ 1 with probability at least 1 − δ,
+
+rt = f (x(cid:63)) − f (xt)
+
+≤ βtσt−1(xt) + µt−1(xt) − f (xt)
+≤ 2βtσt−1(xt),
+
+T
+(cid:80)
+t=1
+
+T
+(cid:80)
+t=1
+
+rt ≤ 2βT
+
+and hence
+βT ≤ B + R(cid:112)2(γT + 1 + ln(1/δ)). Hence with probability at least 1 − δ,
+
+σt−1(xt). Now from Lemma 4,
+
+T
+(cid:80)
+t=1
+
+σt−1(xt) = O(
+
+T γT ) and by deﬁnition
+
+√
+
+RT =
+
+rt = O
+
+(cid:16)
+
+B(cid:112)T γT + (cid:112)T γT (γT + ln(1/δ))
+
+(cid:17)
+,
+
+T
+(cid:88)
+
+t=1
+
+and thus with high probability,
+
+(cid:16)√
+
+√
+
+RT = O
+
+T (B
+
+γT + γT )
+
+(cid:17)
+
+.
+
+E. Analysis of GP-TS (Theorem 4)
+
+Lemma 5 For any δ ∈ (0, 1) and any ﬁnite subset D(cid:48) of D,
+
+(cid:104)
+P
+
+∀x ∈ D(cid:48), |ft(x) − µt−1(x)| ≤ vt
+
+(cid:112)2 ln(|D(cid:48)| t2) σt−1(x) (cid:12)
+
+(cid:12) Ht−1
+
+(cid:105)
+
+≥ 1 − 1/t2,
+
+for all possible realizations of history Ht−1.
+
+20
+
+Proof Fix x ∈ D and t ≥ 1. Given history Ht−1, ft(x) ∼ N (µt−1(x), v2
+of Hoffman et al. (2013), for any δ ∈ (0, 1), with probability at least 1 − δ
+
+t σ2
+
+t−1(x)). Thus using Lemma B4
+
+|ft(x) − µt−1(x)| ≤ (cid:112)2 ln(1/δ) vtσt−1(x),
+
+and now applying union bound,
+
+|ft(x) − µt−1(x)| ≤ vt
+
+(cid:112)2 ln(|D(cid:48)| /δ) σt−1(x) ∀x ∈ D(cid:48)
+
+holds with probability at least 1 − δ, given any possible realizations of history Ht−1. Now setting δ = 1/t2,
+the result follows.
+
+Deﬁnition 1 Deﬁne For all t ≥ 1, ˜ct = (cid:112)4 ln t + 2d ln(BLrdt2) and ct = vt(1 + ˜ct), where vt = B +
+R(cid:112)2(γt−1 + 1 + ln(2/δ)). Clearly, ct increases with t.
+
+Deﬁnition 2 Deﬁne Ef (t) as the event that for all x ∈ D,
+
+and Eft(t) as the event that for all x ∈ Dt,
+
+|µt−1(x) − f (x)| ≤ vtσt−1(x),
+
+|ft(x) − µt−1(x)| ≤ vt˜ctσt−1(x).
+
+Deﬁnition 3 Deﬁne the set of saturated points St in discretization Dt at round t as
+
+St := {x ∈ Dt : ∆t(x) > ctσt−1(x)},
+
+where ∆t(x) := f ([x(cid:63)]t) − f (x), the difference between function values at the closest point to x(cid:63) in Dt and
+at x. Clearly ∆t([x(cid:63)]t) = 0 for all t, and hence [x(cid:63)]t ∈ Dt is unsaturated at every t.
+
+Deﬁnition 4 Deﬁne ﬁltration F
+· · · . Observe that given F
+
+(cid:48)
+
+(cid:48)
+
+t−1 as the history until time t, i.e., F
+
+t−1 = Ht−1. By deﬁnition, F
+
+(cid:48)
+
+(cid:48)
+
+1 ⊆ F (cid:48)
+
+2 ⊆
+
+t−1, the set St and the event Ef (t) are completely deterministic.
+
+Lemma 6 Given any δ ∈ (0, 1), P (cid:2)∀t ≥ 1, Ef (t)(cid:3) ≥ 1−δ/2 and for all possible ﬁltrations F
+1 − 1/t2.
+
+(cid:104)
+
+(cid:48)
+
+t−1, P
+
+Eft(t) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+≥
+
+Proof The probability bound for the event Ef (t) follows from Theorem 2 by replacing δ with δ
+event Eft(t) follows from Lemma 5 by setting D(cid:48) = Dt and Ht−1 = F
+
+(cid:48)
+
+t−1.
+
+2 and for the
+
+Lemma 7 (Gaussian Anti-concentration) For a Gaussian random variable X with mean µ and standard
+deviation σ, for any β > 0,
+
+Lemma 8 For any ﬁltration F
+
+(cid:48)
+
+t−1 such that Ef (t) is true,
+
+for any x ∈ D, where p = 1
+√
+4e
+
+π .
+
+P
+
+(cid:20) X − µ
+σ
+
+(cid:21)
+
+> β
+
+≥
+
+e−β2
+√
+πβ
+4
+
+.
+
+(cid:104)
+
+P
+
+ft(x) > f (x) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+≥ p,
+
+21
+
+Proof Fix any x ∈ D. Given ﬁltration F
+t−1, ft(x) is a Gaussian random variable with mean µt−1(x) and
+standard deviation vtσt−1(x) and since event Ef (t) is true, |µt−1(x) − f (x)| ≤ c1,tσt−1(x). Now using the
+anti-concentration inequality in Lemma 7, we have
+
+(cid:48)
+
+(cid:104)
+
+P
+
+ft(x) > f (x) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+= P
+
+(cid:20) ft(x) − µt−1(x)
+vtσt−1(x)
+(cid:20) ft(x) − µt−1(x)
+vtσt−1(x)
+e−θ2
+t ,
+
+≥ P
+
+≥
+
+1
+√
+πβt
+4
+
+>
+
+>
+
+f (x) − µt−1(x)
+vtσt−1(x)
+|f (x) − µt−1(x)|
+vtσt−1(x)
+
+(cid:21)
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:21)
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+where, from Deﬁnition 2, θt = |f (x)−µt−1(x)|
+the result follows.
+
+vtσt−1(x) ≤ 1. Therefore P
+
+(cid:104)
+
+ft(x) > f (x) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+≥ 1
+√
+4e
+
+π , and hence
+
+Lemma 9 For any ﬁltration F
+
+(cid:48)
+
+t−1 such that Ef (t) is true,
+
+(cid:104)
+
+P
+
+xt ∈ Dt \ St
+
+(cid:105)
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+≥ p − 1/t2.
+
+Proof At round t our algorithm chooses the point xt ∈ Dt, at which the highest value of ft, within cur-
+rent decision set Dt, is attained. Now if ft([x(cid:63)]t) is greater than ft(x) for all saturated points at round t,
+i.e.,ft([x(cid:63)]t) > ft(x), ∀x ∈ St, then one of the unsaturated points (which includes [x(cid:63)]t) in Dt must be
+played and hence xt ∈ Dt \ St. This implies
+(cid:104)
+(cid:105)
+xt ∈ Dt \ St
+
+(cid:104)
+ft([x(cid:63)]t) > ft(x), ∀x ∈ St
+
+≥ P
+
+(14)
+
+P
+
+(cid:105)
+
+.
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+Now form Deﬁnition 3, ∆t(x) > ctσt−1(x), for all x ∈ St. Also if both the events Ef (t) and Eft(t)
+are true, then from Deﬁnition 1 and 2, ft(x) ≤ f (x) + ctσt−1(x), for all x ∈ Dt. Thus for all x ∈ St,
+t−1 such that Ef (t) is true, either Eft(t) is false, or
+ft(x) < f (x) + ∆t(x). Therefore, for any ﬁltration F
+t−1 such that Ef (t) is true,
+else for all x ∈ St, ft(x) < f ([x(cid:63)]t). Hence, for any F
+
+(cid:48)
+
+(cid:48)
+
+P
+
+(cid:104)
+ft([x(cid:63)]t) > ft(x), ∀x ∈ St
+
+(cid:105)
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+≥ P (cid:2)ft([x(cid:63)]t) > f ([x(cid:63)]t) (cid:12)
+
+(cid:12) Ft−1
+
+(cid:3) − P
+
+(cid:104)
+Eft(t) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+≥ p − 1/t2,
+
+where we have used Lemma 6 and Lemma 8. Now the proof follows from Equation 14.
+
+Lemma 10 For any ﬁltration F
+
+(cid:48)
+
+t−1 such that Ef (t) is true,
+
+(cid:104)
+
+E
+
+rt
+
+(cid:105)
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+≤
+
+11ct
+p
+
+E
+
+(cid:104)
+σt−1(xt) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
++
+
+2B + 1
+t2
+
+,
+
+where rt is the instantaneous regret at round t.
+
+Proof Let ¯xt be the unsaturated point in Dt with smallest σt−1(x), i.e.,
+
+¯xt = argmin
+x∈Dt\St
+
+σt−1(x).
+
+Since σt−1(·) and St are deterministic given F
+
+t−1, so is ¯xt. Now for any F
+
+(cid:48)
+
+(cid:104)
+
+E
+
+σt−1(xt) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+(cid:104)
+
+≥ E
+
+σt−1(xt) (cid:12)
+≥ σt−1(¯xt)(p − 1/t2),
+
+(cid:12) F
+
+(cid:48)
+
+t−1, xt ∈ Dt \ St
+
+(cid:48)
+
+t−1 such that Ef (t) is true,
+(cid:104)
+xt ∈ Dt \ St
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+(cid:105)
+
+P
+
+(15)
+
+(16)
+
+22
+
+where we have used Equation 15 and Lemma 9. Now, if both the events Ef (t) and Eft(t) are true, then from
+Deﬁnition 1 and 2, f (x) − ctσt−1(x) ≤ ft(x) ≤ f (x) + ctσt−1(x), for all x ∈ Dt. Using this observation
+along with Deﬁnition 3 and the facts that ft(xt) ≥ ft(x) for all x ∈ Dt and ¯xt ∈ Dt \ St, we have
+
+∆t(xt) = f ([x(cid:63)]t) − f (¯xt) + f (¯xt) − f (xt)
+
+≤ ∆t(¯xt) + ft(¯xt) + ctσt−1(¯xt) − ft(xt) + ctσt−1(xt)
+≤ ctσt−1(¯xt) + ctσt−1(¯xt) + ctσt−1(xt)
+(cid:0)2σt−1(¯xt) + ctσt−1(xt)(cid:1).
+≤ ct
+
+(cid:48)
+
+(cid:0)2σt−1(¯xt) + ctσt−1(xt)(cid:1), or Eft(t) is
+Therefore, for any F
+false. Now from our assumption of bounded variance, for all x ∈ D, |f (x)| ≤ (cid:107)f (cid:107)k k(x, x) ≤ B, and hence
+∆t(x) ≤ 2 sup
+x∈D
+
+t−1 such that Ef (t) is true, either ∆t(xt) ≤ ct
+
+|f (x)| ≤ 2B. Thus, using Equation 16, we get
+
+E
+
+(cid:104)
+∆t(xt) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+(cid:104)
+
+≤ E
+
+(cid:0)2σt−1(¯xt) + ctσt−1(xt)(cid:1) (cid:12)
+
+ct
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
++ 2BP
+
+(cid:104)
+
+E
+
+σt−1(xt) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
++ ctE
+
+σt−1(xt) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
++
+
+(cid:105)
+
+(cid:104)
+
+≤
+
+≤
+
+2ct
+p − 1/t2
+(cid:104)
+11ct
+p
+
+E
+
+σt−1(xt) (cid:12)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:105)
+
++
+
+2B
+t2 ,
+
+(17)
+
+(cid:105)
+
+(cid:12) F
+
+(cid:48)
+t−1
+
+(cid:104)
+
+Eft(t) (cid:12)
+(cid:105)
+
+2B
+t2
+
+where in the last inequality we used that 1/(p − 1/t2) ≤ 5/p, which holds trivially for t ≤ 4 and also holds
+for t ≥ 5, as t2 > 5e
+
+π. Now using Equation 7, we have the instantaneous regret at round t,
+
+√
+
+rt = f (x(cid:63)) − f ([x(cid:63)]t) + f ([x(cid:63)]t) − f (xt) ≤
+
+1
+t2 + ∆t(xt),
+
+and then taking conditional expectation on both sides, the result follows from Equation 17.
+
+Deﬁnition 5 Let us deﬁne Y0 = 0, and for all t = 1, . . . , T :
+
+¯rt = rt · I{Ef (t)},
+
+Xt = ¯rt −
+
+σt−1(xt) −
+
+11ct
+p
+
+2B + 1
+t2
+
+,
+
+Yt =
+
+Xs.
+
+t
+(cid:88)
+
+s=1
+
+Deﬁnition 6 A sequence of random variables (Zt; t ≥ 0) is called a super-martingale corresponding to a
+ﬁltration Ft, if for all t, Zt is Ft-measurable, and for t ≥ 1,
+
+E (cid:2)Zt
+
+(cid:12)
+(cid:12) Ft−1
+
+(cid:3) ≤ Zt−1.
+
+Lemma 11 (Azuma-Hoeffding Inequality) If a super-martingale (Zt; t ≥ 0), corresponding to ﬁltration
+Ft, satisﬁes |Zt − Zt−1| ≤ αt for some constant αt, for all t = 1, . . . , T , then for any δ ≥ 0,
+
+
+
+P
+
+ZT − Z0 ≤
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)2 ln(1/δ)
+
+T
+(cid:88)
+
+t=1
+
+
+
+α2
+t
+
+ ≥ 1 − δ.
+
+23
+
+Lemma 12 (Yt; t = 0, ..., T ) is a super-martingale process with respect to ﬁltration F
+
+(cid:48)
+
+t .
+
+Proof From Deﬁnition 6, we need to prove that for all t ∈ {1, . . . , T } and any possible F
+0, i.e.
+
+(cid:48)
+
+t−1, E
+
+(cid:104)
+Yt − Yt−1
+
+(cid:105)
+
+(cid:12)
+(cid:12) F
+
+(cid:48)
+t−1
+
+≤
+
+(cid:104)
+
+E
+
+¯rt|F
+
+(cid:48)
+t−1
+
+(cid:105)
+
+≤
+
+11ct
+p
+
+E
+
+(cid:104)
+σt−1(xt)|F
+
+(cid:105)
+
+(cid:48)
+t−1
+
++
+
+2B + 1
+t2
+
+.
+
+(18)
+
+(cid:48)
+
+Now if F
+for F
+
+(cid:48)
+
+t−1 such that Ef (t) is false, then ¯rt = rt · I{Ef (t)} = 0, and Equation 18 holds trivially. Moreover,
+
+t−1 such that both Ef (t) is true, Equation 18 follows from Lemma 10.
+
+Lemma 13 Given any δ ∈ (0, 1), with probability at least 1 − δ,
+
+RT =
+
+r(t) =
+
+σt−1(xt) +
+
+T
+(cid:88)
+
+t=1
+
+11cT
+p
+
+T
+(cid:88)
+
+t=1
+
+(2B + 1)π2
+6
+
++
+
+(4B + 11)cT
+p
+
+(cid:112)2T ln(2/δ),
+
+where T is the total number of rounds played.
+
+Proof First note that from Deﬁnition 5 for all t = 1, . . . , T ,
+
+|Yt − Yt−1| = |Xt| ≤ |¯rt| +
+
+σt−1(xt) +
+
+11ct
+p
+
+2B + 1
+t2
+
+.
+
+Now as ¯rt ≤ rt ≤ 2 sup
+x∈D
+
+|f (x)| ≤ 2B and σ2
+
+t−1(xt) ≤ σ2
+
+0(xt) ≤ 1, we have
+
+|Yt − Yt−1| ≤ 2B +
+
+11ct
+p
+
++
+
+2B + 1
+t2
+
+≤
+
+(4B + 11)ct
+p
+
+,
+
+which follows from the fact that 2B ≤ 2Bct/p and also (2B + 1)/t2 ≤ 2Bct/p. Thus, we can apply
+Azuma-Hoeffding inequality (Lemma 11) to obtain that with probability at least 1 − δ/2,
+
+T
+(cid:88)
+
+t=1
+
+¯rt ≤
+
+σt−1(xt) +
+
+T
+(cid:88)
+
+t=1
+
+2B + 1
+
+t2 +
+
+(cid:118)
+(cid:117)
+(cid:117)
+(cid:116)2 ln(2/δ)
+
+T
+(cid:88)
+
+t=1
+
+(4B + 11)2c2
+t
+p2
+
+≤
+
+σt−1(xt) +
+
+(2B + 1)π2
+6
+
++
+
+(4B + 11)cT
+p
+
+(cid:112)2T ln(2/δ),
+
+T
+(cid:88)
+
+t=1
+
+11ct
+p
+
+11cT
+p
+
+T
+(cid:88)
+
+t=1
+
+as by deﬁnition ct ≤ cT for all t ∈ {1, . . . , T }. Now, as the event Ef (t) holds holds for all t with probability
+at least 1 − δ/2 (see Lemma 6), then from Deﬁnition 5, ¯rt = rt for all t with probability at least 1 − δ/2.
+Now by applying union bound, the result follows.
+
+Proof of Theorem 4
+
+From Lemma 4 we have,
+
+σt−1(xt) = O(
+
+T γT ). Also from Deﬁnition 1,
+
+T
+(cid:80)
+t=1
+
+√
+
+(cid:16)
+
+CT ≤ B + R(cid:112)2(γT + 1 + ln(2/δ)) +
+
+B + R(cid:112)2(γT + 1 + ln(2/δ))
+
+(cid:17)(cid:112)4 ln T + 2d ln(BLrdT 2)
+
+= O
+
+= O
+
+(cid:17)
+(cid:16)(cid:112)(γT + ln(2/δ))(ln T + d ln(BdT )) + B(cid:112)d ln(BdT )
+(cid:17)
+(cid:16)(cid:112)(γT + ln(2/δ))d ln(BdT )
+
+.
+
+24
+
+Hence, from Lemma 13, with probability at least 1 − δ,
+
+(cid:32)
+(cid:112)(γT + ln(2/δ))d ln(BdT ) ·
+
+RT = O
+
+(cid:16)(cid:112)T γT + B(cid:112)T ln(2/δ)
+
+(cid:17)
+
+(cid:33)
+
+and thus with high probability,
+
+RT = O
+
+T γ2
+
+(cid:17)
+T d ln(BdT ) + B(cid:112)T γT d ln(BdT )
+
+= O
+
+(cid:16)
+(cid:112)T d ln(BdT )
+
+B
+
+√
+
+γT + γT
+
+(cid:17)
+
+(cid:33)
+.
+
+(cid:16)(cid:113)
+
+(cid:32)
+
+F. Recursive Updates of Posterior Mean and Covariance
+
+We now describe a procedure to update the posterior mean and covariance function in a recursive fashion
+through the properties of Schur complement (Zhang (2006)) rather than evaluating Equation 2 and 3 at each
+round. Speciﬁcally for all t ≥ 1 we show the following:
+
+µt(x) = µt−1(x) +
+
+(yt − µt−1(xt)),
+
+kt−1(x, xt)
+λ + σ2
+t−1(xt)
+
+kt(x, x(cid:48)) = kt−1(x, x(cid:48)) −
+
+kt−1(x, xt)kt−1(xt, x(cid:48))
+
+,
+
+λ + σ2
+
+t−1(xt)
+
+t (x) = σ2
+σ2
+
+t−1(x) −
+
+k2
+t−1(x, xt)
+λ + σ2
+t−1(xt)
+
+.
+
+(19)
+
+(20)
+
+(21)
+
+These update rules make our algorithms easy to implement and we are not aware of any literature which
+explicitly states or uses these relations.
+
+First we write the matrix Kt + λI as
+
+(cid:20)A B
+C D
+
+(cid:21)
+, where A = Kt−1 + λI, B = kt−1(xt), C = BT and
+
+D = λ + k(xt, xt). Now using Schur’s complement we get
+
+(cid:21)−1
+
+(cid:20)A B
+C D
+
+=
+
+=
+
+=
+
+(cid:20)A−1 + A−1BβCA−1 −A−1Bβ
+
+(cid:21)
+
+−βCA−1
+
+(cid:20)A−1 + βA−1BBT A−1 −βA−1B
+
+(cid:21)
+
+β
+
+β
+
+−βBT A−1
+(cid:20)A−1 + βγ −βα
+
+(cid:21)
+
+−βαT
+
+,
+
+β
+
+where β = (D − CA−1B)−1 = 1/(D − BT A−1B), γ = A−1BBT A−1 and α = A−1B. Therefore we
+have
+
+µt(x) = kt(x)T (Kt + λI)−1y1:t
+k(xt, x)(cid:3)
+
+= (cid:2)kt−1(x)T
+
+(cid:20)A−1 + βγ −βα
+
+(cid:21)
+
+(cid:21) (cid:20)y1:t−1
+yt
+
+β
+= kt−1(x)T (A−1 + βγ)y1:t−1 − βk(xt, x)αT y1:t−1 − βytαT kt−1(x) + βytk(xt, x)
+= kt−1(x)T A−1y1:t−1 + β
+
+(cid:17)
+kt−1(x)T γy1:t−1 − k(xt, x)αT y1:t−1 − ytαT kt−1(x) + ytk(xt, x)
+
+(cid:16)
+
+,
+
+−βαT
+
+25
+
+where
+
+Thus we have
+
+Now as
+
+Now we have
+
+also
+
+and
+
+kt−1(x)T A−1y1:t−1 = kt−1(x)T (Kt−1 + λI)−1y1:t−1 = µt−1(x),
+
+kt−1(x)T γy1:t−1 = kt−1(x)T A−1kt−1(xt)kt−1(xt)T A−1y1:t−1 = (cid:0)kt−1(xt)T A−1kt−1(x)(cid:1) µt−1(xt),
+
+αT y1:t−1 = kt−1(xt)T A−1y1:t−1 = µt−1(xt),
+
+αT kt−1(x) = kt−1(xt)T A−1kt−1(x).
+
+µt(x) = µt−1(x) + β
+
+kt−1(xt)T A−1kt−1(x) (µt−1(xt) − yt) + k(xt, x) (yt − µt−1(xt))
+
+(cid:16)
+
+(cid:17)
+
+= µt−1(x) + β (yt − µt−1(xt)) (cid:0)k(xt, x) − kt−1(xt)T A−1kt−1(x)(cid:1)
+= µt−1(x) + βkt−1(xt, x)(yt − µt−1(xt)).
+
+D − BT A−1B = λ + k(xt, xt) − kt−1(xt)T (Kt−1 + λI)−1kt−1(xt) = λ + σ2
+
+t−1(xt),
+
+putting β = 1/(λ + σ2
+
+t−1(xt)), we obtain Equation 19. Again observe that
+
+kt(x, x(cid:48))
+
+= k(x, x(cid:48)) − kt(x)T (Kt + λI)−1kt(x(cid:48))
+= k(x, x(cid:48)) − kt−1(x)T A−1kt−1(x(cid:48))
+
+(cid:16)
+
+(cid:17)
+kt−1(x)T γkt−1(x(cid:48)) − k(xt, x)αT kt−1(x(cid:48)) − k(xt, x(cid:48))αT kt−1(x) + k(xt, x)k(xt, x(cid:48))
+
+.
+
++β
+
+k(x, x(cid:48)) − kt−1(x)T A−1kt−1(x(cid:48)) = k(x, x(cid:48)) − kt−1(x)T (Kt−1 + λI)−1kt−1(x(cid:48)) = kt−1(x, x(cid:48)),
+
+kt−1(x)T γkt−1(x(cid:48)) − k(xt, x)αT kt−1(x(cid:48))
+
+= kt−1(x)T A−1kt−1(xt)kt−1(xt)T A−1kt−1(x(cid:48)) − k(xt, x)kt−1(xt)T A−1kt−1(x(cid:48))
+= (kt−1(x)T A−1kt−1(xt) − k(xt, x))kt−1(xt)T A−1kt−1(x(cid:48))
+= −kt−1(xt, x)kt−1(xt)T A−1kt−1(x(cid:48)),
+
+k(xt, x)k(xt, x(cid:48)) − k(xt, x(cid:48))αT kt−1(x) = k(xt, x(cid:48))(k(xt, x) − kt−1(xt)T A−1kt−1(x))
+
+= k(xt, x(cid:48))kt−1(xt, x).
+
+Putting all these together we get
+
+kt(x, x(cid:48)) = kt−1(x, x(cid:48)) − β
+
+(cid:16)
+
+(cid:17)
+k(xt, x(cid:48))kt−1(xt, x) − kt−1(xt, x)kt−1(xt)T A−1kt−1(x(cid:48))
+
+(cid:16)
+
+(cid:16)
+
+= kt−1(x, x(cid:48)) − β
+= kt−1(x, x(cid:48)) − βkt−1(xt, x)kt−1(xt, x(cid:48)).
+
+kt−1(xt, x)
+
+k(xt, x(cid:48)) − kt−1(xt)T A−1kt−1(x(cid:48))
+
+(cid:17)(cid:17)
+
+Now Equation 20 and 21 follows by using β = 1/(λ + σ2
+
+t−1(x)) and σ2
+
+t (x) = kt(x, x).
+
+26
+
+

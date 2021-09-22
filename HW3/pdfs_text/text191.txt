@@ -1,0 +1,1272 @@
+Rule-Enhanced Penalized Regression by Column Generation
+using Rectangular Maximum Agreement
+
+Jonathan Eckstein 1 Noam Goldberg 2 Ai Kagawa 3
+
+Abstract
+
+We describe a procedure enhancing L1-penalized
+regression by adding dynamically generated
+rules describing multidimensional “box” sets.
+Our
+rule-adding procedure is based on the
+classical column generation method for high-
+dimensional linear programming. The pricing
+problem for our column generation procedure
+reduces to the N P-hard rectangular maximum
+agreement (RMA) problem of ﬁnding a box
+that best discriminates between two weighted
+datasets. We solve this problem exactly us-
+ing a parallel branch-and-bound procedure. The
+resulting rule-enhanced regression method is
+computation-intensive, but has promising predic-
+tion performance.
+
+1. Motivation and Overview
+
+This paper considers the general learning problem in which
+we have m observation vectors X1, . . . , Xm ∈ Rn, with
+matching response values y1, . . . , ym ∈ R. Each response
+yi is a possibly noisy evaluation of an unknown function
+f : Rn → R at Xi, that is, yi = f (Xi) + ei, where ei ∈
+R represents the noise or measurement error. The goal is
+to estimate f by some ˆf : Rn → R such that ˆf (Xi) is
+a good ﬁt for yi, that is, | ˆf (Xi) − yi| tends to be small.
+The estimate ˆf may then be used to predict the response
+value y corresponding to a newly encountered observation
+x ∈ Rn through the prediction ˆy = ˆf (x). A classical
+linear regression model is one simple example of the many
+possible techniques one might employ for constructing ˆf .
+The classical regression approach to this problem is to posit
+
+1Management Science and Information Systems, Rutgers
+University, Piscataway, NJ, USA 2Department of Manage-
+ment, Bar-Ilan University, Ramat Gan, Israel 3Doctoral Pro-
+gram in Operations Research, Rutgers University, Piscat-
+away, NJ, USA. Correspondence to: Jonathan Eckstein <jeck-
+stei@business.rutgers.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+a particular functional form for ˆf (x) (for example, an afﬁne
+function of x) and then use an optimization procedure to
+estimate the parameters in this functional form.
+
+Here, we are interested in cases in which a concise can-
+didate functional form for ˆf is not readily apparent, and
+we wish to estimate ˆf by searching over a very high-
+dimensional space of parameters. For example, Breiman
+(2001) proposed the method of random forests, which
+constructs ˆf by training regression trees on multiple ran-
+dom subsamples of the data, and then averaging the re-
+sulting predictors. Another proposal is the RuleFit algo-
+rithm (Friedman & Popescu, 2008), which enhances L1-
+regularized regression by generating box-based rules to use
+as additional explanatory variables. Given a, b ∈ Rn with
+a ≤ b, the rule function r(a,b) : Rn → {0, 1} is given by
+
+r(a,b)(x) = I (cid:0)∧j∈{1,...,n}(aj ≤ xj ≤ bj)(cid:1) ,
+
+(1)
+
+that is r(a,b)(x) = 1 if a ≤ x ≤ b (componentwise) and
+r(a,b)(x) = 0 otherwise. RuleFit generates rules through a
+two-phase procedure: ﬁrst, it determines a regression tree
+ensemble, and then decomposes these trees into rules and
+determines the regression model coefﬁcients (including for
+the rules).
+
+The approach of Dembczy´nski et al. (2008a) generates
+rules more directly (without having to rely on an initial en-
+semble of decision trees) within gradient boosting (Fried-
+man, 2001) for non-regularized regression. In this scheme,
+a greedy procedure generates the rules within a gradient
+descent method runs that for a predetermined number of it-
+erations. Aho et al. (2012) extended the RuleFit method to
+solve more general multi-target regression problems. For
+the special case of single-target regression, however, their
+experiments suggest that random forests and RuleFit out-
+perform several other methods, including their own ex-
+tended implementation and the algorithm of Dembczy´nski
+et al. (2008a). Compared with random forests and other
+popular learning approaches such as kernel-based methods
+and neural networks, rule-based approaches have the ad-
+vantage of generally being considered more accessible and
+easier to interpret by domain experts. Rule-based methods
+also have a considerable history in classiﬁcation settings, as
+in for example Weiss & Indurkhya (1993), Cohen & Singer
+
+Rule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+(1999), and Dembczy´nski et al. (2008b).
+
+Here, we propose an iterative optimization-based regres-
+sion procedure called REPR (Rule-Enhanced Penalized
+Regression).
+Its output models resemble those of Rule-
+Fit, but our methodology draws more heavily on exact op-
+timization techniques from the ﬁeld of mathematical pro-
+gramming. While it is quite computationally intensive, its
+prediction performance appears promising. As in Rule-
+Fit, we start with a linear regression model (in this case,
+with L1-penalized coefﬁcients to promote sparsity), and
+enhance it by synthesizing rules of the form (1). We in-
+crementally adjoin such rules to our (penalized) linear re-
+gression model as if they were new observation variables.
+Unlike RuleFit, we control the generation of new rules us-
+ing the classical mathematical programming technique of
+column generation. Our employment of column generation
+roughly resembles its use in the LPBoost ensemble classi-
+ﬁcation method of Demiriz et al. (2002).
+
+Column generation involves cyclical alternation between
+optimization of a restricted master problem (in our case
+a linear or convex quadratic program) and a pricing prob-
+lem that ﬁnds the most promising new variables to adjoin
+to the formulation.
+In our case, the pricing problem is
+equivalent to an N P-hard combinatorial problem we call
+Rectangular Maximum Agreement (RMA), which general-
+izes the Maximum Mononial Agreement (MMA) problem
+as formulated and solved by Eckstein & Goldberg (2012).
+We solve the RMA problem by a similar branch-and-bound
+method procedure, implemented using parallel computing
+techniques.
+
+To make our notation below more concise, we let X de-
+note the matrix whose rows are X (cid:62)
+m, and also let
+y = (y1, . . . , ym) ∈ Rm. We may then express a prob-
+lem instance by the pair (X, y). We also let xij denote the
+(i, j)th element of this matrix, that is, the value of variable
+j in observation i.
+
+1 , . . . , X (cid:62)
+
+2. A Penalized Regression Model with Rules
+
+Let K be a set of pairs (a, b) ∈ Rn × Rn with a ≤ b, con-
+stituting a catalog of all the possible rules of the form (1)
+that we wish to be available to our regression model. The
+set K will typically be extremely large: restricting each
+aj and bj to values that appear as xij for some i, which
+is sufﬁcient to describe all possible distinct behaviors of
+rules of the form (1) on the dataset X,
+there are still
+(cid:81)n
+j=1 (cid:96)j((cid:96)j + 1)/2 ≥ 3n possible choices for (a, b), where
+(cid:96)j = |(cid:83)m
+i=1{xij}| is the number of distinct values for xij.
+The predictors ˆf that our method constructs are of the form
+
+ˆf (x) = β0 +
+
+βjxj +
+
+γkrk(x)
+
+(2)
+
+n
+(cid:88)
+
+j=1
+
+(cid:88)
+
+k∈K
+
+for some β0, β1, . . . , βn, (γk)k∈K ∈ R. Finding an ˆf of
+this form is a matter of linear regression, but with the re-
+gression coefﬁcients in a space with the potentially very
+high dimension of 1 + n + |K|. As is now customary in re-
+gression models in which the number of explanatory vari-
+ables potentially outnumbers the number of observations,
+we employ a LASSO-class model in which all explanatory
+variables except the constant term have L1 penalties. Let-
+ting β = (β1, . . . , βn) ∈ Rn and γ ∈ R|K|, let fβ0,β,γ( · )
+denote the predictor function in (2). We then propose to
+estimate β0, β, γ by solving
+
+(cid:40) m
+(cid:88)
+
+i=1
+
+min
+β0,β,γ
+
+|fβ0,β,γ(Xi) − yi|p + C (cid:107)β(cid:107)1 + E (cid:107)γ(cid:107)1
+
+,
+
+(cid:41)
+
+(3)
+where p ∈ {1, 2} and C, E ≥ 0 are scalar parameters. For
+p = 2 and C = E > 0, this model is essentially the classic
+LASSO as originally proposed by Tibshirani (1996).
+
++ and γ+, γ− ∈ R|K|
+
+To put (3) into a more convenient form for our purposes,
+we split the regression coefﬁcient vectors into positive and
+negative parts, so β = β+ − β− and γ = γ+ − γ−, with
+β+, β− ∈ Rn
++ . Introducing one more
+vector of variables (cid:15) ∈ Rm, the model shown as (4) in Fig-
+ure 1 is equivalent to (3). The model is constructed so that
+(cid:15)i = |fβ0,β,γ(Xi) − yi| for i = 1, . . . , m. If p = 1, the
+model is a linear program, and if p = 2 it is a convex, lin-
+early constrained quadratic program. In either case, there
+are 2m constraints (other than nonnegativity), but the num-
+ber of variables is 1 + m + 2n + 2 |K|.
+
+Because of this potentially unwieldy number of variables,
+we propose to solve (4) by using the classical technique
+of column generation, which dates back to Ford & Fulker-
+son (1958) and Gilmore & Gomory (1961); see for example
+Section 7.3 of Griva et al. (2009) for a recent textbook treat-
+ment. In brief, column generation cycles between solving
+two optimization problems, the restricted master problem
+and the pricing problem. In our case, the restricted master
+problem is the same as (4), but with K replaced by some
+(presumably far smaller) K (cid:48) ⊆ K. We initially choose
+K (cid:48) = ∅. Solving the restricted master problem yields op-
+timal Lagrange multipliers ν ∈ Rm
++ (for the
+constraints other than simple nonnegativity). For each rule
+k ∈ K, these Lagrange multipliers yield respective reduced
+costs rc[γ+
+k ] for the variables γ+
+k that are in the
+master problem, but not the restricted master. One then
+solves the pricing problem, whose job is to identify the
+smallest of these reduced costs. The reduced cost rc[v] of a
+variable v indicates the rate of change of the objective func-
+tion as one increases v away from 0. If the smallest reduced
+
++ and µ ∈ Rm
+
+k ], rc[γ−
+
+k , γ−
+
+Rule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+(cid:15)p
+i + C
+
+(β+
+
+j + β−
+
+j ) + E
+
+(cid:88)
+
+(γ+
+
+k + γ−
+k )
+
+m
+(cid:88)
+
+i=1
+
+min
+
+s. t.
+
+n
+(cid:88)
+
+j=1
+
+β0 + X (cid:62)
+
+i (β+ − β−) +
+
+k − γ−
+
+k ) − (cid:15)i ≤ yi,
+
+i = 1, . . . , m
+
+(4)
+
+−β0 − X (cid:62)
+
+i (β+ − β−) −
+
+rk(Xi)(γ+
+
+k − γ−
+
+k ) − (cid:15)i ≤ −yi,
+
+i = 1, . . . , m
+
+k∈K
+rk(Xi)(γ+
+
+(cid:88)
+
+k∈K
+(cid:88)
+
+k∈K
+
+(cid:15) ≥ 0
+
+β+, β− ≥ 0
+
+γ−, γ+ ≥ 0
+
+Figure 1. Formulation of the REPR master problem, with scalar parameters p ∈ {1, 2}, C ≥ 0, and E ≥ 0. The decision variables are
+(cid:15) ∈ Rm, β0 ∈ R, β+, β− ∈ Rn, and γ+, γ− ∈ R|K|. The input data are X = [X1 · · · Xm](cid:62) ∈ Rm×n and y ∈ Rm.
+
+k = γ−
+
+cost is nonnegative, then clearly all the reduced costs are
+nonnegative, which means that the current restricted master
+problem yields an optimal solution to the master problem
+by setting γ+
+k = 0 for all k ∈ K\K (cid:48), and the process
+terminates. If the smallest reduced cost is negative, we ad-
+join elements to K (cid:48), including at least one corresponding
+to a variable γ+
+k with a negative reduced cost, and
+we repeat the process, re-solving the expanded restricted
+master problem.
+
+k or γ−
+
+let w(S) = (cid:80)
+i∈S wi. We also assume we are given
+a partition of the observations into two subsets, a “pos-
+itive” subset Ω+ ⊂ {1, . . . , m} and a “negative” subset
+Ω− = {1, . . . , m}\Ω+.
+Given two vectors a, b ∈ Rn, let B(a, b) denote the “box”
+{x ∈ Zn | a ≤ x ≤ b }. Given the input data X, the cov-
+erage CvrX (a, b) of B(a, b) consists of the indices of the
+observations from X falling within B(a, b), that is,
+
+In our case, the reduced costs take the form
+
+CvrX (a, b) = {i ∈ {1, . . . , m} | a ≤ Xi ≤ b } .
+
+rc[γ+
+
+k ] = E −
+
+rk(xi)νi +
+
+rk(xi)µi
+
+rc[γ−
+
+k ] = E +
+
+rk(xi)νi −
+
+rk(xi)µi
+
+m
+(cid:88)
+
+i=1
+m
+(cid:88)
+
+i=1
+
+m
+(cid:88)
+
+i=1
+m
+(cid:88)
+
+i=1
+
+and hence we have for each k ∈ K that
+
+min (cid:8)rc[γ+
+
+k ], rc[γ−
+
+k ](cid:9) = E −
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+m
+(cid:88)
+
+i=1
+
+(cid:12)
+(cid:12)
+(cid:12)
+rk(xi)(νi − µi)
+(cid:12)
+(cid:12)
+
+. (5)
+
+Therefore, the pricing problem may be solved by maximiz-
+ing the second term on the right-hand side of (5), that is,
+ﬁnding
+
+The rectangular maximum agreement (RMA) problem is
+(cid:12)w(cid:0)Ω+ ∩ CvrX (a, b)(cid:1) − w(cid:0)Ω− ∩ CvrX (a, b)(cid:1)(cid:12)
+(cid:12)
+a, b ∈ Rn,
+
+max (cid:12)
+s.t.
+
+(7)
+with decision variables a, b ∈ Rn. Essentially implicit
+in this formulation is the constraint that a ≤ b, since if
+a (cid:54)≤ b then CvrX (a, b) = ∅ and the objective value is
+0. The previously mentioned MMA problem is the spe-
+cial case of RMA in which all the observations are bi-
+nary, X ∈ {0, 1}m×n. Since the MMA problem is N P-
+hard (Eckstein & Goldberg, 2012), so is RMA.
+If we take K to be the set of all possible boxes on Rn, the
+pricing problem (6) may be reduced to RMA by setting
+
+z∗ = max
+k∈K
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+m
+(cid:88)
+
+i=1
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+rk(xi)(νi − µi)
+
+,
+
+(6)
+
+(∀ i = 1, . . . , m) : wi = |νi − µi|
+
+and the stopping condition for the column generation pro-
+cedure is z∗ ≤ E. This problem turns out to be equivalent
+to the RMA problem, whose formulation and solution we
+now describe.
+
+Ω+ = {i ∈ {1, . . . , m} | νi ≥ µi } ,
+
+and thus Ω− = {i ∈ {1, . . . , m} | νi < µi }.
+
+3.2. Preprocessing and Restriction to N
+
+(8)
+
+(9)
+
+3. The RMA Problem
+
+3.1. Formulation and Input Data
+
+Suppose we have m observations and n explanatory vari-
+ables, expressed using a matrix X ∈ Rm×n as above.
+Each observation i ∈ {1, . . . , m} is assigned a nonega-
+tive weight wi ∈ R+. For any set S ⊆ {1, . . . , m},
+
+Any RMA problem instance may be converted to an equiv-
+alent instance in which all the observation data are integer.
+Essentially, for each coordinate j = 1, . . . , n, one may sim-
+ply record the distinct values of xij and replace each xij
+with its ordinal position among these values. Algorithm 1,
+with its parameter δ set to 0, performs exactly this proce-
+dure, outputing a equivalent data matrix X ∈ Nm×n and
+a vector (cid:96) ∈ Nn whose jth element is (cid:96)j = |(cid:83)m
+i=1{xij}|
+
+Rule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+Algorithm 1 Preprocessing discretization algorithm
+1: Input: X ∈ Rm×n, δ ≥ 0
+2: Output: X ∈ Nm×n, (cid:96) ∈ Nn
+3: ProcessData
+4: for j = 1 to n do
+(cid:96)j ← 0
+5:
+Sort x1j, . . . , xmj and set (k1, . . . , km) such that
+6:
+
+xk1j ≤ xk2j ≤ · · · ≤ xkmj
+
+if xki+1j − xkij > δ · (xkmj − xk1j) then
+
+¯xk1,j ← 0
+for i = 1 to m − 1 do
+
+(cid:96)j ← (cid:96)j + 1
+
+7:
+8:
+9:
+10:
+11:
+12:
+13:
+14:
+15: end for
+16: return (X, (cid:96))
+
+end for
+(cid:96)j ← (cid:96)j + 1
+
+end if
+¯xki+1j ← (cid:96)j
+
+as deﬁned in the previous section. Algorithm 1’s output
+values ¯xij for attribute j vary between 0 and (cid:96)j − 1.
+
+The number of distinct values (cid:96)j of each explanatory vari-
+able j directly inﬂuences the difﬁculty of RMA instances.
+To obtain easier instances, Algorithm 1 can combine its
+“integerization” process with some binning of nearby val-
+ues. Essentially, if the parameter δ is positive, the algorithm
+bins together consecutive values xij that are within relative
+tolerance δ, resulting in a smaller number of distinct values
+(cid:96)j for each explanatory variable j.
+
+Some datasets contain both categorical and numerical data.
+In addition to Algorithm 1, we also convert each k-way
+categorical attribute into k − 1 binary attributes.
+
+Within the context of our REPR regression method, we set
+the RMA weight vector and data partition as in (8)-(9), in-
+tegerize the data X using Algorithm 1 with some (small)
+parameter value δ, solve the RMA problem, and then trans-
+late the resulting boxes back to the original, pre-integerized
+coordinate system. We perform this translation by expand-
+ing box boundaries to lie halfway between the boundaries
+of the clusters of points grouped by Algorithm 1, except
+when the lower boundary of the box has the lowest pos-
+sible value or the upper boundary has the largest possible
+In these cases, we expand the box boundaries to
+value.
+−∞ or +∞, respectively. More precisely, for each obser-
+vation variable j and v ∈ {0, . . . , (cid:96)j − 1}, let xmin
+j,v be the
+smallest value of xij assigned to the integer value v by Al-
+j,v be the largest. If ˆa, ˆb ∈ Nn, ˆa ≤ ˆb
+gorithm 1, and xmax
+describe an integerized box arising from the solution of the
+preprocessed RMA problem, we choose the corresponding
+box boundaries a, b ∈ Rn in the original coordinate system
+
+to be given by, for j = 1, . . . , n,
+
+aj =
+
+bj =
+
+(cid:40)
+
+(cid:40)
+
+−∞,
+1
+2 (xmax
++∞,
+1
+2 (xmax
+j,ˆbj
+
+j,ˆaj −1 + xmin
+j,ˆaj
+
+if ˆaj = 0
+), otherwise
+
+if ˆbj = (cid:96)j − 1
+
++ xmin
+
+j,ˆbj +1
+
+), otherwise.
+
+Overall, our procedure is equivalent to solving the pricing
+problem (6) over some set of boxes K = Kδ(X). For
+δ = 0, the resulting set of boxes K0(X) is such that the cor-
+responding set of rules {rk | k ∈ K0(X) } comprises ev-
+ery box-based rule distinguishable on the dataset X. For
+small positive values of δ, the set of boxes Kδ(X) ex-
+cludes those corresponding to rules that “cut” between very
+closely spaced observations.
+
+3.3. Branch-and-Bound Subproblems
+
+In this and the following two subsections, we describe the
+key elements of our branch-and-bound procedure for solv-
+ing the RMA problem, assuming that the data X have al-
+ready been preprocessed as above. For brevity, we omit
+some details which will instead be covered in a forthcom-
+ing publication. For general background on branch-and-
+bound algorithms, Morrison et al. (2016) provide a recent
+survey with numerous citations.
+
+Branch-and-bound methods search a tree of subproblems,
+each describing some subset of the search space.
+In our
+RMA method, each subproblem P is characterized by
+four vectors a(P ), a(P ), b(P ), b(P ) ∈ Nn, and represents
+search space subset consisting of vector pairs (a, b) for
+which a(P ) ≤ a ≤ a(P ) and b(P ) ≤ b ≤ b(P ). Any valid
+subproblem conforms to a(P ) ≤ a(P ), b(P ) ≤ b(P ),
+a(P ) ≤ b(P ), and a(P ) ≤ b(P ). The root problem R
+of the branch-and-bound tree is R = (0, (cid:96) − 1, 0, (cid:96) − 1),
+where where (cid:96) ∈ Nn is as output from Algorithm 1, and
+0 and 1 respectively denote the vectors (0, 0, . . . , 0) ∈ Nn
+and (1, 1, . . . , 1) ∈ Nn.
+
+3.4. Inseparability and the Bounding Function
+
+In branch-and-bound methods, the bounding function pro-
+vides an upper bound (when maximizing) on the best pos-
+sible objective value in the region of the search space corre-
+sponding to a subproblem. Our bounding function is based
+on an extension of the notion of inseparability developed
+by Eckstein & Goldberg (2012). Consider any subproblem
+P = (a, a, b, b) and two observations i and i(cid:48). If xij = xi(cid:48)j
+or aj ≤ xij, xi(cid:48)j ≤ bj for each j = 1, . . . , n, then
+xi, xi(cid:48) ∈ Nn are inseparable with respect to a, b ∈ Nn,
+in the sense that any box B(a, b) with a ≤ a and b ≥ b
+must either cover both of xi, xi(cid:48) or neither of them.
+
+Inseparability with respect to a, b is an equivalence relation,
+
+Rule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+(cid:2)w(C ∩ CvrX (a, b) ∩ Ω+) − w(C ∩ CvrX (a, b) ∩ Ω−)(cid:3)
+
+β(a, a, b, b) = max
+
+(cid:2)w(C ∩ CvrX (a, b) ∩ Ω−) − w(C ∩ CvrX (a, b) ∩ Ω+)(cid:3)
+
+(10)
+
++,
+
++
+
+
+
+
+
+
+.
+
+
+
+
+
+
+(cid:88)
+
+C∈E(a,b)
+(cid:88)
+
+C∈E(a,b)
+
+Figure 2. The RMA bounding function.
+
+and we denote the equivalence classes it induces among the
+observation indices 1, . . . , m by E(a, b). That is, observa-
+tion indices i and i(cid:48) are in the same equivalence class of
+E(a, b) if xi and xi(cid:48) are inseparable with respect to a, b.
+
+Our bounding function β(a, a, b, b) for each subproblem
+P = (a, a, b, b) is shown in (10) in Figure 2. The reasoning
+behind this bound is that each possible box in the set speci-
+ﬁed by (a, a, b, b) must either cover or not cover the entirety
+of each C ∈ E(a, b). The ﬁrst argument to the “max” op-
+eration reﬂects the situation that every equivalence class C
+with a positive net weight is covered, and no classes with
+negative net weight are covered; this is the best possible
+situation if the box ends up covering a higher weight of
+positive observations than of negative. The second “max”
+argument reﬂects the opposite situation, the best possible
+case in which the box covers a greater weight of negative
+observations than of positive ones.
+
+3.5. Branching
+
+The branching scheme of a branch-and-bound algorithm
+divides subproblems into smaller ones in order to im-
+prove their bounds. In our case, branching a subproblem
+P = (a, a, b, b) involves choosing an explanatory variable
+j ∈ {1, . . . , n} and a cutpoint v ∈ {aj, . . . , bj − 1} ∈ Nn.
+There are three possible cases, the ﬁrst of which is when
+bj < aj and v ∈ {bj, . . . , aj − 1}. In this case, our scheme
+creates three children based on the disjunction that either
+bj ≤ v − 1 (the box lies below v), aj ≤ v ≤ bj (the box
+straddles v), or aj ≥ v + 1 (the box lies above v). The next
+case is that v ∈ (cid:8)aj, . . . , min{aj, bj} − 1(cid:9), in which case
+the box cannot lie below v and we split P into two chil-
+dren based on the disjunction that either aj ≤ v (the box
+straddles v) or aj ≥ v + 1 (the box is above v). The third
+case occurs when v ∈ (cid:8)max{aj, bj}, . . . , bj −1(cid:9), in which
+case we split P into two children based on the disjunction
+that either bj ≤ v (the box is does not extend above v) or
+bj ≥ v + 1 (the box extends above v). If no v falling under
+one of these three cases exists for any dimension j, then the
+subproblem represents a single possible box, that is, a = a
+and b = b. Such a subproblem is a terminal node of the
+branch-and-bound tree, and in this case we simply compute
+the RMA objective value for a = a = a and b = b = b as
+the subproblem bound.
+
+When more than one possible variable-cutpoint pair (j, v)
+exists, as is typically the case, our algorithm must se-
+lect one. We use two related procedures for branch-
+ing selection: strong branching and cutpoint caching. In
+strong branching, we simply experiment with all applicable
+variable-cutpoint pairs (j, v), and select one that the max-
+imizes the minimum bound of the resulting two or three
+children. This is a standard technique in branch-and-bound
+algorithms, and involves evaluating the bounds of all the
+potential children of the current search node. To make this
+process as efﬁcient as possible, we have developed special-
+ized data structures for manipulating equivalence classes,
+and we analyze the branching possibilities in a particular
+order. In cutpoint caching, some subproblems use strong
+branching, while others select from a list of cutpoints that
+were chosen by strong branching for previously processed
+search nodes. The details of these procedures will be cov-
+ered in a forthcoming companion publication.
+
+4. Full Algorithm and Implementation
+
+The pseudocode in Algorithm 2 describes our full REPR
+column generation procedure for solving (4), using the
+RMA preprocessing and branch-and-bound methods de-
+scribed above to solve the pricing problem. Several points
+bear mentioning: ﬁrst, the nonnegative scalar parameter θ
+allows us to incorporate a tolerance into the column gen-
+eration stopping criterion, so that we terminate when all
+reduced costs exceed −θ instead of when all reduced costs
+are nonnegative. This kind of tolerance is customary in
+column generation methods. The tolerance δ, on the other
+hand, controls the space of columns searched over. Further-
+more, our implementation of the RMA branch-and-bound
+algorithm can identify any desired number t ≥ 1 of the best
+possible RMA solutions, as opposed to just one value of k
+attaining the maximum in (11). This t is also a parameter to
+our procedure, so at each iteration of Algorithm 2 we may
+adjoin up to t new rules to K (cid:48). Adding multiple columns
+per iteration is a common technique in column generation
+methods. Finally, the algorithm has a parameter S specify-
+ing a limit on the number of column generation iterations,
+meaning that at the output model will contain at most St
+rules.
+
+We implemented the algorithm in C++, using the GuRoBi
+
+Rule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+Algorithm 2 REPR: Rule-enhanced penalized regression
+1: Input: data X ∈ Rm×n, y ∈ Rm, penalty parameters
+C, E ≥ 0, column generation tolerance θ ≥ 0, integer
+t ≥ 1, aggregation tolerance δ ≥ 0, iteration limit S
+2: Output: β0 ∈ R, β ∈ Rn, K (cid:48) ⊂ Kδ(X), γ ∈ R|K(cid:48)|
+3: REPR
+4: K (cid:48) ← ∅
+5: for s = 1, . . . , S do
+6:
+
+Solve the restricted master problem to obtain opti-
+mal primal variables (β0, β+, β−, γ+, γ−) and dual
+variables (ν, µ)
+Use the RMA branch-and-bound algorithm, with
+preprocessing as in Algorithm 1, to identify a t-best
+solution k1, . . . , kt to
+
+7:
+
+max
+k∈Kδ(X)
+
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+(cid:12)
+
+m
+(cid:88)
+
+i=1
+
+(cid:12)
+(cid:12)
+(cid:12)
+rk(xi)(νi − µi)
+(cid:12)
+(cid:12)
+
+,
+
+(11)
+
+with k1, . . . , kt having respective objective values
+z1 ≥ z2 ≥ · · · ≥ zt
+if z1 ≤ E + θ break
+for each l ∈ {1, . . . , t} with zl > E + θ do
+
+8:
+9:
+10:
+11:
+12: end for
+13: return (β0, β := β+ − β−, K (cid:48), γ := γ+ − γ−)
+
+K (cid:48) ← K (cid:48) ∪ {kl}
+
+end for
+
+commercial optimizer (Gurobi Optimization, 2016) to
+solve the restricted master problems. We implemented
+the RMA algorithm using using the PEBBL C++ class li-
+brary (Eckstein et al., 2015), an open-source C++ frame-
+work for parallel branch and bound. PEBBL employs MPI-
+based parallelism (Gropp et al., 1994). Since solving the
+RMA pricing problem is by far the most time-consuming
+part of Algorithm 2, we used true parallel computing only
+in that portion of the algorithm. The remainder of the al-
+gorithm, including solving the restricted master problems,
+was executed in serial and redundantly on all processors.
+
+5. Preliminary Testing of REPR
+
+For preliminary testing of REPR, we selected 8 datasets
+from the UCI repository (Lichman, 2013), choosing small
+datasets with continuous response variables. The ﬁrst four
+columns of Table 1 summarize the number of observations
+m, the number of attributes n, and the maximum number
+of distinguishable box-based rules |K0(X)| for these data
+sets.
+
+In our initial testing, we focused on the p = 2 case in which
+ﬁtting errors are penalized quadratically, and set t = 1, that
+is, we added one model rule per REPR iteration. We set the
+iteration limit S to 100 and effectively set the termination
+
+Dataset
+SERVO
+CONCRETE
+MACHINE
+YACHT
+MPG
+COOL
+HEAT
+AIRFOIL
+
+REPR
+m n |K0(X)|
+Time
+9.8e05
+167 10
+0:00:11
+2.7e29
+9
+103
+0:29:51
+2.5e15
+6
+209
+0:03:07
+0:00:36
+2.6e10
+6
+308
+3.3e19 13:09:58
+7
+392
+0:04:48
+1.1e10
+8
+768
+0:03:42
+1.1e10
+8
+768
+2:13:04
+1.0e11
+5
+1503
+
+RMA
+Nodes
+3.6e2
+3.0e5
+5.6e4
+5.3e2
+2.4e6
+3.7e3
+3.9e3
+5.1e3
+
+Table 1. Summary of experimental datasets. The last two columns
+respectively show REPR’s average run time for an 80% sample of
+the dataset (on a 16-core workstation, in hh:mm:ss format) and the
+average resulting number of RMA search nodes per RMA invo-
+cation.
+
+tolerance θ so that REPR terminated when
+
+z1 ≤ max (cid:8)0, E · (cid:0) |E[y]| − 0.1σ[y](cid:1)(cid:9) + 0.001,
+
+where E[y] denotes the sample mean of the response vari-
+able and σ[y] its sample standard deviation. We found this
+rule of thumb to work well in pracice, but it likely merits
+further study. We also chose C = 1 and E = 1. We used
+δ = 0 for SERVO, YACHT, and MPG, and δ = 0.005 for
+the remaining datasets.
+
+With the ﬁxed parameters given above, we tested REPR
+and some competing regression procedures on ten differ-
+ent randomly-chosen partitions of each dataset; each parti-
+tion consists of 80% training data and 20% testing data.
+The competing procedures are RuleFit, random forests,
+LASSO, and classical linear regression. The penalty pa-
+rameter in LASSO is the same as the value of C chosen for
+REPR. To implement RuleFit and random forests, we used
+their publicly available R packages. Table 2 shows the aver-
+ages of the resulting mean square errors and Table 3 shows
+their standard deviations. REPR has the smallest average
+MSE for 5 of the 8 datasets and has the second smallest av-
+erage MSE on the remaining 3 datasets, coming very close
+to random forests on MPG. For the standard deviation of
+the MSE, which we take as a general measure of predic-
+tion stability, REPR has the lowest values for 6 of the 8
+datasets. The box plots in Figures 3 and 4 visualize these
+results in more detail for HEAT and MACHINE, respec-
+tively. Figure 5 displays the average MSEs in a bar-chart
+format, with the MSE of REPR normalized to 1.
+
+Figures 6-9 give more detailed information for speciﬁc
+datasets. Figure 6 and 7 respectively show how REPR’s
+prediction MSEs for HEAT and CONCRETE evolve with
+each iteration, with each data point averaged over the 10
+different REPR runs; the horizontal lines indicate the aver-
+age MSE level for the competing procedures. MSE gener-
+ally declines as REPR adds rules, although some diminish-
+
+Rule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+Method Dataset:
+REPR
+RuleFit
+Random forests
+Lasso
+Linear regression
+
+SERVO CONCRETE MACHINE YACHT MPG
+0.08228
+0.10053
+0.24305
+0.67362
+0.67723
+
+0.00447
+0.00736
+0.01348
+0.00573
+0.00573
+
+0.37128
+0.97250
+0.55456
+0.48776
+0.48776
+
+0.00630
+0.00571
+0.13343
+0.74694
+0.74455
+
+0.01380
+0.01430
+0.01348
+0.01981
+0.02073
+
+COOL
+0.00218
+0.00094
+0.00302
+0.01757
+0.01708
+
+HEAT
+0.00220
+0.01063
+0.00544
+0.01694
+0.01581
+
+AIRFOIL
+0.00030
+0.00032
+0.00083
+0.00150
+0.00149
+
+Table 2. Average MSE over the experimental datasets. The smallest value in each column is bolded.
+
+Method Dataset:
+REPR
+RuleFit
+Random forests
+Lasso
+Linear regression
+
+SERVO CONCRETE MACHINE YACHT MPG
+0.03196
+0.05173
+0.07554
+0.15302
+0.15814
+
+0.00186
+0.00287
+0.04922
+0.10380
+0.09806
+
+0.14625
+0.65957
+0.31717
+0.24303
+0.24303
+
+0.00220
+0.00188
+0.00521
+0.00255
+0.00255
+
+0.00213
+0.00430
+0.00403
+0.00300
+0.00251
+
+COOL
+0.00091
+0.00007
+0.00044
+0.00270
+0.00251
+
+HEAT
+0.00043
+0.01453
+0.00055
+0.00145
+0.00192
+
+AIRFOIL
+0.00006
+0.00011
+0.00006
+0.00010
+0.00010
+
+Table 3. Standard deviation of MSE over the experimental datasets. The smallest value in each column is bolded.
+
+ing returns are evident for CONCRETE. Interestingly, nei-
+ther of these ﬁgures shows appreciable evidence of overﬁt-
+ting by REPR, even when large numbers of rules are incor-
+porated into the model. Figures 8 and 9 display testing-set
+predictions for speciﬁc (arbitrarily chosen) partitions of the
+MACHINE and CONCRETE datasets, respectively, with
+the observations sorted by response value. REPR seems
+to outperform the other methods in predicting extreme re-
+sponse values, although it is somewhat worse than the other
+methods at predicting non-extreme values for MACHINE.
+
+The last two columns of Table 1 show, for a 16-core Xeon
+E5-2660 workstation, REPR’s average total run time per
+data partition and the average number of search node per
+invocation of RMA. The longer runs could likely be accel-
+erated by the application of more parallel processors.
+
+Figure 3. MSE box plots of for the HEAT data set.
+
+Figure 4. MSE box plots of for the MACHINE data set.
+
+6. Conclusions and Future Research
+
+The results presented here suggest that REPR has sig-
+niﬁcant potential as a regression tool, at least for small
+datasets. Clearly, it should be tested on more datasets and
+larger datasets.
+
+Here, we have tested REPR using ﬁxed values of most of
+its parameters, and we expect we should be able to improve
+its performance by using intelligent heuristics or cross-
+validation procedures to select key parameters such as C
+and E. Improved preprocessing may also prove helpful: ju-
+dicious normalization of the input data (X, y) should assist
+in ﬁnding good parameter choices, and we are also working
+on more sophisticated discretization technique for prepro-
+cessing the RMA solver input, as well as branch selection
+heuristics that are more efﬁcient for large (cid:96)j.
+
+REPRRuleFitRandomForestsLASSOLinearRegression0.000.010.020.030.040.050.06MSEREPRRuleFitRandomForestsLASSOLinearRegression0.00.51.01.52.02.53.0MSERule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+Figure 5. Comparison the average MSEs, with the MSE of REPR
+normalized to 1. The random forest value for YACHT is trun-
+cated.
+
+Figure 7. MSE as a function of iterations for the CONCRETE
+dataset.
+
+Figure 6. MSE as a function of iterations for the HEAT dataset.
+
+It would be interesting to see how well REPR performs if
+the pricing problems are solved less exactly. For example,
+one could use various techniques for truncating the branch-
+and-bound search, such as setting a limit on the number of
+subproblems explored or loosening the conditions for prun-
+ing unpromising subtrees. Or one could use, perhaps selec-
+tively, some entirely heuristic procedure to identify rules to
+add to the restricted master problem.
+
+For problems with large numbers of observations m, it
+is conceivable that solving the restricted master problems
+could become a serial bottleneck in our current implemen-
+tation strategy. If this phenomenon is observed in practice,
+it could be worth investigating parallel solution strategies
+for the restricted master.
+
+Figure 8. Sorted predictions for the MACHINE data set.
+
+Figure 9. Sorted predictions for the CONCRETE data set.
+
+SERVOCONCRETEMACHINEYACHTMPGCOOLHEATAIRFOILDataset012345Relative MSEREPRRuleFitRandom Forests020406080100Iterations0.0020.0040.0060.0080.0100.0120.0140.0160.018MSEREPRRuleFitRandom ForestsLinear Regression020406080100Iterations0.0040.0060.0080.0100.0120.014MSEREPRRuleFitRandom ForestsLinear Regression0510152025303540Observation−200020040060080010001200Response valueResponseREPRRuleFitRandom Forests05101520Observation1520253035404550Response valueResponseREPRRuleFitRandom ForestsRule-Enhanced Penalized Regression by Column Generation using Rectangular Maximum Agreement
+
+References
+Aho, Timo, ˇZenko, Bernard, Dˇzeroski, Saˇso, and Elomaa,
+Tapio. Multi-target regression with rule ensembles. J.
+Mach. Learn. Res., 13(Aug):2367–2407, 2012.
+
+Breiman, Leo. Random forests. Mach. Learn., 45:5–32,
+
+2001.
+
+Cohen, William W. and Singer, Yoram. A simple, fast, and
+effective rule learner. In Proc. of the 16th Nat. Conf. on
+Artiﬁcial Intelligence, pp. 335–342, 1999.
+
+Dembczy´nski, Krzysztof, Kotłowski, Wojciech,
+
+and
+Słowi´nski, Roman. Solving regression by learning an
+ensemble of decision rules. In International Conference
+on Artiﬁcial Intelligence and Soft Computing, 2008, vol-
+ume 5097 of Lecture Notes in Artiﬁcial Intelligence, pp.
+533–544. Springer-Verlag, 2008a.
+
+Dembczy´nski, Krzysztof, Kotłowski, Wojciech,
+
+and
+Słowi´nski, Roman. Maximum likelihood rule ensem-
+bles. In Proceedings of the 25th International Confer-
+ence on Machine Learning, ICML ’08, pp. 224–231,
+New York, NY, USA, 2008b. ACM.
+
+Demiriz, Ayhan, Bennett, Kristin P., and Shawe-Taylor,
+John. Linear programming boosting via column genera-
+tion. Mach. Learn., 46(1-3):225–254, 2002.
+
+Eckstein,
+
+Jonathan and Goldberg, Noam.
+
+An im-
+proved branch-and-bound method for maximum mono-
+mial agreement. INFORMS J. Comput., 24(2):328–341,
+2012.
+
+Eckstein, Jonathan, Hart, William E., and Phillips, Cyn-
+thia A. PEBBL: an object-oriented framework for scal-
+able parallel branch and bound. Math. Program. Com-
+put., 7(4):429–469, 2015.
+
+Ford, Jr., Lester R. and Fulkerson, David R. A sug-
+gested computation for maximal multi-commodity net-
+work ﬂows. Manage. Sci., 5:97–101, 1958.
+
+Friedman, Jerome H. Greedy function approximation: a
+gradient boosting machine. Ann. of Stat., pp. 1189–1232,
+2001.
+
+Friedman, Jerome H. and Popescu, Bogdan E. Predictive
+learning via rule ensembles. Ann. Appl. Stat., 2(3):916–
+954, 2008.
+
+Gilmore, Paul C. and Gomory, Ralph E. A linear program-
+ming approach to the cutting-stock problem. Oper. Res.,
+9:849–859, 1961.
+
+Griva, Igor, Nash, Stephen G., and Sofer, Ariela. Lin-
+ear and Nonlinear Optimization. SIAM, second edition,
+2009.
+
+Gropp, William, Lusk, Ewing, and Skjellum, Anthony.
+Using MPI: Portable Parallel Programming with the
+Message-Passing Interface. MIT Press, 1994.
+
+Gurobi Optimization, Inc. Gurobi optimizer reference
+manual, 2016. URL http://www.gurobi.com/
+documentation/7.0/refman/index.html.
+
+Lichman, Moshe. UCI machine learning repository, 2013.
+
+URL http://archive.ics.uci.edu/ml.
+
+Morrison, David R., Jacobson, Sheldon H., Sauppe, Ja-
+son J., and Sewell, Edward C. Branch-and-bound algo-
+rithms: a survey of recent advances in searching, branch-
+ing, and pruning. Discrete Optim., 19(C):79–102, 2016.
+
+Tibshirani, Robert. Regression shrinkage and selection via
+the lasso. J. R. Statist. Soc. B, 58(1):267–288, 1996.
+
+Weiss, Sholom M. and Indurkhya, Nitin. Optimized rule
+
+induction. IEEE Expert, 8(6):61–69, 1993.
+
+

@@ -1,0 +1,3964 @@
+000
+001
+002
+003
+004
+005
+006
+007
+008
+009
+010
+011
+012
+013
+014
+015
+016
+017
+018
+019
+020
+021
+022
+023
+024
+025
+026
+027
+028
+029
+030
+031
+032
+033
+034
+035
+036
+037
+038
+039
+040
+041
+042
+043
+044
+045
+046
+047
+048
+049
+050
+051
+052
+053
+054
+
+Learning from Clinical Judgments: Semi-Markov-Modulated Marked
+Hawkes Processes for Risk Prognosis
+
+Anonymous Authors1
+
+Abstract
+
+Critically ill patients in regular wards are vulner-
+able to unanticipated adverse events which re-
+quire prompt transfer to the intensive care unit
+(ICU). To allow for accurate prognosis of deteri-
+orating patients, we develop a novel continuous-
+time probabilistic model for a monitored pa-
+tient’s temporal sequence of physiological data.
+Our model captures “informatively sampled” pa-
+tient episodes: the clinicians’ decisions on when
+to observe a hospitalized patient’s vital signs and
+lab tests over time are represented by a marked
+Hawkes process, with intensity parameters that
+are modulated by the patient’s latent clinical
+states, and with observable physiological data
+(mark process) modeled as a switching multi-task
+Gaussian process. In addition, our model cap-
+tures “informatively censored” patient episodes
+by representing the patient’s latent clinical states
+as an absorbing semi-Markov jump process. The
+model parameters are learned from ofﬂine patient
+episodes in the electronic health records via an
+EM-based algorithm. Experiments conducted on
+a cohort of patients admitted to a major medical
+center over a 3-year period show that risk prog-
+nosis based on our model signiﬁcantly outper-
+forms the currently deployed medical risk scores
+and other baseline machine learning algorithms.
+
+1. Introduction
+
+Hospitalized patients are vulnerable to a wide range of
+adverse events, including cardiopulmonary arrests (Kause
+et al., 2004; Hogan et al., 2012; Yoon et al., 2016), acute
+respiratory failures (Mokart, 2013), septic shocks (Henry
+et al., 2015), and post-operative complications (Clifton
+et al., 2012). For a patient in a regular ward, the occur-
+
+*Equal contribution
+
+1Anonymous Institution, Anonymous
+City, Anonymous Region, Anonymous Country. Correspondence
+to: Anonymous Author <anon.email@domain.com>.
+
+Preliminary work. Under review by the International Conference
+on Machine Learning (ICML). Do not distribute.
+
+rence of any such event entails an unplanned transfer to an
+intensive care unit (ICU), the timing of which is a major
+determinant of the eventual outcome. Indeed, recent medi-
+cal studies have conﬁrmed that delayed transfer to the ICU
+is strongly correlated with morbidity and mortality (Mar-
+dini L, 2012; Mokart, 2013). The problem of delayed ICU
+transfer is enormous and acute: over 750,000 septic shocks
+and 200,000 cardiac arrests occur in the U.S. each year with
+mortality rates of 28.6% and 75% respectively (Merchant
+et al., 2011; Kumar et al., 2011). Fortunately, experts be-
+lieve that much of these events could be prevented with ac-
+curate prognosis and early warning (Nguyen et al., 2007).
+
+Motivated by the proliferation of electronic health records
+(EHRs) (currently available in more than 75% of hospi-
+tals in the U.S. (Charles et al., 2016)) we develop a data-
+driven real-time risk score that can promptly assess a hos-
+pitalized patient’s risk of clinical deterioration. Our risk
+score hinges on a novel continuous-time semi-Markov-
+modulated marked Hawkes process model for a monitored
+patient’s episode, i.e. the patient’s evolving (latent) clini-
+cal states and her corresponding (observed) physiological
+data. With the guidance of critical care experts, we con-
+ducted experiments on a dataset for a cohort of critically-
+ill patients admitted to a major academic medical center.
+Results show that our risk score offers signiﬁcant gains in
+the accuracy (and timeliness) of predicting clinical deteri-
+oration; our risk score attains a 23% improvement in the
+Area Under Receiver Operating Characteristic (AUROC)
+as compared to the technology currently deployed in our
+medical center. Since it confers a signiﬁcant prognostic
+value in subacute care in wards, the proposed risk score is
+currently being installed in our medical center as a replace-
+ment for the current technology.
+
+The proposed probabilistic model (based on which our risk
+score is computed) captures a hospitalized patient’s entire
+episode as recorded in the EHR. A typical (critical care)
+patient episode comprises the time of her admission to the
+ward, the time of her admission to the ICU or discharge
+from the ward, and a temporal sequence of irregularly sam-
+pled physiological data that are collected during her stay in
+the ward (Johnson, 2016; Ghassemi et al., 2015). We model
+a patient’s episode as being driven by a latent clinical state
+
+055
+056
+057
+058
+059
+060
+061
+062
+063
+064
+065
+066
+067
+068
+069
+070
+071
+072
+073
+074
+075
+076
+077
+078
+079
+080
+081
+082
+083
+084
+085
+086
+087
+088
+089
+090
+091
+092
+093
+094
+095
+096
+097
+098
+099
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+process, which we represent as a semi-Markov jump pro-
+cess (Yu, 2010), describing the evolution of the patient’s
+“severity of illness” over time. All the observable physio-
+logical variables are modulated by this process: the times at
+which clinicians decide to observe the patient’s physiolog-
+ical data are drawn from a Hawkes point process (Hawkes
+& Oakes, 1974), the intensity of which is modulated by the
+patient’s clinical state process, whereas the observed phys-
+iological data is drawn from a switching multi-task Gaus-
+sian process with hyper-parameters that depend on the pa-
+tient’s clinical state. The patient episode is thus a marked
+Hawkes process –with the physiological data serving as the
+marks– that is modulated by the patient’s clinical states.
+We provide a detailed description of the model in Section
+3, and then propose an EM-based algorithm for learning its
+parameters from the EHR data in Section 4.
+
+A distinctive feature of our model is its ability to incorpo-
+rate informative clinical judgments into the generative pro-
+cess for the patient’s episode. The manifestation of infor-
+mative clinical judgments in the EHR episodes is double-
+faceted: the patients’ episodes are both “informatively sam-
+pled” and “informatively censored”. Informative sampling
+results from the fact that clinicians decide to observe the pa-
+tient’s physiological data more intensely if they believe that
+the patient is in a “bad” clinical state (Moskovitch et al.,
+2015; Qin & Shelton, 2015)– a belief that is based on ei-
+ther the clinician’s own assessment of the patient’s state, or
+the communication between the patient and the ward staff
+(Kyriacos et al., 2014). Informative censoring results from
+the clinicians’ decision on when to send the patient to the
+ICU or discharge her from the ward, which is indeed infor-
+mative of the “ clinical deterioration” or “clinical stability”
+onsets. In our model, informative censoring is taken into
+account by adopting an absorbing semi-Markov chain as a
+model for the patient’s latent clinical states; a patient’s risk
+score at any point of time is thus deﬁned as the probability
+of eventual absorption in a “clinical deterioration” state.
+
+Related work: Marked point processes have been recently
+used in a very different context to model check-in data (Du
+et al., 2016; Pan et al., 2016), but we are not aware of any
+attempts for their deployment in the medical context. Most
+of the previous works on risk prognosis for critical care
+patients viewed informative censoring as a “surrogate la-
+bel” for a patient’s clinical deterioration, and hence used
+those labels to train a supervised (regression) model us-
+ing the physiological data in a ﬁxed-size time window be-
+fore censoring. The supervised models used in the liter-
+ature included logistic regression (Ho et al., 2012; Saria
+et al., 2010), SVMs (Wiens et al., 2012), Gaussian pro-
+cesses (Ghassemi et al., 2015; Yoon et al., 2016) and recur-
+rent neural networks (Che et al., 2016). The main limitation
+of this approach is that, in addition to the fact that it gener-
+ally does not deal with informatively sampled episodes, it
+
+110
+111
+112
+113
+114
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+125
+126
+127
+128
+129
+130
+131
+132
+133
+134
+135
+136
+137
+138
+139
+140
+141
+142
+143
+144
+145
+146
+147
+148
+149
+150
+151
+152
+153
+154
+155
+156
+157
+158
+159
+160
+161
+162
+163
+164
+
+does not model the entire patient’s physiological trajectory,
+and hence it does not accurately capture intermediate (sub-
+tle) deterioration stages that are indicative of future severe
+deterioration stages, which leads to a sluggish risk assess-
+ment and delayed ICU alarms.
+
+Another strand of literature has focused on building proba-
+bilistic models, usually variants of Hidden Markov Models
+(HMMs), for the entire patient’s physiological trajectories;
+applications have ranged from disease progression model-
+ing to neonatal sepsis prediction (Wang et al., 2014; Stan-
+culescu et al., 2014). These models are not capable of deal-
+ing with irregularly-sampled data, do not deal with infor-
+matively sampled episodes, and are restricted to the Marko-
+vianity assumption which entails unrealistically memory-
+less clinical state transitions. In (Henry et al., 2015), a rank-
+ing algorithm was used to construct a risk score for sepsis
+shocks; however, the approach therein requires the clini-
+cians to provide assessments that order the disease severity
+at different time instances– we typically do not have such
+data in the EHR for ward patients.
+
+Various works in the medical literature have proposed
+“expert-based” medical risk scores for prognosis in hos-
+pital wards (Morgan et al., 1997; Parshuram et al., 2009),
+some of which are currently used in practice. The medical
+literature has also suggested the use of mortality risk scores
+that are normally used in the ICU, such as APACHE-II and
+SOFA, as risk scores for ward patients (Yu et al., 2014).
+However, recent systematic reviews have demonstrated the
+modest net clinical utility of all these scores (Cvach, 2012).
+More recently, a data-driven medical risk score based on a
+simple regression model, known as the Rothman index, has
+been developed and commercialized (Finlay et al., 2014;
+Rothman et al., 2013). The Rothman index is currently de-
+ployed in various major hospitals in the U.S. including our
+medical center; in Section 5, we show that our risk score
+signiﬁcantly outperforms the Rothman index in terms of
+AUROC and timeliness of ICU admission alarms.
+
+2. Structure of the EHR Data
+
+The subacute care data in an EHR typically comprises a set
+of episodes; each episode is a sequence of vital signs and
+lab tests (physiological data) that have been gathered (by
+clinicians) for a hospitalized patient at irregularly spaced
+time instances during her stay in a ward. The episode
+starts at the time of admission to the ward, and is con-
+cluded by either an unplanned admission to the ICU, which
+means that the patient was clinically deteriorating, or a dis-
+charge from the ward, which means that the patient was
+clinically stable. We denote an EHR dataset D that com-
+prises the episodes for D patients as D = fE dgD
+d=1; where
+E d is the episode for the dth patient, and is deﬁned as
+E d = (fyd
+m being the mth Q-
+
+c ; ld); with yd
+
+gMd
+m=1; T d
+
+m; td
+m
+
+165
+166
+167
+168
+169
+170
+171
+172
+173
+174
+175
+176
+177
+178
+179
+180
+181
+182
+183
+184
+185
+186
+187
+188
+189
+190
+191
+192
+193
+194
+195
+196
+197
+198
+199
+200
+201
+202
+203
+204
+205
+206
+207
+208
+209
+210
+211
+212
+213
+214
+215
+216
+217
+218
+219
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+dimensional physiological variable (vital signs and lab test
+outcomes) for patient d observed at time td
+m, and the to-
+tal number of samples observed for that patient during her
+episode is Md. The duration of patient d’s stay in the ward
+is denoted by T d
+c , whereas her endpoint outcome (clinical
+deterioration and ICU admission, or clinical stability and
+discharge) is declared via a binary variable ld; the realiza-
+tion ld = 1 means that patient d was admitted to the ICU,
+and ld = 0 means that the patient was discharged home.
+We stress that the labels ld associated with every episode
+are neither noisy nor entirely subjective: we assign a label
+ld = 1 for patients who actually needed a therapeutic in-
+tervention in the ICU after an unplanned admission, and
+assign a label ld = 0 for patients who were discharged and
+not re-admitted shortly after. We excluded all post-surgical
+ward patients for whom an ICU admission was preordained
+since for those patients the prognosis problem is not rele-
+vant. Our dataset comprises thousands of episodes for pa-
+tients admitted to a large medical center over a 3-year pe-
+riod; all the episodes display the structure described above.
+
+judgments manifest
+
+The clinicians were right!
+in the dth episode of D
+Clinical
+through informative sampling (encoded in the observation
+gMd
+times ftd
+m=1), and informative censoring (encoded in
+m
+c and the endpoint outcome ld). Fig-
+the episode duration T d
+ure 1 is a depiction for both informative sampling and in-
+formative censoring.
+In Figure 1, we estimate the phys-
+iological data (time-varying) sampling rate using all the
+episodes in our dataset over a time horizon of 35 hours be-
+fore ICU admission for deteriorating patients (i.e. patients
+with ld = 1, with t = 0 being the ICU admission time),
+and we compute the same estimates for stable patients (i.e.
+patients with ld = 0, with t = 0 being the discharge time).
+
+We can see from the trends in Figure 1 that as the deterio-
+rating patient approaches the ICU admission time, the clin-
+icians tend to sample her physiological data more intensely,
+whereas as the stable patient approaches the discharge time,
+the clinicians tend to have a more relaxed schedule for ob-
+serving her vital signs and lab tests. The divergence be-
+tween the sampling rates for deteriorating and stable pa-
+tient groups increases as the patients approach their ICU
+admission and discharge onsets– that is because the clini-
+cians become less uncertain about the patient’s state as time
+progresses. We have tested the hypothesis that the sam-
+pling rate of deteriorating patients is –on average– larger
+than that for stable patients in the last 24 hours before ICU
+admission or discharge via a two-sample t-test with a sig-
+niﬁcance level of 0.05, and the hypothesis was accepted.
+
+The take-away from Figure 1 is that the clinician’s judg-
+ment of the patient’s clinical state –manifesting in the vital
+signs and lab tests sampling rates– is very predictive of the
+endpoint outcomes. This implies that there is a room for
+
+220
+221
+222
+223
+224
+225
+226
+227
+228
+229
+230
+231
+232
+233
+234
+235
+236
+237
+238
+239
+240
+241
+242
+243
+244
+245
+246
+247
+248
+249
+250
+251
+252
+253
+254
+255
+256
+257
+258
+259
+260
+261
+262
+263
+264
+265
+266
+267
+268
+269
+270
+271
+272
+273
+274
+
+Figure1. Estimated sampling rates (with 95% conﬁdence inter-
+vals) for the physiological data over time.
+
+“learning from the informative clinical judgments”; that is,
+one can infer the patients’ latent states over time by us-
+ing the clinicians’ observable sampling patterns as proxi-
+mal noisy labels for those latent states.
+
+3. The Semi-Markov-Modulated Marked
+
+Hawkes Process Model
+
+Now we present a probabilistic model for the episodes
+fE dgD
+d=1 that captures the informative sampling and cen-
+soring effects discussed in Section 2. We start by modeling
+the patient’s latent clinical state process in Subsection 3.1,
+before modeling the observable variables in Subsection 3.2.
+
+3.1. Latent Clinical States
+
+We assume that each patient’s episode is governed by an
+underlying latent clinical state process X(t) that represents
+the evolution of her “clinical well-being” over time. The
+patient’s latent clinical state X(t) at any point of time t 2
+R+ (t = 0 corresponds to the time of admission to the
+ward) belongs to a ﬁnite space X comprising N states, i.e.
+X = f1; 2; : :; :; N g. We model informative censoring by
+assuming that states 1 and N are absorbing states; state 1
+is the state of clinically stability, at which the patient can
+be safely discharged home, whereas state N is the state
+of clinical deterioration, at which the patient needs to be
+admitted to the ICU. Whenever the patient is in state 1 or
+N , her episode is terminated by the clinicians shortly after.
+All other states in X =f1; N g are transient states in which
+the patient needs vigilant monitoring by the ward staff.
+
+K
+
+∑
+
+The clinical state process X(t) is a semi-Markov jump pro-
+n=1 Xn (cid:1) 1f(cid:28)n(cid:20)t<(cid:28)n+1g
+cess (Yu, 2010), i.e. X(t) =
+is a semi-Markov process for which every new state real-
+ization Xn starts at a jump time (cid:28)n, where (cid:28)1 = 0, and
+lasts for a random sojourn time Sn = (cid:28)n+1 (cid:0) (cid:28)n. A total
+number of K states are realized in the path X(t), where
+K is indeed random, and XK 2 f1; N g; i.e.
+the pa-
+tient’s episode is concluded by either clinical deterioration
+or stability. The advantage of adopting a semi-Markovian
+model for the clinical state process is that unlike Marko-
+vian models, semi-Markovianity does not imply memory-
+
+275
+276
+277
+278
+279
+280
+281
+282
+283
+284
+285
+286
+287
+288
+289
+290
+291
+292
+293
+294
+295
+296
+297
+298
+299
+300
+301
+302
+303
+304
+305
+306
+307
+308
+309
+310
+311
+312
+313
+314
+315
+316
+317
+318
+319
+320
+321
+322
+323
+324
+325
+326
+327
+328
+329
+
+−35−30−25−20−15−10−50123456789TimetoICUadmission/discharge(hours)Estimatedsamplingrate(perhour)  ClinicallydeterioratingClinicallystable0.45 0.55 0.65 0.75 0.85 0.95 1.05 Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+Figure2. Depiction of the physiological data sampling times for a clinically deteriorating and a clinically stable patient.
+
+less transitions– the transition probability from one clinical
+state to another at any time depends on the time spent in the
+current state, a property that has been recently validated in
+various clinical state models (Taghipour et al., 2013). We
+adopt an explicit-duration model for the state sojourn times
+(Johnson & Willsky, 2013): the nth state sojourn time Sn
+is drawn from a Gamma distribution1 with state-speciﬁc
+parameters as follows
+
+Snj(Xn = i) (cid:24) Gamma((cid:13)i); 8i 2 X :
+
+(1)
+
+Since the model includes two absorbing states (1 and N )
+for which the notion of sojourn time is inapplicable, we
+deﬁne the variables Sn of such states as the clinicians’
+“response times” for admitting patients to the ICU or dis-
+charging them upon the clinical deterioration/stability on-
+set. The transitions among the clinical states are governed
+by a semi-Markov transition kernel matrix P = (pij)i;j;
+i.e.
+
+(2)
+
+P(Xn+1 = jjXn = i) = pij;
+where self-transitions are eliminated for all transient states
+(Yu, 2010; Johnson & Willsky, 2013), i.e. pii = 0; 8i 2
+X =f1; N g; and enforced for the two absorbing states pii =
+1; 8i 2 f1; N g. The initial state distribution is given by
+i=1; where (cid:25)i = P(X(0) = i). Every episode
+(cid:25) = ((cid:25)i)N
+E d in an EHR dataset D is associated with a latent clini-
+gKd
+cal state trajectory fX d
+n=1, but we can only observe
+the absorbing state realization XKd = ld in the EHR data
+(informative censoring).
+
+n; Sd
+n
+
+3.2. Observable Physiological Data
+
+The patient’s latent clinical state process X(t) manifests in
+two ways: (1) it modulates the intensity of sampling the pa-
+tient’s physiological variables (informative sampling), and
+(2) it modulates the distributional properties of the ob-
+served physiological variables. We capture these two ef-
+fects via a marked point process model for the patient’s
+
+1We model the sojourn time via a Gamma distribution since
+it encompasses memoryless exponential distributions of Markov
+models as a special case (Liu et al., 2015).
+
+episode E:
+the marked point process f(ym; tm)gm2N+
+comprises an observation process ftmgm2N+ , which rep-
+resents the physiological variables’ sampling times, and a
+mark process fymgm2N+ , which represents the realized
+physiological variables at these sampling times. The dis-
+tributional speciﬁcations of our marked point process are
+given in the following Subsections.
+
+3.2.1. THE OBSERVATION PROCESS
+
+We model the observation process generating the physio-
+logical variables’ observation times ftmgm2N+ as a doubly
+stochastic point process whose intensity, (cid:21)(t), is a stochas-
+tic process modulated by the latent clinical state process
+X(t). In particular, the observation process ftmgm2N+ is
+modeled as a one-dimensional Hawkes process with a lin-
+ear self-exciting intensity function (cid:21)(t; X(t)) (Lee et al.,
+2016), i.e.
+
+(cid:21)(t; X(t) = i) = (cid:21)o
+
+i + (cid:11)i
+
+e(cid:0)(cid:12)i(t(cid:0)tm);
+
+(3)
+
+∑
+
+(cid:28) <tm<t
+
+8 i 2 X ;, where (cid:21)o
+i , (cid:11)i and (cid:12)i are the state-dependent in-
+tensity parameters, e(cid:0)(cid:12)i(t(cid:0)tm) is an exponential trigger-
+ing kernel, and (cid:28) < t is the time of the most recent jump
+in X(t).
+In order to ensure the local stationarity of the
+Hawkes process within the sojourn time of every latent
+< 1; 8i 2 X (Roueff et al.,
+state, we assume that (cid:11)i
+(cid:12)i
+2016); the expected value of the intensity function is there-
+fore given by E[(cid:21)(t; X(t) = i)] = (cid:21)o
+. For (cid:12)i = 1
+i
+1(cid:0) (cid:11)i
+(cid:12)i
+or (cid:11)i = 0, we recover a modulated Poisson process as a
+special case (Pan et al., 2016).
+
+In Figure 2, we depict the observation times in two patients’
+episodes: patient A being a clinically deteriorating patient,
+and patient B being a clinically stable patient. We can see
+that patient A’s episode had its sampling rate escalating as
+her condition was worsening; the sampling rate remained
+intense after she was admitted to the ICU. On the other
+hand, patient B’s episode exhibited a decelerating sampling
+rate on her path to clinical stability. We can also notice that
+
+330
+331
+332
+333
+334
+335
+336
+337
+338
+339
+340
+341
+342
+343
+344
+345
+346
+347
+348
+349
+350
+351
+352
+353
+354
+355
+356
+357
+358
+359
+360
+361
+362
+363
+364
+365
+366
+367
+368
+369
+370
+371
+372
+373
+374
+375
+376
+377
+378
+379
+380
+381
+382
+383
+384
+
+385
+386
+387
+388
+389
+390
+391
+392
+393
+394
+395
+396
+397
+398
+399
+400
+401
+402
+403
+404
+405
+406
+407
+408
+409
+410
+411
+412
+413
+414
+415
+416
+417
+418
+419
+420
+421
+422
+423
+424
+425
+426
+427
+428
+429
+430
+431
+432
+433
+434
+435
+436
+437
+438
+439
+
+−150−100−50050100150012Time(hours)Labtestsandvitalsignssamplingtimes  −45−40−35−30−25−20−15−10−50012Time(hours)  PatientA:clinicallydeterioratingPatientB:clinicallystablepatientPatientAPatientBDischargeonsetIntensiveCareHospitalizationinregularwardHospitalizationinregularwardICUadmissiononsetSemi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+440
+441
+442
+443
+444
+445
+446
+447
+448
+449
+450
+451
+452
+453
+454
+455
+456
+457
+458
+459
+460
+461
+462
+463
+464
+465
+466
+467
+468
+469
+470
+471
+472
+473
+474
+475
+476
+477
+478
+479
+480
+481
+482
+483
+484
+485
+486
+487
+488
+489
+490
+491
+492
+493
+494
+
+the observation times display a subtle “clustered” pattern
+that point out to their temporal dependencies– indeed, the
+clinicians are not memoryless, and the times at which they
+observe the physiological data are dependent. In the light of
+the above, the modulated Hawkes process described above
+appears to be a sensible model for the observation process
+ftmgm2N+ as it captures both the time-varying intensity
+and the temporal dependencies illustrated in Figure 2.
+
+3.2.2. THE MARK PROCESS
+
+Now we provide the distributional speciﬁcation of the mark
+process fymgm2N+. Since the physiological data are irreg-
+ularly sampled from an underlying continuous-time physi-
+ological process Y (t) at the sampling times determined by
+the observation process ftmgm2N+ , a convenient model for
+Y (t) is a switching Gaussian Process deﬁned as follows:
+Y (t) =
+
+K
+n=1 Yn(t)1f(cid:28)n(cid:20)t<(cid:28)n+1g; with
+Yn(t)j(Xn = i) (cid:24) GP(mi(t); ki(t; t′));
+
+(4)
+
+∑
+
+where mi(t) and ki(t; t′) are the state-dependent mean
+function and covariance kernel, respectively. We use a con-
+stant mean function mi(t) = mi and a Mat´ern kernel given
+by
+
+ki(t; t′) =
+
+( p
+
+2vi(cid:0)1 jt(cid:0)t′j
+ℓi
+
+( p
+
+)vi(cid:0) 1
+
+2
+
+Kvi(cid:0) 1
+2 (cid:0)(vi (cid:0) 1
+2 )
+
+2
+
+2vi(cid:0) 3
+
+2vi(cid:0)1 jt(cid:0)t′j
+ℓi
+
+)
+
+;
+
+2
+
+(5)
+where vi 2 N+, ℓi 2 R+, (cid:0)(:) is the Gamma function and
+(:) is a modiﬁed Bessel function (Rasmussen, 2006).
+Kvi(cid:0) 1
+Our choice for the Mat´ern kernel is motivated by its ability
+to represent various commonly used stochastic processes;
+for instance, when vi = 1, then Yn(t)j(Xn = i) is an
+Ornstein-Uhlenbeck process (Rasmussen, 2006), whereas
+for a general integer value of vi, Yn(t)j(Xn = i) is a
+continuous-time analogue of the Auto-regressive process
+AR(vi)– a process that has been widely used to model
+physiological time-series data (Stanculescu et al., 2014).
+By constructing Yn(t) as a continuous-time analog of the
+K
+n=1 Yn(t)1f(cid:28)n(cid:20)t(cid:20)(cid:28)n+1g
+AR model, the process Y (t) =
+becomes a continuous-time switching AR model that is
+modulated by the patient’s latent clinical state process
+X(t). We observe the continuous-time process Y (t) only
+at the sampling times dictated by the observation process
+(tm)m2N+ , and the resulting process fymgm2N+ deﬁnes
+the mark process. The observation process together with
+the mark process, both modulated by the latent clinical state
+process X(t), constitute a marked Hawkes process, which
+completely describes a patient’s episode.
+
+∑
+
+The mark process deﬁned above is one-dimensional, and
+hence we need to extend the deﬁnition to handle a multi-
+dimensional process that represents multiple lab tests and
+
+vital signs. In other words, we seek a continuous-time ana-
+log of the switching Vector Auto-regressive (VAR) model
+rather than an AR model2. This is achieved by adopt-
+ing a multi-task Gaussian Process as a model for the Q-
+dimensional physiological process Y (t) 2 RQ (Durichen
+et al., 2015). That is, we assume that Yn(t)j(Xn =
+i) (cid:24) GP(mi(t); Ki(t; t′)); where the covariance kernel
+Ki(t; t′) = fki(r; g; t; t′)gQ
+r;g=1 is based on the intrinsic
+correlation model (Bonilla et al., 2007), i.e. Ki(t; t′) can
+be written in the following separable form
+
+ki(r; g; t; t′) = (cid:6)i(r; g) (cid:1) ki(t; t′);
+(6)
+where ki(r; g; t; t′) is the covariance between the rth phys-
+iological variable at time t and the gth physiological vari-
+able at time t′, (cid:6)i is a Q (cid:2) Q intrinsic correlation ma-
+trix, and ki(t; t′) is the Mat´ern kernel in (5). For ev-
+ery state i, we denote the multi-task GP parameter set as
+(cid:2)i = (mi(t); Ki(t; t′)), and the Hawkes process parame-
+ter set as (cid:3)i. The entire model parameters can be bundled
+in the parameter set Ω as follows
+
+Ω = fP; ((cid:25)i; (cid:13)i; (cid:3)i; (cid:2)i)i2X g:
+
+Given a parameter set Ω, we can easily generate sample
+patient episodes from our model by ﬁrst sampling a state
+sequence fX1; : : :; XKg using the semi-Markov transition
+kernel, then sampling a corresponding sequence of sojourn
+times fS1; : : :; SKg from the state-dependent Gamma dis-
+tributions, then sampling a set of multi-task Gaussian pro-
+cess fY1(t); : : :; YK(t)g, and ﬁnally sampling a sequence
+of observation times ftmgM
+m=1 using Ogata’s modiﬁed thin-
+ning algorithm (Ogata, 1981). Figure 3 depicts one patient
+episode sampled from our model. (An algorithm for sam-
+pling episodes from our model is provided in Appendix B
+in the supplementary material.)
+
+4. Learning and Inference
+
+In this Section, we develop an ofﬂine learning algorithm
+that learns the model parameter Ω using the ofﬂine training
+episodes in D, and a real-time risk scoring algorithm that
+computes a hospitalized patient’s risk over time. The learn-
+ing algorithm operates by ﬁrst detecting change-points in
+the physiological data and the observation process; using
+the detected change-points, the algorithm segments each
+episode into a sequence of states, and uses an EM algo-
+rithm to estimate the model parameters. The real-time risk
+scoring algorithm operates by inferring the patient’s current
+state via forward-ﬁltering, and then computing the proba-
+bility of eventual absorption in the deteriorating state.
+
+2In Appendix A of the supplementary material, we establish
+the connection between the switching multi-task Gaussian Pro-
+cess model described herein and the conventional VAR model,
+showing that the former is the continuous-time analog of the lat-
+ter.
+
+495
+496
+497
+498
+499
+500
+501
+502
+503
+504
+505
+506
+507
+508
+509
+510
+511
+512
+513
+514
+515
+516
+517
+518
+519
+520
+521
+522
+523
+524
+525
+526
+527
+528
+529
+530
+531
+532
+533
+534
+535
+536
+537
+538
+539
+540
+541
+542
+543
+544
+545
+546
+547
+548
+549
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+550
+551
+552
+553
+554
+555
+556
+557
+558
+559
+560
+561
+562
+563
+564
+565
+566
+567
+568
+569
+570
+571
+572
+573
+574
+575
+576
+577
+578
+579
+580
+581
+582
+583
+584
+585
+586
+587
+588
+589
+590
+591
+592
+593
+594
+595
+596
+597
+598
+599
+600
+601
+602
+603
+604
+
+Figure3. An episode sampled from the proposed model.
+
+4.1. The Ofﬂine Learning Algorithm
+
+n; Sd
+n
+
+Estimating the model parameters Ω from the dataset D =
+fE dgD
+d=1 is a daunting task due to the hiddenness of the
+patients’ clinical state trajectories fX d
+gD
+d=1; an appli-
+cation of MCMC-based inference methods, such as the
+method in (Qin & Shelton, 2015), will incur an exces-
+sive computational cost for a complex model like ours.
+We therefore developed an efﬁcient three-step learning al-
+gorithm that capitalizes on the structure of the patients’
+episodes in order to ﬁnd a point estimate ^Ω for Ω. The three
+steps of the our learning algorithm are listed hereunder3.
+
+1 ; : : :; (cid:28) d
+
+Step 1: Change-point detection
+Kd g for ev-
+We ﬁrst estimate the jump times f(cid:28) d
+ery episode E d in D. This is achieved by using the
+E-divisive change-point detection algorithm (Matteson &
+James, 2014). Since the E-divisive algorithm is nonpara-
+metric, we are able to estimate the onsets of all clinical
+the jump times of X d(t), prior to ﬁnding the
+states, i.e.
+estimate ^Ω. We let the E-divisive algorithm jointly de-
+tect changes in the distributions of the observable variables
+gMd
+fyd
+m=1 by cre-
+m
+ating an augmented vector of observables that comprises
+both the physiological observations and a “differential” ob-
+servation process, i.e.
+
+gMd
+m=1 and the observation process ftd
+
+m
+
+f^(cid:28) d
+
+1 ; : : :; ^(cid:28) d
+
+Kdg = E-divisive((yd
+
+1 ; ∆td
+
+1); : : :; (yd
+
+M d; ∆td
+
+M d));
+
+m = td
+m
+
+m(cid:0)1, with ∆td
+where ∆td
+1 = 0. By the end of
+this step, we obtain an estimate for the start and end times
+of all clinical state realizations for every episode E d.
+
+(cid:0) td
+
+Step 2: Maximum Likelihood Estimation (MLE) of the
+absorbing states’ parameters
+By virtue of informative censoring, we know the identities
+Kd = ld; 8d. Now that
+of all the absorbing states, i.e. X d
+we have estimates for the onsets of the absorbing states,
+obtained from step 1, then we can estimate the response
+
+times as ^Sd
+c
+observable) sub-dataset Di as follows
+
+Kd = T d
+
+(cid:0) ^(cid:28) d
+
+Kd; 81 (cid:20) d (cid:20) D. Deﬁne the (fully
+
+{
+
+}
+
+Di =
+
+(ym; tm)ftm(cid:21)^(cid:28) d
+Kd
+
+g; ^Sd
+
+Kd : ld = i; E d 2 D
+
+;
+
+8i 2 f0; 1g. Given such a fully ﬂedged speciﬁcation of the
+absorbing states’ onsets, identities, and the corresponding
+physiological variables, we can directly apply MLE to es-
+timate the parameters (cid:2)1; (cid:2)N ; (cid:13)1; (cid:13)N ; (cid:3)1 and (cid:3)N . Using
+the dataset Di, the parameter (cid:2)i is estimated using the gra-
+dient method for Gaussian processes as in (Bonilla et al.,
+2007), (cid:13)i is estimated using the standard MLE estimating
+equations, and (cid:3)i is estimated by maximizing the recursive
+likelihood formula in (Ogata, 1981) using the Nelder-Mead
+simplex method (Nelder & Mead, 1965).
+
+Step 3: Estimation of the transient states’ parameters us-
+ing the EM algorithm
+While the absorbing states are observable, the transient
+states are all hidden. In order to estimate the parameters
+i=2 , and f(cid:3)igN (cid:0)1
+P; f(cid:2)igN (cid:0)1
+i=2 ; f(cid:13)igN (cid:0)1
+i=2 , we use the jump
+times’ estimates f^(cid:28) d
+g (obtained from step 1)
+1 ; : : :; ^(cid:28) d
+Kd(cid:0)1
+in order to segment every episode d into a set of ﬁnite tran-
+sition, and hence we obtain a discrete-time HMM-like pro-
+cess. We truncate all the episodes by removing the data
+belonging to the absorbing state, and run the EM algorithm
+in order to estimate the transient state parameters. The EM
+algorithm takes advantage of informative censoring in the
+forward-backward message passing stage by computing the
+backward messages conditioned on the identity of the end-
+point absorbing state ld for every episode d.
+
+4.2. The Real-time Risk Scoring Algorithm
+Having learned the model parameters ^Ω from an ofﬂine
+dataset D, we now explain how risk scoring is conducted
+in real-time for a newly hospitalized patient. The patient
+risk score at time t is denoted by R(t), and is deﬁned as
+R(t) = P(X(1) = N j fym; tmg; tm (cid:20) t; ^Ω). That is,
+the risk score R(t) is the probability of being eventually
+absorbed in the deteriorating state N given the observable
+physiological data up to time t. Using Bayes’ rule, the risk
+score R(t) is given by
+∑
+
+P(X(t) = i j fym; tmg)
+|
+{z
+}
+Current state
+
+|
+
+(cid:1) P(X(1) = N j X(t) = i)
+;
+}
+{z
+Future transition
+
+i2X
+
+where the “current state” term is computed in real-time us-
+ing the efﬁcient (dynamic programming) forward-ﬁltering
+algorithm, whereas the “future transition” term is computed
+ofﬂine using the estimated model parameters.
+
+5. Experiments
+
+605
+606
+607
+608
+609
+610
+611
+612
+613
+614
+615
+616
+617
+618
+619
+620
+621
+622
+623
+624
+625
+626
+627
+628
+629
+630
+631
+632
+633
+634
+635
+636
+637
+638
+639
+640
+641
+642
+643
+644
+645
+646
+647
+648
+649
+650
+651
+652
+653
+654
+655
+656
+657
+658
+659
+
+3The details for all the algorithms in this Section are provided
+
+in Appendix C in the supplementary material.
+
+In order to evaluate the prognostic utility of our model, we
+conducted experiments on a dataset D comprising informa-
+
+05101520250246810TimetLatentStatesandIntensityFunctionClinicalstatespaceisX={1,2,3,4}(state4isthe“clinicaldeterioration”state)  05101520250510152025TimetPhysiologicalVariables  Y(t){ym}Mm=1Intensityfunctionλ(t,X(t))ClinicalstateprocessX(t)Observationprocess{tm}Informativecensoringl=1X1=2X2=3X3=4Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+5.1. Data Description
+
+Figure4. An episode for a hospitalized cardiac patient.
+
+660
+661
+662
+663
+664
+665
+666
+667
+668
+669
+670
+671
+672
+673
+674
+675
+676
+677
+678
+679
+680
+681
+682
+683
+684
+685
+686
+687
+688
+689
+690
+691
+692
+693
+694
+695
+696
+697
+698
+699
+700
+701
+702
+703
+704
+705
+706
+707
+708
+709
+710
+711
+712
+713
+714
+
+tion on patient admissions to a major medical center over
+a 3-year period, and compared the proposed risk score de-
+ﬁned in Subsection 4.2 with other competing baselines. We
+brieﬂy describe our dataset in the next Subsection, and then
+present the experimental results. A very detailed descrip-
+tion for our dataset and the implementation of the baselines
+is provided in Appendix D in the supplementary material.
+
+Each patient record in D is an episode that is formatted
+as described in Section 2. The patients’ cohort in D is
+very heterogeneous; diagnoses included sepsis, hyperten-
+sion, renal failure, leukemia, septicemia and pneumonia.
+Each patient’s episode in D comprises 21 vital signs and lab
+tests that are collected for the patient over time, along with
+the time instances at which they where collected. The vital
+signs include diastolic and systolic blood pressure, Glas-
+gow coma scale score, heart rate, eye opening, respiratory
+rate, temperature, O2 saturation and device assistance, best
+motor and verbal responses. The lab tests included mea-
+surements of chloride, glucose, urea nitrogen, white blood
+cell count, creatinine, hemoglobin, platelet count, potas-
+sium, sodium and CO2. In all the experiments conducted
+in this Section, we split D into a training set consisting of
+admissions over a 2.5-year period (5,000 episodes) and a
+testing set consisting of admissions over a 6-month period
+(1,094 episodes).
+
+5.2. Results
+
+We ran the ofﬂine learning algorithm in Subsection 4.1
+(with 1000 EM iterations) on the 5,000 training episodes
+in D, and obtained an estimate ^Ω for the semi-Markov-
+modulated marked Hawkes process that describes the pa-
+tient cohort. Using the Bayesian information criterion, we
+selected an instantiation of our model with 4 clinical states,
+where state 1 is the clinical stability (absorbing) state, and
+state 4 is the clinical deterioration (absorbing) state. The
+learned Hawkes process intensity functions for these two
+states are given by
+
+(cid:21)(t; 1) =
+
+0:55|{z}
+Baseline intensity #
+
++ 0:2
+
+(cid:21)(t; 4) =
+
+0:82|{z}
+Baseline intensity "
+
++ 0:16
+
+∑
+
+tm
+
+e(cid:0)8:46(t(cid:0)tm)
+|
+}
+{z
+Temporal dependencies #
+e(cid:0)1:36(t(cid:0)tm)
+|
+}
+{z
+Temporal dependencies "
+
+∑
+
+tm
+
+;
+
+;
+
+where (cid:21)(t; X(t)) is measured in samples per hour. We
+note that the estimated Hawkes process parameters accu-
+rately describe the clinicians’ judgments; when the patient
+is in the deteriorating state (state 4), the clinicians tend to
+observe her physiological measurements more frequently.
+
+This manifests in the baseline intensity of (cid:21)(t; 4) being
+50% higher than that of (cid:21)(t; 1). Moreover, we note that
+when the patient is clinically stable (state 1), the temporal
+dependencies between the observation times almost disap-
+pear as the exponential triggering kernel plays little role
+in determining the observation times, i.e. (cid:21)(t; 1) (cid:25) 0:55,
+which renders the observation process closer to a Pois-
+son process. Contrarily, when the patient is deteriorating,
+strong temporal dependencies are displayed in the observa-
+tion times– this is intuitive since for a deteriorating patient,
+the follow-up times decided by the clinicians strongly de-
+pend on what have been observed in the past. These dis-
+tinguishing state-speciﬁc features of the clinical judgments
+are the essence of informative sampling, which allows us
+to integrate physiological data together with clinical expe-
+rience while learning the patient’s physiological model.
+
+We illustrate the value of informative sampling in Figure 4
+through an episode for a cardiac patient who was admitted
+in the ward for 1 week before being sent to the ICU upon a
+cardiac arrest. When running the ofﬂine learning algorithm
+in Section 4.1 while assuming that the observation process
+gm is uninformative (i.e. (cid:21)(t; i) = (cid:21)(t; j); 8i; j 2 X ),
+ftd
+m
+the detected clinical deterioration onset is only 10 hours
+ahead of the cardiac arrest event (onset (2) in Figure 4):
+this is because the states are estimated solely based on
+the physiological data, and hence the clinical deterioration
+state is detected only when the patient’s heart rate fell be-
+low 60 beats per minute (BPM). When running the learn-
+ing again but with informative sampling taken into account,
+the detected clinical deterioration onset is 40 hours ahead
+of the cardiac arrest event (onset (1) in Figure 4); this is
+the time instance at which the clinicians decided to moni-
+tor the patient more vigilantly (i.e. more intense sampling
+rate) even though the evidence for an upcoming cardiac
+arrest in her heart rate trajectory was rather subtle. The
+clinicians’ decision to intensely observe the patient’s phys-
+iological trajectory is based either on their experience, or
+on apparent symptoms or complains from the patient that
+were not recorded in the EHR. By integrating the clini-
+cians’ judgments into our model, we are able to capture the
+subtleties in the patients’ temporal physiological parame-
+ters, and hence learn more accurate representations for the
+clinical states.
+
+715
+716
+717
+718
+719
+720
+721
+722
+723
+724
+725
+726
+727
+728
+729
+730
+731
+732
+733
+734
+735
+736
+737
+738
+739
+740
+741
+742
+743
+744
+745
+746
+747
+748
+749
+750
+751
+752
+753
+754
+755
+756
+757
+758
+759
+760
+761
+762
+763
+764
+765
+766
+767
+768
+769
+
+−180−160−140−120−100−80−60−40−20020406080100120Timeinhours(ICUadmissionatt=0)HearRate(BPM)Admissiontotheward212ObservationprocessSemi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+770
+771
+772
+773
+774
+775
+776
+777
+778
+779
+780
+781
+782
+783
+784
+785
+786
+787
+788
+789
+790
+791
+792
+793
+794
+795
+796
+797
+798
+799
+800
+801
+802
+803
+804
+805
+806
+807
+808
+809
+810
+811
+812
+813
+814
+815
+816
+817
+818
+819
+820
+821
+822
+823
+824
+
+Method
+
+AUROC
+
+Proposed Score
+
+Rothman Index
+MEWS
+APACHE-II
+SOFA
+SW-RF
+HMMs
+SW-GP
+SW-LR
+
+0.481
+0.255
+0.182
+0.130
+0.127
+0.366
+0.321
+0.305
+0.267
+
+Medical Scores
+
+ML Algorithms
+
+Table1. Comparison between various risk scoring methods (p <
+0:01). (SW: Sliding-window, GP: Gaussian process regression,
+LR: Logistic Regression, RF: Random Forests)
+
+We then computed the real-time risk score (as described
+in Subsection 4.2) for the testing episodes, and compared
+its sensitivity-precision AUCROC with that of the baseline
+risk scoring methods listed hereunder.
+
+Medical Risk Scores: we considered the two most
+commonly used medical risk scores in regular wards– the
+MEWS score (Morgan et al., 1997) and the Rothman in-
+dex4 (Rothman et al., 2013). We implemented the MEWS
+score and the Rothman index as described in (Kyriacos
+et al., 2014) and (Rothman et al., 2013), respectively. We
+also included the APACHE-II and SOFA scores in our
+comparisons.
+
+Machine Learning Algorithms: we considered the
+traditional approach for real-time risk scoring, which treats
+informative censoring as a surrogate label based on which
+a supervised regression model is learned ofﬂine, and then
+risk scoring is applied in real-time using the temporal data
+within a sliding window– we call these methods “sliding-
+window methods”. We implemented sliding-window
+methods based on logistic regression (Ho et al., 2012;
+Saria et al., 2010), random forests, and Gaussian process
+regression (Ghassemi et al., 2015; Yoon et al., 2016).
+In addition, we compared our risk score with a standard
+Hidden Markov Model with Gaussian emissions. The
+relevant physiological measurements for every baseline
+were selected through the correlated feature selection
+method (Yu & Liu, 2003). The hyper-parameters of all
+the baselines, including the size of the sliding window
+for the supervised learning methods, were optimized via
+cross-validation. To handle the irregularly sampled data,
+we discretized the time horizon into 1-hour steps and fed
+the baselines with interpolated, discrete-time episodes.
+
+In Table 1, we compare the performance of our risk score
+
+4At the time of conducting these experiments, the Rothman
+
+index was deployed in more than 60 major hospitals in the US.
+
+with the baselines in terms of the sensitivity-precision AU-
+ROC. As we can see, the proposed risk score offers a 23%
+AUROC improvement as compared to the best perform-
+ing medical risk score –the Rothman index– which was the
+score deployed in our medical center at the time of conduct-
+ing this experiment. Moreover, our risk score also provides
+signiﬁcant gains over discriminative sliding-window re-
+gression models; the proposed risk score achieves a 11.5%
+AUROC improvement as compared to the best perform-
+In addition, the pro-
+ing ML algorithm (random forest).
+posed risk score achieves a 16% AUROC improvement as
+compared to a standard HMM with Gaussian emission vari-
+ables5. On average, our risk score prompts ICU alarms 8
+hours before the censoring time at a sensitivity of 50% and
+precision of 35%.
+
+6. Discussion: Chicken-and-egg
+
+We stress that while computing our risk score for the test-
+ing episodes, we did not use the information conveyed in
+the observation process ftd
+gm to infer the patients’ clini-
+m
+cal states. This is because in practice, the value of the real-
+time risk score R(t) itself inﬂuences the clinician’s behav-
+ior and hence impacts the observation process, creating a
+chicken-and-egg dilemma in which one cannot clearly con-
+ceptualize the causal relation between the risk score and the
+clinicians’ judgments. A very interesting research direction
+is to consider an observation process that is modulated by
+both the patient’s state and the real-time risk score through
+an intensity function (cid:21)(t; X(t); R(t)), where the algorithm
+learns the clinical state representation online by “sharing
+experience” with the clinicians. That is, the algorithm uses
+the clinician’s judgments to reﬁne its clinical state model,
+which leads to a reﬁned risk score R(t) that would in turn
+allow the clinician to exhibit more accurate judgments; an
+online learning process that would ideally converge to a
+state of “shared knowledge” between the clinician and the
+system.
+
+The signiﬁcant prognostic value offered by our risk score
+promises a great improvement in the quality of subacute
+care in wards. By utilizing the proposed score instead of
+the current technology, clinicians in a crowded ward can
+better focus their attention on patients at real risk of deterio-
+ration, and can also plan for timely ICU admissions and ef-
+fective therapeutic interventions. With the high in-hospital
+mortality rates in wards, deploying our risk score may help
+save thousands of lives annually– we are currently working
+towards installing the proposed risk score in our medical
+center.
+
+5The adoption of a semi-Markovian model for the clinical state
+process protects our model from the overtly rapid state switching
+behavior that is introduced by memoryless HMMs (Matteson &
+James, 2014).
+
+825
+826
+827
+828
+829
+830
+831
+832
+833
+834
+835
+836
+837
+838
+839
+840
+841
+842
+843
+844
+845
+846
+847
+848
+849
+850
+851
+852
+853
+854
+855
+856
+857
+858
+859
+860
+861
+862
+863
+864
+865
+866
+867
+868
+869
+870
+871
+872
+873
+874
+875
+876
+877
+878
+879
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+880
+881
+882
+883
+884
+885
+886
+887
+888
+889
+890
+891
+892
+893
+894
+895
+896
+897
+898
+899
+900
+901
+902
+903
+904
+905
+906
+907
+908
+909
+910
+911
+912
+913
+914
+915
+916
+917
+918
+919
+920
+921
+922
+923
+924
+925
+926
+927
+928
+929
+930
+931
+932
+933
+934
+
+References
+
+Bonilla, Edwin V, Chai, Kian M, and Williams, Christo-
+In Ad-
+pher. Multi-task gaussian process prediction.
+vances in neural information processing systems, pp.
+153–160, 2007.
+
+Charles, D, Gabriel, M, and Henry, J. Electronic capabili-
+ties for patients among us non-federal acute care hospi-
+tals: 2008-2014. onc data brief 29. ofﬁce of the national
+coordinator for health information technology: Wash-
+ington dc, 2016.
+
+Che, Zhengping, Purushotham, Sanjay, Cho, Kyunghyun,
+Sontag, David, and Liu, Yan. Recurrent neural networks
+for multivariate time series with missing values. arXiv
+preprint arXiv:1606.01865, 2016.
+
+Clifton, Lei, Clifton, David A, Pimentel, Marco AF,
+Watkinson, Peter J, and Tarassenko, Lionel. Gaus-
+sian process regression in vital-sign early warning sys-
+tems. In Engineering in Medicine and Biology Society
+(EMBC), 2012 Annual International Conference of the
+IEEE, pp. 6161–6164. IEEE, 2012.
+
+Cvach, Maria. Monitor alarm fatigue: an integrative re-
+view. Biomedical instrumentation and technology, 46
+(4):268–277, 2012.
+
+Du, Nan, Dai, Hanjun, Trivedi, Rakshit, Upadhyay,
+Utkarsh, Gomez-Rodriguez, Manuel, and Song, Le. Re-
+current marked temporal point processes: Embedding
+event history to vector. In Proceedings of the 22nd ACM
+SIGKDD, pp. 1555–1564. ACM, 2016.
+
+Durichen, Robert, Pimentel, Marco AF, Clifton, Lei,
+Schweikard, Achim, and Clifton, David A. Multitask
+gaussian processes for multivariate physiological time-
+series analysis. Biomedical Engineering, IEEE Transac-
+tions on, 62(1):314–322, 2015.
+
+Finlay, G Duncan, Rothman, Michael J, and Smith,
+Robert A. Measuring the modiﬁed early warning score
+and the rothman index: advantages of utilizing the elec-
+tronic medical record in an early warning system. Jour-
+nal of hospital medicine, 9(2):116–119, 2014.
+
+Ghassemi, Marzyeh, Pimentel, Marco AF, Naumann, Tris-
+tan, Brennan, Thomas, Clifton, David A, Szolovits, Pe-
+ter, and Feng, Mengling. A multivariate timeseries mod-
+eling approach to severity of illness assessment and fore-
+casting in icu with sparse, heterogeneous clinical data. In
+AAAI, pp. 446–453, 2015.
+
+Hawkes, Alan G and Oakes, David. A cluster process rep-
+resentation of a self-exciting process. Journal of Applied
+Probability, pp. 493–503, 1974.
+
+Henry, Katharine E, Hager, David N, Pronovost, Peter J,
+and Saria, Suchi. A targeted real-time early warning
+score (trewscore) for septic shock. Science Translational
+Medicine, 7(299):299ra122–299ra122, 2015.
+
+Ho, Joyce C, Lee, Cheng H, and Ghosh, Joydeeph.
+Imputation-enhanced prediction of septic shock in icu
+patients. In Proceedings of the ACM SIGKDD Workshop
+on Health Informatics, pp. 21–27, 2012.
+
+Hogan, Helen, Healey, Frances, Neale, Graham, Thomson,
+Richard, Vincent, Charles, and Black, Nick. Preventable
+deaths due to problems in care in english acute hospitals:
+a retrospective case record review study. BMJ quality &
+safety, pp. bmjqs–2012, 2012.
+
+Johnson, Alistair EW, et. al. Mimic-iii, a freely accessible
+
+critical care database. Scientiﬁc data, 3, 2016.
+
+Johnson, Matthew J and Willsky, Alan S. Bayesian non-
+parametric hidden semi-markov models. Journal of Ma-
+chine Learning Research, 14(Feb):673–701, 2013.
+
+Kause, Juliane, Smith, Gary, Prytherch, David, Parr,
+Michael, Flabouris, Arthas, Hillman, Ken, et al. A
+comparison of antecedents to cardiac arrests, deaths and
+emergency intensive care admissions in australia and
+new zealand, and the united kingdomthe academia study.
+Resuscitation, 62(3):275–282, 2004.
+
+Kumar, Gagan, Kumar, Nilay, Taneja, Amit, Kaleekal,
+Thomas, Tarima, Sergey, McGinley, Emily, Jimenez,
+Edgar, Mohan, Anand, Khan, Rumi Ahmed, Whittle,
+Jeff, et al. Nationwide trends of severe sepsis in the 21st
+century (2000-2007). Chest Journal, 140(5):1223–1231,
+2011.
+
+Kyriacos, Una, Jelsma, Jennifer, James, Michael, and Jor-
+dan, Sue. Monitoring vital signs: development of a mod-
+iﬁed early warning scoring (mews) system for general
+wards in a developing country. PloS one, 9(1):e87073,
+2014.
+
+Lee, Young, Lim, Kar Wai, and Ong, Cheng Soon. Hawkes
+processes with stochastic excitations. pp. 79–88, 2016.
+
+Liu, Yu-Ying, Li, Shuang, Li, Fuxin, Song, Le, and Rehg,
+James M. Efﬁcient learning of continuous-time hidden
+markov models for disease progression. In Advances in
+neural information processing systems, pp. 3600–3608,
+2015.
+
+Mardini L, Lipes J, Jayaraman D. Adverse outcomes asso-
+ciated with delayed intensive care consultation in medi-
+cal and surgical inpatients. Journal of critical care, 27
+(6):688–693, 2012.
+
+935
+936
+937
+938
+939
+940
+941
+942
+943
+944
+945
+946
+947
+948
+949
+950
+951
+952
+953
+954
+955
+956
+957
+958
+959
+960
+961
+962
+963
+964
+965
+966
+967
+968
+969
+970
+971
+972
+973
+974
+975
+976
+977
+978
+979
+980
+981
+982
+983
+984
+985
+986
+987
+988
+989
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+990
+991
+992
+993
+994
+995
+996
+997
+998
+999
+1000
+1001
+1002
+1003
+1004
+1005
+1006
+1007
+1008
+1009
+1010
+1011
+1012
+1013
+1014
+1015
+1016
+1017
+1018
+1019
+1020
+1021
+1022
+1023
+1024
+1025
+1026
+1027
+1028
+1029
+1030
+1031
+1032
+1033
+1034
+1035
+1036
+1037
+1038
+1039
+1040
+1041
+1042
+1043
+1044
+
+Matteson, David S and James, Nicholas A. A nonparamet-
+ric approach for multiple change point analysis of multi-
+variate data. Journal of the American Statistical Associ-
+ation, 109(505):334–345, 2014.
+
+Merchant, Raina M, Yang, Lin, Becker, Lance B, Berg,
+Robert A, Nadkarni, Vinay, Nichol, Graham, Carr, Bren-
+dan G, Mitra, Nandita, Bradley, Steven M, Abella, Ben-
+jamin S, et al.
+Incidence of treated cardiac arrest in
+hospitalized patients in the united states. Critical care
+medicine, 39(11):2401, 2011.
+
+Mokart, Djamel et. al. Delayed intensive care unit admis-
+sion is associated with increased mortality in patients
+with cancer with acute respiratory failure. Leukemia &
+lymphoma, 54(8):1724–1729, 2013.
+
+Morgan, RJM, Williams, F, and Wright, MM. An early
+warning scoring system for detecting developing critical
+illness. Clin Intensive Care, 8(2):100, 1997.
+
+Moskovitch, Robert, Walsh, Colin, Wang, Fei, Hripcsak,
+George, and Tatonetti, Nicholas. Outcomes prediction
+In Data Mining
+via time intervals related patterns.
+(ICDM), 2015 IEEE International Conference on, pp.
+919–924. IEEE, 2015.
+
+Nelder, John A and Mead, Roger. A simplex method for
+function minimization. The computer journal, 7(4):308–
+313, 1965.
+
+Nguyen, H Bryant, Corbett, Stephen W, Steele, Robert,
+Banta, Jim, Clark, Robin T, Hayes, Sean R, Edwards,
+Jeremy, Cho, Thomas W, and Wittlake, William A. Im-
+plementation of a bundle of quality indicators for the
+early management of severe sepsis and septic shock
+is associated with decreased mortality. Critical care
+medicine, 35(4):1105–1112, 2007.
+
+Ogata, Yosihiko. On lewis’ simulation method for point
+IEEE Transactions on Information Theory,
+
+processes.
+27(1):23–31, 1981.
+
+Pan, Jiangwei, Rao, Vinayak, Agarwal, Pankaj K., and
+Gelfand, Alan E. Markov-modulated marked poisson
+In Proceedings of ICML,
+processes for check-in data.
+pp. 2244–2253, 2016.
+
+Parshuram, Christopher S, Hutchison, James, and Mid-
+daugh, Kristen. Development and initial validation of
+the bedside paediatric early warning system score. Crit
+Care, 13(4):R135, 2009.
+
+Qin, Zhen and Shelton, Christian R. Auxiliary gibbs sam-
+pling for inference in piecewise-constant conditional in-
+tensity models. In UAI, pp. 722–731, 2015.
+
+Rasmussen, Carl Edward. Gaussian processes for machine
+
+learning. 2006.
+
+Rothman, Michael J, Rothman, Steven I, and Beals,
+Joseph. Development and validation of a continuous
+measure of patient condition using the electronic med-
+ical record. Journal of biomedical informatics, 46(5):
+837–848, 2013.
+
+Roueff, Franc¸ois, Von Sachs, Rainer, and Sansonnet,
+Laure. Locally stationary hawkes processes. Stochas-
+tic Processes and their Applications, 126(6):1710–1743,
+2016.
+
+Saria, Suchi, Rajani, Anand K, Gould, Jeffrey, Koller,
+Daphne, and Penn, Anna A. Integration of early physio-
+logical responses predicts later illness severity in preterm
+infants. Science translational medicine, 2(48):48ra65–
+48ra65, 2010.
+
+Stanculescu, Ioan, Williams, Christopher KI, and Freer,
+Yvonne. Autoregressive hidden markov models for
+IEEE journal
+the early detection of neonatal sepsis.
+of biomedical and health informatics, 18(5):1560–1570,
+2014.
+
+Taghipour, S, Banjevic, D, Miller, AB, Montgomery, N,
+Jardine, AKS, and Harvey, BJ. Parameter estimates for
+invasive breast cancer progression in the canadian na-
+tional breast screening study. British journal of cancer,
+108(3):542–548, 2013.
+
+Wang, Xiang, Sontag, David, and Wang, Fei. Unsupervised
+learning of disease progression models. In Proceedings
+of the 20th ACM SIGKDD, pp. 85–94. ACM, 2014.
+
+Wiens, Jenna, Horvitz, Eric, and Guttag, John V. Patient
+risk stratiﬁcation for hospital-associated c. diff as a time-
+series classiﬁcation task. In Advances in Neural Infor-
+mation Processing Systems, pp. 467–475, 2012.
+
+Yoon, J, Alaa, A, Hu, S, and van der Schaar, M. Fore-
+casticu: A prognostic decision support system for timely
+prediction of intensive care unit admission. Proceedings
+of ICML, pp. 1680–1689, 2016.
+
+Yu, Lei and Liu, Huan.
+
+Feature selection for high-
+dimensional data: A fast correlation-based ﬁlter solu-
+tion. In ICML, volume 3, pp. 856–863, 2003.
+
+Yu, Shun, Leung, Sharon, Heo, Moonseong, Soto, Gra-
+ciela J, Shah, Ronak T, Gunda, Sampath, and Gong,
+Michelle Ng. Comparison of risk prediction scoring
+systems for ward patients: a retrospective nested case-
+control study. Critical Care, 18(3):1, 2014.
+
+Yu, Shun-Zheng. Hidden semi-markov models. Artiﬁcial
+
+Intelligence, 174(2):215–243, 2010.
+
+1045
+1046
+1047
+1048
+1049
+1050
+1051
+1052
+1053
+1054
+1055
+1056
+1057
+1058
+1059
+1060
+1061
+1062
+1063
+1064
+1065
+1066
+1067
+1068
+1069
+1070
+1071
+1072
+1073
+1074
+1075
+1076
+1077
+1078
+1079
+1080
+1081
+1082
+1083
+1084
+1085
+1086
+1087
+1088
+1089
+1090
+1091
+1092
+1093
+1094
+1095
+1096
+1097
+1098
+1099
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+1100
+1101
+1102
+1103
+1104
+1105
+1106
+1107
+1108
+1109
+1110
+1111
+1112
+1113
+1114
+1115
+1116
+1117
+1118
+1119
+1120
+1121
+1122
+1123
+1124
+1125
+1126
+1127
+1128
+1129
+1130
+1131
+1132
+1133
+1134
+1135
+1136
+1137
+1138
+1139
+1140
+1141
+1142
+1143
+1144
+1145
+1146
+1147
+1148
+1149
+1150
+1151
+1152
+1153
+1154
+
+Supplementary Material
+
+Appendix A: Multitask Gaussian Processes as Vector
+Autoregressive Models
+
+In order to show the equivalence between a multitask GP
+with a Mat´ern kernel and the continuous-time VAR pro-
+cess, we ﬁrst start by writing down the classical discrete-
+time VAR process y(t) in its difference equation form as
+follows
+y(t) = e(t) + A1 (cid:1) y(t (cid:0) 1) + : : : + Ap (cid:1) y(t (cid:0) p); (A1)
+where e(t) 2 RQ(cid:2)1 is a white noise vector and Am =
+[am;ij]ij 2 RQ(cid:2)Q is the matrix associated with the mth
+lag of the process y(t). Here we assume, as usual, that the
+noise process e(t) is zero mean with a Dirac-delta auto-
+correlation function, i.e. E[e(t)] = 0 and E[e(t) (cid:1) e(t (cid:0)
+l)] = 0; 8 l 2 N+. Note that when e(t) is assumed to be
+Gaussian, then y(t) is an order-p Gauss-Markov process.
+The continuous-time version of the VAR process y(t) is
+one that is deﬁned using a stochastic differential equation
+(SDE) that is equivalent to the difference equation in (A1),
+i.e.
+y(t) = e(t) + A1 (cid:1) @y(t)
+@t
+
++ : : : + Ap (cid:1) @py(t)
+@tp
+
+; (A2)
+
+where @y(t)
+is the component-wise derivative of the
+@t
+vector-valued process y(t) with respect to t. Now we
+want to ﬁnd the power spectrum Sy(!) for the (station-
+ary) process corresponding to the SDE in (A2). This is
+achieved by conceptualizing (A2) as an LTI system with
+a white noise process as the input and the VAR process
+y(t) as the output, and thus computing the power spectrum
+as Sy(!) = jH(j!)j2, where H(j!) is the LTI system’s
+transfer function assuming that the noise process e(t) has
+a normalized (unity) power spectrum. In order to proceed
+with our analysis, we start by taking the Fourier transform
+for (A2) as follows
+
+Y(j!) = E(j!) +
+
+(j!)n An Y(j!);
+
+(A3)
+
+which can be further reduced as follows
+
+Y(j!) = (I (cid:0)
+
+(j!)n An)(cid:0)1E(j!):
+
+(A4)
+
+p∑
+
+n=1
+
+p∑
+
+n=1
+
+Based on (A4), we can easily compute the (matrix-valued)
+transfer function H(j!) = [hmn(j!)]mn as follows
+
+H(j!) = (I (cid:0)
+
+(j!)n An)(cid:0)1:
+
+(A5)
+
+p∑
+
+n=1
+Since we assumed (without
+
+loss of generality) that
+E(j!) = 1, then the power spectrum of any compo-
+nent of y(t) can thus be found by examining the struc-
+n hmn(j!)) (cid:1)
+ture of Sm
+∑
+(
+
+n hmn(j!)j2 = (
+
+y (!) = j
+
+n hmn((cid:0)j!)).
+
+∑
+
+∑
+
+Let us take the case when An = diag(an;11; : : :; an;QQ) is
+a diagonal matrix for every n. In this case, we have that
+
+hmn(j!) = (
+
+(j!)n an;mm)(cid:0)1;
+
+(A6)
+
+p∑
+
+n=0
+
+and hence we have that
+
+Sm
+
+y (j!) =
+
+∑
+p
+
+1
+n=0(j!)n an;mm) (cid:1) (
+
+(
+
+∑
+
+p
+
+n=0((cid:0)j!)n an;mm)
+
+:
+
+From Section (B.2.1) in (Rasmussen, 2006), we know that
+for a particular selection of the coefﬁcients [an;mm], the
+power spectrum can be put in the form
+
+Sm
+
+y (j!) =
+
+1
+(4(cid:25)2 !2 + (cid:11)2)p :
+
+(A8)
+
+p
+
+∑
+
+By taking the inverse Fourier transform of (A8), one
+can see that the corresponding covariance function is of
+n=0 (cid:12)n jtjn e(cid:0)(cid:11) jtj, which is a special case
+the form
+of the Mat´ern kernel in (5). For a general setting of
+n=0 (cid:12)n jtjn e(cid:0)(cid:11) jtj
+An, one can easily reach to the form
+as an approximate form for the covariance function by
+∑
+p
+n=1(j!)n An)(cid:0)1 = I (cid:0)
+using the fact
+∑
+p
+1
+n=1(j!)n An):
+
+that (I (cid:0)
+n=1(j!)n An)(cid:0)1) (
+
+1+trace((
+
+∑
+
+∑
+
+p
+
+p
+
+Appendix B: Sampling Episodes from a Semi-Markov
+Modulated Marked Hawkes Process
+
+In order to generate a sample for a patient’s episode
+given a parameter set Ω, we ﬁrst sample a state sequence
+fX1; : : :; XKg using the semi-Markov transition kernel,
+then sample a corresponding sequence of sojourn times
+fS1; : : :; SKg from the state-dependent Gamma distribu-
+tions, then sample a set of multi-task Gaussian process
+fY1(t); : : :; YK(t)g, and ﬁnally sampling a sequence of ob-
+servation times ftmgM
+m=1 using Ogata’s modiﬁed thinning
+algorithm (Ogata, 1981). Algorithm 1 generates samples
+from a semi-Markov modulated Hawkes Process, whereas
+algorithm 2 is a thinning algorithm used as a sub-module in
+algorithm 1 in order to sample a Hawkes process by thin-
+ning an inhomogeneous Poisson process.
+
+Appendix C: Pseudo-codes for the Learning and
+Inference Algorithms
+
+In this Subsection, we provide the detailed implementation
+of the learning and inference algorithms presented in Sec-
+tions 4.2 and 4.1. We start ﬁrst by presenting the real-time
+risk scoring algorithm in the following Subsection.
+
+THE REAL-TIME RISK SCORING ALGORITHM
+We assume that we know the model parameters ^Ω (in prac-
+tice, this will be learned from the ofﬂine dataset D). As
+
+1155
+1156
+1157
+1158
+1159
+1160
+1161
+1162
+1163
+1164
+1165
+1166
+1167
+1168
+1169
+1170
+1171
+1172
+1173
+1174
+1175
+1176
+1177
+1178
+1179
+1180
+1181
+1182
+1183
+1184
+1185
+1186
+1187
+1188
+1189
+1190
+1191
+1192
+1193
+1194
+1195
+1196
+1197
+1198
+1199
+1200
+1201
+1202
+1203
+1204
+1205
+1206
+1207
+1208
+1209
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+Algorithm 1 Sampling an episode from a semi-Markov
+modulated Hawkes Process
+Input: parameter set Ω
+Output: an episode E = f(ym; tm)M
+X1 = j (cid:24) (cid:25)j; (cid:28)1
+S1 j (X1 = j) (cid:24) Gamma((cid:13)j)
+Y1(t) j (X1 = j) (cid:24) GP((cid:2)j)
+T1   Thin((cid:3)j; (cid:28)n; (cid:28)n + Sn)
+n   2
+repeat
+
+m=1; (Xn; Sn)K
+
+n=1
+
+g
+
+Xn+1 = jjXn = i (cid:24) pij.
+Sn j (Xn = j) (cid:24) Gamma((cid:13)j); (cid:28)n = (cid:28)n(cid:0)1 + Sn
+Yn(t) j (Xn = j) (cid:24) GP((cid:2)j)
+Tn   Thin((cid:3)j; (cid:28)n; (cid:28)n + Sn)
+n   n + 1
+until Xn 2 f1; N g
+∑
+Y (t) =
+ftmgM
+
+n Yn(t) (cid:1) 1f(cid:28)n(cid:20)t(cid:20)(cid:28)n+1g
+Tn; fymgM
+ 
+
+  fY (tm)gM
+
+∪
+
+m=1
+
+m=1
+
+m=1
+
+n
+
+explained earlier in Sections 4.2, the patient risk score at
+time t is denoted by R(t), and is deﬁned as follows
+
+R(t) = P(X(1) = N j fym; tmg; tm (cid:20) t; Ω):
+
+(C9)
+
+In other words, the risk score R(t) is the probability of the
+patient’s eventual absorption in the deteriorating state N
+given the observable physiological data up to time t. The
+expression in (C9) can be decomposed using Bayes’ rule as
+follows
+
+R(t) =
+
+P(X(t) = ijfym; tmg)P(X(1) = N jX(t) = i):
+
+∑
+
+i2X
+
+(C10)
+Given the model parameters Ω, one can easily compute
+the transition probabilities P(X(t + ∆t) = jjX(t) = i)
+for any ∆t, i and j using the parameter the semi-Markov
+transition kernel and the sojourn time distributions. (For
+a semi-Markov chain, the transition probabilities are the
+solutions of a Volterra integral equation, which parallels
+the Chapman-Kolomogrov equations in ordinary Markov
+chains.) Now we focus on the term P(X(t) = ijfym; tmg):
+the posterior distribution of the current state given the ob-
+servations up to the current time. We compute this term
+using forward-ﬁltering. Deﬁne the forward message as
+
+(cid:11)(tm; i) = P(X(t) = i; fym; tmg):
+
+(C11)
+
+The forward messages in (C11) are computed efﬁciently
+using dynamic programming as in (Yu, 2010). The risk
+score is thus computed as follows
+
+R(t) =
+
+∑
+
+i2X
+
+∑
+
+(cid:11)(tm; i)
+j (cid:11)(tm; j)
+
+(cid:1) P(X(1) = N jX(t) = i):
+
+1210
+1211
+1212
+1213
+1214
+1215
+1216
+1217
+1218
+1219
+1220
+1221
+1222
+1223
+1224
+1225
+1226
+1227
+1228
+1229
+1230
+1231
+1232
+1233
+1234
+1235
+1236
+1237
+1238
+1239
+1240
+1241
+1242
+1243
+1244
+1245
+1246
+1247
+1248
+1249
+1250
+1251
+1252
+1253
+1254
+1255
+1256
+1257
+1258
+1259
+1260
+1261
+1262
+1263
+1264
+
+Algorithm 2 Sampling a Hawkes process by Ortega’s mod-
+iﬁed thinning algorithm Thin((cid:3); (cid:28)o; (cid:28)1)
+
+Input: Hawkes process parameters (cid:3), interval [(cid:28)o; (cid:28)1]
+Output: a point process ftmg on the interval [(cid:28)o; (cid:28)1]
+T = ∅; s = 0; n = 0; T = (cid:28)1 (cid:0) (cid:28)o
+while s < T do
+
+∑
+
+(cid:28) 2T e(cid:0)(cid:12) (s(cid:0)(cid:28) )
+
+(cid:22)(cid:21) = (cid:21)(S+) = (cid:21)o + (cid:11)
+u (cid:24) uniform(0; 1)
+w   (cid:0) log(u)=(cid:22)(cid:21)
+s   s + w
+D (cid:24) uniform(0; 1)
+if D (cid:22)(cid:21) (cid:20) (cid:21)(s) = (cid:21)o + (cid:11)
+
+n   n + 1; tn   s; T = T
+
+∑
+
+∪
+
+(cid:28) 2T e(cid:0)(cid:12) (s(cid:0)(cid:28) ) then
+ftng
+
+end if
+end while
+if tn (cid:20) T then
+
+return f(cid:28)o + tkgk=1;2;: : :;n
+
+return f(cid:28)o + tkgk=1;2;: : :;n(cid:0)1
+
+else
+
+end if
+
+THE OFFLINE LEARNING ALGORITHM
+
+Now we describe the ofﬂine learning algorithm by going
+through steps 1, 2 and 3 discussed in Section 4.1 in detail.
+
+Step 1:
+We estimate the jump times f(cid:28)1; : : :; (cid:28)Kg for an episode
+E by using the E-divisive nonparametric mutli-variate
+change-point detection algorithm (Matteson & James,
+2014). We jointly detect the changes in the distributions
+gMd
+of the observable variables fyd
+m=1 and the observation
+m
+gMd
+process ftd
+m=1 by creating an augmented vector of
+m
+observables that comprises both the physiological ob-
+servations and a “differential” observation process as
+follows:
+0
+0
+
+1
+
+0
+
+1
+
+0
+
+1
+
+1
+
+B
+B
+B
+B
+B
+@
+
+B
+B
+B
+B
+B
+@
+
+C
+C
+C
+C
+C
+A
+
+y1(1)
+y1(2)
+...
+y1(Q)
+∆t1
+
+B
+B
+B
+B
+B
+@
+
+ym(1)
+ym(2)
+...
+ym(Q)
+∆tm
+
+C
+C
+C
+C
+C
+A
+
+; : : :;
+
+; : : :;
+
+B
+B
+B
+B
+B
+@
+
+yM (1)
+yM (2)
+...
+yM (Q)
+∆tM
+
+C
+C
+C
+C
+C
+A
+
+C
+C
+C
+C
+C
+A
+
+where ∆tm = tm (cid:0) tm(cid:0)1, with ∆t1 = 0. We run the
+E-divisive algorithm with a signiﬁcance level of 0.05 for
+the permutation test and a parameter setting (cid:11) = 1 for the
+moment distance. The output of this step is a set of jump
+time estimates f^(cid:28)1; : : :; ^(cid:28)Kg.
+
+Step 2:
+Now that we have estimates for the onsets of the absorbing
+state ^(cid:28)K, obtained from step 1, then we can estimate the
+response times as ^SK = Tc (cid:0) ^(cid:28)K. Let us assume that we
+have a set of D episodes absorbed in state 1 for whom
+
+(C12)
+
+1265
+1266
+1267
+1268
+1269
+1270
+1271
+1272
+1273
+1274
+1275
+1276
+1277
+1278
+1279
+1280
+1281
+1282
+1283
+1284
+1285
+1286
+1287
+1288
+1289
+1290
+1291
+1292
+1293
+1294
+1295
+1296
+1297
+1298
+1299
+1300
+1301
+1302
+1303
+1304
+1305
+1306
+1307
+1308
+1309
+1310
+1311
+1312
+1313
+1314
+1315
+1316
+1317
+1318
+1319
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+the estimated response times are f ^Sd
+gD
+d=1 with labels
+K
+fld = 0gD
+d=1, and let the Gamma distribution parameters
+be (cid:13)1 = fk1; (cid:12)1g: Then the MLE of (cid:13)1 and (cid:12)1 as follows
+
+log( ^Si
+
+K)
+
+v = log
+
+(
+
+)
+
+D∑
+
+^Si
+K
+
+1
+D
+
+(cid:0) 1
+D
+
+D∑
+
+i=1
+√
+
+i=1
+(v (cid:0) 3)2 + 24 v
+12 v
+
+3 (cid:0) v +
+
+^k1 =
+
+^(cid:12)1 =
+
+1
+^k1 D
+
+D∑
+
+i=1
+
+^Si
+K;
+
+and the same estimates are found for (cid:13)N = fkN ; (cid:12)N g:
+Now let fym; tmg be the sampling times and observed vari-
+ables within the response time interval [ ^SK; Tc]. For an
+episode with absorbed in state i 2 f1; N g, we estimate the
+multi-task GP parameter (cid:2)i using the gradient method as
+in (Bonilla et al., 2007). The Hawkes process parameters
+(cid:3)i are estimated by maximizing the recursive likelihood
+formula in (Ogata, 1981):
+
+log(P(ftmgM
+
+m=1
+
+j(cid:3)i)) = (cid:0)(cid:21)o
+
+i tm + H(m; (cid:3)i);
+
+H(m; (cid:3)i) =
+
+M∑
+
+m=1
+
+(
+
+M∑
+
+m=1
+
+(cid:11)i
+(cid:12)i
+
+(e(cid:0)(cid:12)i(tn(cid:0)tm) (cid:0) 1) +
+
+log((cid:21)o
+
+i + (cid:11)i A(m))
+
+;
+
+)
+
+∑
+
+tj <tm
+
+e(cid:0)(cid:12)i(tm(cid:0)tj ). The maximization is
+where A(m) =
+conducted using the Nelder-Mead simplex method (Nelder
+& Mead, 1965), implementation is done through the nlm
+function in R.
+
+Step 3:
+After segmenting the episodes using the estimated jump
+times f(cid:28)1; : : :; (cid:28)Kg in step 1, we view the segment episode
+as a discrete-time HMM with no self-transition and with
+transition probabilities [pij]ij and initial state probabilities
+[(cid:25)i]i. The observations associated with every segment is
+a set of observation times ftmg, the observations fymg
+and the segment duration ^(cid:28)n (cid:0) ^(cid:28)n(cid:0)1. The transition states’
+parameters are then estimated straightforwardly using the
+Baum-Welch algorithm.
+
+Appendix D: Data Description and Implementation of
+Baseline Algorithms
+
+DATA DESCRIPTION
+
+We conducted our experiments on a very heterogeneous co-
+hort of episodes for patients hospitalized in a major med-
+ical center over the last 3 years. The cohort involved all
+the hospital’s major units, namely, the cardiac observation
+ﬂoor, the cardiothoracic ﬂoor, the hematology and stem cell
+
+1320
+1321
+1322
+1323
+1324
+1325
+1326
+1327
+1328
+1329
+1330
+1331
+1332
+1333
+1334
+1335
+1336
+1337
+1338
+1339
+1340
+1341
+1342
+1343
+1344
+1345
+1346
+1347
+1348
+1349
+1350
+1351
+1352
+1353
+1354
+1355
+1356
+1357
+1358
+1359
+1360
+1361
+1362
+1363
+1364
+1365
+1366
+1367
+1368
+1369
+1370
+1371
+1372
+1373
+1374
+
+ICD-9 codes
+(786.05)
+(401.9)
+(38.9)
+(995.91)
+(780.6)
+(486)
+(584.9)
+(599)
+(780.97)
+(285.9)
+(786.5)
+(585)
+(780.79)
+(578)
+(428)
+(427.31)
+(787.01)
+—
+
+Diagnosis
+Shortness of Breath
+Hypertension
+Septicemia
+Sepsis
+Fever
+Pneumonia
+Renal failure
+Urethra and urinary attack
+Altered mental status
+Anemia
+Chest pain
+Chronic renal failure
+Malaise and fatigue
+Gastrointestinal hemorrhage
+Heart failure
+Atrial ﬁbrillation
+Nausea
+Other
+
+% Freq.
+7%
+6%
+5%
+5%
+5%
+5%
+5%
+5%
+4%
+4%
+4%
+4%
+3%
+3%
+3%
+3%
+3%
+22.5%
+
+transplant ﬂoor, the liver transplant service and the critical
+care pediatrics unit. The cohort involved patients who were
+undergoing narcotic drugs or chemotherapy, and hence are
+very are vulnerable to adverse outcomes that require an im-
+pending ICU transfer. The patients’ cohort displays vast
+heterogeneity in terms of a wide variety of diagnoses and
+ICD-9 codes including leukemia, hypertension, septicemia,
+sepsis, pneumonia, and renal failure. The distribution of the
+most frequent ICD-9 codes in the patient cohort (together
+with the corresponding diagnoses) is provided in Table 6.
+
+Every patient’s episode in the cohort is associated with a
+set of 21 (temporal) physiological streams comprising a
+set of vital signs and lab tests that are listed as follows.
+
+Vital signs
+
+(cid:15) Diastolic blood pressure
+
+(cid:15) Systolic blood pressure
+
+(cid:15) Glasgow coma scale score
+
+(cid:15) Heart rate
+
+(cid:15) Eye opening
+
+(cid:15) Respiratory rate
+
+(cid:15) Temperature
+
+(cid:15) O2 saturation and device assistance
+
+(cid:15) Best motor and verbal responses.
+
+1375
+1376
+1377
+1378
+1379
+1380
+1381
+1382
+1383
+1384
+1385
+1386
+1387
+1388
+1389
+1390
+1391
+1392
+1393
+1394
+1395
+1396
+1397
+1398
+1399
+1400
+1401
+1402
+1403
+1404
+1405
+1406
+1407
+1408
+1409
+1410
+1411
+1412
+1413
+1414
+1415
+1416
+1417
+1418
+1419
+1420
+1421
+1422
+1423
+1424
+1425
+1426
+1427
+1428
+1429
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+(cid:15) White blood cell count
+
+Lab tests
+
+(cid:15) Chloride
+
+(cid:15) Glucose
+
+(cid:15) Urea nitrogen
+
+(cid:15) Creatinine
+
+(cid:15) Hemoglobin
+
+(cid:15) Platelet count
+
+(cid:15) Potassium
+
+(cid:15) Sodium
+
+(cid:15) CO2
+
+In all the experiments, we split the patient cohort into a
+training set, covering episodes for a 2.5 year period, and
+a testing set, covering episodes recorded over a 6 month
+period. The training set comprises 5,000 episodes, whereas
+the testing set comprises 1,094 episodes. All the patient
+episodes in the cohort were informatively censored. That
+is, for every patient in the cohort, we know the following
+information: the censoring time Tc, i.e. the length of stay
+of each patient in the ward. The average hospitalization
+time (or censoring time) in the ward was 150 hours and
+24 minutes. The patient episodes’ censoring times ranged
+from 4 hours to more than 2,500 hours. We also know the
+absorbing clinical state (l) for every patient.
+
+IMPLEMENTATION OF THE BASELINES
+
+In this Section, we present the details of our implemen-
+tation for all
+the baseline algorithms involved in the
+comparisons in Section 5. We ﬁrst start by explaining how
+the state-of-the-art clinical risk scores were implemented.
+
+the entire 21 vital signs and lab tests available in the
+EHR, and the smoothing function is obtained from Ap-
+pendix B in (Rothman et al., 2013). The “Time since
+lab” variable is the last time (in hours) in which the cor-
+responding lab test (or vital sign) was gathered, and its
+maximum value is 48 hours. At the time of conducting
+these experiments, the Rothman index was deployed in
+the medical center from which we obtained the data.
+
+(2) Modiﬁed Early Warning System (MEWS): we im-
+plemented MEWS as speciﬁed in (Morgan et al.,
+1997). The MEWS score typically ranges from 0 to
+3 and is computed over time based on the instanta-
+neous values of the following cardinal vital signs: sys-
+tolic blood pressure, respiratory rate, SaO2, tempera-
+ture, and heart rate. Table 2 provides the MEWS risk
+scoring function in terms of those vital signs.
+
+(3) Sequential Organ Failure Assessment (SOFA): a
+risk score (ranging from 1 to 4) that is used to deter-
+mine the extent of a hospitalized patient’s respiratory,
+cardiovascular, hepatic, coagulation, renal and neuro-
+logical organ function in the ICU.
+
+(4) Acute Physiology and Chronic Health Evaluation
+(APACHE-II): a risk scoring system (an integer score
+from 0 to 71) for predicting mortality of patients in the
+ICU. The score is based on 12 physiological measure-
+ments, including creatinine, white blood cell count,
+and Glasgow coma scale.
+
+We note that while the SOFA and APACHE II scores were
+originally constructed for deployed for patients in the
+ICU, both scores have been recently shown to provide a
+prognostic utility for predicting clinical deterioration for
+patients in regular wards (Yu et al., 2014), and hence we
+consider both scores in our comparisons. Our implementa-
+tion for APACHE-II and SOFA followed that in (Yu et al.,
+2014).
+
+Implementation of the Clinical Risk Scores
+
+Implementation of the machine learning baselines
+
+(1) Rothman Index: we implement the stepwise logistic
+regression scheme adopted by the Rothman index as
+described in (Rothman et al., 2013). The Rothman risk
+score was computed as in equation (1) and (2) in (Roth-
+man et al., 2013), i.e.
+[
+
+)]
+
+(
+
+Rothman Index =
+
+Smoothing function
+
+Time since lab
+48
+
+RIno lab
+(
+[
+1 (cid:0) Time since lab
+
+RIlab
+
+48
+
++
+
+)]
+
+;
+
+where the “RI” for every lab test (or vital sign) are ob-
+tained from Figure A1 in (Rothman et al., 2013) for
+
+We have not used any of the patients’ static features
+(e.g. age, gender, diagnoses, etc) in the baselines to ensure
+a fair comparison with the medical risk scores, which
+ignore those features. For all the baseline (including our
+algorithm), the relevant physiological time series for every
+baseline were selected through the correlated feature se-
+lection method (Yu & Liu, 2003). The hyper-parameters of
+all the baselines, including the size of the sliding window
+for the supervised learning methods, were optimized via
+cross-validation. In order to handle the irregularly sampled
+data, we discretized the time horizon into 1-hour steps and
+fed the baselines with spline-interpolated, discrete-time
+episodes.
+
+1430
+1431
+1432
+1433
+1434
+1435
+1436
+1437
+1438
+1439
+1440
+1441
+1442
+1443
+1444
+1445
+1446
+1447
+1448
+1449
+1450
+1451
+1452
+1453
+1454
+1455
+1456
+1457
+1458
+1459
+1460
+1461
+1462
+1463
+1464
+1465
+1466
+1467
+1468
+1469
+1470
+1471
+1472
+1473
+1474
+1475
+1476
+1477
+1478
+1479
+1480
+1481
+1482
+1483
+1484
+
+1485
+1486
+1487
+1488
+1489
+1490
+1491
+1492
+1493
+1494
+1495
+1496
+1497
+1498
+1499
+1500
+1501
+1502
+1503
+1504
+1505
+1506
+1507
+1508
+1509
+1510
+1511
+1512
+1513
+1514
+1515
+1516
+1517
+1518
+1519
+1520
+1521
+1522
+1523
+1524
+1525
+1526
+1527
+1528
+1529
+1530
+1531
+1532
+1533
+1534
+1535
+1536
+1537
+1538
+1539
+
+Semi-Markov-Modulated Marked Hawkes Processes for Risk Prognosis
+
+Table2. Computation of the MEWS score
+
+Score
+Heart rate (bpm)
+Temperature (C)
+Systolic BP (mmHg)
+SpO2 (%)
+Respiratory rate (breaths/min)
+
+3
+> 129
+(cid:0) (cid:0) (cid:0)
+(cid:0) (cid:0) (cid:0)
+< 85
+> 35
+
+2
+110 (cid:0) 129
+> 38:9
+> 199
+85 (cid:0) 89
+31 (cid:0) 35
+
+1
+100 (cid:0) 109
+38 (cid:0) 38:9
+(cid:0) (cid:0) (cid:0)
+90 (cid:0) 92
+21 (cid:0) 30
+
+0
+50 (cid:0) 99
+36 (cid:0) 37:9
+100 (cid:0) 199
+> 92
+9 (cid:0) 20
+
+1
+40 (cid:0) 49
+35 (cid:0) 35:9
+80 (cid:0) 99
+(cid:0) (cid:0) (cid:0)
+(cid:0) (cid:0) (cid:0)
+
+2
+30 (cid:0) 39
+34 (cid:0) 34:9
+70 (cid:0) 79
+(cid:0) (cid:0) (cid:0)
+(cid:0) (cid:0) (cid:0)
+
+3
+< 30
+< 34
+< 70
+(cid:0) (cid:0) (cid:0)
+< 7
+
+et al., 2007), and used the gradient method to learn the
+parameters of two Gaussian process models: one for
+patients with l = 0, and one for patients with l = 1.
+The risk score for a patient’s risk score is computed as
+the test statistic of a sequential hypothesis test that is
+based on the two learned Gaussian process models as
+in (Yoon et al., 2016). Hence, the SW-GP baseline is a
+combination of the methods in (Ghassemi et al., 2015)
+and (Yoon et al., 2016) that is capable of handling ir-
+regularly sampled data.
+
+1540
+1541
+1542
+1543
+1544
+1545
+1546
+1547
+1548
+1549
+1550
+1551
+1552
+1553
+1554
+1555
+1556
+1557
+1558
+1559
+1560
+1561
+1562
+1563
+1564
+1565
+1566
+1567
+1568
+1569
+1570
+1571
+1572
+1573
+1574
+1575
+1576
+1577
+1578
+1579
+1580
+1581
+1582
+1583
+1584
+1585
+1586
+1587
+1588
+1589
+1590
+1591
+1592
+1593
+1594
+
+In the following, we provide the implementation details for
+the different machine learning baselines.
+
+(1) Hidden Markov Model with Gaussian Emissions:
+informative censoring information was incorporated by
+including two absorbing HMM states for clinical sta-
+bility (l = 0) and deterioration (l = 1). We used
+the Baum-Welch algorithm for learning the HMM, and
+informed the forward-backward algorithm with the la-
+beled states l at the end of every episode. We initial-
+ized the Baum-Welch algorithm with seed parameter
+estimates that are obtained using a K-means clustering
+of the patients’ episodes followed by change-point de-
+tection (using E-divisive) and then MLE for a labeled
+HMM. The complete data log likelihood after 200 EM
+iterations was -5.35(cid:2) 106. Using the Bayesian infor-
+mation criterion, we selected an HMM with 5 states
+(2 of which are absorbing). In the testing phase, a pa-
+tient’s risk score at every point of time is computed by
+ﬁrst applying forward ﬁltering to obtain the posterior
+probability of the patient’s states, and then averaging
+over the distribution of the absorbing states.
+
+(2) Sliding Window Methods:
+
+in order to ensure that
+the censoring information is utilized by all the sliding-
+window predictors, we trained every predictor by con-
+structing a training dataset that comprises the physi-
+ological data gathered within a temporal window be-
+fore the censoring event (ICU admission or patient dis-
+charge), and using the censoring information (i.e. the
+variable l) as the labels. The size of this window is
+a hyper-parameter that is tuned separately for every
+predictor. For the testing data, the predictors are ap-
+plied sequentially to a sliding window of every pa-
+tient’s episode, and the predictor’s output is considered
+as the patient’s real-time risk score. This differs from
+the static simulation setting in (Ghassemi et al., 2015)
+were predictions are issued in a one-shot fashion using
+only the data obtained within 24 hours after a patient’s
+admission. We used the built-in MATLAB functions
+for training the logistic regression and the random for-
+est predictors. For SW-GP, we used multi-task Gaus-
+sian process regression using squared exponential ker-
+nel and using the free-form parametrization in (Bonilla
+
+1595
+1596
+1597
+1598
+1599
+1600
+1601
+1602
+1603
+1604
+1605
+1606
+1607
+1608
+1609
+1610
+1611
+1612
+1613
+1614
+1615
+1616
+1617
+1618
+1619
+1620
+1621
+1622
+1623
+1624
+1625
+1626
+1627
+1628
+1629
+1630
+1631
+1632
+1633
+1634
+1635
+1636
+1637
+1638
+1639
+1640
+1641
+1642
+1643
+1644
+1645
+1646
+1647
+1648
+1649
+
+

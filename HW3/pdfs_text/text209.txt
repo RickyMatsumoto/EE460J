@@ -1,0 +1,1179 @@
+Learning to Detect Sepsis with a Multitask Gaussian Process RNN Classiﬁer
+
+Joseph Futoma 1 Sanjay Hariharan 1 Katherine Heller 1
+
+Abstract
+
+We present a scalable end-to-end classiﬁer that
+uses streaming physiological and medication
+data to accurately predict the onset of sepsis,
+a life-threatening complication from infections
+that has high mortality and morbidity. Our pro-
+posed framework models the multivariate trajec-
+tories of continuous-valued physiological time
+series using multitask Gaussian processes, seam-
+lessly accounting for the high uncertainty, fre-
+quent missingness, and irregular sampling rates
+typically associated with real clinical data. The
+Gaussian process is directly connected to a
+black-box classiﬁer that predicts whether a pa-
+tient will become septic, chosen in our case to be
+a recurrent neural network to account for the ex-
+treme variability in the length of patient encoun-
+ters. We show how to scale the computations as-
+sociated with the Gaussian process in a manner
+so that the entire system can be discriminatively
+trained end-to-end using backpropagation. In a
+large cohort of heterogeneous inpatient encoun-
+ters at our university health system we ﬁnd that it
+outperforms several baselines at predicting sep-
+sis, and yields 19.4% and 55.5% improved ar-
+eas under the Receiver Operating Characteristic
+and Precision Recall curves as compared to the
+NEWS score currently used by our hospital.
+
+1. Introduction
+
+Sepsis is a clinical condition involving a destructive host
+response to the invasion of a microorganism and/or its
+toxin, and is associated with high morbidity and mortal-
+ity. Without early intervention, this inﬂammatory response
+can progress to septic shock, organ failure and death (Bone
+et al., 1989). Identifying sepsis early improves patient out-
+comes, as mortality from septic shock increases by 7.6%
+
+1Dept. of Statistical Science, Duke University, Durham NC,
+
+USA. Correspondence to: Joseph Futoma <jdf38@duke.edu>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017
+by the author(s).
+
+for every hour that treatment is delayed after the onset of
+hypotension (Kumar et al., 2006).
+It was also recently
+shown that timely administration of a 3-hour bundle of
+care for patients with sepsis (i.e. blood culture, broad-
+spectrum antibiotics, and a lactate measurement) was as-
+sociated with lower in-hospital mortality (Seymour et al.,
+2017), further emphasizing the need for fast and aggressive
+treatment. Unfortunately, early and accurate identiﬁcation
+of sepsis remains elusive even for experienced clinicians,
+as the symptoms associated with sepsis may be caused by
+many other clinical conditions (Jones et al., 2010).
+
+Despite the difﬁculties associated with identifying sepsis,
+data that could be used to inform such a prediction is
+already being routinely captured in the electronic health
+record (EHR). To this end, data-driven early warning scores
+have great potential to identify early clinical deteriora-
+tion using live data from the EHR. As one example, the
+Royal College of Physicians developed, validated, and im-
+plemented the National Early Warning Score (NEWS) to
+identify patients who are acutely decompensating (Smith
+et al., 2013). Such early warning scores compare a small
+number of physiological variables (NEWS uses six) to nor-
+mal ranges of values to generate a single composite score.
+NEWS is already implemented in our university health sys-
+tem’s EHR so that when the score reaches a deﬁned trigger,
+a patient’s care nurse is alerted to potential clinical deteri-
+oration. However, a major problem with NEWS and other
+related early warning scores is that they are typically broad
+in scope and were not developed to target a speciﬁc con-
+dition such as sepsis, since many unrelated disease states
+(e.g.
+trauma, pancreatitis, alcohol withdrawal) can result
+in high scores. Previous measurements revealed 63.4% of
+the alerts triggered by the NEWS score at our hospital were
+cancelled by the care nurse, suggesting breakdowns in the
+training and education process, low speciﬁcity, and high
+alarm fatigue. Despite the obvious limitation of using only
+a small fraction of available information, these scores are
+also overly simplistic in assigning independent scores to
+each variable, ignoring both the complex relationships be-
+tween different physiological variables and their evolution
+in time.
+
+The goal in this work is to develop a more ﬂexible statis-
+tical model that leverages as much available data as pos-
+sible from patient admissions in order to provide earlier
+
+Learning to Detect Sepsis
+
+and more accurate detection of sepsis. However, this task
+is complicated by a number of problems that arise work-
+ing with real EHR data, some of them particular to sep-
+sis. Unlike other clinical adverse events such as cardiac
+arrests or transfers to the Intensive Care Unit (ICU) with
+known event times, sepsis presents a challenge as the exact
+time at which it starts is generally unknown. Instead, sep-
+sis is typically observed indirectly through abnormal labs
+or vitals, the administration of antibiotics, or the drawing
+of blood cultures to test for suspected infection. Another
+challenging aspect of our data source is the large degree of
+heterogeneity present across patient encounters, as we did
+not exclude certain classes of admissions. More generally,
+clinical time series data presents its own set of problems, as
+they are measured at irregularly spaced intervals and there
+are many (often informatively) missing values. Alignment
+of patient time series also presents an issue, as patients ad-
+mitted to the hospital may have very different unknown
+clinical states, with some having sepsis already upon ad-
+mission. A crucial clinical consideration to be taken into
+account is the timeliness of alarms raised by the model, as
+a clinician needs ample time to act on the prediction and
+quickly intervene on patients ﬂagged as high-risk of being
+septic. Thus in building a system to predict sepsis we must
+consider timeliness of the prediction in addition to other
+metrics that quantify discrimination and accuracy.
+
+Our proposed methodology for detecting sepsis in multi-
+variate clinical time series overcomes many of these lim-
+itations. Our approach hinges on constructing an end-to-
+end classiﬁer that takes in raw physiology time series data,
+transforms it through a Multitask Gaussian Process (MGP)
+to a more uniform representation on an evenly spaced grid,
+and feeds the latent function values through a deep recur-
+rent neural network (RNN) to predict the binary outcome of
+whether or not the patient will become (or is already) sep-
+tic. Setting up the problem in this way allows us to leverage
+the powerful representational abilities of RNNs, which typ-
+ically requires standardized inputs at uniformly-spaced in-
+tervals, for our irregularly spaced multivariate clinical time
+series. As more information is made available during an
+encounter, the model can dynamically update its prediction
+about how likely it is that the patient will become septic.
+When the predicted probability of sepsis exceeds a pre-
+deﬁned threshold (chosen to maximize predeﬁned metrics
+such as sensitivity, positive predictive value, and timeli-
+ness), the model can be used to trigger an alarm.
+
+We train our model with real patient data extracted from the
+Duke University Health System EHR, using a large cohort
+of heterogeneous inpatient encounters spanning 18 months.
+Our experiments show that using our method we can reli-
+ably predict the onset of sepsis roughly 4 hours in advance
+of the true occurrence, at a sensitivity of 0.85 and a preci-
+sion of 0.64. The beneﬁts of our MGP classiﬁcation frame-
+
+work are also apparent as there is a performance gain of
+4.3% in area under the ROC curve and 11.1% in area un-
+der the Precision Recall curve, compared to the results of
+training an RNN to raw clinical data without a Gaussian
+Process to smoothly interpolate and impute missing values.
+Our overall performance is also substantially better than the
+most common early warnings scores from the medical liter-
+ature, and in particular we perform signiﬁcantly better than
+the NEWS score currently in use at our hospital. These
+large gains in performance will translate to better patient
+outcomes and a lower burden on the overall health system
+when our model is deployed on the wards in the near future
+as part of a randomized trial.
+
+2. Related Works
+
+There is a large body of works on the development and
+validation of early warning scores to predict clinical de-
+terioration and other related outcomes. For instance, the
+MEWS score (Gardner-Thorpe et al., 2006) and NEWS
+score (Smith et al., 2013) are two of the more common
+scores used to assess overall clinical deterioration. In ad-
+dition, the SIRS score for systemic inﬂammatory response
+syndrome was part of the original clinical deﬁnition of sep-
+sis (Bone et al., 1992), although other scores designed for
+sepsis such as SOFA (Vincent et al., 1996) and qSOFA
+(Singer et al., 2016) have been more popular in recent
+years. A more sophisticated regression-based approach
+called the Rothman Index (Rothman et al., 2013) is also in
+widespread use for detecting overall deterioration. Finally,
+(Henry et al., 2015) used a Cox regression to predict sepsis
+using clinical time series data, although they do not account
+for temporal structure since they simply create feature and
+event-time pairs from raw data.
+
+There has been much recent interest within machine learn-
+ing in developing models to predict future disease pro-
+gression using EHRs. For instance, (Schulam & Saria,
+2015) developed a longitudinal model for predicting pro-
+gression of scleroderma, (Futoma et al., 2016) presented
+a joint model for predicting progression of chronic kidney
+disease and cardiac events, and (Liu et al., 2015) proposed
+a continuous-time hidden Markov model for progression
+of glaucoma. However, these models operate on a longer
+time scale, on the order of months to years, which is dif-
+ferent for our setting that demands real-time predictions at
+an hourly level of granularity. The recent works of (Yoon
+et al., 2016) and (Hoiles & van der Schaar, 2016) are more
+relevant to our application, as they both developed models
+using clinical time series to predict a more general condi-
+tion of clinical deterioration, as observed by admission to
+the Intensive Care Unit.
+
+Although there has been some past methodological work
+on classiﬁcation of multivariate time series, most of these
+
+Learning to Detect Sepsis
+
+approaches rely on clustering using some form of ad-hoc
+distance metric between series, e.g. (Xing et al., 2012), and
+comparing a new series to observed clusters. More similar
+to our work are several recent papers on using recurrent
+neural networks to classify clinical time series. In partic-
+ular, (Lipton et al., 2016) used Long-Short Term Memory
+(LSTM) RNNs to predict diagnosis codes given physiolog-
+ical time series from the ICU, and (Choi et al., 2016) used
+Gated Recurrent Unit RNNs to predict onset of heart fail-
+ure using categorical time series of diagnosis and proce-
+dural codes. Lastly, on a different note (Zhengping et al.,
+2016) also used a variant of Gated Recurrent Unit networks
+to investigate patterns of informative missingness in physi-
+ological ICU time series.
+
+There are several related works that also utilized multi-
+task Gaussian processes in modeling multivariate physio-
+logical time series. For instance (Ghassemi et al., 2015)
+and (Durichen et al., 2015) used a similar model to ours,
+but instead focused more on forecasting of vitals to predict
+clinical instability, whereas our task is a binary classiﬁca-
+tion to identify sepsis early. Finally, our end-to-end tech-
+nique to discriminatively learn both the MGP and classiﬁer
+parameters builds off of (Cheng-Xian Li & Marlin, 2016).
+However, our focus is more applied and the setting is more
+involved, as our time series are multivariate, of highly vari-
+able length, and may contain large amounts of missingness.
+
+3. Proposed Model
+
+Figure 1. Model framework. Raw labs and vitals Y at times t are
+fed through a Multitask Gaussian Process to get imputed and in-
+terpolated values Z at regularly spaced grid times x. These are fed
+into an RNN along with baseline covariates b and medications P
+to predict the binary outcome o (presence of sepsis).
+
+We frame the problem of early detection of sepsis as a mul-
+tivariate time series classiﬁcation problem. Given a new pa-
+tient encounter, the goal is to continuously update the pre-
+dicted probability that the encounter will result in sepsis,
+using all available information up until that time. Figure
+1 shows an overview of our approach. We ﬁrst introduce
+
+Figure 2. An example patient encounter that shows when differ-
+ent lab and vital time series variables were measured, to highlight
+their irregular sampling rates. Not pictured are the 8 other physi-
+ological variables in our dataset that were never measured during
+this encounter (Ammonia, Bandemia, CK-MB, CRP, D-Dimer,
+ESR, LDH, PO2).
+
+some notation, before presenting the details of the model-
+ing framework, the learning algorithm, and the approxima-
+tions to speed up learning and inference.
+
+We suppose that our dataset
+consists of N indepen-
+D
+N
+dent patient encounters,
+i=1. For each patient en-
+{Di}
+counter i, we have a vector of baseline covariates available
+RB, such
+upon admission to the hospital, denoted bi ∈
+as gender, age, and documented comorbidities. At times
+ti = [ti1, ti2, . . . , tiTi] during the encounter we obtain in-
+formation about M different types of vitals and labora-
+tory tests that characterize the patient’s physiological state,
+where ti1 = 0 is the time of admission. These longitudi-
+RTi×M ,
+nal values are denoted Yi = [yi1, yi2, . . . , yiM ]
+RTi the vector of recorded values for variable
+with yim ∈
+m at each time. In practice, only a small fraction of this
+complete matrix is observed, since only a subset of the
+M variables are recorded at each observation time. We
+make no assumption about how long each encounter may
+last, so the length of the time series for each encounter is
+= Ti(cid:48)) and these times are irregularly
+highly variable (Ti (cid:54)
+spaced, with each encounter having a unique set of obser-
+vation times. Additionally, during the encounter, medica-
+tions of P different classes are administered at Ui different
+times (and it is possible for Ui = 0). We denote this in-
+(ui1, pi1), (ui2, pi2), . . . , (uiUi, piUi}
+,
+formation as
+{
+P a binary vector denoting which of the
+with pij ∈ {
+P medications were administered at time uij. This infor-
+
+Pi =
+0, 1
+}
+
+∈
+
+Multitask  Gaussian  ProcessY,tRNNoZ⇠p(Z|Y,t;✓){dj=[zj,b,pj]}Xj=1l(f(D;w),o)MGP PosteriorRaw  Labs/VitalsRNN inputsLossSepsis LabelLearning to Detect Sepsis
+
+mation is particularly valuable, because administration of
+medications provides some insight into a physician’s sub-
+jective impression of a patient’s health state by the type and
+quantity of medications ordered. Finally, each encounter in
+the training set is associated with a binary label oi ∈ {
+0, 1
+}
+denoting whether or not the patient acquired sepsis; we go
+into detail about how this is deﬁned from the raw data in
+Section 4.1. Thus, the data for a single encounter can be
+summarized as
+
+Di =
+3.1. Multitask Gaussian Processes
+
+bi, ti, Yi,
+
+{
+
+.
+Pi, oi}
+
+Gaussian processes (GPs) are a common choice for mod-
+eling irregularly spaced time series as they are naturally
+able to handle the variable spacing and differing number of
+observations per series. Additionally, they maintain uncer-
+tainty about the variance of the series at each point, which
+is important in our setting since the irregularity and miss-
+ingness of clinical time series can lead to high uncertainty
+for variables that are infrequently (or perhaps never) ob-
+served, as is often the case.
+In order to account for the
+multivariate nature of our time series, we use a Multitask
+Gaussian Process (MGP) (Bonilla et al., 2008), an exten-
+sion to GPs for handling multiple outputs at each time. Let
+fim(t) be a latent function representing the true values of
+physiological variable m for patient encounter i at time t.
+The MGP model places independent GP priors over the la-
+tent functions, with a shared correlation function kt over
+time. We assume each function has a prior mean of zero,
+so that the data has been centered. Then, we have:
+
+cov(fim(t), fim(cid:48)(t(cid:48))) = KM
+
+mm(cid:48)kt(t, t(cid:48))
+(fim(t), σ2
+m)
+
+yim(t)
+
+∼ N
+
+where yim(t) is the actual observed value. Equivalently,
+the likelihood for a fully observed multivariate time series
+of M measurements at T unique times is:
+
+vec(Yi)
+Σi = KM
+
+(0, Σi)
+
+yi ∼ N
+K Ti + D
+
+I,
+
+⊗
+
+≡
+
+⊗
+
+⊗
+×
+
+where yi is a stacked vector of all M longitudinal variables
+denotes the Kronecker
+at the Ti observation times, and
+product. KM is a full-rank M
+M covariance matrix
+specifying the relationships among the variables, crucially
+allowing information from more frequently sampled vari-
+ables to help improve learning about the variables infre-
+quently (or perhaps never) measured. K Ti is a Ti ×
+Ti
+correlation matrix (the variance can be fully explained by
+KM ) for the observation times ti as speciﬁed by the cor-
+relation function kt with parameters η shared across all
+encounters. In this work we use the Ornstein-Uhlenbeck
+(OU) kernel function, kt(t, t(cid:48)) = e−|t−t(cid:48)|/l, with a single
+length-scale parameter η = l. The OU kernel is useful
+for modeling noisy physiological data, as draws from the
+
+(1)
+
+(2)
+
+(3)
+
+(4)
+
+σ2
+m}
+
+corresponding stochastic process are only ﬁrst-order con-
+tinuous (Rasmussen & Williams, 2005). Finally, D is a
+M
+diagonal matrix of noise variances
+m=1. In practice,
+only a subset of the M series are observed at each time,
+M Ti covariance matrix Σi only needs to be
+so the M Ti ×
+computed at the observed values. This model is known in
+geostatistics as the intrinsic correlation model, since the co-
+variance between different variables and between different
+points in time is explicitly separated, and is a special case of
+the linear model of coregionalization (Wackernagel, 1998).
+
+{
+
+X
+
+The MGP can be used as a mechanism to handle the ir-
+regular spacing and missing values in the raw data, and
+output a uniform representation to feed into a black box
+to be a set of
+classiﬁer. To accomplish this, we deﬁne
+evenly spaced points in time (e.g. every hour) that will be
+shared across all encounters. For each encounter, we de-
+note a subset of these points by xi = (xi1, xi2, . . . , xiXi),
+so that xij = xi(cid:48)j if both series are at least xij hours long.
+The MGP provides a posterior distribution for the M
+Xi
+matrix Zi of latent time series values at the grid times xi
+within this encounter, while also maintaining uncertainty
+over the values. If we let zi = vec(Zi), this posterior is
+also normally distributed with mean and covariance given
+by:
+
+×
+
+µzi = (KM
+Σzi = (KM
+
+K XiTi)Σ−1
+K Xi)
+
+i yi
+(KM
+
+−
+
+⊗
+
+⊗
+
+⊗
+
+K XiTi)Σ−1
+
+(KM
+
+i
+
+(5)
+K TiXi)
+(6)
+
+⊗
+
+where K XiTi and K Xi are correlation matrices between
+the grid times xi and observation times ti and between
+xi with itself, as speciﬁed by the correlation function kt.
+The set of MGP parameters to be learned are thus θ =
+M
+(KM ,
+m=1, η), and in this work we assume that they
+are shared across all encounters. The structured input Zi
+can then serve as a standardized input to the RNN, where
+the raw time series data has been interpolated and missing
+values imputed.
+
+σ2
+m}
+{
+
+3.2. Classiﬁcation Method
+
+We build off the ideas in (Cheng-Xian Li & Marlin, 2016)
+to learn a classiﬁer that directly takes the latent function
+Xi
+values zi at shared reference time points xi =
+j=1
+as inputs. The time series for each encounter i in our data
+can be represented as an MGP posterior distribution zi ∼
+N (µzi, Σzi; θ) at times xi. This information will be fed
+into a downstream black box classiﬁer to learn the label of
+the time series.
+
+xij}
+
+{
+
+Since the lengths of each times series are variable, the clas-
+siﬁer used must be able to account for variable length in-
+puts, as the size of zi and xi will differ across encoun-
+ters. To this end, we turn to deep recurrent neural net-
+works, a natural choice for learning ﬂexible functions that
+
+Learning to Detect Sepsis
+
+map variable-length input sequences to a single output. In
+particular, we used a Long-Short Term Memory (LSTM)
+architecture (Hochreiter & Schmidhuber, 1997), as these
+classes of RNNs have been shown to be very ﬂexible and
+have obtained excellent performance on a wide variety of
+problems. At each time xij, a new set of inputs dij =
+ij](cid:62) will be fed into the network, consisting of
+[z(cid:62)
+the M latent function values zij, the baseline covariates
+bi, and pij, a vector of counts of the S medications ad-
+ministered between xij and xi,j−1. Thus, the RNN is able
+to learn complicated time-varying interactions among the
+static admission variables, the physiological labs and vi-
+tals, and administration of medications.
+
+ij, b(cid:62)
+
+i , p(cid:62)
+
+If the function values zij were actually observed at each
+time xij, they could be directly fed into the RNN clas-
+siﬁer along with the rest of the observed portion of the
+vector dij, and learning would be straightforward. Let
+f (Di; w) denote the RNN classiﬁer function, parameter-
+ized by w, that maps the (M + B + P )
+Xi matrix of
+inputs Di to an output probability. Learning the classi-
+ﬁer given zi would involve learning the parameters w of
+the RNN by optimizing a loss function l(f (Di; w), oi) that
+compares the model’s prediction to the true label oi. How-
+ever, since zi is a random variable, this loss function to
+be optimized is itself a random variable. Thus, the loss
+function that we will actually optimize is the expected loss
+E
+zi∼N (µzi ,Σzi ;θ)[l(f (Di; w), oi)], with respect to the MGP
+posterior distribution of zi. Then the overall learning prob-
+lem is to minimize this loss function over the full dataset:
+
+×
+
+w∗, θ∗ = argminw,θ
+
+E
+zi∼N (µzi ,Σzi ;θ)[l(f (Di; w), oi)].
+
+N
+(cid:88)
+
+i=1
+
+(7)
+
+i(cid:48) ,Σz
+
+zi(cid:48) ∼N (µz
+
+Given ﬁtted model parameters w∗, θ∗, when we are given
+a new patient encounter
+Di(cid:48) for which we wish to pre-
+dict whether or not it will become septic, we simply take
+E
+i(cid:48) ;θ∗)[f (Di(cid:48); w∗)] as a risk score that can
+be updated continuously as more information is available.
+This approach is “uncertainty-aware”, as the uncertainty in
+the MGP posterior for zi is propagated all the way through
+to the loss function. Variations on this setup exist by mov-
+ing the expectation. For instance, moving the expectation
+inside the classiﬁer function f swaps the MGP mean vector
+µzi in place of zi in the RNN input Di. This approach will
+be more computationally efﬁcient but discards the uncer-
+tainty information in the time series, which may be unde-
+sirable in our setting of noisy clinical time series with high
+rates of missingness.
+
+3.3. End to End Learning Framework
+
+The learning problem is to learn optimal parameters
+that minimize the loss in (7). Since the expected loss
+
+E
+z∼N (µz,Σz;θ)[l(f (D; w), o)] is intractable for our problem
+setup, we approximate the loss with Monte Carlo samples:
+
+E
+
+z∼N (µz,Σz;θ)[l(f (D; w), o)]
+
+l(f (Ds; w), o),
+
+1
+S
+
+S
+(cid:88)
+
+s=1
+
+≈
+
+(8)
+
+(9)
+
+Ds = [Z(cid:62)
+
+s , B(cid:62), P(cid:62)](cid:62), vec(Zs)
+
+zs ∼
+
+≡
+
+N (µz, Σz; θ)
+
+where B and P are appropriately sized matrices of the base-
+line covariates and medication counts over time.
+
+∼
+
+We need to compute gradients of this expression with re-
+spect to the RNN parameters w and the MGP parameters
+θ. This can be achieved with the reparameterization trick,
+using the fact that z = µz + Rξ, where ξ
+N (0, I) and
+R is a matrix such that Σz = RR(cid:62) (Kingma & Welling,
+2014). This allows us to bring the gradients of (8) inside
+the expectation, where they can be computed efﬁciently.
+Rather than choose R to be lower triangular so that it can
+(M 3X 3) time with a Cholesky de-
+only be computed in
+composition, we follow (Cheng-Xian Li & Marlin, 2016)
+and let R be the symmetric matrix square root, as this leads
+to a scalable approximation to be discussed in Section 3.4.
+Finally, we train our model discriminatively and end-to-end
+by jointly learning θ with w, as opposed to a two-stage ap-
+proach that would ﬁrst learn and ﬁx θ before learning w.
+
+O
+
+3.4. Scaling Computation with the Lanczos Method
+
+The computation to both learn the model parameters and
+make predictions for a new patient encounter is dominated
+primarily by computing the parameters of the MGP in (5)
+and (6) and then drawing samples for z from it, as these are
+of dimension M X (where X is the number of reference
+time points). To make this computation more amenable to
+large-scale datasets such as our large cohort of inpatient
+admissions, we use the Lanczos method to obtain approxi-
+mate draws from large multivariate Gaussians.
+
+z
+
+z
+
+z ξ, where Σ1/2
+
+Recall that to draw from a multivariate Gaussian requires
+taking the product Σ1/2
+is the symmetric
+matrix square root and ξ
+N (0, I). We can approx-
+∼
+imate this product using the Lanczos method, a Krylov
+subspace approximation that bypasses the need to explic-
+itly compute Σ1/2
+and only requires matrix-vector prod-
+ucts with Σz. The main idea is to ﬁnd an optimal ap-
+proximation of Σ1/2
+Kk(Σz, ξ) =
+span
+this approximation is simply
+the orthogonal projection of Σzξ into the subspace. See
+(Chow & Saad, 2014) for more details on the use of Krylov
+methods for sampling multivariate Gaussians. In practice,
+k is chosen to be a small constant, k << M X, so that
+(k3) operation of computing the matrix square root
+the
+O
+k tridiagonal matrix can effectively be treated as
+of a k
+
+ξ, Σzξ, . . . , Σk−1
+{
+
+in the Krylov subspace
+
+}
+
+ξ
+
+;
+
+z
+
+z
+
+×
+
+Learning to Detect Sepsis
+
+Algorithm 1 Lanczos Method to approximate Σ1/2ξ
+Input: covariance matrix Σ, random vector ξ, k
+β1 = 0 and d0 = 0
+d1 = ξ/
+ξ
+||
+for j = 1 to k do
+d = Σdj
+αj = d(cid:62)
+d = d
+−
+βj+1 =
+||
+dj+1 = d/βj+1
+
+αjdj
+d
+
+βjdj−1
+
+−
+j d
+
+||
+
+||
+
+end for
+D = [d1, . . . , dk]
+H = tridiagonal(β2:k, α1:k, β2:k)
+DH 1/2e1
+Return:
+||
+
+||
+
+ξ
+
+// e1 = [1, 0, . . . , 0](cid:62)
+
+(1). The most expensive step in the Lanczos method then
+O
+becomes computation of matrix-vector products Σzd. To
+compute these we use the conjugate gradient algorithm, an-
+other Krylov method, and it usually converges in only a few
+iterations. We also use conjugate gradient when computing
+µz in (5) to approximate Σ−1y. Importantly, every oper-
+ation in both the Lanczos method (Algorithm 1) and the
+conjugate gradient algorithm are differentiable, so that it
+is possible to backpropagate through the entire procedure
+during training with automatic differentiation.
+
+4. Experiments
+
+4.1. Data Description
+
+Our dataset consists of 49,312 inpatient admissions from
+our university health system spanning 18 months, extracted
+directly from our EHR. After extensive data cleaning, there
+are M = 34 physiological variables, of which 5 are vi-
+tals, and 29 are laboratory values (see Figure 2), and they
+vary considerably in the number of encounters with at least
+one recorded measurement. At least one value for each
+of the vital variables is measured in over 99% of encoun-
+ters, while some labs (e.g. Ammonia, ESR, D-Dimer) are
+very rarely taken, being measured in only 2-4% of encoun-
+ters, with most of the rest falling somewhere in the middle.
+There were b = 35 baseline covariates reliably measured
+upon admission (e.g. age, race, gender, whether the ad-
+mission was a transfer or urgent, comorbidities upon ad-
+mission). Finally, we have information on P = 8 medica-
+tion classes, where these classes were determined from a
+thorough review of the raw medication names in the EHR.
+The patient encounters range from very short admissions of
+only a few hours to extended stays lasting multiple months,
+with the mean length of stay at 121.7 hours, with a standard
+deviation of 108.1 hours. As there was no speciﬁc inclusion
+or exclusion criteria in the creation of this patient cohort,
+the resulting population is very heterogeneous and can vary
+
+tremendously in clinical status. This makes the dataset rep-
+resentative of the real clinical setting in which our method
+will be used, across the entire inpatient wards. Before mod-
+eling we log transform all M physiological time series vari-
+ables to reduce the effect of outliers, and then center and
+scale all continuous-valued inputs into the model.
+
+For encounters that ultimately resulted in sepsis, we used
+a well-deﬁned clinical deﬁnition to assess the ﬁrst time at
+which sepsis is suspected to have been present. This crite-
+ria consisted of at least two consistently abnormal vitals
+signs, along with a blood culture drawn for a suspected
+infection, and at least one abnormal laboratory value in-
+dicating early signs of organ failure. This deﬁnition was
+carefully reviewed and found to be sufﬁcient by clinicians.
+Thus each encounter is associated with a binary label indi-
+cating whether or not that patient ever acquired sepsis; the
+prevalence of sepsis in our full dataset was 21.4%.
+
+4.2. Experimental Setup
+
+We train our method to 80% of the full dataset, setting aside
+10% as a validation set to select hyperparameters and a ﬁnal
+10% for testing. For the encounters that result in sepsis,
+we throw away data from after sepsis was acquired, as our
+clinical goal is to be able to predict sepsis before it happens
+for a new patient. For non-septic encounters we train on
+the full length of the encounter until discharge. We choose
+the shared reference times
+to be evenly spaced at every
+X
+hour starting at admission, as clinically the desire is for a
+risk score that will refresh only once an hour.
+
+We compared our method (denoted “MGP-RNN”) against
+several baselines, including several common clinical scor-
+ing systems, as well as more complex methods. In partic-
+ular, we compared our model with the NEWS score cur-
+rently in use at our hospital, along with the MEWS score
+and the SIRS score. Each of these scores are based off of
+a small subset of the total variables available to our meth-
+ods. In particular, MEWS uses ﬁve, NEWS uses seven, and
+SIRS uses four. These clinical benchmarks all assign inde-
+pendent scores to each variable under consideration, with
+higher scores given for more abnormal values, although
+they each use different thresholds and different values.
+
+As a strong comparison to our end-to-end MGP-RNN clas-
+siﬁer, we also trained an LSTM recurrent neural network
+from the raw data alone (denoted “Raw RNN” in Figure
+3), with the same number of layers and hidden units as the
+network in our classiﬁer (2 layers with 64 hidden units per
+layer). The mean value for each vital and lab was taken
+in hourly windows, and windows with missing values car-
+ried the most recent value forward. If there was no previ-
+ously observed variable yet in that encounter, we imputed
+the mean. In addition, we trained an L2 penalized logistic
+regression baseline (“PLR”) using this imputation mecha-
+
+Learning to Detect Sepsis
+
+Figure 3. Left: Area under the Receiver Operating Characteristic curve for each method, as a function of the number of hours in advance
+of sepsis/discharge the prediction is issued (0-12 hours). Middle: Area under the Precision Recall curve as a function of time. Right:
+Precision as a function of time, for a ﬁxed sensitivity of 0.85. Methods are all color coded according to middle legend; all GP/MGP-RNN
+methods are solid lines.
+
+nism.
+
+We also compare against a simpliﬁed version of the end-to-
+end MGP-RNN framework, (denoted “MGP-RNN-mean”)
+where we replace the latent MGP function values z with
+their expectation µz during both training and testing, to test
+the effect of discarding the extra uncertainty information.
+Finally, to demonstrate the added value of using an MGP
+instead of independent GPs for each physiological variable,
+we trained two end-to-end GP-RNN baselines using (7),
+the same loss function as the MGP-RNN. The ﬁrst, “GP-
+RNN-shared”, is equivalent to an MGP with KM = I,
+i.e. no covariances across variables, and all variables share
+the same length-scale in the OU kernel. The second, “GP-
+RNN-indep”, is considerably stronger as it also has no co-
+variances across variables, but allows each GP prior on the
+latent functions fm to have its own length scale in its OU
+kernel, i.e. lm (cid:54)
+To guard against overﬁtting we apply early stopping on the
+validation set, and use mild L2 regularization for all RNN-
+based methods. We train all models using stochastic gra-
+dient descent with the ADAM optimizer (Kingma & Ba,
+2015) using minibatches of 100 encounters at a time and a
+learning rate of 0.001. To approximate the expectation in
+(8) we draw ten Monte Carlo samples. We implemented
+our methods in Tensorﬂow1. On a server with 63GB RAM
+and 12 Intel Xeon E5-2680 2.50GHz CPUs, the MGP-RNN
+method takes roughly 10 hours per epoch on the training
+set, and takes on average 0.3 seconds to evaluate a test case
+
+= lm(cid:48).
+
+1https://github.com/jfutoma/MGP-RNN
+
+and generate a risk score. All methods converged in a small
+number of epochs.
+
+4.3. Evaluation Metrics
+
+We use several different metrics to evaluate performance.
+The area under the Receiver Operating Characteristic
+(ROC) curve (AU-ROC) is an overall measure of discrim-
+ination, and can be interpreted as the probability that the
+classiﬁer correctly ranks a random sepsis encounter as
+higher risk than a random non-sepsis encounter. We also
+report the area under the Precision Recall (PR) curve (AU-
+PR). Importantly, we examine how these metrics vary as
+we change the window in which we make the prediction
+to see how far in advance we can reliably predict onset of
+sepsis.
+
+4.4. Results
+
+Our results show that the MGP-RNN classiﬁcation frame-
+work yields clear performance gains when compared to
+the various baselines considered.
+It substantially outper-
+forms the overly simplistic clinical scores, and demon-
+strates modest gains over the RNN trained to raw data, the
+MGP-RNN-mean method that discards uncertainty infor-
+mation, and the univariate GP baselines.
+
+Figure 3 summarizes the results. The four MGP/GP-RNN
+methods are in solid lines, and the other baselines are
+It is clear that these four methods perform con-
+dashed.
+siderably better than the other methods, especially in the
+last four hours prior to sepsis/discharge.
+
+Learning to Detect Sepsis
+
+The left and middle panes of Figure 3 display the AU-ROC
+and AU-PR for each method as a function of the num-
+ber of hours in advance the prediction is made. Generally
+the MGP-RNN performs best, followed by the three other
+MGP/GP-RNN baselines. This is likely because it retains
+uncertainty information about the noisy time series (un-
+like MGP-RNN-mean), and can learn correlations among
+the different physiological variables to improve the qual-
+ity of the imputation (unlike the GP-RNN methods). As
+expected, the GP-RNN-indep baseline consistently outper-
+forms the simpler GP-RNN-shared.
+
+The right pane of Figure 3 shows the tradeoff between pre-
+cision and timeliness for a ﬁxed sensitivity of 0.85 across
+the methods. It is most useful to evaluate with such a high
+sensitivity as this is the setting clinicians typically want to
+use a risk score, in order not to miss many cases. The MGP-
+RNN performs comparably to the MGP-RNN-mean within
+a few hours of sepsis, and demonstrates the biggest perfor-
+mance gains from about 3 to 7 hours beforehand. Through-
+out, it has much higher precision than NEWS, MEWS, and
+SIRS, especially so in the few hours immediately preceding
+sepsis. This is a very important clinical point, since clini-
+cians want a method with very high precision and a low
+false alarm rate to reduce the alarm fatigue experienced
+with current solutions. Furthermore, being able to detect
+sepsis even a few hours early might substantially increase
+treatment effectiveness and improve patient outcomes.
+
+5. Conclusions and Clinical Signiﬁcance
+
+We have presented a novel approach for early detection of
+sepsis that classiﬁes multivariate clinical time series in a
+manner that is both ﬂexible and takes into account the un-
+certainty in the series. On a large dataset of inpatient en-
+counters from our university health system, we ﬁnd that our
+proposed method substantially outperforms strong base-
+lines and a number of widespread clinical benchmarks. In
+particular, our methods tend to have much higher precision,
+and thus they have much lower rates of false alarm. For in-
+stance, at a very high sensitivity of 0.85 and when making
+predictions 4 hours in advance, there will be only roughly
+0.5 false alarms for every true alarm generated by our ap-
+proach, whereas for the NEWS score currently being used
+at our institution, there will be about 2.5 false alarms for ev-
+ery true alarm. Thus, adoption of our method would result
+in a drastic reduction in the total number of false alarms.
+
+In addition to the initial promise of our approach, there
+are a number of interesting directions to extend the pro-
+posed method to better account for various aspects of our
+data source. In particular, we could incorporate a cluster-
+ing component with different sets of MGPs for different
+latent subpopulations of encounters, to address high het-
+erogeneity across patients. The medication data might be
+
+better utilized to also learn the effect of medications on
+the physiological time series. For instance, certain medi-
+cations might have a sharp effect on certain vitals signs to
+help stabilize them; such treatment response curves could
+be learned observationally and applied to help improve pre-
+dictions. More sophisticated covariance structure in the
+multitask Gaussian process would allow for a more ﬂexi-
+ble model, since our assumption of a correlation function
+shared across all physiological streams may be overly re-
+strictive. Finally, use of additional approximations from
+the GP literature may further decrease the computational
+overhead and improve training times.
+
+This work has the potential to have a high impact in im-
+proving clinical practice in the identiﬁcation of sepsis, both
+at our institution and elsewhere. The underlying biological
+mechanism is poorly understood, and the problem has his-
+torically been very difﬁcult for clinicians. Use of a model
+such as ours to predict onset of sepsis would signiﬁcantly
+reduce the alarm fatigue associated with current clinical
+scores, and could both signiﬁcantly improve patient out-
+comes and reduce burden on the health system. Although
+in this work our emphasis was on early detection of sepsis,
+the methods could be modiﬁed with minimal effort to ap-
+ply to detection of other clinical events of interest, such as
+cardiac arrests, code blue events, admission to the ICU, and
+cardiogenic shock. We are currently working to implement
+our methods directly into an application that can pull live
+data from our health system’s EHR and present our model’s
+predictions to a rapid response team. This will allow us to
+apply our methods in a real-time clinical setting and their
+utility can be proven empirically, as data is collected on
+how accurate the alarms it raises are and how it is used on
+the actual wards.
+
+Acknowledgements
+
+Joseph Futoma is supported by an NDSEG fellowship.
+Katherine Heller is supported by an NSF CAREER award.
+This project was partially funded by the Duke Institute
+for Health Innovation. Thanks to the other members of
+our team for their invaluable work on this project: Cara
+O’Brien MD, Meredith Clement MD, Armando Bedoya
+MD, Mark Sendak MD, Nathan Brajer, and Bryce Wolery.
+
+References
+
+Bone, R. C., Fisher, C. J., and Clemmer, T. P. et al. Sepsis syn-
+drome: a valid clinical entity. methylprednisolone severe sepsis
+study group. Crit Care Med., 17(5):389–93, 1989.
+
+Bone, R. C., Balk, R. A., and Cerra, F. B. et al. Deﬁnitions for
+sepsis and organ failure and guidelines for the use of innovative
+therapies in sepsis. Chest, 101(6):1644–55, 1992.
+
+Bonilla, E. V., Chai, K. M. A., and Williams, C. K. I. Multi-task
+
+gaussian process prediction. NIPS, 2008.
+
+Learning to Detect Sepsis
+
+Cheng-Xian Li, S. and Marlin, B. A scalable end-to-end gaussian
+process adapter for irregularly sampled time series classiﬁca-
+tion. NIPS, 2016.
+
+Choi, E., Schuetz, A., Stewart, W. F., and Sun, J. Using recur-
+rent neural network models for early detection of heart failure
+onset. J Am Med Inform Assoc., 0(1-9), 2016.
+
+Chow, E. and Saad, Y. Preconditioned krylov subspace methods
+for sampling multivariate gaussian distributions. SIAM Journal
+on Scientiﬁc Computing, 36(2):A588–A608, 2014.
+
+Durichen, R., Pimentel, M. A. F., and Clifton, L. et al. Multitask
+gaussian processes for multivariate physiological time-series
+IEEE Transactions on Biomedical Engineering, 61
+analysis.
+(1), 2015.
+
+Rothman, M. J., Rothman, S. I., and Beals IV, J. Development and
+validation of a continuous measure of patient condition using
+the electronic medical record. Journal of Biomedical Informat-
+ics, 46(5):837–48, 2013.
+
+Schulam, P. and Saria, S. A framework for individualizing pre-
+dictions of disease trajectories by exploiting multi-resolution
+structure. NIPS, 2015.
+
+Seymour, C. W., Gesten, F., and Prescott, H. C. et al. Time to
+treatment and mortality during mandated emergency care for
+sepsis. New England Journal of Medicine, 2017.
+
+Singer, M., Deutschman, C. S., and Seymour, C. W. et al. The
+third international consensus deﬁnitions for sepsis and septic
+shock (sepsis-3). JAMA, 315:801–10, 2016.
+
+Futoma, J., Sendak, M., Cameron, C. B., and Heller, K. Scal-
+able joint modeling of longitudinal and point process data for
+disease trajectory prediction and improving management of
+chronic kidney disease. UAI, 2016.
+
+Smith, G. B., Prytherch, D. R., and Meredith, P. et al. The abil-
+ity of the national early warning score (news) to discriminate
+patients at risk of early cardiac arrest, unanticipated intensive
+care unit admission, and death. Resuscitation, 84(4), 2013.
+
+Gardner-Thorpe, J., Love, N., and Wrightson, J. et al. The value
+of modiﬁed early warning score (mews) in surgical in-patients:
+A prospective observational study. Ann R Coll Surg Engl, 88
+(6):571–75, 2006.
+
+Ghassemi, M., Pimentel, M. A. F., and Naumann, T. et al. A
+multivariate timeseries modeling approach to severity of illness
+assessment and forecasting in icu with sparse, heterogeneous
+clinical data. AAAI, 2015.
+
+Vincent, J. L., Moreno, R., and Takala, J. et al. The sofa (sepsis-
+related organ failure assessment) score to describe organ dys-
+function/failure. Intensive Care Med., 22(7):707–10, 1996.
+
+Wackernagel, H. Multivariate Geostatistics: An Introduction with
+
+Applications. Springer-Verlag, 2nd edition edition, 1998.
+
+Xing, Z., Jian, P., and Philip, S. Y. Early classiﬁcation on time
+
+series. Knowledge and information systems, 31(1), 2012.
+
+Henry, K. E., Hager, D. N., Pronovost, P. J., and Saria, S. A
+targeted real-time early warning score (trewscore) for septic
+shock. Science Translational Medicine, 7(299), 2015.
+
+Yoon, J., Alaa, A. M., Hu, Scott, and van der Schaar, M. Forecas-
+ticu: A prognostic decision support system for timely predic-
+tion of intensive care unit admission. ICML, 2016.
+
+Zhengping, C., Purushotham, S., and Cho, K. et al. Recurrent
+neural networks for multivariate time series with missing val-
+ues. arXiv preprint: 1606.01865, 2016.
+
+Hochreiter, S. and Schmidhuber, J. Long short-term memory.
+
+Neural Computation, 9(8):1735–80, 1997.
+
+Hoiles, W. and van der Schaar, M. A non-parametric learning
+method for conﬁdently estimating patient’s clinical state and
+dynamics. NIPS, 2016.
+
+Jones, A. E., Shapiro, N. I., and Trzeciak, S. et al. Lactate clear-
+ance vs central venous oxygen saturation as goals of early sep-
+sis therapy: a randomized clinical trial. JAMA, 303(8):739–46,
+2010.
+
+Kingma, D. P. and Ba, J. Adam: A method for stochastic opti-
+
+mization. ICLR, 2015.
+
+Kingma, D. P. and Welling, M. Auto-encoding variational bayes.
+
+ICLR, 2014.
+
+Kumar, A., Roberts, D., and Wood, K. E. et al. Duration of hy-
+potension before initiation of effective antimicrobial therapy is
+the critical determinant of survival in human septic shock. Crit
+Care Med., 34(6):1589–96, 2006.
+
+Lipton, Z. C., Kale, D. C., Elkan, C., and Wetzel, R. Learning to
+diagnose with lstm recurrent neural networks. ICLR, 2016.
+
+Liu, Y. Y., Li, S., and Li, F. et al. Efﬁcient learning of continuous-
+time hidden markov models for disease progression. NIPS,
+2015.
+
+Rasmussen, C. E. and Williams, C. K. I. Gaussian Processes for
+
+Machine Learning. The MIT Press, 2005.
+
+

@@ -1,0 +1,1268 @@
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+Andrew C. Miller 1 Nicholas J. Foti 2 Ryan P. Adams 1 3
+
+Abstract
+
+We propose a black-box variational inference
+method to approximate intractable distributions
+with an increasingly rich approximating class.
+Our method, variational boosting, iteratively re-
+ﬁnes an existing variational approximation by
+solving a sequence of optimization problems, al-
+lowing a trade-off between computation time and
+accuracy. We expand the variational approximat-
+ing class by incorporating additional covariance
+structure and by introducing new components to
+form a mixture. We apply variational boosting
+to synthetic and real statistical models, and show
+that the resulting posterior inferences compare
+favorably to existing variational algorithms.
+
+1. Introduction
+
+Variational inference (VI) is a family of methods to approx-
+imate an intractable target distribution (typically known
+only up to a constant) with a tractable surrogate distri-
+bution (Blei et al., 2016; Jordan et al., 1999; Wainwright
+& Jordan, 2008). VI procedures typically minimize the
+Kullback-Leibler (KL) divergence between the approxima-
+tion and target distributions by maximizing a tractable lower
+bound on the marginal likelihood. The approximating fam-
+ily is often ﬁxed, and typically excludes the neighborhood
+surrounding the target distribution, which prevents the ap-
+proximation from becoming arbitrarily close to the true
+posterior. In the context of Bayesian inference, this mis-
+match between the variational family and the true posterior
+often manifests as underestimating the posterior variances of
+the model parameters and the inability to capture posterior
+correlations (Wainwright & Jordan, 2008).
+
+An alternative approach to posterior inference uses Markov
+
+1Harvard University, Cambridge, MA, USA 2University
+Seattle, WA, USA 3Google Brain,
+of Washington,
+Cambridge, MA, USA. Correspondence
+Andrew
+C. Miller <acm@seas.harvard.edu>, Nicholas J. Foti
+<nfoti@uw.edu>.
+
+to:
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+chain Monte Carlo (MCMC) methods that approximate a
+target distribution with samples drawn from a Markov chain
+constructed to admit the target distribution as the stationary
+distribution. MCMC enables a trade-off between computa-
+tion and accuracy: drawing more samples makes the approx-
+imation closer to the target distribution. However, MCMC
+algorithms typically must be run iteratively and it can be dif-
+ﬁcult to assess convergence to the true target. Furthermore,
+correctly specifying MCMC moves can be more algorithmi-
+cally restrictive than optimization-based approaches.
+
+To alleviate the mismatch between tractable variational ap-
+proximations and complicated posterior distributions, we
+propose a variational inference method that iteratively al-
+lows the approximating family of distributions to become
+more complex. Under certain conditions, the proposed ap-
+proximations are eventually expressive enough to represent
+the true target arbitrarily well (though we do not prove our al-
+gorithm attains such a universal approximation here). Thus,
+the practitioner can trade time ﬁtting a posterior approxi-
+mation for increased accuracy of posterior estimates. Our
+algorithm grows the complexity of the approximating class
+in two ways: 1) incorporating rich covariance structure, and
+2) sequentially adding new components to the approximat-
+ing distribution. Our method builds on black-box variational
+inference methods using the re-parameterization trick by
+adapting it to be used with mixture distributions. This allows
+our method to be applied to a variety of target distributions
+including those arising from non-conjugate model speciﬁ-
+cations (Kingma & Welling, 2014; Ranganath et al., 2014;
+Salimans & Knowles, 2013). We demonstrate empirically
+that our algorithm improves posterior estimates over other
+variational methods for several practical Bayesian models.
+
+2. Variational Inference
+
+Given a target distribution with density1 π(x) for a con-
+tinuous random variable x ∈ X ⊆ RD, variational in-
+ference approximates π(x) with a tractable distribution,
+q(x; λ), from which we can efﬁciently draw samples and
+form sample-based estimates of functions of x. Variational
+methods minimize the KL-divergence, KL(q||π), between
+q(·; λ) and the true π as a function of variational param-
+eter λ (Bishop, 2006). Although direct minimization of
+
+1We assume π(x) is known up to a constant, ˜π(x) = Cπ(x).
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+KL(q||π) is often intractable, we can derive a tractable ob-
+jective based on properties of the KL-divergence. This
+objective is known as the evidence lower bound (ELBO):
+
+L(λ) = Eqλ [ln π(x) − ln q(x; λ)] + ln C
+(cid:90)
+
+= ln C − KL(qλ||π) ≤ ln C = ln
+
+˜π(x)dx
+
+which, due to the positivity of KL(q||π), is a lower bound
+on C = log π(x), i.e., the marginal likelihood.
+
+Variational methods typically ﬁx a family of distributions
+Q = {q(·; λ) : λ ∈ Λ} parameterized by λ, and maximize
+the ELBO with respect to λ ∈ Λ. Often there exists some
+(possibly non-unique) λ∗ ∈ Λ for which KL(q||π) is min-
+imized. However, when the family Q does not include π
+then KL(qλ∗ ||π) > 0 which will result in biased estimates
+of functions f (x), Ex∼qλ∗ [f (x)] (cid:54)= Ex∼π[f (x)].
+The primary alternative to variational methods for approx-
+imate inference is Markov chain Monte Carlo (MCMC),
+which constructs a Markov chain such that the target dis-
+tribution remains invariant. Expectations with respect to
+the target distribution can be calculated as an average with
+respect to these correlated samples. MCMC typically en-
+joys nice asymptotic properties; as the number of samples
+grows, MCMC samplers represent the true target distribu-
+tion with increasing ﬁdelity. However, rules for constructing
+correct Markov steps are restrictive. With a few exceptions,
+most MCMC algorithms require evaluating a log-likelihood
+that touches all data at each step in the chain (Maclaurin &
+Adams, 2014; Welling & Teh, 2011). This becomes prob-
+lematic during statistical analyses of large amounts of data —
+MCMC is often considered unusable because of this compu-
+tational bottleneck. Notably, variational methods can avoid
+this bottleneck by sub-sampling the data (Ranganath et al.,
+2016a), as unbiased estimates of the log-likelihood can often
+be straight-forwardly used with optimization methods.
+
+In the next section, we propose an algorithm that iteratively
+grows the approximating class Q and reframes the VI pro-
+cedure as a series of optimization problems, resulting in a
+practical inference method that can both represent arbitrarily
+complex distributions and scale to large data sets.
+
+3. Variational Boosting
+
+We deﬁne our class of approximating distributions to be
+mixtures of C simpler component distributions:
+
+q(C)(x; λ, ρ) =
+
+ρcqc(x; λc) , s.t. ρc ≥ 0,
+
+ρc = 1,
+
+(cid:88)
+
+c
+
+C
+(cid:88)
+
+c=1
+
+where we denote the full mixture as q(C), mixing
+proportions ρ = (ρ1, . . . , ρC), and component distribu-
+tions qc(·; λc) parameterized by λ = (λ1, . . . , λC). The
+
+qc(·; λc)s can be any distribution over X ⊆ RD from which
+we can efﬁciently draw samples using a continuous mapping
+parameterized by λc (e.g., multivariate normal (Jaakkola &
+Jordan, 1998), or a composition of invertible maps (Rezende
+& Mohamed, 2015)).
+
+When posterior expectations and variances are of interest,
+mixture distributions provide tractable summaries. Expecta-
+tions are easily expressed in terms of component expecta-
+tions:
+
+E
+
+q(C) [f (x)] =
+
+q(C)(x)f (x)dx =
+
+ρcEqc [f (x)].
+
+(cid:90)
+
+(cid:88)
+
+c
+
+In the case of multivariate normal components, the mean
+and covariance of a mixture are easy to compute, as are
+marginal distributions along any set of dimensions.
+
+Variational boosting (VBoost) begins with a single mix-
+ture component, q(1)(x; λ) = q1(x; λ1) with C = 1. We
+ﬁx ρ1 = 1 and use existing black-box variational infer-
+ence methods to ﬁt the ﬁrst component parameter, λ1. At
+the next iteration C = 2, we ﬁx λ1 and introduce a new
+component into the mixture, q2(x; λ2). We deﬁne a new
+ELBO objective as a function of new component parame-
+ters, λ2, and a new mixture weight, ρ2. We then optimize
+this objective with respect to λ2 and ρ2 until convergence.
+At each subsequent round, c, we introduce new component
+parameters and a mixing weight, (λc, ρc), which are then
+optimized according to a new ELBO objective. The name
+variational boosting is inspired by methods that iteratively
+construct strong learners from ensembles of weak learners.
+We apply VBoost to target distributions via black-box vari-
+ational inference with the re-parameterization trick to ﬁt
+each component and mixture weights (Kingma & Welling,
+2014; Ranganath et al., 2014; Salimans & Knowles, 2013).
+However, using mixtures as the variational approximation
+complicates the use of the re-parameterization trick.
+
+3.1. The re-parameterization trick and mixtures
+
+The re-parameterization trick is used to compute an unbiased
+estimate of the gradient of an objective that is expressed
+as an intractable expectation with respect to a continuous-
+valued random variable. This situation arises in variational
+inference when the ELBO cannot be evaluated analytically.
+We form an unbiased estimate as:
+
+L(λ) = Eq [ln π(x) − ln q(x; λ)]
+
+≈
+
+1
+L
+
+L
+(cid:88)
+
+(cid:104)
+
+(cid:96)=1
+
+ln π(x((cid:96))) − ln q(x((cid:96)); λ)
+
+(cid:105)
+
+(1)
+
+(2)
+
+where x((cid:96)) ∼ q(x; λ). To obtain a Monte Carlo estimate
+of the gradient of L(λ) using the re-parameterization
+trick, we ﬁrst separate the randomness needed to gen-
+erate x((cid:96)) from the parameters λ, by deﬁning a deter-
+ministic map x((cid:96)) (cid:44) fq((cid:15); λ) such that (cid:15) ∼ p((cid:15)) implies
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+x((cid:96)) ∼ q(x; λ). Note that p((cid:15)) does not depend on λ. We
+then differentiate Eq. (2) with respect to λ through the map
+fq to obtain an estimate of ∇λL(λ).
+
+When q(·; λ) is a mixture, applying the re-parameterization
+trick is not straightforward. The typical sampling procedure
+for a mixture model includes a discrete random variable that
+indicates a mixture component, which complicates differ-
+entiation. We circumvent this by re-writing the variational
+objective as a weighted combination of expectations with
+respect to individual mixture components:
+
+L(λ, ρ) =
+
+ρcqc(x; λc)
+
+[ln π(x) − ln q(x; λ)] dx
+
+(cid:33)
+
+(cid:90) (cid:32) C
+(cid:88)
+
+c=1
+(cid:90)
+
+=
+
+=
+
+C
+(cid:88)
+
+c=1
+
+C
+(cid:88)
+
+c=1
+
+ρc
+
+qc(x; λc) [ln π(x) − ln q(x; λ)] dx
+
+ρcEqc [ln π(x) − ln q(x; λ)]
+
+which is a weighted sum of component-speciﬁc ELBOs. If
+the qc are continuous and there exists some function fc((cid:15); λ)
+such that x = fc((cid:15); λ) and x ∼ qc(·; λ) when (cid:15) ∼ p((cid:15)), then
+we can apply the re-parameterization trick to each compo-
+nent to obtain gradients of the ELBO :
+
+∇λcL(λ, ρ) = ∇λc
+
+ρcEx∼q(x;λ) [ln π(x) − ln q(x; λ)]
+
+C
+(cid:88)
+
+c=1
+
+=
+
+C
+(cid:88)
+
+c=1
+
+Figure 1. One-dimensional illustration of the VBoost procedure.
+Top: Initial single-component approximation (solid blue). Middle:
+A new component (dotted red) is initialized. Bottom: New compo-
+nent parameters and mixing weights are optimized using Monte
+Carlo gradients of the ELBO. Note that the mass of the existing
+components can rise and fall, but not shift in space.
+Component C + 1 After iteration C, our current approxi-
+mation to π(x) is a mixture distribution with C components:
+
+q(C)(x; λ, ρ) =
+
+ρcqc(x; λc).
+
+(5)
+
+C
+(cid:88)
+
+c=1
+
+Adding a component to Eq. (5) introduces a new compo-
+nent parameter, λC+1, and a new mixing weight, ρC+1. In
+this section, the mixing parameter ρC+1 ∈ [0, 1] mixes be-
+tween the new component, qC+1(·; λC+1) and the existing
+approximation, q(C). The new approximate distribution is
+
+ρcE(cid:15)∼p((cid:15))
+
+(cid:2)∇λc ln π(fc((cid:15); λc))
+
+− ∇λc ln q(fc((cid:15); λc); λ)(cid:3) .
+
+q(C+1)(x; λ, ρ)
+= (1 − ρC+1)q(C)(x) + ρC+1qC+1(x; λC+1) .
+
+VBoost leverages the above formulation of ∇λc L(λ, ρ)
+to use the re-parameterization trick in a component-by-
+component manner, allowing us to improve the variational
+approximation as we incorporate new components.
+
+The new ELBO, as a function of ρC+1 and λC+1, is:
+
+L(C+1)(ρC+1, λC+1)
+= E
+
+x∼q(C+1)
+
+(cid:104)
+
+ln π(x) − ln q(C+1)(x; λC+1, ρC+1)
+
+(cid:105)
+
+3.2. Incorporating New Components
+
+Next, we describe how to incrementally add components
+during the VBoost procedure.
+
+The ﬁrst component VBoost starts by ﬁtting a approxi-
+mation to π(x) consisting of a single component, q1. We do
+this by maximizing the ﬁrst ELBO objective
+
+L(1)(λ1) = Eq1 [ln π(x) − ln q1(x; λ1)]
+
+λ∗
+1 = arg max
+
+L(1)(λ1) .
+
+λ1
+
+(3)
+
+(4)
+
+Depending on the forms of π and q1, optimizing L(1) can
+be accomplished by various methods — an obvious choice
+being black-box VI with the re-parameterization trick. After
+convergence we ﬁx λ1 to be λ∗
+1.
+
+= (1 − ρC+1)E
+
+(cid:104)
+
+(cid:105)
+ln π(x) − ln q(C+1)(x; λC+1, ρC+1)
+
++ ρC+1EqC+1
+
+(cid:105)
+ln π(x) − ln q(C+1)(x; λC+1, ρC+1)
+
+.
+
+q(C)
+(cid:104)
+
+Crucially, we have separated out two expectations: one
+with respect to the existing approximation, q(C) (which is
+ﬁxed), and the other with respect to the new component
+distribution, qC+1. Because we have ﬁxed q(C), we only
+need to optimize the new component parameters, λC+1
+and ρC+1, allowing us to use the re-parameterization trick
+to obtain gradients of L(C+1). Note that evaluating the
+gradient requires sampling from the existing components
+which may result in larger variance than typical black-box
+variational methods. To mitigate the extra variance we use
+many samples to estimate the gradient and leave variance
+reduction to future work.
+
+existing approx targetexisting approx initial new comp targetexisting approx optimized new comp targetVariational Boosting: Iteratively Reﬁning Posterior Approximations
+
+Figure 1 illustrates the algorithm on a simple one-
+dimensional example — the initialization of a new com-
+ponent and the resulting mixture after optimizing the sec-
+ond objective, L(2)(ρ2, λ2). Figure 2 depicts the result
+of VBoost on a two-dimensional, multi-modal target dis-
+tribution. In both cases, the component distributions are
+Gaussians with diagonal covariance.
+
+3.3. Structured Multivariate Normal Components
+
+Though our method can use any component distribution
+that can be sampled using a continuous mapping, a sensible
+choice of component distribution is a multivariate normal
+
+q(x; λ) = N (x; µλ, Σλ)
+= |2πΣλ|−1/2 exp (cid:0)− 1
+
+2 (x − µλ)(cid:124)Σ−1
+
+λ (x − µλ)(cid:1)
+
+where the variational parameter λ is transformed into a mean
+vector µλ and covariance matrix Σλ.
+
+1, . . . , σ2
+
+Specifying the structure of the covariance matrix is a choice
+that largely depends on the dimensionality of X ⊆ RD
+and the correlation structure of the target distribution.
+A common choice of covariance is a diagonal matrix,
+Σλ = diag(σ2
+D), which implies that x is indepen-
+dent across dimensions. When the approximation only con-
+sists of one component, this structure is commonly referred
+to as the mean ﬁeld family. While computationally efﬁcient,
+mean ﬁeld approximations cannot model posterior corre-
+lations, which often leads to underestimation of marginal
+variances. Additionally, when diagonal covariances are used
+as the component distributions in Eq. (5) the resulting mix-
+ture may require a large number of components to represent
+the strong correlations (see Fig. 2). Furthermore, indepen-
+dence constraints can actually introduce local optima in the
+variational objective (Wainwright & Jordan, 2008).
+
+On the other end of the spectrum, we can parameterize
+the entire covariance matrix using the Cholesky decompo-
+sition, L, such that LL(cid:124) = Σ. This allows Σ to be any
+positive semi-deﬁnite matrix, enabling q to have the full
+ﬂexibility of a D-dimensional multivariate normal distri-
+bution. However, this introduces D(D + 1)/2 parameters,
+which can be computationally cumbersome when D is even
+moderately large. Furthermore, only a few pairs of variables
+may exhibit posterior correlations, particularly in multi-level
+models or neural networks where different parameter types
+may be nearly independent in the posterior.
+
+As such, we would like to incorporate some capacity to
+capture correlations between dimensions of x without over-
+parameterizing the approximation. The next subsection dis-
+cusses a covariance speciﬁcation that provides this tradeoff,
+while remaining computationally tractable.
+
+Low-rank plus diagonal covariance Black-box varia-
+tional inference methods with the re-parameterization trick
+
+Figure 2. Sequence of increasingly complex approximate poste-
+riors, with C = 1, 2, 3, 4 isotropic Gaussian components. The
+background (grey/black) contours depict the target distribution,
+and the foreground (red) contours depict the approximations.
+
+require sampling from the variational distribution and ef-
+ﬁciently computing (or approximating) the entropy of the
+variational distribution. For multivariate normal distribu-
+tions, the entropy is a function of the determinant of the
+covariance matrix, Σ, while computing the log likelihood
+requires computing Σ−1. When the dimensionality of the
+target, D, is large, computing determinants and inverses
+will have O(D3) time complexity and therefore may be
+prohibitively expensive to compute at every iteration.
+
+However, it may be unnecessary to represent all D(D−1)/2
+possible correlations in the target distribution, particularly
+if certain dimensions are close to independent. One way to
+increase the capacity of q(x; λ) is to model the covariance
+as a low-rank plus diagonal (LR+D) matrix
+
+Σ = F F (cid:124) + diag(exp(v))
+
+(6)
+
+where F ∈ RD×r is a matrix of off diagonal factors,
+and v ∈ RD is the log-diagonal component. This is effec-
+tively approximating the target via a factor analysis model.
+
+The choice of the rank r presents a tradeoff: with a larger
+rank, the variational approximation can be more ﬂexible;
+with a lower rank, the computations necessary for ﬁtting the
+variational approximation are more efﬁcient. As a concrete
+example, in Section 4 we present a D = 37 dimensional
+posterior resulting from a non-conjugate hierarchical model,
+and we show that a “rank r = 2 plus diagonal” covariance
+does an excellent job capturing all D(D − 1)/2 = 780 pair-
+wise correlations and D marginal variances. Incorporating
+more components using the VBoost framework further im-
+proves the approximation of the distribution.
+
+To use the re-parameterization trick with this low rank co-
+variance, we can simulate from q in two steps
+
+z(lo) ∼ N (0, Ir)
+
+z(hi) ∼ N (0, ID)
+
+x = F z(lo) + µ + I(v/2)z(hi)
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+where z(lo) generates the randomness due to the low-rank
+structure, and z(hi) generates the randomness due to the di-
+agonal structure. We use the operator I(a) = diag(exp(a))
+for notational brevity. This generative process can be dif-
+ferentiated, yielding Monte Carlo estimates of the gradient
+with respect to F and v suitable for stochastic optimization.
+
+In order to use LR+D covariance structure within VBoost,
+we will need to efﬁciently compute the determinant and
+inverse of Σ. The matrix determinant lemma expresses the
+determinant of Σ as the product of two determinants
+
+|F F (cid:124) + I(v))| = |I(v))||Ir + F (cid:124)I(−v)F |
+
+= exp
+
+(cid:32)
+
+(cid:33)
+
+(cid:88)
+
+vd
+
+d
+
+|Ir + F (cid:124)I(−v)F |
+
+where the left term is simply the product of the diagonal
+component, and the right term is the determinant of an r × r
+matrix, computable in O(r3) time (Harville, 1997).
+
+To compute Σ−1, the Woodbury matrix identity states that
+
+(F F (cid:124) + I(v))−1
+= I(−v) − I(−v)F (Ir + F (cid:124)I(−v)F )−1F (cid:124)I(−v)
+
+which involves the inversion of a smaller, r × r matrix
+and can be done in O(r3) time (Golub & Van Loan, 2013).
+Importantly, for r (cid:28) D the above operations are efﬁciently
+differentiable and amenable for use in the BBVI framework.
+
+Fitting the rank To specify the ELBO objective, we need
+to choose a rank r for the component covariance. There are
+many ways to decide on the rank of the variational approx-
+imation, some more appropriate for certain settings given
+dimensionality and computational constraints. For instance,
+we can greedily incorporate new rank components. Alter-
+natively, we can ﬁt a sequence of ranks r = 1, 2, . . . , rmax,
+and choose the best result (in terms of KL). In the Bayesian
+neural network model, we report results for a ﬁxed schedule
+of ranks. In the hierarchical Poisson model, we monitor the
+change in marginal variances to decide the appropriate rank.
+See Section B of the supplement for further discussion.
+
+Initializing new component parameters When we add
+a new component, we must ﬁrst initialize the component
+parameters. We ﬁnd that the VBoost optimization proce-
+dure can be sensitive to initialization, so we devise a cheap
+importance sampling-based algorithm to generate a good
+starting point. This initialization procedure is detailed in
+Section A and Algorithm 1 of the supplement.
+
+3.4. Related Work
+
+Mixtures of mean ﬁeld approximations were introduced
+in Jaakkola & Jordan (1998) where mean ﬁeld-like updates
+were developed using a bound on the entropy term and
+
+model-speciﬁc parameter updates. Nonparametric varia-
+tional inference, introduced in Gershman et al. (2012), is a
+black-box variational inference algorithm that approximates
+a target distribution with a mixture of equally-weighted
+isotropic normals. The authors use a lower-bound on the en-
+tropy term in the ELBO to make the optimization procedure
+tractable. Similarly, Salimans & Knowles (2013) present a
+method for ﬁtting mixture distributions as an approximation.
+However, their method is restricted to mixture component
+distributions within the exponential family, and a joint op-
+timization procedure. Mixture distributions are a type of
+hierarchical variational model (Ranganath et al., 2016b),
+where the component identity can be thought of as latent
+variables in the variational distribution. While in Ranganath
+et al. (2016b), the authors optimize a lower bound on the
+ELBO to ﬁt general hierarchical variational models, our ap-
+proach integrates out the discrete latent variables, allowing
+us to directly optimize the ELBO.
+
+Sequential maximum-likelihood estimation of mixture mod-
+els has been studied previously where the error between the
+sequentially learned model and the optimal model where all
+components and weights are jointly learned is bounded by
+O(1/C) where C is the number of mixture components (Li
+& Barron, 1999; Li, 1999; Rakhlin et al., 2006). A similar
+bound was proven in Zhang (2003) using arguments from
+convex analysis. More recently, sequentially constructing
+a mixture of deep generative models has been shown to
+achieve the same O(1/C) error bound when trained using
+an adversarial approach (Tolstikhin et al., 2016). Though
+these ideas show promise for deriving error bounds for vari-
+ational boosting, there are difﬁculties in applying them.
+
+In concurrent work, Guo et al. (2016) developed a boosting
+procedure to construct ﬂexible approximations to posterior
+distributions. In particular, they use gradient-boosting to
+determine candidate component distributions and then opti-
+mize the mixture weight for the new component (Friedman,
+2000). However, Guo et al. (2016) assume that the gradient-
+boosting procedure is able to ﬁnd the optimal new compo-
+nent so that the arguments in Zhang (2003) apply, which is
+not true in general. We note that if we make the similar as-
+sumption that at each step of VBoost the component param-
+eters λ∗
+C are found exactly, then the optimization of ρC is
+convex and can be optimized exactly. We can then appeal to
+the same arguments in Zhang (2003) and obtain an O(1/C)
+error bound. The work in Guo et al. (2016) provides impor-
+tant ﬁrst steps in the theoretical development of boosting
+methods applied to variational inference, however, we note
+that developing a comprehensive theory that deals with the
+difﬁculties of multimodality and the non-joint-convexity of
+KL divergence in λ and ρ is still needed. Recently, Moore
+(2016) began to address issues of multimodality from model
+symmetry in variational inference. However, the question
+remains whether the entire distribution is being explored.
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+(a) baseball marginals
+
+(b) baseball covariances
+
+Figure 3. Left: Comparison of bivariate (top) and univariate (bottom) marginals for the baseball model. Histograms/scatterplots depict
+20,000 NUTS samples. The top left depicts (ln κ, θ0) marginal samples and a mean ﬁeld approximation (MFVI). The Top Right shows
+the same bivariate marginal, and the VBoost approximation with isotropic components. The bottom panels compare NUTS, MFVI, and
+VBoost on univariate marginals (φ and ln κ). Right: Comparison of posterior covariances for the D = 20-dimensional baseball model.
+Each plot compares covariance estimates of VBoost (x-axis) with increasing numbers of components and MCMC samples (y-axis). As
+more components are added, the VBoost estimates more closely match the MCMC covariance estimates.
+
+Seeger (2010) explored the use of low-rank covariance Gaus-
+sians as variational approximations using a PCA-like algo-
+rithm. Additionally, concurrent work has proposed the use
+a LR+D matrices as the covariances of Gaussian posterior
+approximations (Ong et al., 2017). We have also found that
+though the LR+D covariance approximation is useful for
+capturing posterior correlations, combining the idea with
+boosting new components to capture non-Gaussian posteri-
+ors yields superior posterior inferences.
+
+4. Experiments and Analysis
+
+To supplement the previous synthetic examples, we use
+VBoost to approximate various challenging posterior distri-
+butions arising from real statistical models of interest.2
+
+Binomial Regression We ﬁrst apply VBoost to a non-
+conjugate hierarchical binomial regression model.3 The
+model describes the binomial rates of success (batting aver-
+ages) of baseball players using a hierarchical model (Efron
+& Morris, 1975), parameterizing the “skill” of each player:
+
+θj ∼ Beta(φ · κ, (1 − φ) · κ)
+yj ∼ Binomial(Kj, θj)
+
+player j prior
+player j hits ,
+
+where yj is the number of successes (hits) player j has
+attempted in Kj attempts (at bats). Each player has a la-
+tent success rate θj, which is governed by two global vari-
+ables κ and φ. We specify the priors φ ∼ Unif(0, 1) and
+κ ∼ Pareto(1, 1.5). There are 18 players in this example,
+creating a posterior distribution with D = 20 parameters.
+For each round of VBoost, we estimate ∇λ,ρL(C+1) using
+
+2Code available at https://github.com/andymiller/vboost.
+3Model and data from the mc-stan case studies
+
+400 samples each for qC+1 and qC. We use 1,000 itera-
+tions of adam with default parameters to update ρC+1 and
+λC+1 (Kingma & Ba, 2014).
+
+In all experiments, we use autograd to obtain gradients
+with respect to new component parameters (Maclaurin et al.,
+2015b;a). To highlight the ﬁdelity of our method, we com-
+pare VBoost with rank-1 components to mean ﬁeld VI
+(MFVI) and the No-U-Turn Sampler (NUTS) (Hoffman
+& Gelman, 2014). The empirical distribution resulting from
+20k NUTS samples is considered the “ground truth” pos-
+terior in this example. Figure 3a compares a selection of
+univariate and bivariate posterior marginals. We see that
+VBoost is able to closely match the NUTS posteriors, im-
+proving upon the MFVI approximation. Figure 3b compares
+the VBoost covariance estimates to the “ground truth” es-
+timates of MCMC at various stages of the algorithm. We
+see that VBoost is able to capture pairwise covariances with
+increasing accuracy as the number of components increases.
+
+Multi-level Poisson GLM We use VBoost to approxi-
+mate the posterior of a hierarchical Poisson GLM, a com-
+mon non-conjugate Bayesian model. Here, we focus on a
+speciﬁc model that was formulated to measure the relative
+rates of stop-and-frisk events for different ethnicities and in
+different precincts (Gelman et al., 2007), and has been used
+as an illustrative example of multi-level modeling (Gelman
+& Hill, 2006). The model uses a precinct and ethnicity effect
+to describe the relative rate of stop-and-frisk events
+
+αe ∼ N (0, σ2
+α)
+βp ∼ N (0, σ2
+β)
+
+ethnicity effect
+
+precinct effect
+
+ln λep = µ + αe + βp + ln Nep
+
+log rate
+
+Yep ∼ P(λep)
+
+stop-and-frisk events
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+(a) Rank 0 (MFVI)
+
+(d) Rank 3, 2-component
+
+(b) Rank 1
+
+(e) Rank 3, 4-component
+
+(c) Rank 2
+
+(f) Rank 3, 8-component
+
+Figure 4. Left: A sampling of bivariate marginals for a single Gaussian component approximation for the D = 37-dimensional frisk
+model. Each row incorporates more covariance structure. Though there are a total of 666 covariances to be approximated, only a few
+directions in the D-dimensional parameter space exhibit non-trivial correlations. Right: The same marginals with a mixture approximation
+using rank-3 Gaussians at various stages of the VBoost algorithm. Introducing new mixture components allows the posterior to take a
+non-Gaussian shape, most exhibited in the third column.
+
+dataset
+
+pbp
+
+rank 5
+
+vboost 2
+
+vboost 6
+
+vboost 10
+
+wine
+boston
+concrete
+power-plant
+yacht
+energy-eff.
+
+-0.990 (± 0.08)
+-2.902 (± 0.64)
+-3.162 (± 0.15)
+-2.798 (± 0.04)
+-0.990 (± 0.08)
+-1.971 (± 0.11)
+
+-0.972 (± 0.05)
+-2.670 (± 0.16)
+-3.247 (± 0.06)
+-2.814 (± 0.03)
+-0.972 (± 0.05)
+-2.452 (± 0.12)
+
+-0.971 (± 0.05)
+-2.651 (± 0.16)
+-3.228 (± 0.06)
+-2.811 (± 0.03)
+-0.971 (± 0.05)
+-2.422 (± 0.11)
+
+-0.978 (± 0.06)
+-2.599 (± 0.16)
+-3.169 (± 0.07)
+-2.800 (± 0.03)
+-0.978 (± 0.06)
+-2.345 (± 0.11)
+
+-0.994 (± 0.06)
+-2.628 (± 0.16)
+-3.134 (± 0.08)
+-2.793 (± 0.03)
+-0.994 (± 0.06)
+-2.299 (± 0.12)
+
+Table 1. Test log probability for PBP and
+VBoost with varying number of compo-
+nents (ﬁxed rank of 5). Each entry shows
+the average predictive performance of
+the model and the standard deviation
+across the 20 trials — bold indicates the
+best average (though not necessarily “sta-
+tistical signiﬁcance”).
+
+where Yep are the number of stop-and-frisk events within
+ethnicity group e and precinct p over some ﬁxed pe-
+riod of time; Nep is the total number of arrests of eth-
+nicity group e in precinct p over the same period of
+time; αe and βp are the ethnicity and precinct effects. The
+prior over the mean offset and group variances is given
+by µ, ln σ2
+
+β ∼ N (0, 102).
+
+α, ln σ2
+
+As before, we simulate 20k NUTS samples, and compare
+various variational approximations. Because of the high
+posterior correlations present in this example, VBoost with
+diagonal covariance components is inefﬁcient in its rep-
+resentation of this structure. As such, this example relies
+on the low-rank approximation to shape the posterior. Fig-
+ure 4 shows how posterior accuracy is affected by incorpo-
+rating covariance structure (left) and adding more compo-
+nents (right). Figures 6 and 7 in the supplement compare
+VBoost covariances to MCMC samples, showing that in-
+creased posterior rank capacity and number of components
+yield more accurate marginal variance and covariance es-
+timates. These results indicate that while incorporating
+covariance structure increases the accuracy of estimating
+marginal variances, the non-Gaussianity afforded by the use
+
+of mixture components allows for a better posterior approx-
+imation translating into more accurate moment estimates.
+
+Bayesian Neural Network We apply our method to a
+Bayesian neural network (BNN) regression model, which
+admits a high-dimensional, non-Gaussian posterior. We
+compare predictive performance of VBoost to Probabilis-
+tic Backpropagation (PBP) (Hernández-Lobato & Adams,
+2015). Mimicking the experimental setup of Hernández-
+Lobato & Adams (2015), we use a single 50-unit hidden
+layer, with ReLU activation functions. We place a normal
+prior over each weight in the neural network, governed by
+the same variance and an inverse Gamma prior over the
+observation variance yielding the model:
+
+wi ∼ N (0, 1/α)
+y|x, w, τ ∼ N (φ(x, w), 1/τ )
+
+weights
+
+output distribution
+
+where w = {wi} is the set of weights, and φ(x, w) is
+a multi-layer perceptron that maps input x to output y
+as a function of parameters w. Both α and τ are given
+Gamma(1, .1) priors. We denote the set of parameters as
+θ (cid:44) (w, α, τ ). We approximate the posterior p(w, α, τ |D),
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+where D is the training set of {xn, yn}N
+n=1 input-output
+pairs. We then use the posterior predictive distribution to
+compute the distribution for a new input x∗
+
+num comps
+
+1
+
+2
+
+5
+
+10
+
+20
+
+VBoost
+NPVI
+
+-702.97
+-718.47
+
+-700.92
+-717.86
+
+-699.69
+-717.09
+
+-699.07
+-716.36
+
+-698.88
+-715.86
+
+p(y|x∗, D) =
+
+p(y|x∗, θ)p(θ|D)dθ
+
+(7)
+
+p(y|x∗, θ((cid:96))) ,
+
+θ((cid:96)) ∼ p(θ|D)
+
+(8)
+
+(cid:90)
+
+≈
+
+1
+L
+
+L
+(cid:88)
+
+(cid:96)=1
+
+and report average predictive log probabilities for held out
+data, p(Y = y∗|x∗, D). For a dataset with input dimension
+P , the posterior has dimension D = (P +2)·50+3 (between
+D = 303 and D = 753 for the data sets considered).
+
+We report held-out predictive performance for different ap-
+proximate posteriors for six datasets. For each dataset, we
+perform the following training procedure 20 times. First,
+we create a random partition into a 90% training set and
+10% testing set. We then apply VBoost, adding rank 5 com-
+ponents. We allow each additional component only 200
+iterations. To save time on initialization, we draw 100 sam-
+ples from the existing approximation, and initialize the new
+component with the sample with maximum weight. For
+comparison, Probabilistic back-propagation is given 1000
+passes over the training data — empirically, sufﬁcient for
+the algorithm to converge.
+
+Table 3 in the supplement presents out-of-sample log proba-
+bility for single-component multivariate Gaussian approxi-
+mations with varying rank structure. Table 1 presents out-
+of-sample log probability for additional rank 5 components
+added using VBoost. We note that though we do not see
+much improvement as rank structure is added, we do see
+predictive improvement as components are added. Our re-
+sults suggest that incorporating and adapting new mixture
+components is a recipe for a more expressive posterior ap-
+proximation, translating into better predictive results. In fact,
+for all datasets we see that incorporating a new component
+improves test log probability, and we see further improve-
+ment with additional components for most of the datasets.
+Furthermore, in ﬁve of the datasets we see predictive per-
+formance surpass probabilistic back-propagation as new
+components are added. This highlights VBoost’s ability to
+trade computation for improved accuracy. These empirical
+results suggest that augmenting a Gaussian approximation
+to include additional capacity can improve predictive perfor-
+mance in a BNN while retaining computational tractability.
+
+4.1. Comparison to NPVI
+
+We also compare VBoost to nonparametric variational in-
+ference (NPVI) (Gershman et al., 2012), a similar mix-
+ture based black-box variational method. NPVI derives a
+tractable lower bound to the ELBO which is then approxi-
+mately maximized. NPVI requires computing the Hessian
+
+Table 2. ELBO values for VBoost and NPVI (higher is better).
+Note that VBoost with 1 component is MFVI. All ELBO values are
+computed using a Monte Carlo estimate with L = 100k samples
+from the variational distribution. In NPVI, each component is a
+spherical gaussian with a single σ2 shared across all dimensions
+— this limits the capacity of the approximation, requiring more
+components. Note, VBoost greedily incorporates components,
+while NPVI is re-run using a different number of components.
+
+of the model for the ELBO approximation, so we limit our
+comparison to the lower dimensional hierarchical models.
+
+We also note that the NPVI ELBO approximation does not
+fully integrate the ln π(x) term against the variational ap-
+proximation, q(x; λ) when optimizing the mean parameters
+of the approximation components. When we applied NPVI
+to the baseball model, we discovered an instability in
+the optimization of these mean parameters (which we veri-
+ﬁed by ﬁnding that map optimization diverges). Black box
+VI, VBoost, and MCMC were not susceptible to this pathol-
+ogy. Consequently, we only compare NPVI to VBoost on
+the frisk model. Because NPVI uses diagonal compo-
+nents, we restrict VBoost to use purely diagonal components
+(r = 0). In Table 2 we show marginal likelihood lower
+bounds, comparing NPVI to VBoost with a varying number
+of components. Even with a single component, the NPVI
+objective tends to underperform. The NPVI component vari-
+ance is spherical, limiting its capacity to represent posterior
+correlations. Further, NPVI is approximately optimizing a
+looser lower bound to the marginal likelihood. These two
+factors explain why NPVI fails to match MFVI and VBoost.
+
+5. Discussion and Conclusion
+
+We proposed VBoost, a practical variational inference
+method that constructs an increasingly expressive posterior
+approximation and is applicable to a variety of Bayesian
+models. We demonstrated the ability of VBoost to learn
+rich representations of complex, high-dimensional posteri-
+ors on a variety of real world statistical models. One avenue
+for future work is incorporating ﬂexible component distri-
+butions such as compositions of invertible maps (Rezende
+& Mohamed, 2015) or auxiliary variable variational mod-
+els (Maaløe et al., 2016). We also plan to study approxi-
+mation guarantees of the VBoost method and variance re-
+duction techniques for our reparameterization gradient ap-
+proach. Also, when optimizing parameters of a variational
+family, recent work has shown that the natural gradient can
+be more robust and lead to better optima (Hoffman et al.,
+2013; Johnson et al., 2016). Deriving and applying natural
+gradient updates for mixture approximations could make
+VBoost more efﬁcient.
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+Acknowledgements
+
+The authors would like to thank Arjumand Masood, Mike
+Hughes, and Finale Doshi-Velez for helpful feedback. ACM
+is supported by the Applied Mathematics Program within
+the Ofﬁce of Science Advanced Scientiﬁc Computing Re-
+search of the U.S. Department of Energy under contract No.
+DE-AC02-05CH11231. NJF is supported by a Washington
+Research Foundation Innovation Postdoctoral Fellowship in
+Neuroengineering and Data Science. RPA is supported by
+NSF IIS-1421780 and the Alfred P. Sloan Foundation.
+
+References
+
+Bishop, C. Pattern Recognition and Machine Learning.
+
+Springer-Verlag, 2006.
+
+Blei, D. M., Kucukelbir, A., and McAuliffe, J. D. Varia-
+tional inference: A review for statisticians. arXiv preprint
+arXiv:1601.00670, 2016.
+
+Dempster, A. P., Laird, N. M., and Rubin, D. B. Maximum
+likelihood from incomplete data via the EM algorithm.
+Journal of the Royal Statistical Society. Series B (method-
+ological), pp. 1–38, 1977.
+
+Efron, B. and Morris, C. Data analysis using Stein’s esti-
+mator and its generalizations. Journal of the American
+Statistical Association, 70(350):311–319, 1975.
+
+Friedman, J. H. Greedy function approximation: A gradient
+boosting machine. Annals of Statistics, 29:1189–1232,
+2000.
+
+Gelman, A. and Hill, J. Data Analysis Using Regression and
+Multilevel/Hierarchical Models. Cambridge University
+Press, 2006.
+
+Gelman, A., Fagan, J., and Kiss, A. An analysis of the
+NYPD’s stop-and-frisk policy in the context of claims of
+racial bias. Journal of the American Statistical Associa-
+tion, 102:813–823, 2007.
+
+Gershman, S., Hoffman, M., and Blei, D. M. Nonparametric
+In International Conference on
+
+variational inference.
+Machine Learning, 2012.
+
+Golub, G. H. and Van Loan, C. F. Matrix Computations.
+
+JHU Press, 2013.
+
+Guo, F., Wang, X., Fan, K., Broderick, T., and Dunson, D. B.
+Boosting variational inference. arXiv:1611.05559, 2016.
+
+Harville, D. A. Matrix Algebra from a Statistician’s Per-
+
+spective. Springer-Verlag, 1997.
+
+Hoffman, M. D. and Gelman, A. The No-U-turn sampler:
+adaptively setting path lengths in Hamiltonian monte
+carlo. Journal of Machine Learning Research, 15(1):
+1593–1623, 2014.
+
+Hoffman, M. D., Blei, D. M., Wang, C., and Paisley, J. W.
+Stochastic variational inference. Journal of Machine
+Learning Research, 14(1):1303–1347, 2013.
+
+Jaakkola, T. S. and Jordan, M. I. Improving the mean ﬁeld
+approximation via the use of mixture distributions. In
+Learning in Graphical Models, pp. 163–173. Springer,
+1998.
+
+Johnson, M. J., Duvenaud, D. K., Wiltschko, A. B., and
+Datta, S. R.and Adams, R. P. Composing graphical mod-
+els with neural networks for structured representations
+and fast inference. In Advances in Neural Information
+Processing Systems, 2016.
+
+Jordan, M. I., Ghahramani, Z., Jaakkola, T. S., and Saul,
+L. K. An introduction to variational methods for graphical
+models. Machine learning, 37(2):183–233, 1999.
+
+Kingma, D. and Ba, J. Adam: A method for stochastic
+optimization. In International Conference on Learning
+Representations, 2014.
+
+Kingma, D. P. and Welling, M. Auto-encoding variational
+Bayes. In International Conference on Learning Repre-
+sentations, 2014.
+
+Li, Q. Estimation of Mixture Models. PhD thesis, Yale
+
+University, May 1999.
+
+Li, Q. J. and Barron, A. R. Mixture density estimation.
+In Advances in Neural Information Processing Systems,
+1999.
+
+Maaløe, L., Sønderby, C. K., Sønderby, S. K., and Winther,
+O. Auxiliary deep generative models. In International
+Conference on Machine Learning, 2016.
+
+Maclaurin, D. and Adams, R. P. Fireﬂy Monte Carlo: Exact
+MCMC with subsets of data. In Uncertainty in Artiﬁcial
+Intelligence, 2014.
+
+Maclaurin, D., Duvenaud, D., and Adams, R. P. Autograd:
+Reverse-mode differentiation of native python. ICML
+workshop on Automatic Machine Learning, 2015a.
+
+Maclaurin, D., Duvenaud, D., Johnson, M., and Adams,
+R. P. Autograd: Reverse-mode differentiation of native
+Python, 2015b. URL http://github.com/HIPS/
+autograd.
+
+Hernández-Lobato, J. M. and Adams, R. P. Probabilistic
+backpropagation for scalable learning of Bayesian neural
+networks. 2015.
+
+Moore, D. A. Symmetrized variational inference. In NIPS
+Workshop on Advances in Approximate Bayesian Inferece,
+2016.
+
+Variational Boosting: Iteratively Reﬁning Posterior Approximations
+
+Ong, V. M.-H., Nott, D. J., and Smith, M. S. Gaussian vari-
+ational approximation with factor covariance structure.
+arXiv preprint arXiv:1701.03208, 2017.
+
+Rakhlin, A., D., Panchenko, and S., Mukherjee. Risk bounds
+for mixture density estimation. ESAIM: Probability and
+Statistics, 9:220–229, 2006.
+
+Ranganath, R., Gerrish, S., and Blei, D. M. Black box
+In International Conference on
+variational inference.
+Artiﬁcial Intelligence and Statistics, pp. 814–822, 2014.
+
+Ranganath, R., Altosaar, J., Tran, D., and Blei, D. M. Oper-
+ator variational inference. In Advances in Neural Infor-
+mation Processing Systems, 2016a.
+
+Ranganath, R., Tran, D., and Blei, D. M. Hierarchical varia-
+tional models. In International Conference on Machine
+Learning, 2016b.
+
+Rezende, D. and Mohamed, S. Variational inference with
+normalizing ﬂows. In International Conference on Ma-
+chine Learning, pp. 1530–1538, 2015.
+
+Salimans, T. and Knowles, D. A. Fixed-form variational pos-
+terior approximation through stochastic linear regression.
+Bayesian Analysis, 8(4):837–882, 2013.
+
+Seeger, M. W. Gaussian covariance and scalable varia-
+tional inference. In International Conference on Machine
+Learning, 2010.
+
+Tolstikhin, I., Gelly, S., Bousquet, O., Simon-Gabriel, C.-J.,
+and Schoelkopf, B. Adagan: Boosting generative models.
+arXiv preprint arXiv:1701.02386, 2016.
+
+Wainwright, M. J. and Jordan, M. I. Graphical models, ex-
+ponential families, and variational inference. Foundations
+and Trends in Machine Learning, 1(1-2):1–305, 2008.
+
+Welling, M. and Teh, Y. W. Bayesian learning via stochastic
+gradient Langevin dynamics. In International Conference
+on Machine Learning, 2011.
+
+Zhang, T. Sequential greedy approximation for certain
+convex optimization problems. IEEE Transactions on
+Information Theory, 49:682–691, 2003.
+
+

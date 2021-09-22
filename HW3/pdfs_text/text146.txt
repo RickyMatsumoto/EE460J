@@ -1,0 +1,1228 @@
+Algorithms for (cid:96)p Low-Rank Approximation
+
+Flavio Chierichetti 1 Sreenivas Gollapudi 2 Ravi Kumar 2 Silvio Lattanzi 3 Rina Panigrahy 2
+David P. Woodruff 4
+
+Abstract
+We consider the problem of approximating a
+given matrix by a low-rank matrix so as to mini-
+mize the entry-wise (cid:96)p-approximation error, for
+any p ≥ 1; the case p = 2 is the classical SVD
+problem. We obtain the ﬁrst provably good ap-
+proximation algorithms for this version of low-
+rank approximation that work for every value of
+p ≥ 1, including p = ∞. Our algorithms are sim-
+ple, easy to implement, work well in practice, and
+illustrate interesting tradeoffs between the approx-
+imation quality, the running time, and the rank of
+the approximating matrix.
+
+1. Introduction
+
+The problem of low-rank approximation of a matrix is usu-
+ally studied as approximating a given matrix by a matrix of
+low rank so that the Frobenius norm of the error in the ap-
+proximation is minimized. The Frobenius norm of a matrix
+is obtained by taking the sum of the squares of the entries
+in the matrix. Under this objective, the optimal solution is
+obtained using the singular value decomposition (SVD) of
+the given matrix. Low-rank approximation is useful in large
+data analysis, especially in predicting missing entries of a
+matrix by projecting the row and column entities (e.g., users
+and movies) into a low-dimensional space. In this work we
+consider the low-rank approximation problem, but under the
+general entry-wise (cid:96)p norm, for any p ∈ [1, ∞].
+
+There are several reasons for considering the (cid:96)p version of
+
+*Equal contribution
+
+1Sapienza University, Rome,
+
+Italy.
+Supported in
+Work done in part while visiting Google.
+part by a Google Focused Research Award, by the ERC
+Starting Grant DMAP 680153,
+and by the SIR Grant
+2Google, Mountain View, CA 3Google,
+RBSI14Q743.
+Zurich, Switzerland 4IBM Almaden, San Jose, CA. Corre-
+spondence to: Flavio Chierichetti <ﬂavio@di.uniroma1.it>,
+Sreenivas Gollapudi <sgollapu@yahoo.com>, Ravi Kumar
+<ravi.k53@gmail.com>, Silvio Lattanzi <silviol@google.com>,
+Rina Panigrahy <rinapy@gmail.com>, David P. Woodruff <dp-
+woodru@us.ibm.com>.
+
+Proceedings of the 34 th International Conference on Machine
+Learning, Sydney, Australia, PMLR 70, 2017. Copyright 2017 by
+the author(s).
+
+low-rank approximation instead of the usually studied (cid:96)2
+(i.e., Frobenius) version. For example, it is widely acknowl-
+edged that the (cid:96)1 version is more robust to noise and outliers
+than the (cid:96)2 version (Cand`es et al., 2011; Huber, 1981; Xu
+& Yuille, 1995). Several data mining and computer vision-
+related applications exploit this insight and resort to ﬁnding
+a low-rank approximation to minimize the (cid:96)1 error (Lu et al.,
+2014; Meng & Torre, 2013; Wang & Yeung, 2013; Xiong
+et al., 2011). Furthermore, the (cid:96)1 error is typically used as a
+proxy for capturing sparsity in many applications including
+robust versions of PCA, sparse recovery, and matrix com-
+pletion; see, for example (Cand`es et al., 2011; Xu et al.,
+2012). For these reasons the problem has already received
+attention (Gillis & Vavasis, 2015) and was suggested as
+an open question in a survey on sketching techniques for
+linear algebra (Woodruff, 2014). Likewise, the (cid:96)∞ version
+(dubbed also as the Chebyshev norm) has been studied for
+the past many years (Goreinov & Tyrtyshnikov, 2001; 2011),
+though to the best of our knowledge, no result with theo-
+retical guarantees was known for (cid:96)∞ before our work. Our
+algorithm is quite general, and works for every p ≥ 1.
+
+Working with (cid:96)p error, however, poses many technical chal-
+lenges. First of all, unlike (cid:96)2, the general (cid:96)p space is not
+amenable to spectral techniques. Secondly, the (cid:96)p space
+is not as nicely behaved as the (cid:96)2 space, for example, it
+lacks the notion of orthogonality. Thirdly, the (cid:96)p version
+quickly runs into computational complexity barriers: for
+example, even the rank-1 approximation in (cid:96)1 has been
+shown to be NP-hard by Gillis and Vavasis (Gillis & Vava-
+sis, 2015). However, there has been no dearth in terms of
+heuristics for the (cid:96)p low-rank approximation problem, in
+particular for p = 1 and p = ∞: this includes alternating
+convex (and, in fact, linear) minimization (Ke & Kanade,
+2005), methods based on expectation-maximization (Wang
+et al., 2012), minimization with augmented Lagrange mul-
+tipliers (Zheng et al., 2012), hyperplanes projections and
+linear programming (Brooks et al., 2013), and generaliza-
+tions of the Wiberg algorithm (Eriksson & van den Hengel,
+2012). These heuristics, unfortunately, do not come with
+any performance guarantees. While theoretical approxima-
+tion guarantees have been given for the rank-1 version for
+the GF(2) and the Boolean cases (Dan et al., 2015), to the
+best of our knowledge there have been no provably good
+
+Algorithms for (cid:96)p Low-Rank Approximation
+
+(approximation) algorithms for general matrices, or for rank
+more than one, or for general (cid:96)p.
+
+1.1. Our contributions
+
+In this paper we obtain the ﬁrst provably good algorithms
+for the (cid:96)p rank-k approximation problem for every p ≥ 1.
+Let n × m be the dimensions of the input matrix. From an
+algorithmic viewpoint, there are three quantities of interest:
+the running time of the algorithm, the approximation fac-
+tor guaranteed by the algorithm, and the actual number of
+vectors in the low-rank approximation that is output by the
+algorithm (even though we only desire k).
+
+Given this setting, we show three main algorithmic results
+intended for the case when k is not too large. First, we
+show that one can obtain a (k + 1)-approximation to the
+rank-k problem in time mk poly(n, m); note that this run-
+ning time is not polynomial once k is larger than a con-
+stant. To address this, next we show that one can get
+an O(k)-approximation to the best k-factorization in time
+O(poly(nm)); however, the algorithm returns O(k log m)
+columns, which is more than the desired k (this is referred
+to as a bi-criteria approximation). Next, we combine these
+two algorithms. We ﬁrst show that the output of the second
+algorithm can further be reﬁned to output exactly k vec-
+tors, with an approximation factor of poly(k) and a running
+time of O(poly(n, m)(k log n)k). The running time now
+is polynomial as long as k = O(log n/ log log n). Finally,
+we show that for any constant p ≥ 1, we can obtain an
+approximation factor of (k log m)O(p) and a running time
+of poly(n, m) for every value of k.
+
+Our ﬁrst algorithm is existential in nature: it shows that there
+are k columns in the given matrix that can be used, along
+with an appropriate convex program, to obtain a (k + 1)-
+approximation. Realizing this as an algorithm would there-
+fore na¨ıvely incur a factor mk in the running time. Our
+second algorithm works by sampling columns and itera-
+tively “covering” the columns of the given matrix, for an
+appropriate notion of covering. In each round of sampling
+our algorithm uniformly samples from a remaining set of
+columns; we note here that it is critical that our algorithm
+is adaptive as otherwise uniform sampling would not work.
+While this is computationally efﬁcient and maintains an
+O(k)-approximation to the best rank-k approximation, it
+can end up with more than k columns, in fact O(k log m).
+Our third algorithm ﬁxes this issue by combining the ﬁrst
+algorithm with the notion of a near-isoperimetric transfor-
+mation for the (cid:96)p-space, which lets us transform a given
+matrix into another matrix spanning the same subspace but
+with small (cid:96)p distortion. Our fourth algorithm uses (cid:96)p lever-
+age scores to overcome the sampling step; this improves
+the running time while mildly worsening the approximation
+factor.
+
+A useful feature of our algorithms is that they are uniform
+with respect to all values of p. We test the performance of
+our algorithms, for p = 1 and p = ∞, on real and synthetic
+data and show that they produce low-rank approximations
+that are substantially better than what the SVD (i.e., p = 2)
+would obtain.
+
+1.2. Related work
+
+Very recently, Song, Woodruff, and Zhong (Song et al.,
+2017), obtained a low-rank approximation that holds for
+every p ∈ [1, 2], using sketching-based techniques.
+In
+their main result is an (O(log m) poly(k))-
+particular,
+approximation in nnz(A)+(n+m) poly(k) time, for every
+k, where nnz(A) is the number of non-zero entries in A.
+In our work, we also obtain such a result for p ∈ [1, 2]
+but via very different sampling-based methods. In addi-
+tion, we obtain an algorithm with a poly(k)-approximation
+factor that is independent of m and n, though this latter
+algorithm requires k = O(log n/ log log n) in order to be
+polynomial time. Another result in (Song et al., 2017) shows
+how to achieve a (k poly(log k))-approximation, in nO(k)
+time for p ∈ [1, 2]. For k larger than a constant, this is
+larger than polynomial time, whereas our algorithm with
+poly(k)-approximation is polynomial time for k as large as
+Θ(log n/ log log n). Importantly, our results hold for every
+p ∈ [1, ∞], rather than only when p ∈ [1, 2].
+
+In addition we note that there exist papers solving prob-
+lems that, at ﬁrst blush, might seem similar to ours. For
+instance, (Deshpande et al., 2011) study a convex relation,
+and a rounding algorithm to solve the subspace approxima-
+tion problem (an (cid:96)p generalization of the least squares ﬁt),
+which is related to but different from our problem. Also,
+(Feldman et al., 2007) offer a bi-criteria solution for another
+related problem of approximating a set of points by a col-
+lection of ﬂats; they use convex relaxations to solve their
+problem and are limited to bi-criteria solutions, unlike ours.
+Finally, in some special settings robust PCA can be used
+to solve (cid:96)1 low-rank approximation (Cand`es et al., 2011).
+However, robust PCA and (cid:96)1 low-rank approximation have
+some apparent similarities but they have key differences.
+Firstly, (cid:96)1 low-rank approximation allows to recover an ap-
+proximating matrix of any chosen rank, whereas robust PCA
+returns some matrix of some unknown (possibly full) rank.
+While variants of robust PCA have been proposed to force
+the output rank to be a given value (Netrapalli et al., 2014;
+Yi et al., 2016), these variants make additional noise model
+and incoherence assumptions on the input matrix, whereas
+our results hold for every input matrix. Secondly, in terms
+of approximation quality, it is unclear if near-optimal solu-
+tions of robust PCA provide near-optimal solutions for (cid:96)1
+low-rank approximation.
+
+Finally, we mention example matrices for which the SVD
+
+Algorithms for (cid:96)p Low-Rank Approximation
+
+gives a poor approximation factor for (cid:96)p-approximation
+error. First, suppose p < 2 and k = 1. Consider the
+following n × n block diagonal matrix composed of two
+blocks: a 1 × 1 matrix with value n and an (n − 1) × (n − 1)
+matrix with all 1s. The SVD returns as a solution the ﬁrst
+column, and therefore incurs polynomial in n error for p =
+2 − Ω(1). Now suppose p > 2 and k = 1. Consider the
+following n × n block diagonal matrix composed of two
+blocks: a 1×1 matrix with value n−2 and an (n−1)×(n−1)
+matrix with all 1s. The SVD returns as a solution the matrix
+spanned by the bottom block, and so also incurs an error
+polynomial in n for p = 2 + Ω(1).
+
+2. Background
+
+For a matrix M , let Mi,j denote the entry in its ith row
+and jth column and let Mi denote its ith column. Let M T
+
+denote its transpose and let |M |p =
+de-
+note its entry-wise p norm. Given a set S = {i1, . . . , it} of
+column indices, let MS = Mi1,...,it be the matrix composed
+of the columns of M with the indices in S.
+
+(cid:16)(cid:80)
+
+i,j |Mi,j|p(cid:17)1/p
+
+Given a matrix M with m columns, we will use span M =
+{(cid:80)m
+i=1 αiMi | αi ∈ R} to denote the vectors spanned by
+its columns. If M is a matrix and v is a vector, we let
+dp(v, M ) denote the minimum (cid:96)p distance between v and a
+vector in span M :
+
+dp(v, M ) =
+
+inf
+w∈span M
+
+|v − w|p.
+
+Let A ∈ Rn×m denote the input matrix and let k > 0
+denote the target rank. We assume, without loss of generality
+(wlog.), that m ≤ n. Our ﬁrst goal is, given A and k, to ﬁnd
+a subset U ∈ Rn×k of k columns of A and V ∈ Rk×m to
+minimize the (cid:96)p error, p ≥ 1, given by
+
+|A − U V |p.
+
+|A − U V |p.
+
+Our second goal is, given A and k, to ﬁnd U ∈ Rn×k, V ∈
+Rk×m to minimize the (cid:96)p error, p ≥ 1, given by
+
+Note that in the second goal, we do not require U be a subset
+of columns.
+
+We refer to the ﬁrst problem as the k-columns subset selec-
+tion problem in the (cid:96)p norm, denoted k-CSSp, and to the
+second problem as the rank-k approximation problem in the
+(cid:96)p norm, denoted k-LRAp.1 In the paper we often call U, V
+the k-factorization of A. Note that a solution to k-CSSp
+can be used as a solution to k-LRAp, but not necessarily
+vice versa.
+
+1k-LRA2 is the classical SVD problem of ﬁnding U ∈
+
+Rn×k, V ∈ Rk×m so as to minimize |A − U V |2.
+
+In this paper we focus on solving the two problems for
+general p. Let U (cid:63)V (cid:63) be a k-factorization of A that is opti-
+mal in the (cid:96)p norm, where U (cid:63) ∈ Rn×k and V (cid:63) ∈ Rk×m,
+and let optk,p(A) = |A − U (cid:63)V (cid:63)|p. An algorithm is said
+to be an α-approximation, for an α ≥ 1, if it outputs
+U ∈ Rn×k, V ∈ Rk×m such that
+
+|A − U V |p ≤ α · optk,p(A).
+
+It is often convenient to view the input matrix as A =
+U (cid:63)V (cid:63) + ∆ = A(cid:63) + ∆, where ∆ is some error matrix of
+minimum (cid:96)p-norm. Let δ = |∆|p = optk,p(A).
+
+We will use the following observation.
+Lemma 1. Let U ∈ Rn×k and v ∈ Rn×1. Suppose that
+there exists x ∈ Rk×1 such that δ = |U · x − v|p. Then,
+there exists a polynomial time algorithm that, given U and
+v, ﬁnds y ∈ Rk×1 such that |U · y − v|p ≤ δ.
+
+Proof. This (cid:96)p regression problem is a convex program and
+well-known to be solvable in polynomial time.
+
+3. An (mk poly(nm))-time algorithm for
+
+k-LRAp
+
+In this section we will present an algorithm that runs in time
+mk poly(nm) and produces a (k + 1)-approximation to k-
+CSSp (hence to k-LRAp) of a matrix A ∈ Rn×m, m ≤ n,
+for any p ∈ [1, ∞]. The algorithm simply tries all possible
+subsets of k columns of A for producing one of the factors,
+U , and then uses Lemma 1 to ﬁnd the second factor V .
+
+3.1. The existence of one factor in A
+
+For simplicity, we assume that |∆i|p > 0 for each column i.
+To satisfy this, we can add an arbitrary small random error to
+each entry of the matrix. For instance, for any γ > 0, and to
+each entry of the matrix, we can add an independent uniform
+value in [−γ, γ]. This would guarantee that |∆i|p > 0 for
+each i ∈ [m].
+
+Recall that A = A(cid:63) + ∆ is the perturbed matrix, and we
+only have access to A, not A(cid:63). Consider Algorithm 1 and
+its output S. Note that we cannot actually run this algorithm
+since we do not know A(cid:63). It is a hypothetical algorithm used
+for the purpose of our proof, i.e., the algorithm serves as a
+proof that there exists a subset of k columns of A providing
+a good low rank approximation. In Theorem 3 we prove
+that the columns in A indexed by the subset S can be used
+as one factor of a k-factorization of A.
+
+Before proving the main theorem of the section, we show a
+useful property of the matrix ˜A(cid:63), i.e., the matrix having the
+vector A(cid:63)
+i /|∆i|p as the ith column. Then we will use this
+property to prove Theorem 3.
+
+Algorithms for (cid:96)p Low-Rank Approximation
+
+Algorithm 1 Enumerating and selecting k columns of A.
+Require: A rank k matrix A(cid:63) and perturbation matrix ∆
+Ensure: k column indices of A(cid:63)
+1: For each column index i, let ˜A(cid:63)
+i /|∆i|p.
+2: Write ˜A(cid:63) = ˜U · ˜V , s.t. ˜U ∈ Rn×k, ˜V ∈ Rk×m.
+3: Let S be the subset of k columns of ˜V ∈ Rk×m that
+has maximum determinant in absolute value (note that
+the subset S indexes a k × k submatrix).
+
+i ← A(cid:63)
+
+4: Output S.
+
+Lemma 2. For each column ˜A(cid:63)
+(cid:80)
+
+j∈S Mi(j) ˜A(cid:63)
+
+j , where |Mi(j)| ≤ 1 for all i, j.
+
+i of ˜A(cid:63), one can write ˜A(cid:63)
+
+i =
+
+Proof. Fix an i ∈ {1, . . . , m}. Consider the equation
+˜VSMi = ˜Vi for Mi ∈ Rk. We can assume the columns
+in ˜VS are linearly independent, since wlog., ˜A(cid:63) has rank
+k. Hence, there is a unique solution Mi = ( ˜VS)−1 ˜Vi. By
+Cramer’s rule, the jth coordinate Mi(j) of Mi satisﬁes
+Mi(j) = det( ˜V j
+S )
+S is the matrix obtained by re-
+det( ˜VS )
+placing the jth column of ˜VS with ˜Vi. By our choice of S,
+S )| ≤ | det( ˜VS)|, which implies |Mi(j)| ≤ 1. Mul-
+| det( ˜V j
+tiplying both sides of equation ˜VSMi = ˜Vi by ˜U , we have
+˜A(cid:63)
+
+, where ˜V j
+
+SMi = ˜A(cid:63)
+i .
+
+Now we prove the main theorem of this section.
+Theorem 3. Let U = AS. For p ∈ [1, ∞], let M1, . . . , Mm
+be the vectors whose existence is guaranteed by Lemma 2
+and let V ∈ Rk×n be the matrix having the vector
+|∆i|p · (Mi(1)/|∆i1|p, . . . , Mi(k)/|∆ik |p)T as its ith col-
+umn. Then, |Ai − (U V )i|p ≤ (k + 1)|∆i|p and hence
+|A − U V |p ≤ (k + 1)|∆|p.
+
+that,
+(cid:80)k
+
+since the sum of
+
+their weights satisﬁes
+ther
+|∆i|p
+j=1 |Mi(j)| ≤ k|∆i|p, we have that the (cid:96)p-norm of
+Ei is not larger than |Ei|p ≤ k|∆i|p. The proof is complete
+using the triangle inequality:
+
+|Ai − (U V )i|p ≤ |A(cid:63)
+
+i − Ai|p + |A(cid:63)
+
+i − (U V )i|p
+
+= |∆i|p + |Ei|p
+≤ (k + 1)|∆i|p.
+
+3.2. An mk poly(nm)-time algorithm
+
+In this section we give an algorithm that returns a
+(k + 1)-approximation to the k-LRAp problem in time
+mk poly(nm).
+
+Algorithm 2 A (k + 1)-approximation to k-LRAp.
+Require: An integer k and a matrix A
+Ensure: U ∈ Rn×k, V ∈ Rk×m s.t. |A − U V |p ≤ (k +
+
+(cid:1) do
+
+1)optk,p(A).
+1: for all I ∈ (cid:0)[m]
+k
+Let U = AI
+2:
+Use Lemma 1 to compute a matrix V that minimizes
+3:
+the distance dI = |A − U V |p
+
+4: end for
+5: Return U, V that minimizes dI , for I ∈ (cid:0)[m]
+
+(cid:1)
+
+k
+
+The following statement follows directly from the existence
+of k columns in A that make up a factor U having small (cid:96)p
+error (Theorem 3).
+
+Theorem 4. Algorithm 2 obtains a (k + 1)-approximation
+to k-LRAp in time mk poly(nm).
+
+Proof. We consider the generic column (U V )i.
+
+4. A poly(nm)-time bi-criteria algorithm for
+
+(U V )i = |∆i|p
+
+k
+(cid:88)
+
+j=1
+
+(cid:18) Mi(j)
+|∆ij |p
+
+(cid:19)
+
+Aij
+
+= |∆i|p
+
+k
+(cid:88)
+
+j=1
+
+(cid:18) Mi(j)
+|∆ij |p
+
+(cid:16)
+
+(cid:17)(cid:19)
+
+A(cid:63)
+ij
+
++ ∆ij
+
+= |∆i|p
+
+Mi(j) ˜A(cid:63)
+ij
+
++ Mi(j)
+
+= |∆i|p ˜A(cid:63)
+
+i + |∆i|p
+
+Mi(j)
+
+k
+(cid:88)
+
+(cid:18)
+
+j=1
+
+(cid:19)
+
+∆ij
+|∆ij |p
+
+(cid:19)
+
+∆ij
+|∆ij |p
+
+= A(cid:63)
+
+i +
+
+|∆i|p · Mi(j)
+
+(cid:19)
+
+∆ij
+|∆ij |p
+
+∆= A(cid:63)
+
+i + Ei.
+
+k
+(cid:88)
+
+(cid:18)
+
+j=1
+
+k
+(cid:88)
+
+(cid:18)
+
+j=1
+
+Observe that Ei
+, . . . , ∆ik
+|∆ik |p
+
+∆i1
+|∆i1 |p
+
+is the weighted sum of k vectors,
+, having unit (cid:96)p-norm. Observe fur-
+
+k-CSSp
+
+We next show an algorithm that runs in time poly(nm)
+but returns O(k log m) columns of A that can be used in
+place of U , with an error O(k) times the error of the best
+k-factorization.
+In other words, it obtains more than k
+columns but achieves a polynomial running time; we will
+later build upon this algorithm in Section 5 to obtain a faster
+algorithm for the k-LRAp problem. We also show a lower
+bound: there exists a matrix A for which the best possible
+approximation for the k-CSSp, for p ∈ (2, ∞), is kΩ(1).
+Deﬁnition 5 (Approximate coverage). Let S be a sub-
+set of k column indices. We say that column Ai is cp-
+approximately covered by S if for p ∈ [1, ∞) we have
+minx∈Rk×1 |ASx − Ai|p
+, and for p = ∞,
+minx∈Rk×1 |ASx − Ai|∞ ≤ c(k + 1)|∆|∞. If c = 1, we
+say Ai is covered by S.
+
+100(k+1)p|∆|p
+p
+n
+
+p ≤ c
+
+We ﬁrst show that if we select a set R columns of size 2k
+
+Algorithms for (cid:96)p Low-Rank Approximation
+
+uniformly at random in (cid:0)[m]
+cover a constant fraction of columns of A.
+
+2k
+
+(cid:1), with constant probability we
+
+Lemma 6. Suppose R is a set of 2k uniformly random
+chosen columns of A. With probability at least 2/9, R
+covers at least a 1/10 fraction of columns of A.
+
+Proof. Let i be a column index of A selected uniformly at
+random and not in R. Let T = R ∪ {i} and let η be the cost
+of the best (cid:96)p rank-k approximation to AT . Note that T is a
+uniformly random subset of 2k + 1 columns of A.
+
+Case: p < ∞. Since T is a uniformly random subset
+of 2k + 1 columns of A, ET [ηp] =
+. Let E1
+denote the event “ηp ≤
+”. By a Markov bound,
+Pr[E1] ≥ 9/10.
+
+10(2k+1)|∆|p
+p
+n
+
+(2k+1)|∆|p
+p
+n
+
+By Theorem 3, there exists a subset L of k columns of
+p ≤ (k + 1)pηp. Since
+AT for which minX |ALX − AT |p
+i is itself uniformly random in the set T , it holds that
+p ≤ (k+1)pηp
+Ei[minx |ALx − Ai|p
+. Let E2 denote the event
+p ≤ 10(k+1)pηp
+“minx |ALx − Ai|p
+”. By a Markov bound,
+Pr[E2] ≥ 9/10.
+
+2k+1
+
+2k+1
+
+Let E3 denote the event “i /∈ L”. Since i is uniformly
+random in the set T , Pr[E3] ≥ k+1
+
+2k > 1/2.
+
+Clearly Pr[E1∧E2∧E3] ≥ 3/10. Conditioned on E1∧E2∧E3,
+we have
+
+min
+x
+
+|ARx − Ai|p
+p
+
+E3
+≤ min
+
+|ALx − Ai|p
+p
+
+E2
+≤
+
+E1
+≤
+
+x
+10(k + 1)pηp
+2k + 1
+
+100(k + 1)p|∆|p
+p
+n
+
+,
+
+which implies that i is covered by R. Note that the ﬁrst
+inequality uses that L is a subset of R given E3, and so
+the regression cost using AL cannot be smaller than that of
+using AR
+
+i Zi. We have E[Z] = (cid:80)
+
+Let Zi be an indicator variable if i is covered by R and
+let Z = (cid:80)
+i E[Zi] ≥ (cid:80)
+3
+10 =
+3m/10; hence E[m − Z] ≤ 7m
+10 . By a Markov bound,
+10 ] ≤ 7
+Pr[m − Z ≥ 9m
+9 .
+
+i
+
+Case p = ∞. Then η ≤ |∆|∞ since AT is a submatrix of
+A. By Theorem 3, there exists a subset L of k columns of
+AT for which minX |ALX − AT |∞ ≤ (k + 1)η. Deﬁning
+E3 as before and conditioning on it, we have
+
+min
+x
+
+|ARx − Ai|∞ ≤ min
+
+|ALx − Ai|∞
+
+x
+
+X
+
+≤ min
+
+|ALX − AT |∞
+
+≤ (k + 1)|∆|∞,
+
+i.e., i is covered by R. Again deﬁning Zi to be the event that
+
+i is covered by R, we have E[Zi] ≥ 1
+2 , which implies Pr[m − Z ≥ 9m
+m
+
+10 ] ≤ 5
+
+9 < 7
+9 .
+
+2 , and so E[m − Z] ≤
+
+We are now ready to introduce Algorithm 3. We can wlog.
+assume that the algorithm knows a number N for which
+|∆|p ≤ N ≤ 2|∆|p. Indeed, such a value can be obtained
+by ﬁrst computing |∆|2 using the SVD. Note that although
+one does not know ∆, one does know |∆|2 since this is the
+Euclidean norm of all but the top k singular values of A,
+which one can compute from the SVD of A. Then, note
+that for p < 2, |∆|2 ≤ |∆|p ≤ n2−p|∆|2, while for p ≥ 2,
+|∆|p ≤ |∆|2 ≤ n1−2/p|∆|p. Hence, given |∆|2, there
+are only O(log n) values of N , one of which will satisfy
+|∆|p ≤ N ≤ 2|∆|p. One can take the best solution found
+by Algorithm 3 for each of the O(log n) guesses to N .
+
+Algorithm 3 Selecting O(k log m) columns of A.
+Require: An integer k, and a matrix A = A(cid:63) + ∆.
+Ensure: O(k log m) columns of A
+SELECTCOLUMNS (k, A)
+
+if number of columns of A ≤ 2k then
+
+return all the columns of A
+
+else
+
+repeat
+
+Let R be uniform at random 2k columns of A
+
+until at least (1/10)-fraction columns of A are cp-
+approximately covered
+Let AR be the columns of A not approximately covered
+by R
+return AR∪ SELECTCOLUMNS (k, AR)
+
+end if
+
+Theorem 7. With probability at least 9/10, Algorithm 3
+runs in time poly(nm) and returns O(k log m) columns
+that can be used as a factor of the whole matrix inducing (cid:96)p
+error O(k|∆|p).
+
+Proof. First note that if |∆|p ≤ N ≤ 2|∆|p and if i is
+covered by a set R of columns, then i is cp-approximately
+covered by R for a constant cp; here cp = 2p for p < ∞ and
+c∞ = 2. By Lemma 6, the expected number of repetitions
+of selecting 2k columns until (1/10)-fraction of columns
+of A are covered is O(1). When we recurse on SELECT-
+COLUMNS on the resulting matrix AR, each such matrix
+admits a rank-k factorization of cost at most |∆|p. More-
+over, the number of recursive calls to SELECTCOLUMNS
+can be upper bounded by log10 m. In expectation there will
+be O(log m) total repetitions of selecting 2k columns, and
+so by a Markov bound, with probability 9/10, the algorithm
+will choose O(k log m) columns in total and run in time
+poly(nm).
+
+Let S be the union of all columns of A chosen by the al-
+gorithm. Then for each column i of A, for p ∈ [1, ∞),
+
+Algorithms for (cid:96)p Low-Rank Approximation
+
+100(k+1)p2p|∆|p
+p
+p ≤
+n
+p ≤ 100(k + 1)p2p|∆|p
+
+we have minx |ASx − Ai|p
+, and so
+minX |ASX − A|p
+p. For p = ∞
+we instead have minx |ASx − Ai|∞ ≤ 2(k + 1)|∆|∞, and
+so minX |ASX − A|∞ ≤ 2(k + 1)|∆|∞.
+
+4.1. A lower bound for k-CSSp
+
+In this section we prove an existential result showing that
+there exists a matrix for which the best approximation to the
+k-CSSp is kΩ(1).
+Lemma 8. There exists a matrix A such that the best ap-
+proximation for the k-CSSp problem, for p ∈ (2, ∞), is
+kΩ(1).
+
+Proof. Consider A = (k + 1)Ik+1, where Ik+1 is the (k +
+1) × (k + 1) identity matrix. And consider the matrix B =
+(k + 1) · Ik+1 − E, where E is the (k + 1) × (k + 1) all
+ones matrix. Note that B has rank at most k, since the sum
+of its columns is 0.
+
+Case: 2 < p < ∞. If we choose any k columns of A, then
+the (cid:96)p cost of using them to approximate A is (k + 1). On
+the other hand, |A − B|∞ = 1, which means that (cid:96)p cost of
+B is smaller or equal than (cid:0)(k + 1)2(cid:1)1/p
+
+.
+
+Case: p = ∞. If we choose any k columns of A, then the
+(cid:96)∞ cost of using them to approximate A is k + 1. On the
+other hand, |A − B|∞ = 1, which means that (cid:96)∞ cost of B
+is smaller or equal than 1.
+
+Note also that in (Song et al., 2017) the authors show that
+for p = 1 the best possible approximation is Ω(
+k) up to
+poly(log k) factors.
+
+√
+
+5. A ((k log n)k poly(mn))-time algorithm for
+
+k-LRAp
+
+In the previous section we have shown how to get a rank-
+O(k log m), O(k)-approximation in time poly(nm) to the
+k-CSSp and k-LRAp problems. In this section we ﬁrst show
+how to get a rank-k, poly(k)-approximation efﬁciently start-
+ing from a rank-O(k log m) approximation. This algorithm
+runs in polynomial time as long as k = O
+. We
+then show how to obtain a (k log m)O(p)-approximation
+ratio in polynomial time for every k.
+
+(cid:16) log n
+log log n
+
+(cid:17)
+
+Let U be the columns of A selected by Algorithm 3.
+
+5.1. An isoperimetric transformation
+
+The ﬁrst step of our proof is to show that we can modify the
+selected columns of A to span the same space but to have
+small distortion. For this, we need the following notion of
+isoperimetry.
+
+Deﬁnition 9 (Almost isoperimetry). A matrix B ∈ Rn×m
+is almost-(cid:96)p-isoperimetric if for all x, we have
+
+|x|p
+2m
+
+≤ |Bx|p ≤ |x|p.
+
+We now show that given a full rank A ∈ Rn×m, it is possible
+to construct in polynomial time a matrix B ∈ Rn×m such
+that A and B span the same space and B is almost-(cid:96)p-
+isoperimetric.
+Lemma 10. Given a full (column) rank A ∈ Rn×m, there
+is an algorithm that transforms A into a matrix B such
+that span A = span B and B is almost-(cid:96)p-isoperimetric.
+Furthermore the running time of the algorithm is poly(nm).
+
+Proof. In (Dasgupta et al., 2009), speciﬁcally, Equation
+(4) in the proof of Theorem 4, the authors show that in
+polynomial time it is possible to ﬁnd a matrix B such that
+span B = span A and for all x,
+
+|x|2 ≤ |Bx|p ≤
+
+m|x|2,
+
+√
+
+for any p ≥ 1.
+
+If p < 2, their result implies
+
+|x|p√
+m
+
+≤ |x|2 ≤ |Bx|p ≤
+
+m|x|2 ≤
+
+m|x|p,
+
+√
+
+√
+
+and so rescaling B by
+On the other hand, if p > 2, then
+
+m makes it almost-(cid:96)p-isoperimetric.
+
+√
+
+|x|p ≤ |x|2 ≤ |Bx|p ≤
+
+m|x|2 ≤ m|x|p,
+
+√
+
+and rescaling B by m makes it almost-(cid:96)p-isoperimetric.
+
+Note that the algorithm used in (Dasgupta et al., 2009) re-
+lies on the construction of the L¨owner–John ellipsoid for a
+speciﬁc set of points. Interestingly, we can also show that
+there is a more simple and direct algorithm to compute such
+a matrix B; this may be of independent interest. We provide
+the details of our algorithm in the full version (Chierichetti
+et al., 2017).
+
+5.2. Reducing the rank to k
+
+The main idea for reducing the rank is to ﬁrst apply the
+almost-(cid:96)p-isoperimetric transformation to the factor U to
+obtain a new factor Z 0. For such a Z 0, the (cid:96)p-norm of Z 0V
+is at most the (cid:96)p-norm of V . Using this fact we show that
+V has a low-rank approximation and a rank-k approxima-
+tion of V translates into a good rank-k approximation of
+U V . But a good rank-k approximation of V can be ob-
+tained by exploring all possible k-subsets of rows of V , as
+in Algorithm 2. More formally, in Algorithm 4 we give the
+pseudo-code to reduce the rank of our low-rank approxima-
+tion from O(k log m) to k. Let δ = |∆|p = optk,p(A).
+
+Algorithms for (cid:96)p Low-Rank Approximation
+
+Algorithm 4 An algorithm that transforms an O(k log m)-
+rank matrix decomposition into a k-rank matrix decomposi-
+tion without inﬂating the error too much.
+Require: U ∈ Rn×O(k log m), V ∈ RO(k log m)×m
+Ensure: W ∈ Rn×k, Z ∈ Rk×m
+1: Apply Lemma 10 to U to obtain matrix W 0
+2: Apply Lemma 1 to obtain matrix Z 0, s.t. ∀i, |W 0Z 0
+
+i −
+
+(U V )i|p is minimized
+
+3: Apply Algorithm 2 with input (Z 0)T ∈ Rn×O(k log m)
+
+and k to obtain X and Y
+
+4: Set Z ← X T
+5: Set W ← W 0Y T
+6: Output W and Z
+
+Theorem 11. Let A ∈ Rn×m, U ∈ Rn×O(k log m), V ∈
+RO(k log m)×m be such that |A − U V |p = O(kδ). Then,
+Algorithm 4 runs in time O(k log m)k(mn)O(1) and out-
+puts W ∈ Rn×k, Z ∈ Rk×m such that |A − W Z|p =
+O((k4 log k)δ).
+
+5.3. Improving the running time
+
+Interestingly it is possible to improve the running time
+to (mn)O(1) for every k and every constant p ≥ 1, at
+the cost of a poly(k log(m))-approximation instead of the
+poly(k)-approximation we had previously. See the full ver-
+sion (Chierichetti et al., 2017) for a proof.
+Theorem 12. Let A ∈ Rn×m, 1 ≤ k ≤ min(m, n), and
+p ≥ 1 be an arbitrary constant. Let U ∈ Rn×O(k log m)
+and V ∈ RO(k log m)×m be such that |A − U V |p = O(kδ).
+There is an algorithm that runs in time (mn)O(1) and out-
+puts W ∈ Rn×k, Z ∈ Rk×m such that |A − W Z|p =
+(k log m)O(p)δ.
+
+6. Experiments
+
+In this section, we show the effectiveness of Algorithm 2
+compared to the SVD. We run our comparison both on
+synthetic as well as real data sets. For the real data sets,
+we use matrices from the FIDAP set2 and a word frequency
+dataset from UC Irvine 3. The FIDAP matrix is 27 × 27 with
+279 real asymmetric non-zero entries. The KOS blog entries
+matrix, representing word frequencies in blogs, is 3430 ×
+6906 with 353160 non-zero entries. For the synthetic data
+sets, we use two matrices. For the ﬁrst, we use a 20 ×
+30 random matrix with 184 non-zero entries—this random
+matrix was generated as follows: independently, we set each
+entry to 0 with probability 0.7, and to a uniformly random
+
+2ihttp://math.nist.gov/MatrixMarket/data/
+
+SPARSKIT/fidap/fidap005.html
+
+3https://archive.ics.uci.edu/ml/datasets/
+
+Bag+of+Words
+
+value in [0, 1] with probability 0.3. Both matrices are full
+rank. For the second matrix, we use a random ±1 20 × 30
+matrix.
+
+k
+
+In all our experiments, we run a simpliﬁed version of Al-
+(cid:1)
+gorithm 2, where instead of running for all possible (cid:0)[m]
+subsets of k columns (which would be computationally pro-
+hibitive), we repeatedly sample k columns, a few thousand
+times, uniformly at random. We then run the (cid:96)p-projection
+on each sampled set and ﬁnally select the solution with
+the smallest (cid:96)p-error. (While this may not guarantee prov-
+able approximations, we use this a reasonable heuristic that
+seems to work well in practice, without much computational
+overhead.) We focus on p = 1 and p = ∞.
+
+Figure 1 illustrates the relative performance of Algorithm 2
+compared to the SVD for different values of k on the real
+data sets. In the ﬁgure the green line is the ratio of the total
+error. The (cid:96)1-error for Algorithm 2 is always less than the
+corresponding error for the SVD and in fact consistently
+outperforms the SVD by roughly 40% for small values of
+k on the FIDAP matrix. On the larger KOS matrix, the
+relative improvement in performance with respect to (cid:96)∞-
+error is more uniform (around 10%).
+
+We observe similar trends for the synthetic data sets as
+well. Figures 2 and 3 illustrate the trends. Algorithm 2
+performs consistently better than the SVD in the case of
+(cid:96)1-error for both the matrices. In the case of (cid:96)∞-error, it
+outperforms SVD by around 10% for higher values of k on
+the random matrix. Furthermore, it consistently outperforms
+SVD, between 30% and 50%, for all values of k on the
+random ±1 matrix.
+
+To see why our (cid:96)∞ error is always 1 for a random ±1 matrix
+A, note that by setting our rank-k approximation to be the
+zero matrix, we achieve an (cid:96)∞ error of 1. This is optimal
+for large values of n and m and small k as can be seen
+by recalling the notion of the sign-rank of a matrix A ∈
+{−1, 1}n×m, which is the minimum rank of a matrix B for
+which the sign of Bi,j equals Ai,j for all entries i, j. If the
+sign-rank of A is larger than k, then for any rank-k matrix
+B, we have (cid:107)A − B(cid:107)∞ ≥ 1 since necessarily there is an
+entry Ai,j for which |Ai,j − Bi,j| ≥ 1. It is known that the
+sign-rank of a random m × m matrix A, and thus also of a
+random n × m matrix A, is Ω(
+m) with high probability
+(Forster, 2002).
+
+√
+
+7. Conclusions
+
+We studied the problem of low-rank approximation in the
+entry-wise (cid:96)p error norm and obtained the ﬁrst provably
+good approximation algorithms for the problem that work
+for every p ≥ 1. Our algorithms are extremely simple,
+which makes them practically appealing. We showed the
+effectiveness of our algorithms compared with the SVD on
+
+Algorithms for (cid:96)p Low-Rank Approximation
+
+(a) FIDAP matrix ((cid:96)1)
+
+(b) KOS matrix ((cid:96)∞)
+
+Figure 1: Comparing the performance of Algorithm 2 with SVD on the real data sets.
+
+(a) Random matrix ((cid:96)1)
+
+(b) Random matrix ((cid:96)∞)
+
+Figure 2: Comparing the performance of Algorithm 2 with SVD on the random matrix.
+
+(a) ±1 matrix ((cid:96)1)
+
+(b) ±1 matrix ((cid:96)∞)
+
+Figure 3: Comparing the performance of Algorithm 2 with SVD on the ±1 matrix.
+
+real and synthetic data sets. We obtain a kO(1) approxi-
+mation factor for every p for the column subset selection
+problem, and we showed an example matrix for this prob-
+lem for which a kΩ(1) approximation factor is necessary. It
+is unclear if better approximation factors are possible by
+designing algorithms that do not choose a subset of input
+columns to span the output low rank approximation. Re-
+solving this would be an interesting and important research
+direction.
+
+0.640.660.680.70.720.740.760.780.80.820.8405010015020025012345678910Ratio of Alg 2 to SVD ErrorsAbsolute ErrorKAlg 2SVDRatio00.20.40.60.811.205101520253035404512345678910Ratio of Alg 2 to SVD ErrorsAbsolute ErrorKAlg 2SVDRatio0.680.70.720.740.760.780.805010015020025012345678910Ratio of Alg2 to SVD ErrorsAbsolute ErrorKAlg 2SVDRatio00.20.40.60.811.200.20.40.60.811.212345678910Ratio of Alg2 to SVD ErrosAbsolute ErrorKAlg 2SVDRatio0.780.80.820.840.860.880.90.920.94010020030040050060012345678910Ratio of Alg 2 to SVD ErrorsAbsolute ErrorKAlg 2SVDRatio00.10.20.30.40.50.60.70.800.511.522.512345678910Ratio of Alg 2 to SVD ErrorsAbsolute ErrorKAlg 2SVDRatioAlgorithms for (cid:96)p Low-Rank Approximation
+
+References
+
+Brooks, J. Paul, Dul´a, Jose’ H., and Boone, Edward L. A
+pure (cid:96)1-norm principal component analysis. Computa-
+tional Statistics & Data Analysis, 61:83–98, 2013.
+
+Cand`es, Emmanuel J., Li, Xiaodong, Ma, Yi, and Wright,
+John. Robust principal component analysis? JACM, 58
+(3):11:1–11:37, 2011.
+
+Chierichetti, Flavio, Gollapudi, Sreenivas, Kumar, Ravi,
+Lattanzi, Silvio, Panigrahy, Rina, and Woodruff, David P.
+Algorithms for (cid:96)p low-rank approximation. Technical
+Report 1705.06730, arXiv, 2017.
+
+Ke, Qifa and Kanade, Takeo. Robust L1 norm factorization
+in the presence of outliers and missing data by alternative
+convex programming. In CVPR, pp. 739–746, 2005.
+
+Lu, Cewu, Shi, Jiaping, and Jia, Jiaya. Scalable adaptive
+robust dictionary learning. TIP, 23(2):837–847, 2014.
+
+Meng, Deyu and Torre, Fernando. D. L. Robust matrix
+factorization with unknown noise. In ICCV, pp. 1337–
+1344, 2013.
+
+Netrapalli, Praneeth, Niranjan, U. N., Sanghavi, Sujay,
+Anandkumar, Animashree, and Jain, Prateek. Non-convex
+robust PCA. In NIPS, pp. 1107–1115, 2014.
+
+Dan, Chen, Hansen, Kristoffer A., Jiang, He, Wang, Liwei,
+and Zhou, Yuchen. On low rank approximation of binary
+matrices. Technical Report 1511.01699v1, arXiv, 2015.
+
+Song, Zhao, Woodruff, David P., and Zhong, Pelin. Low
+rank approximation with entrywise (cid:96)1-norm error.
+In
+STOC, 2017.
+
+Dasgupta, Anirban, Drineas, Petros, Harb, Boulos, Kumar,
+Ravi, and Mahoney, Michael W. Sampling algorithms and
+coresets for lp regression. SICOMP, 38(5)(2060–2078),
+2009.
+
+Deshpande, Amit, Tulsiani, Madhur,
+
+and Vishnoi,
+Nisheeth K. Algorithms and hardness for subspace ap-
+proximation. In SODA, pp. 482–496, 2011.
+
+Eriksson, Anders and van den Hengel, Anton. Efﬁcient
+computation of robust low-rank matrix approximations
+using the L1 norm. PAMI, 34(9):1681–1690, 2012.
+
+Feldman, Dan, Fiat, Amos, Sharir, Micha, and Segev, Danny.
+Bi-criteria linear-time approximations for generalized k-
+mean/median/center. In SoCG, pp. 19–26, 2007.
+
+Forster, J¨urgen. A linear lower bound on the unbounded
+error probabilistic communication complexity. J. Comput.
+Syst. Sci., 65(4):612–625, 2002.
+
+Gillis, Nicolas and Vavasis, Stephen A. On the complexity
+of robust PCA and (cid:96)1-norm low-rank matrix approxima-
+tion. Technical Report 1509.09236, arXiv, 2015.
+
+Goreinov, Sergei A. and Tyrtyshnikov, Eugene E. The
+maximal-volume concept in approximation by low-rank
+matrices. Contemporary Mathematics, 208:47–51, 2001.
+
+Goreinov, Sergei A. and Tyrtyshnikov, Eugene E. Qua-
+sioptimality of skeleton approximation of a matrix in the
+Chebyshev norm. Doklady Mathematics, 83(3):374–375,
+2011.
+
+Huber, Peter J. Robust Statistics. John Wiley & Sons, New
+
+York,, 1981.
+
+Wang, Naiyan and Yeung, Dit-Yan. Bayesian robust matrix
+factorization for image and video processing. In ICCV,
+pp. 1785–1792, 2013.
+
+Wang, Naiyan, Yao, Tiansheng, Wang, Jingdong, and Ye-
+ung, Dit-Yan. A probabilistic approach to robust matrix
+factorization. In ECCV, pp. 126–139, 2012.
+
+Woodruff, David P. Sketching as a tool for numerical linear
+algebra. Foundations and Trends in Theoretical Computer
+Science, 10(1-2):1–157, 2014.
+
+Xiong, Liang, Chen, Xi, and Schneider, Jeff. Direct robust
+matrix factorization for anomaly detection. In ICDM, pp.
+844–853, 2011.
+
+Xu, Huan, Caramanis, Constantine, and Sanghavi, Sujay.
+Robust PCA via outlier pursuit. TOIT, 58(5):3047–3064,
+2012.
+
+Xu, Lei and Yuille, Alan L. Robust principal compo-
+nent analysis by self-organizing rules based on statis-
+tical physics approach. IEEE Transactions on Neural
+Networks, 6(1):131–143, 1995.
+
+Yi, Xinyang, Park, Dohyung, Chen, Yudong, and Caramanis,
+Constantine. Fast algorithms for robust pca via gradient
+descent. In NIPS, pp. 4152–4160, 2016.
+
+Zheng, Yinqiang, Liu, Guangcan, Sugimoto, Shigeki, Yan,
+Shuicheng, and Okutomi, Masatoshi. Practical low-rank
+matrix approximation under robust L1-norm. In CVPR,
+pp. 1410–1417, 2012.
+
+
